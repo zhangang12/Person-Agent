@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>天枢 · 设计北极星（浅色主题）</title>
+<style>
+  body{margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+    background:#ced3e0;font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;padding:28px}
+  .scene{position:relative;width:680px;max-width:96vw;min-height:566px;border-radius:16px;overflow:hidden;background:#e8ebf3}
+  .glass{position:relative;background:linear-gradient(158deg,rgba(255,255,255,.76),rgba(255,255,255,.58));
+    border:1px solid rgba(255,255,255,.95);border-radius:16px;
+    box-shadow:0 18px 44px rgba(28,36,86,.20),0 4px 12px rgba(28,36,86,.10),inset 0 1px 0 rgba(255,255,255,1)}
+  .hl{position:absolute;left:16px;right:16px;top:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.95),transparent)}
+  .mono{font-family:ui-monospace,"Cascadia Code",Consolas,monospace}
+  .msg{max-width:84%;font-size:13px;line-height:1.5;padding:8px 11px;border-radius:13px}
+  .me{align-self:flex-end;background:rgba(99,130,246,.20);border:.5px solid rgba(99,130,246,.32);border-bottom-right-radius:5px;color:#1f2b54}
+  .ai{align-self:flex-start;background:rgba(252,253,255,.72);border:.5px solid rgba(28,36,86,.10);border-bottom-left-radius:5px;color:#1b1c33}
+  .chip{font-size:12px;padding:5px 11px;border-radius:999px;border:.5px solid rgba(27,28,51,.20);color:#2a3358;background:rgba(255,255,255,.55)}
+  .cl{height:7px;border-radius:3px;display:inline-block}
+  .cap{font-size:12px;color:#4a5170}
+</style>
+</head>
+<body>
+<div class="scene">
+  <div style="position:absolute;inset:0;opacity:.7;padding:16px 18px;display:flex;flex-direction:column;gap:11px;">
+    <div><span class="cl" style="width:42px;background:#8b95cf"></span> <span class="cl" style="width:78px;background:#6fae9a"></span> <span class="cl" style="width:36px;background:#8aa0c4"></span></div>
+    <div style="margin-left:22px"><span class="cl" style="width:58px;background:#8b95cf"></span> <span class="cl" style="width:104px;background:#6fae9a"></span></div>
+    <div style="margin-left:22px"><span class="cl" style="width:48px;background:#8aa0c4"></span> <span class="cl" style="width:66px;background:#aab0c6"></span> <span class="cl" style="width:30px;background:#8b95cf"></span></div>
+    <div style="margin-left:44px"><span class="cl" style="width:88px;background:#6fae9a"></span> <span class="cl" style="width:40px;background:#aab0c6"></span></div>
+    <div><span class="cl" style="width:52px;background:#8b95cf"></span> <span class="cl" style="width:92px;background:#6fae9a"></span></div>
+    <div style="margin-left:22px"><span class="cl" style="width:64px;background:#8aa0c4"></span> <span class="cl" style="width:48px;background:#aab0c6"></span></div>
+    <div style="margin-left:44px"><span class="cl" style="width:38px;background:#6fae9a"></span> <span class="cl" style="width:72px;background:#aab0c6"></span></div>
+    <div><span class="cl" style="width:46px;background:#8b95cf"></span> <span class="cl" style="width:84px;background:#8aa0c4"></span></div>
+  </div>
+
+  <div class="glass" style="position:absolute;right:-34px;top:104px;width:300px;height:380px;transform:rotate(3deg);opacity:.6;box-shadow:0 16px 40px rgba(28,36,86,.16)"></div>
+
+  <div style="position:relative;display:flex;flex-direction:column;align-items:center;gap:16px;padding:22px 0;">
+
+    <div class="glass" style="width:462px;border-radius:999px;display:flex;align-items:center;gap:11px;padding:10px 14px;">
+      <span style="width:32px;height:32px;flex:none;border-radius:50%;background:rgba(124,140,255,.16);border:1px solid rgba(124,140,255,.30);display:flex;align-items:center;justify-content:center;">
+        <svg width="17" height="17" viewBox="0 0 24 24"><defs><linearGradient id="s" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8b5cf6"/><stop offset="1" stop-color="#0891b2"/></linearGradient></defs><path fill="url(#s)" d="M12 2l1.7 6.1L20 10l-6.3 1.9L12 18l-1.7-6.1L4 10l6.3-1.9z"/></svg>
+      </span>
+      <span style="flex:1;font-size:14px;color:rgba(27,28,51,.5)">描述一个任务，回车开一个新对话…</span>
+      <span class="mono" style="font-size:11px;color:rgba(27,28,51,.45);border:1px solid rgba(27,28,51,.18);border-radius:7px;padding:3px 8px">Ctrl ⇧ Space</span>
+    </div>
+
+    <div class="glass" style="width:474px;padding:14px 16px;display:flex;flex-direction:column;gap:11px;">
+      <span class="hl"></span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0a9d6e" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg>
+        <span style="flex:1;font-size:13px;font-weight:600;color:#16182e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">评审 CreditApplyService 改动</span>
+        <span class="mono" style="font-size:11px;color:rgba(27,28,51,.45)">ses_130e</span>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(27,28,51,.45)" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </div>
+
+      <div class="msg me">看下 CreditApplyService 最近的改动有没有坑</div>
+
+      <div class="msg ai" style="max-width:92%;">
+        看了 git diff，两处要紧的：
+        <div style="margin-top:9px;background:rgba(28,36,86,.05);border:.5px solid rgba(28,36,86,.10);border-radius:10px;padding:9px 11px;display:flex;flex-direction:column;gap:9px;">
+          <div style="display:flex;gap:9px;align-items:flex-start;">
+            <span style="font-size:11px;font-weight:600;color:#be123c;background:rgba(225,29,72,.12);padding:2px 7px;border-radius:5px;white-space:nowrap;">必改</span>
+            <div style="font-size:12px;color:#26283f;line-height:1.45;">金额单位：<span class="mono" style="color:#5a6b9a">:88</span> 按「元」算，但此表按「分」存储</div>
+          </div>
+          <div style="display:flex;gap:9px;align-items:flex-start;">
+            <span style="font-size:11px;font-weight:600;color:#be123c;background:rgba(225,29,72,.12);padding:2px 7px;border-radius:5px;white-space:nowrap;">必改</span>
+            <div style="font-size:12px;color:#26283f;line-height:1.45;">SQL 注入：<span class="mono" style="color:#5a6b9a">LoanMapper.xml:120</span> 用了 <span class="mono" style="color:#5a6b9a">${}</span> 拼接</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-self:flex-start;">
+        <span class="chip">生成修复 diff</span>
+        <span class="chip">补回归单测</span>
+        <span class="chip">查影响面</span>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:10px;background:rgba(245,158,11,.13);border:.5px solid rgba(245,158,11,.34);border-radius:11px;padding:8px 11px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#b45309" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7l5 5-5 5M13 17h6"/></svg>
+        <span style="flex:1;font-size:12px;color:#7c4a06;">请求执行 <span class="mono">bash · git diff</span></span>
+        <span style="font-size:11px;color:#fff;background:#2563eb;padding:4px 10px;border-radius:7px;font-weight:600;">允许一次</span>
+        <span style="font-size:11px;color:rgba(27,28,51,.6);">拒绝</span>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:8px;background:rgba(28,36,86,.05);border:1px solid rgba(28,36,86,.12);border-radius:12px;padding:6px 6px 6px 13px;margin-top:1px;">
+        <span style="flex:1;font-size:13px;color:rgba(27,28,51,.4)">继续对话…</span>
+        <span style="width:28px;height:28px;flex:none;border-radius:50%;background:linear-gradient(135deg,#8b5cf6,#0891b2);display:flex;align-items:center;justify-content:center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></span>
+      </div>
+    </div>
+
+  </div>
+</div>
+<div class="cap">设计北极星 · 浅色主题（macOS 浅色 vibrancy 风）· 浅磨砂玻璃 + 深色字 + 投影浮起</div>
+</body>
+</html>

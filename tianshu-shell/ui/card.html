@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<script>try { document.documentElement.dataset.theme = window.tianshu.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
+<link rel="stylesheet" href="glass.css" />
+<style>
+  .card { display: flex; flex-direction: column; height: 100%; padding: 11px 13px 12px; gap: 9px; }
+  .hd { display: flex; align-items: center; gap: 7px; flex: none; }
+  .icn { width: 16px; height: 16px; flex: none; display: inline-flex; }
+  .ttl { flex: 1; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .proj { font-size: 10.5px; font-family: var(--mono); color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 999px; padding: 2px 8px; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hbtn { border: none; background: transparent; color: var(--txt3); cursor: pointer; padding: 3px; border-radius: 6px; display: flex; align-items: center; }
+  .hbtn:hover { color: var(--txt); background: var(--composer-bg); }
+  .hbtn.on { color: var(--accent); }
+  .err { color: var(--txt2); }
+
+  /* 思考链折叠块 */
+  .reason { align-self: flex-start; max-width: 92%; background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 11px; }
+  .reason > summary { cursor: pointer; padding: 7px 12px; color: var(--txt2); font-size: 12px; list-style: none; display: flex; align-items: center; gap: 7px; user-select: none; }
+  .reason > summary::-webkit-details-marker { display: none; }
+  .reason > summary .chev { transition: transform .15s; }
+  .reason[open] > summary .chev { transform: rotate(90deg); }
+  .reason .body { padding: 0 12px 9px; color: var(--txt2); white-space: pre-wrap; line-height: 1.5; font-size: 12px; max-height: 200px; overflow-y: auto; }
+  .reason .body::-webkit-scrollbar { width: 5px; } .reason .body::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+
+  /* Markdown */
+  #feed { overflow-x: hidden; }
+  .ai { overflow-wrap: anywhere; line-height: 1.55; }
+  .ai h1, .ai h2, .ai h3, .ai h4 { font-size: 13px; font-weight: 600; margin: 9px 0 4px; }
+  .ai p { margin: 5px 0; } .ai p:first-child { margin-top: 0; }
+  .ai ul, .ai ol { margin: 5px 0; padding-left: 18px; } .ai li { margin: 2px 0; }
+  .ai code { font-family: var(--mono); font-size: 12px; background: var(--composer-bg); padding: 1px 5px; border-radius: 4px; }
+  .ai pre.code { background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 8px; padding: 9px 11px; overflow-x: auto; margin: 7px 0; }
+  .ai pre.code code { background: none; padding: 0; white-space: pre; }
+  .ai hr { border: none; border-top: .5px solid var(--composer-border); margin: 9px 0; }
+  .floc { color: var(--accent); cursor: pointer; text-decoration: none; border-bottom: 1px dotted var(--accent); }
+  .floc:hover { opacity: .75; }
+  .ai table { border-collapse: collapse; margin: 7px 0; font-size: 12px; display: block; max-width: 100%; overflow-x: auto; }
+  .ai th, .ai td { border: .5px solid var(--composer-border); padding: 4px 8px; text-align: left; vertical-align: top; }
+  .ai th { font-weight: 600; background: var(--composer-bg); white-space: nowrap; }
+  .ai pre.code::-webkit-scrollbar, .ai table::-webkit-scrollbar { height: 6px; }
+  .ai pre.code::-webkit-scrollbar-thumb, .ai table::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+
+  .perm { display: flex; align-items: center; gap: 8px; background: var(--warn-bg); border: .5px solid var(--warn-border); border-radius: 11px; padding: 7px 9px; }
+  .perm .t { flex: 1; font-size: 12px; color: var(--warn-txt); }
+  .perm .ok { font-size: 11px; font-weight: 600; color: var(--warn-btn-fg); background: var(--warn-btn); padding: 4px 10px; border-radius: 7px; border: none; cursor: pointer; }
+  .perm .no { font-size: 11px; color: var(--txt2); background: transparent; border: none; cursor: pointer; padding: 4px 6px; }
+</style>
+</head>
+<body>
+<div class="glass">
+  <span class="hl"></span>
+  <div class="card">
+    <div class="hd">
+      <span id="st" class="icn"></span>
+      <span id="ttl" class="ttl">对话</span>
+      <span id="proj" class="proj"></span>
+      <button id="pin" class="hbtn nodrag" title="置顶" aria-label="置顶"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l-1.2 5.2L17 12v2H7v-2l3.2-2.8z"/><path d="M12 14v6"/></svg></button>
+      <button id="max" class="hbtn nodrag" title="最大化 / 还原" aria-label="最大化"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></button>
+      <button id="min" class="hbtn nodrag" title="最小化" aria-label="最小化"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+      <button id="x" class="hbtn nodrag" title="关闭" aria-label="关闭"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div id="feed" class="feed nodrag"></div>
+    <div class="composer nodrag">
+      <input id="ci" placeholder="继续对话…" />
+      <button id="send" class="send" aria-label="发送"></button>
+    </div>
+  </div>
+</div>
+<script>
+  window.tianshu.onTheme((t) => { document.documentElement.dataset.theme = t })
+
+  function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }
+  // 把 文件:行（需含字母扩展名，排除 URL/时间）渲染成可点链接
+  const FLOC = /([\w./\\-]+\.[A-Za-z]\w*):(\d+)/g
+  function linkify(s) { return s.replace(FLOC, function (m, f, l) { return '<a class="floc" data-file="' + f + '" data-line="' + l + '">' + m + '</a>' }) }
+  function inline(s) {
+    return linkify(esc(s))
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+  }
+  function renderMarkdown(md) {
+    if (!md) return ''
+    const blocks = []
+    md = md.replace(/```(\w*)\r?\n?([\s\S]*?)```/g, function (m, lang, code) {
+      blocks.push('<pre class="code"><code>' + esc(code.replace(/\n$/, '')) + '</code></pre>')
+      return '@@CB' + (blocks.length - 1) + '@@'
+    })
+    const lines = md.replace(/\r/g, '').split('\n')
+    const sep = (s) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(s)
+    const cells = (s) => s.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim())
+    let html = '', i = 0
+    while (i < lines.length) {
+      const line = lines[i]
+      const ph = line.match(/^@@CB(\d+)@@$/)
+      if (ph) { html += blocks[+ph[1]]; i++; continue }
+      if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && sep(lines[i + 1])) {
+        const head = cells(line); i += 2; const rows = []
+        while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) { rows.push(cells(lines[i])); i++ }
+        html += '<table><thead><tr>' + head.map((c) => '<th>' + inline(c) + '</th>').join('') + '</tr></thead><tbody>' +
+          rows.map((r) => '<tr>' + r.map((c) => '<td>' + inline(c) + '</td>').join('') + '</tr>').join('') + '</tbody></table>'
+        continue
+      }
+      const hm = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/)
+      if (hm) { const lv = Math.min(hm[1].length, 4); html += '<h' + lv + '>' + inline(hm[2]) + '</h' + lv + '>'; i++; continue }
+      if (/^\s*([-*_])\1\1+\s*$/.test(line)) { html += '<hr>'; i++; continue }
+      if (/^\s*[-*+]\s+/.test(line)) { const it = []; while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) { it.push('<li>' + inline(lines[i].replace(/^\s*[-*+]\s+/, '')) + '</li>'); i++ } html += '<ul>' + it.join('') + '</ul>'; continue }
+      if (/^\s*\d+\.\s+/.test(line)) { const it = []; while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) { it.push('<li>' + inline(lines[i].replace(/^\s*\d+\.\s+/, '')) + '</li>'); i++ } html += '<ol>' + it.join('') + '</ol>'; continue }
+      if (/^\s*$/.test(line)) { i++; continue }
+      const para = [line]; i++
+      while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^\s*\|.*\|\s*$/.test(lines[i]) && !/^\s{0,3}#{1,6}\s/.test(lines[i]) && !/^\s*[-*+]\s/.test(lines[i]) && !/^\s*\d+\.\s/.test(lines[i]) && !/^@@CB\d+@@$/.test(lines[i])) { para.push(lines[i]); i++ }
+      html += '<p>' + para.map(inline).join('<br>') + '</p>'
+    }
+    return html.replace(/@@CB(\d+)@@/g, function (m, n) { return blocks[+n] })
+  }
+
+  const params = new URLSearchParams(location.search)
+  const title = params.get('title') || '新对话'
+  const ttl = document.getElementById('ttl'); ttl.textContent = title; ttl.title = title
+  const projEl = document.getElementById('proj')
+  const feed = document.getElementById('feed'), st = document.getElementById('st')
+  const ci = document.getElementById('ci'), send = document.getElementById('send')
+
+  document.getElementById('x').addEventListener('click', () => window.tianshu.closeSelf())
+  document.getElementById('min').addEventListener('click', () => window.tianshu.minimizeSelf())
+  document.getElementById('max').addEventListener('click', () => window.tianshu.toggleMaximize())
+  const pinBtn = document.getElementById('pin')
+  pinBtn.addEventListener('click', async () => { const on = await window.tianshu.togglePin(); pinBtn.classList.toggle('on', on); pinBtn.title = on ? '已置顶（点击取消）' : '置顶' })
+
+  // 点 文件:行 链接 → 在编辑器打开
+  feed.addEventListener('click', (e) => {
+    const a = e.target.closest('a.floc'); if (!a) return
+    e.preventDefault(); window.tianshu.openLoc(a.dataset.file, a.dataset.line)
+  })
+
+  const ARROW = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>'
+  const STOP = '<svg width="12" height="12" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>'
+  const SPIN = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" style="color:var(--accent);animation:spin 1s linear infinite"><path d="M12 3a9 9 0 1 0 9 9"/></svg>'
+  const DONE = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="color:var(--green)"><path d="M4 12l5 5L20 6"/></svg>'
+  let busy = false
+  function setBusy(b) { busy = b; st.innerHTML = b ? SPIN : DONE; send.innerHTML = b ? STOP : ARROW }
+  setBusy(false)
+
+  function addMsg(text, who) {
+    const d = document.createElement('div')
+    d.className = 'msg ' + (who === 'me' ? 'me' : 'ai')
+    if (who === 'ai') d.innerHTML = renderMarkdown(text); else d.textContent = text
+    feed.appendChild(d); feed.scrollTop = feed.scrollHeight
+    return d
+  }
+  function showPermission(requestId, tool) {
+    const box = document.createElement('div'); box.className = 'perm'
+    const t = document.createElement('span'); t.className = 't'
+    t.innerHTML = '请求执行 <span style="font-family:var(--mono)"></span>'
+    t.querySelector('span').textContent = tool
+    const ok = document.createElement('button'); ok.className = 'ok'; ok.textContent = '允许一次'
+    const al = document.createElement('button'); al.className = 'no'; al.textContent = '总是'
+    const no = document.createElement('button'); no.className = 'no'; no.textContent = '拒绝'
+    const reply = (d) => { window.tianshu.permissionReply(requestId, d); box.remove() }
+    ok.onclick = () => reply('once'); al.onclick = () => reply('always'); no.onclick = () => reply('reject')
+    box.append(t, ok, al, no)
+    feed.appendChild(box); feed.scrollTop = feed.scrollHeight
+  }
+  window.tianshu.onPermission(({ requestId, tool }) => showPermission(requestId, tool))
+
+  // 流式：text → 答案气泡；reasoning → 思考折叠块（答案上方）
+  let curAnswer = null, curReason = null
+  function makeReason(beforeEl) {
+    const d = document.createElement('details'); d.className = 'reason'; d.open = true
+    d.innerHTML = '<summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>思考过程</summary><div class="body"></div>'
+    feed.insertBefore(d, beforeEl)
+    return { el: d, body: d.querySelector('.body') }
+  }
+  window.tianshu.onStream(({ kind, text }) => {
+    if (kind === 'reasoning') {
+      if (!curReason && curAnswer) curReason = makeReason(curAnswer)
+      if (curReason) { curReason.body.textContent = text; curReason.body.scrollTop = curReason.body.scrollHeight }
+    } else if (curAnswer) {
+      curAnswer.innerHTML = renderMarkdown(text)
+    }
+    feed.scrollTop = feed.scrollHeight
+  })
+
+  async function turn(text) {
+    const ai = addMsg('', 'ai'); ai.textContent = '思考中…'
+    curAnswer = ai; curReason = null; setBusy(true)
+    try {
+      const reply = await window.tianshu.cardSend(text)
+      if (reply) ai.innerHTML = renderMarkdown(reply)
+      else if (!ai.textContent.trim()) ai.textContent = '（无文本输出）'
+      if (curReason) curReason.el.open = false   // 答完自动折叠思考
+    } catch (e) {
+      ai.className = 'msg ai err'; ai.textContent = '⚠ ' + (e.message || e)
+    } finally { curAnswer = null; setBusy(false); feed.scrollTop = feed.scrollHeight }
+  }
+  function submit() { const v = ci.value.trim(); if (!v || busy) return; ci.value = ''; addMsg(v, 'me'); turn(v) }
+
+  send.addEventListener('click', () => { if (busy) window.tianshu.cardAbort(); else submit() })
+  ci.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit() })
+
+  ;(async () => {
+    addMsg(title, 'me'); setBusy(true)
+    try {
+      const { project } = await window.tianshu.cardInit()
+      projEl.textContent = project || ''; projEl.title = project || ''
+      await turn(title)
+    } catch (e) {
+      const ai = addMsg('', 'ai'); ai.className = 'msg ai err'
+      ai.textContent = '⚠ 引擎未就绪：' + (e.message || e) + '（确认 opencode/bocomcode 已装、模型已配）'
+      setBusy(false)
+    }
+  })()
+  ci.focus()
+</script>
+</body>
+</html>

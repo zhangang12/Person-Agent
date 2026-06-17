@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>天枢 · 设计北极星</title>
+<style>
+  body{margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+    background:#13151f;font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;padding:28px}
+  .scene{position:relative;width:680px;max-width:96vw;min-height:566px;border-radius:16px;overflow:hidden;background:#0b0e1c}
+  .glass{position:relative;background:linear-gradient(158deg,rgba(30,34,58,.78),rgba(15,18,34,.70));border:1px solid rgba(255,255,255,.15);
+    border-radius:16px;box-shadow:0 0 30px rgba(90,140,255,.24),0 20px 48px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.16)}
+  .hl{position:absolute;left:16px;right:16px;top:0;height:1px;background:linear-gradient(90deg,transparent,rgba(150,200,255,.6),transparent)}
+  .mono{font-family:ui-monospace,"Cascadia Code",Consolas,monospace}
+  .msg{max-width:84%;font-size:13px;line-height:1.5;padding:8px 11px;border-radius:13px}
+  .me{align-self:flex-end;background:rgba(110,150,255,.26);border:.5px solid rgba(150,180,255,.34);border-bottom-right-radius:5px;color:#eef2ff}
+  .ai{align-self:flex-start;background:rgba(255,255,255,.07);border:.5px solid rgba(255,255,255,.10);border-bottom-left-radius:5px;color:#e9edff}
+  .chip{font-size:12px;padding:5px 11px;border-radius:999px;border:.5px solid rgba(255,255,255,.22);color:#dfe6ff;background:rgba(255,255,255,.05)}
+  .cl{height:7px;border-radius:3px;display:inline-block}
+  .cap{font-size:12px;color:rgba(237,241,255,.5)}
+</style>
+</head>
+<body>
+<div class="scene">
+  <div style="position:absolute;inset:0;opacity:.42;padding:16px 18px;display:flex;flex-direction:column;gap:11px;">
+    <div><span class="cl" style="width:42px;background:#5a63b0"></span> <span class="cl" style="width:78px;background:#3f7e8e"></span> <span class="cl" style="width:36px;background:#4a7a5e"></span></div>
+    <div style="margin-left:22px"><span class="cl" style="width:58px;background:#5a63b0"></span> <span class="cl" style="width:104px;background:#4a7a5e"></span></div>
+    <div style="margin-left:22px"><span class="cl" style="width:48px;background:#3f7e8e"></span> <span class="cl" style="width:66px;background:#565c7a"></span> <span class="cl" style="width:30px;background:#5a63b0"></span></div>
+    <div style="margin-left:44px"><span class="cl" style="width:88px;background:#4a7a5e"></span> <span class="cl" style="width:40px;background:#565c7a"></span></div>
+    <div><span class="cl" style="width:52px;background:#5a63b0"></span> <span class="cl" style="width:92px;background:#4a7a5e"></span></div>
+    <div style="margin-left:22px"><span class="cl" style="width:64px;background:#3f7e8e"></span> <span class="cl" style="width:48px;background:#565c7a"></span></div>
+    <div style="margin-left:44px"><span class="cl" style="width:38px;background:#4a7a5e"></span> <span class="cl" style="width:72px;background:#565c7a"></span></div>
+    <div><span class="cl" style="width:46px;background:#5a63b0"></span> <span class="cl" style="width:84px;background:#3f7e8e"></span></div>
+  </div>
+
+  <div class="glass" style="position:absolute;right:-34px;top:104px;width:300px;height:380px;transform:rotate(3deg);opacity:.5;box-shadow:0 16px 40px rgba(0,0,0,.45)"></div>
+
+  <div style="position:relative;display:flex;flex-direction:column;align-items:center;gap:16px;padding:22px 0;">
+
+    <div class="glass" style="width:462px;border-radius:999px;display:flex;align-items:center;gap:11px;padding:10px 14px;">
+      <span style="width:32px;height:32px;flex:none;border-radius:50%;background:rgba(124,140,255,.18);border:1px solid rgba(150,180,255,.25);display:flex;align-items:center;justify-content:center;">
+        <svg width="17" height="17" viewBox="0 0 24 24"><defs><linearGradient id="s" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#9b8cff"/><stop offset="1" stop-color="#46e0ff"/></linearGradient></defs><path fill="url(#s)" d="M12 2l1.7 6.1L20 10l-6.3 1.9L12 18l-1.7-6.1L4 10l6.3-1.9z"/></svg>
+      </span>
+      <span style="flex:1;font-size:14px;color:rgba(237,241,255,.55)">描述一个任务，回车开一个新对话…</span>
+      <span class="mono" style="font-size:11px;color:rgba(237,241,255,.42);border:1px solid rgba(255,255,255,.16);border-radius:7px;padding:3px 8px">Ctrl ⇧ Space</span>
+    </div>
+
+    <div class="glass" style="width:474px;padding:14px 16px;display:flex;flex-direction:column;gap:11px;">
+      <span class="hl"></span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#54e0a8" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg>
+        <span style="flex:1;font-size:13px;font-weight:600;color:#eef2ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">评审 CreditApplyService 改动</span>
+        <span class="mono" style="font-size:11px;color:rgba(237,241,255,.42)">ses_130e</span>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(237,241,255,.42)" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </div>
+
+      <div class="msg me">看下 CreditApplyService 最近的改动有没有坑</div>
+
+      <div class="msg ai" style="max-width:92%;">
+        看了 git diff，两处要紧的：
+        <div style="margin-top:9px;background:rgba(255,255,255,.05);border:.5px solid rgba(255,255,255,.10);border-radius:10px;padding:9px 11px;display:flex;flex-direction:column;gap:9px;">
+          <div style="display:flex;gap:9px;align-items:flex-start;">
+            <span style="font-size:11px;font-weight:600;color:#ff9aa6;background:rgba(255,122,138,.16);padding:2px 7px;border-radius:5px;white-space:nowrap;">必改</span>
+            <div style="font-size:12px;color:#e9edff;line-height:1.45;">金额单位：<span class="mono" style="color:#9fb0dc">:88</span> 按「元」算，但此表按「分」存储</div>
+          </div>
+          <div style="display:flex;gap:9px;align-items:flex-start;">
+            <span style="font-size:11px;font-weight:600;color:#ff9aa6;background:rgba(255,122,138,.16);padding:2px 7px;border-radius:5px;white-space:nowrap;">必改</span>
+            <div style="font-size:12px;color:#e9edff;line-height:1.45;">SQL 注入：<span class="mono" style="color:#9fb0dc">LoanMapper.xml:120</span> 用了 <span class="mono" style="color:#9fb0dc">${}</span> 拼接</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-self:flex-start;">
+        <span class="chip">生成修复 diff</span>
+        <span class="chip">补回归单测</span>
+        <span class="chip">查影响面</span>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:10px;background:rgba(255,207,107,.10);border:.5px solid rgba(255,207,107,.30);border-radius:11px;padding:8px 11px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ffcf6b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7l5 5-5 5M13 17h6"/></svg>
+        <span style="flex:1;font-size:12px;color:#f1e7cf;">请求执行 <span class="mono">bash · git diff</span></span>
+        <span style="font-size:11px;color:#06131c;background:#46e0ff;padding:4px 10px;border-radius:7px;font-weight:600;">允许一次</span>
+        <span style="font-size:11px;color:rgba(237,241,255,.6);">拒绝</span>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.13);border-radius:12px;padding:6px 6px 6px 13px;margin-top:1px;">
+        <span style="flex:1;font-size:13px;color:rgba(237,241,255,.4)">继续对话…</span>
+        <span style="width:28px;height:28px;flex:none;border-radius:50%;background:linear-gradient(135deg,#9b8cff,#46c8ff);display:flex;align-items:center;justify-content:center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0b1020" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></span>
+      </div>
+    </div>
+
+  </div>
+</div>
+<div class="cap">设计北极星 · 墨玻璃对话卡（应用《产品设计规范 v1.0》）· 透出真实桌面 · 冷光描边 · 签名渐变</div>
+</body>
+</html>

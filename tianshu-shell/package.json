@@ -1,0 +1,40 @@
+{
+  "name": "tianshu-shell",
+  "version": "0.1.0",
+  "private": true,
+  "description": "天枢 Tianshu 桌面壳：可拖动透明玻璃卡片 + 全局输入框（Electron）",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^34.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.tianshu.shell",
+    "productName": "Tianshu",
+    "files": [
+      "main.js",
+      "preload.js",
+      "opencode.js",
+      "ui/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": ["nsis", "portable"],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "天枢 Tianshu"
+    },
+    "portable": {
+      "artifactName": "Tianshu-portable-${version}.exe"
+    }
+  }
+}

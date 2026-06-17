@@ -1,0 +1,84 @@
+/* ===== 设计令牌：一套变量名，两套皮肤（data-theme 切换）===== */
+:root, html[data-theme="light"] {
+  --font: -apple-system, "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  /* 浅磨砂 */
+  --txt: #1b1c33; --txt2: rgba(27,28,51,.62); --txt3: rgba(27,28,51,.42);
+  --accent: #2563eb; --green: #0a9d6e;
+  --brand: linear-gradient(135deg, #8b5cf6, #0891b2);
+  --send-fg: #ffffff;
+  --glass-bg: linear-gradient(158deg, rgba(255,255,255,.80), rgba(255,255,255,.62));
+  --glass-border: rgba(255,255,255,.95);
+  --glass-shadow: 0 18px 44px rgba(28,36,86,.20), 0 4px 12px rgba(28,36,86,.10), inset 0 1px 0 rgba(255,255,255,1);
+  --hl: linear-gradient(90deg, transparent, rgba(255,255,255,.95), transparent);
+  --me-bg: rgba(99,130,246,.20); --me-border: rgba(99,130,246,.32); --me-txt: #1f2b54;
+  --ai-bg: rgba(252,253,255,.72); --ai-border: rgba(28,36,86,.10); --ai-txt: #1b1c33;
+  --composer-bg: rgba(28,36,86,.05); --composer-border: rgba(28,36,86,.12);
+  --orb-bg: rgba(124,140,255,.16); --orb-border: rgba(124,140,255,.30);
+  --kbd-border: rgba(27,28,51,.18);
+  --scroll: rgba(27,28,51,.22);
+  --warn-bg: rgba(245,158,11,.13); --warn-border: rgba(245,158,11,.34); --warn-txt: #7c4a06; --warn-btn: #2563eb; --warn-btn-fg: #fff;
+}
+html[data-theme="dark"] {
+  /* 墨玻璃 */
+  --txt: rgba(237,241,255,.95); --txt2: rgba(237,241,255,.60); --txt3: rgba(237,241,255,.38);
+  --accent: #46e0ff; --green: #54e0a8;
+  --brand: linear-gradient(135deg, #9b8cff, #46c8ff);
+  --send-fg: #06131c;
+  --glass-bg: linear-gradient(158deg, rgba(30,34,58,.78), rgba(15,18,34,.70));
+  --glass-border: rgba(255,255,255,.15);
+  --glass-shadow: 0 0 30px rgba(90,140,255,.24), 0 20px 48px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.16);
+  --hl: linear-gradient(90deg, transparent, rgba(150,200,255,.6), transparent);
+  --me-bg: rgba(110,150,255,.26); --me-border: rgba(150,180,255,.34); --me-txt: #eef2ff;
+  --ai-bg: rgba(255,255,255,.07); --ai-border: rgba(255,255,255,.10); --ai-txt: #e9edff;
+  --composer-bg: rgba(255,255,255,.06); --composer-border: rgba(255,255,255,.13);
+  --orb-bg: rgba(124,140,255,.18); --orb-border: rgba(150,180,255,.25);
+  --kbd-border: rgba(255,255,255,.16);
+  --scroll: rgba(255,255,255,.16);
+  --warn-bg: rgba(255,207,107,.10); --warn-border: rgba(255,207,107,.30); --warn-txt: #f1e7cf; --warn-btn: #46e0ff; --warn-btn-fg: #06131c;
+}
+
+/* ===== 基础 ===== */
+* { box-sizing: border-box; }
+html, body {
+  height: 100%; margin: 0; background: transparent; overflow: hidden;
+  font-family: var(--font); color: var(--txt);
+  -webkit-user-select: none; user-select: none;
+}
+body { padding: 24px; }
+
+.glass {
+  position: relative; height: 100%;
+  -webkit-app-region: drag; cursor: grab;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  box-shadow: var(--glass-shadow);
+  animation: pop .26s cubic-bezier(.2,.85,.25,1);
+  transition: background .2s, border-color .2s, box-shadow .2s;
+}
+.glass:active { cursor: grabbing; }
+.glass:focus-within { border-color: var(--accent); }
+.hl { position: absolute; left: 16px; right: 16px; top: 0; height: 1px; background: var(--hl); pointer-events: none; }
+.nodrag { -webkit-app-region: no-drag; }
+
+/* ===== 消息气泡 ===== */
+.msg { max-width: 86%; font-size: 13px; line-height: 1.5; padding: 8px 11px; border-radius: 13px; word-break: break-word; }
+.me { align-self: flex-end; background: var(--me-bg); border: .5px solid var(--me-border); border-bottom-right-radius: 5px; color: var(--me-txt); }
+.ai { align-self: flex-start; background: var(--ai-bg); border: .5px solid var(--ai-border); border-bottom-left-radius: 5px; color: var(--ai-txt); }
+
+/* ===== 消息流 + 滚动条 ===== */
+.feed { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 2px 4px 2px 0; }
+.feed::-webkit-scrollbar { width: 6px; }
+.feed::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+
+/* ===== 输入栏 ===== */
+.composer { flex: none; display: flex; align-items: center; gap: 8px; background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 12px; padding: 5px 6px 5px 12px; }
+.composer input { flex: 1; background: transparent; border: none; outline: none; color: var(--txt); font-size: 13px; font-family: var(--font); }
+.composer input::placeholder { color: var(--txt3); }
+.send { flex: none; width: 28px; height: 28px; border-radius: 50%; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; background: var(--brand); color: var(--send-fg); }
+.send svg { stroke: var(--send-fg); }
+
+@keyframes pop { from { opacity: 0; transform: scale(.96) translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes tw { 0%,100% { opacity: .55; } 50% { opacity: 1; } }

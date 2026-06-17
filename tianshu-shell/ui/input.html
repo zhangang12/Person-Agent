@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<script>try { document.documentElement.dataset.theme = window.tianshu.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
+<link rel="stylesheet" href="glass.css" />
+<style>
+  .bar { display: flex; align-items: center; gap: 9px; height: 100%; padding: 0 10px; }
+  .orb { width: 36px; height: 36px; flex: none; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--orb-bg); border: 1px solid var(--orb-border); cursor: grab; }
+  .orb:active { cursor: grabbing; }
+  .tw { animation: tw 2.6s ease-in-out infinite; }
+  #q { flex: 1; min-width: 0; border: none; outline: none; background: transparent; font-size: 16px; color: var(--txt); font-family: var(--font); cursor: text; }
+  #q::placeholder { color: var(--txt3); }
+  .tbtn { display: flex; align-items: center; gap: 5px; background: transparent; border: none; cursor: pointer; color: var(--txt3); padding: 5px 7px; border-radius: 8px; }
+  .tbtn:hover { color: var(--txt); background: var(--composer-bg); }
+  .projname { font-size: 11px; font-family: var(--mono); max-width: 82px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kbd { font-size: 11px; color: var(--txt3); font-family: var(--mono); border: 1px solid var(--kbd-border); border-radius: 7px; padding: 3px 8px; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div class="glass">
+  <div class="bar">
+    <span class="orb" title="拖动我移动位置">
+      <svg class="tw" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+        <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#9b8cff"/><stop offset="1" stop-color="#46e0ff"/></linearGradient></defs>
+        <path fill="url(#g)" d="M12 2l1.7 6.1L20 10l-6.3 1.9L12 18l-1.7-6.1L4 10l6.3-1.9z"/>
+      </svg>
+    </span>
+    <input id="q" class="nodrag" placeholder="描述一个任务，回车开一个新对话…" autofocus />
+    <button id="proj" class="tbtn nodrag" title="选择代码仓库（卡片对它说话）">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      <span id="projname" class="projname">未选目录</span>
+    </button>
+    <button id="theme" class="tbtn nodrag" title="切换深/浅主题" aria-label="切换主题">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none"/></svg>
+    </button>
+    <span class="kbd">Ctrl ⇧ Space</span>
+  </div>
+</div>
+<script>
+  const q = document.getElementById('q')
+  q.focus()
+  q.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter' && q.value.trim()) {
+      try { await window.tianshu.spawnCard(q.value.trim()) } catch (err) { console.error(err) }
+      q.value = ''
+    } else if (e.key === 'Escape') { window.tianshu.hideSelf() }
+  })
+  window.addEventListener('focus', () => q.focus())
+
+  // 主题
+  document.getElementById('theme').addEventListener('click', () => {
+    const cur = document.documentElement.dataset.theme
+    window.tianshu.setTheme(cur === 'dark' ? 'light' : 'dark')
+  })
+  window.tianshu.onTheme((t) => { document.documentElement.dataset.theme = t })
+
+  // 项目目录
+  const projName = document.getElementById('projname')
+  try { projName.textContent = window.tianshu.getProject() || '未选目录' } catch (e) {}
+  document.getElementById('proj').addEventListener('click', async () => {
+    try { projName.textContent = await window.tianshu.pickProject() } catch (e) {}
+  })
+  window.tianshu.onProject((p) => { projName.textContent = p })
+</script>
+</body>
+</html>
