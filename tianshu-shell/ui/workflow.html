@@ -5,45 +5,51 @@
 <script>try { document.documentElement.dataset.theme = window.tianshu.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
 <link rel="stylesheet" href="glass.css" />
 <style>
-  .card { display: flex; flex-direction: column; height: 100%; padding: 11px 13px 12px; gap: 9px; }
+  .card { display: flex; flex-direction: column; height: 100%; padding: 11px 13px 12px; gap: 8px; }
   .hd { display: flex; align-items: center; gap: 7px; flex: none; }
   .ttl { flex: 1; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .hbtn { border: none; background: transparent; color: var(--txt3); cursor: pointer; padding: 3px; border-radius: 6px; display: flex; }
   .hbtn:hover { color: var(--txt); background: var(--composer-bg); }
+  .stop { font-size: 11px; color: var(--diff-del); background: transparent; border: 1px solid var(--diff-del); border-radius: 7px; padding: 3px 10px; cursor: pointer; }
   .goal { flex: none; font-size: 12px; color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 9px; padding: 7px 10px; line-height: 1.45; }
-  .meta { flex: none; font-size: 11px; color: var(--txt3); display: flex; align-items: center; gap: 8px; }
-  .feed { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; padding-right: 2px; }
-  .feed::-webkit-scrollbar { width: 6px; } .feed::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
-  .round { font-size: 10.5px; color: var(--txt3); margin: 4px 0 1px; font-family: var(--mono); }
-  .task { display: flex; gap: 8px; align-items: flex-start; background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 10px; padding: 7px 9px; }
-  .task .ic { flex: none; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
-  .task .tx { flex: 1; min-width: 0; }
-  .task .tg { font-size: 12px; color: var(--txt); line-height: 1.4; }
-  .task .tm { font-size: 10px; color: var(--txt3); font-family: var(--mono); margin-top: 2px; }
-  .task.ok { border-color: rgba(10,157,110,.3); } .task.err { border-color: var(--diff-del); }
-  .dep { color: var(--accent); }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--txt3); }
+
+  /* DAG 图 */
+  #graph { flex: 1 1 55%; min-height: 130px; overflow: auto; border: .5px solid var(--composer-border); border-radius: 10px; background: var(--composer-bg); }
+  #graph::-webkit-scrollbar, #feed::-webkit-scrollbar { width: 7px; height: 7px; }
+  #graph::-webkit-scrollbar-thumb, #feed::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  .node rect { fill: var(--ai-bg); stroke: var(--composer-border); stroke-width: 1.2; }
+  .node .nid { font: 600 11px var(--mono); fill: var(--txt2); }
+  .node .ng { font: 11px var(--font); fill: var(--txt); }
+  .node { cursor: pointer; }
+  .node.running rect { stroke: var(--accent); stroke-width: 1.8; animation: tw 1.4s ease-in-out infinite; }
+  .node.ok rect { stroke: var(--green); stroke-width: 1.6; }
+  .node.error rect, .node.timeout rect, .node.aborted rect { stroke: var(--diff-del); stroke-width: 1.6; }
+  .node.sel rect { stroke: var(--accent); stroke-width: 2.2; }
+  .edge { fill: none; stroke: var(--txt3); stroke-width: 1.3; opacity: .7; }
+  .detail { flex: none; font-size: 11.5px; color: var(--txt); background: var(--composer-bg); border: .5px solid var(--accent); border-radius: 9px; padding: 7px 9px; line-height: 1.45; display: none; }
+  .detail.on { display: block; }
+
+  #feed { flex: 1 1 45%; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
+  .banner { font-size: 12px; padding: 7px 10px; border-radius: 9px; }
+  .banner.run { background: var(--composer-bg); color: var(--txt2); }
+  .banner.done { background: rgba(10,157,110,.12); color: var(--green); }
+  .banner.err { background: var(--warn-bg); color: var(--warn-txt); border: .5px solid var(--warn-border); }
   .wf-final { background: var(--ai-bg); border: .5px solid var(--ai-border); border-radius: 11px; padding: 9px 11px; overflow-wrap: anywhere; line-height: 1.55; -webkit-user-select: text; user-select: text; }
   .wf-final h1,.wf-final h2,.wf-final h3,.wf-final h4 { font-size: 13px; font-weight: 600; margin: 9px 0 4px; }
   .wf-final p { margin: 5px 0; } .wf-final ul,.wf-final ol { margin: 5px 0; padding-left: 18px; }
   .wf-final pre.code { background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 8px; padding: 9px 11px; overflow-x: auto; }
   .wf-final table { border-collapse: collapse; margin: 7px 0; font-size: 12px; display: block; overflow-x: auto; }
   .wf-final th,.wf-final td { border: .5px solid var(--composer-border); padding: 4px 8px; }
-  .banner { font-size: 12px; padding: 7px 10px; border-radius: 9px; }
-  .banner.run { background: var(--composer-bg); color: var(--txt2); }
-  .banner.done { background: rgba(10,157,110,.12); color: var(--green); }
-  .banner.err { background: var(--warn-bg); color: var(--warn-txt); border: .5px solid var(--warn-border); }
-  .perm { display: flex; align-items: center; gap: 8px; background: var(--warn-bg); border: .5px solid var(--warn-border); border-radius: 11px; padding: 7px 9px; }
-  .perm .t { flex: 1; font-size: 12px; color: var(--warn-txt); }
-  .perm .ok { font-size: 11px; font-weight: 600; color: var(--warn-btn-fg); background: var(--warn-btn); padding: 4px 10px; border-radius: 7px; border: none; cursor: pointer; }
-  .perm .no { font-size: 11px; color: var(--txt2); background: transparent; border: none; cursor: pointer; padding: 4px 6px; }
-  .stop { font-size: 11px; color: var(--diff-del); background: transparent; border: 1px solid var(--diff-del); border-radius: 7px; padding: 3px 10px; cursor: pointer; }
   .approve { background: var(--composer-bg); border: 1px solid var(--accent); border-radius: 11px; padding: 9px 10px; display: flex; flex-direction: column; gap: 8px; }
   .approve .t { font-size: 12px; color: var(--txt); }
   .approve .btns { display: flex; gap: 7px; flex-wrap: wrap; }
   .approve .go { font-size: 11.5px; font-weight: 600; color: var(--send-fg); background: var(--brand); border: none; border-radius: 8px; padding: 5px 13px; cursor: pointer; }
   .approve .auto { font-size: 11.5px; color: var(--txt2); background: transparent; border: 1px solid var(--composer-border); border-radius: 8px; padding: 5px 11px; cursor: pointer; }
   .approve .no { font-size: 11.5px; color: var(--diff-del); background: transparent; border: 1px solid var(--diff-del); border-radius: 8px; padding: 5px 11px; cursor: pointer; }
+  .perm { display: flex; align-items: center; gap: 8px; background: var(--warn-bg); border: .5px solid var(--warn-border); border-radius: 11px; padding: 7px 9px; }
+  .perm .t { flex: 1; font-size: 12px; color: var(--warn-txt); }
+  .perm .ok { font-size: 11px; font-weight: 600; color: var(--warn-btn-fg); background: var(--warn-btn); padding: 4px 10px; border-radius: 7px; border: none; cursor: pointer; }
+  .perm .no { font-size: 11px; color: var(--txt2); background: transparent; border: none; cursor: pointer; padding: 4px 6px; }
 </style>
 </head>
 <body>
@@ -59,6 +65,8 @@
       <button id="x" class="hbtn nodrag" title="关闭"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <div id="goal" class="goal nodrag"></div>
+    <div id="graph" class="nodrag"></div>
+    <div id="detail" class="detail nodrag"></div>
     <div id="feed" class="feed nodrag"></div>
   </div>
 </div>
@@ -69,46 +77,62 @@
   const goal = params.get('goal') || '工作流'
   document.getElementById('goal').textContent = goal
   document.getElementById('ttl').title = goal
-  const feed = document.getElementById('feed')
+  const feed = document.getElementById('feed'), graphEl = document.getElementById('graph'), detailEl = document.getElementById('detail')
   document.getElementById('x').addEventListener('click', () => window.tianshu.closeSelf())
   document.getElementById('min').addEventListener('click', () => window.tianshu.minimizeSelf())
   document.getElementById('max').addEventListener('click', () => window.tianshu.toggleMaximize())
 
-  const SPIN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" style="color:var(--accent);animation:spin 1s linear infinite"><path d="M12 3a9 9 0 1 0 9 9"/></svg>'
-  const OKI = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="color:var(--green)"><path d="M4 12l5 5L20 6"/></svg>'
-  const ERRI = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" style="color:var(--diff-del)"><path d="M6 6l12 12M18 6L6 18"/></svg>'
-  const TOI = '<span style="color:var(--warn-txt);font-size:12px">⏱</span>'
-  const icon = (st) => st === 'running' ? SPIN : st === 'ok' ? OKI : st === 'timeout' ? TOI : (st === 'error' || st === 'aborted') ? ERRI : '<span class="dot"></span>'
+  // ---- DAG 图：按依赖深度分层，状态着色 ----
+  const tasks = new Map()   // id -> { id, role, goal, deps, status }
+  let selId = null
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const STt = { pending: '等待', running: '运行中', ok: '完成', error: '失败', timeout: '超时', aborted: '已停' }
+  const NW = 152, NH = 44, GX = 52, GY = 14, PAD = 12
+  function draw() {
+    const memo = new Map()
+    const layerOf = (id, seen) => {
+      if (memo.has(id)) return memo.get(id)
+      if (seen.has(id)) return 0
+      seen.add(id)
+      const t = tasks.get(id); if (!t) return 0
+      const dl = (t.deps || []).map((d) => layerOf(d, seen))
+      const l = dl.length ? 1 + Math.max(-1, ...dl) : 0
+      memo.set(id, l); return l
+    }
+    const layers = []
+    for (const t of tasks.values()) { const l = layerOf(t.id, new Set()); (layers[l] || (layers[l] = [])).push(t) }
+    const pos = new Map(); let maxRows = 0
+    layers.forEach((arr, li) => { arr.forEach((t, ri) => pos.set(t.id, { x: PAD + li * (NW + GX), y: PAD + ri * (NH + GY) })); maxRows = Math.max(maxRows, arr.length) })
+    const W = Math.max(120, PAD * 2 + layers.length * (NW + GX) - GX)
+    const H = Math.max(70, PAD * 2 + maxRows * (NH + GY) - GY)
+    let edges = '', nodes = ''
+    for (const t of tasks.values()) {
+      const p = pos.get(t.id)
+      for (const d of t.deps || []) { const q = pos.get(d); if (!q) continue
+        const x1 = q.x + NW, y1 = q.y + NH / 2, x2 = p.x, y2 = p.y + NH / 2, mx = (x1 + x2) / 2
+        edges += `<path class="edge" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" marker-end="url(#ah)"/>`
+      }
+      const role = (t.role || 'worker')
+      nodes += `<g class="node ${t.status || 'pending'}${selId === t.id ? ' sel' : ''}" data-id="${esc(t.id)}" transform="translate(${p.x},${p.y})">`
+        + `<rect width="${NW}" height="${NH}" rx="9"/>`
+        + `<text class="nid" x="10" y="17">${esc(t.id)} · ${esc(role)}</text>`
+        + `<text class="ng" x="10" y="33">${esc((STt[t.status] || '等待'))}</text></g>`
+    }
+    graphEl.innerHTML = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg"><defs>`
+      + `<marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--txt3)"/></marker>`
+      + `</defs>${edges}${nodes}</svg>`
+  }
+  graphEl.addEventListener('click', (e) => {
+    const g = e.target.closest('.node'); if (!g) return
+    const t = tasks.get(g.dataset.id); if (!t) return
+    selId = t.id; draw()
+    detailEl.className = 'detail on'
+    detailEl.textContent = '[' + t.id + ' · ' + (t.role || 'worker') + '] ' + t.goal
+  })
 
-  const tasks = new Map()   // id -> {el, ic, tm}
-  let curRound = 0
-  function ensureRound(r) {
-    if (r === curRound) return; curRound = r
-    const d = document.createElement('div'); d.className = 'round'; d.textContent = '— 第 ' + r + ' 轮规划 —'
-    feed.appendChild(d)
-  }
-  function addTask(t) {
-    const el = document.createElement('div'); el.className = 'task'
-    const deps = (t.deps && t.deps.length) ? ' <span class="dep">←' + t.deps.join(',') + '</span>' : ''
-    el.innerHTML = '<span class="ic"></span><div class="tx"><div class="tg"></div><div class="tm">' + t.id + ' · ' + (t.role || 'worker') + deps + '</div></div>'
-    el.querySelector('.tg').textContent = t.goal
-    el.querySelector('.ic').innerHTML = icon('pending')
-    feed.appendChild(el); feed.scrollTop = feed.scrollHeight
-    tasks.set(t.id, { el, ic: el.querySelector('.ic'), tm: el.querySelector('.tm') })
-  }
-  function setTask(id, st, extra) {
-    const o = tasks.get(id); if (!o) return
-    o.ic.innerHTML = icon(st)
-    o.el.classList.toggle('ok', st === 'ok'); o.el.classList.toggle('err', st === 'error' || st === 'timeout' || st === 'aborted')
-    if (extra) o.tm.insertAdjacentHTML('beforeend', ' · ' + extra)
-    feed.scrollTop = feed.scrollHeight
-  }
-  function banner(cls, text) {
-    const b = document.createElement('div'); b.className = 'banner ' + cls; b.textContent = text
-    feed.appendChild(b); feed.scrollTop = feed.scrollHeight; return b
-  }
+  function banner(cls, text) { const b = document.createElement('div'); b.className = 'banner ' + cls; b.textContent = text; feed.appendChild(b); feed.scrollTop = feed.scrollHeight; return b }
 
-  // 权限（worker 写/执行类操作会路由到这里）
+  // 权限（worker 写/执行会路由到这里）
   window.tianshu.onPermission(({ requestId, tool }) => {
     const box = document.createElement('div'); box.className = 'perm'
     const t = document.createElement('span'); t.className = 't'; t.textContent = '某子任务请求执行：' + tool
@@ -123,9 +147,9 @@
   let runningBanner = banner('run', '正在规划…')
   window.tianshu.onWorkflowEvent((ev) => {
     if (ev.type === 'plan') {
-      if (ev.done && (!ev.tasks || !ev.tasks.length)) { ensureRound(ev.round); banner('run', '第 ' + ev.round + ' 轮：判定可收尾，正在汇总…'); return }
-      ensureRound(ev.round)
-      for (const t of ev.tasks || []) if (!tasks.has(t.id)) addTask(t)
+      if (ev.done && (!ev.tasks || !ev.tasks.length)) { banner('run', '第 ' + ev.round + ' 轮：判定可收尾，正在汇总…'); return }
+      for (const t of ev.tasks || []) if (!tasks.has(t.id)) tasks.set(t.id, { id: t.id, role: t.role, goal: t.goal, deps: t.deps || [], status: 'pending' })
+      draw()
     } else if (ev.type === 'plan-approve') {
       const box = document.createElement('div'); box.className = 'approve'
       const t = document.createElement('div'); t.className = 't'; t.textContent = '第 ' + ev.round + ' 轮计划共 ' + ev.count + ' 个子任务，确认执行？'
@@ -137,7 +161,7 @@
       go.onclick = () => reply('run', false); auto.onclick = () => reply('run', true); no.onclick = () => reply('abort', false)
       btns.append(go, auto, no); box.append(t, btns); feed.appendChild(box); feed.scrollTop = feed.scrollHeight
     } else if (ev.type === 'task') {
-      setTask(ev.id, ev.status, ev.status === 'ok' ? (ev.chars + ' 字') : (ev.error ? ev.error.slice(0, 40) : ''))
+      const t = tasks.get(ev.id); if (t) { t.status = ev.status; draw() }
     } else if (ev.type === 'final') {
       if (runningBanner) runningBanner.remove()
       const secs = ev.elapsedMs ? Math.round(ev.elapsedMs / 1000) + 's' : ''
@@ -150,9 +174,7 @@
       banner('err', '⚠ 出错：' + ev.error)
     }
   })
-  // 富结果里的 文件:行 跳转
   feed.addEventListener('click', (e) => { const a = e.target.closest('a.floc'); if (a) { e.preventDefault(); window.tianshu.openLoc(a.dataset.file, a.dataset.line) } })
-
   document.getElementById('stop').addEventListener('click', () => { window.tianshu.abortWorkflow(); banner('err', '已请求停止…') })
   ;(async () => { try { await window.tianshu.runWorkflow(goal) } catch (e) { banner('err', '⚠ ' + (e.message || e)) } })()
 </script>

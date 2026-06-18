@@ -1,6 +1,6 @@
 {
   "name": "tianshu-shell",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "个人桌面智能体：可拖动透明玻璃卡片 + 全局输入框（Electron，基于 opencode serve）",
   "main": "main.js",
