@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('tianshu', {
   // 项目目录
   getProject: () => ipcRenderer.sendSync('get-project'),
   pickProject: () => ipcRenderer.invoke('pick-project'),
+  setProjectDir: (dir) => ipcRenderer.invoke('set-project-dir', dir),
   onProject: (cb) => ipcRenderer.on('project-changed', (_e, p) => cb(p)),
   // 设置面板
   openSettings: () => ipcRenderer.invoke('open-settings'),

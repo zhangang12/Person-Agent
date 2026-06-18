@@ -25,6 +25,9 @@
   .seg button.on { background: var(--brand); color: var(--send-fg); font-weight: 600; }
   .chip { font-size: 11px; color: var(--txt2); background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 999px; padding: 4px 11px; cursor: pointer; font-family: var(--font); }
   .chip:hover { color: var(--txt); border-color: var(--accent); }
+  .chip.on { color: var(--send-fg); background: var(--brand); border-color: transparent; }
+  #recent { flex-wrap: wrap; gap: 6px; }
+  #recent:empty { display: none; }
   .proj { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--txt2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ft { flex: none; display: flex; align-items: center; gap: 9px; }
   .ft .msg { flex: 1; font-size: 11.5px; color: var(--green); }
@@ -74,7 +77,8 @@
           <span id="proj" class="proj">未选目录</span>
           <button id="pick" class="chip">选择…</button>
         </div>
-        <span class="hint">新开的卡片对这个仓库说话。每个项目目录用独立的 serve（任务隔离）。</span>
+        <div id="recent" class="row"></div>
+        <span class="hint">新开的卡片对这个仓库说话。每个项目目录用独立的 serve（任务隔离）。下方为最近用过的仓库，点一下即切换。</span>
       </div>
     </div>
     <div class="ft nodrag">
@@ -108,9 +112,30 @@
   if (cur.serveBinLocked) { serveBin.disabled = true; serveBin.value = cur.serveBinEffective || ''; $('lock').style.display = 'inline-block' }
   else { serveBin.placeholder = cur.serveBinEffective ? '默认：' + cur.serveBinEffective : 'opencode / bocomcode' }
 
-  // 当前项目
+  // 当前项目 + 最近仓库
   const proj = $('proj'); proj.textContent = cur.project || '未选目录'; proj.title = cur.projectDir || ''
-  $('pick').addEventListener('click', async () => { try { proj.textContent = await window.tianshu.pickProject() } catch (e) {} })
+  const base = (d) => d.split(/[\\/]/).filter(Boolean).pop() || d
+  function renderRecent() {
+    const box = $('recent'); box.innerHTML = ''
+    ;(cur.recentDirs || []).forEach((d) => {
+      const c = document.createElement('button'); c.className = 'chip'; c.textContent = base(d); c.title = d
+      if (d === cur.projectDir) c.classList.add('on')
+      c.addEventListener('click', async () => {
+        proj.textContent = await window.tianshu.setProjectDir(d)
+        const s = window.tianshu.getSettings(); cur.recentDirs = s.recentDirs; cur.projectDir = s.projectDir; proj.title = s.projectDir || ''
+        renderRecent()
+      })
+      box.appendChild(c)
+    })
+  }
+  renderRecent()
+  $('pick').addEventListener('click', async () => {
+    try {
+      proj.textContent = await window.tianshu.pickProject()
+      const s = window.tianshu.getSettings(); cur.recentDirs = s.recentDirs; cur.projectDir = s.projectDir; proj.title = s.projectDir || ''
+      renderRecent()
+    } catch (e) {}
+  })
   window.tianshu.onProject((p) => { proj.textContent = p })
 
   // 保存

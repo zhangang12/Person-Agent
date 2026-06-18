@@ -12,10 +12,19 @@ const log = (m) => console.log('[tianshu] ' + m)
 
 // ===== 设置（主题 + 当前项目目录）=====
 let settingsFile = null
-let settings = { theme: 'light', projectDir: '', serveBin: '', editorCmd: '' }
+let settings = { theme: 'light', projectDir: '', serveBin: '', editorCmd: '', recentDirs: [] }
 function loadSettings() { try { return { ...settings, ...JSON.parse(fs.readFileSync(settingsFile, 'utf8')) } } catch { return { ...settings } } }
 function saveSettings() { try { fs.writeFileSync(settingsFile, JSON.stringify(settings)) } catch {} }
 const projName = () => settings.projectDir ? path.basename(settings.projectDir) : '未选目录'
+
+// 切换当前项目目录：记入最近列表、预热其 serve、广播给所有窗口
+function applyProject(dir) {
+  settings.projectDir = dir
+  settings.recentDirs = [dir, ...(settings.recentDirs || []).filter((d) => d !== dir)].slice(0, 6)
+  saveSettings()
+  oc.ensureServe(dir, handlers, log).catch((e) => log('prewarm failed: ' + e.message))
+  for (const w of BrowserWindow.getAllWindows()) w.webContents.send('project-changed', projName())
+}
 
 // ===== 会话映射（跨多 serve）=====
 const sessionByWc = new Map()   // webContents.id -> sessionId
@@ -147,11 +156,13 @@ app.whenReady().then(() => {
   ipcMain.on('get-project', (e) => { e.returnValue = projName() })
   ipcMain.handle('pick-project', async () => {
     const r = await dialog.showOpenDialog({ title: '选择代码仓库（新卡将对它说话）', properties: ['openDirectory'] })
-    if (!r.canceled && r.filePaths[0]) {
-      settings.projectDir = r.filePaths[0]; saveSettings()
-      oc.ensureServe(settings.projectDir, handlers, log).catch((e) => log('prewarm failed: ' + e.message)) // 预热
-      for (const w of BrowserWindow.getAllWindows()) w.webContents.send('project-changed', projName())
-    }
+    if (!r.canceled && r.filePaths[0]) applyProject(r.filePaths[0])
+    return projName()
+  })
+  // 从最近列表一键切换（无需弹框）
+  ipcMain.handle('set-project-dir', (_e, dir) => {
+    if (dir && fs.existsSync(dir)) applyProject(dir)
+    else { settings.recentDirs = (settings.recentDirs || []).filter((d) => d !== dir); saveSettings() } // 失效路径剔除
     return projName()
   })
 
@@ -166,6 +177,7 @@ app.whenReady().then(() => {
       serveBinLocked: !!process.env.TIANSHU_SERVE_BIN,   // 环境变量在场时面板里只读
       project: projName(),
       projectDir: settings.projectDir || '',
+      recentDirs: settings.recentDirs || [],
     }
   })
   ipcMain.handle('set-settings', (_e, patch) => {
