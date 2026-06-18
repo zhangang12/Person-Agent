@@ -3,8 +3,9 @@
   --font: -apple-system, "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
   --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
   /* 浅磨砂 */
-  --txt: #1b1c33; --txt2: rgba(27,28,51,.62); --txt3: rgba(27,28,51,.42);
-  --accent: #2563eb; --green: #0a9d6e;
+  --txt: #111228; --txt2: rgba(17,18,40,.78); --txt3: rgba(17,18,40,.58);
+  --halo: 0 0 3px rgba(255,255,255,.92), 0 1px 1px rgba(255,255,255,.85);   /* 白晕：深字浮在任何背景上都清晰 */
+  --accent: #1d4ed8; --green: #0a9d6e;
   --brand: linear-gradient(135deg, #8b5cf6, #0891b2);
   --send-fg: #ffffff;
   --glass-bg: linear-gradient(158deg, rgba(255,255,255,.80), rgba(255,255,255,.62));
@@ -22,8 +23,9 @@
 }
 html[data-theme="dark"] {
   /* 墨玻璃 */
-  --txt: rgba(237,241,255,.95); --txt2: rgba(237,241,255,.60); --txt3: rgba(237,241,255,.38);
-  --accent: #46e0ff; --green: #54e0a8;
+  --txt: #ffffff; --txt2: rgba(242,245,255,.82); --txt3: rgba(242,245,255,.58);
+  --halo: 0 0 4px rgba(0,0,0,.6), 0 1px 2px rgba(0,0,0,.72);   /* 黑晕：亮字浮在任何背景上都清晰 */
+  --accent: #5be6ff; --green: #54e0a8;
   --brand: linear-gradient(135deg, #9b8cff, #46c8ff);
   --send-fg: #06131c;
   --glass-bg: linear-gradient(158deg, rgba(30,34,58,.78), rgba(15,18,34,.70));
@@ -65,6 +67,10 @@ body { padding: 24px; }
 .glass:focus-within { border-color: var(--accent); }
 .hl { position: absolute; left: 16px; right: 16px; top: 0; height: 1px; background: var(--hl); pointer-events: none; }
 .nodrag { -webkit-app-region: no-drag; }
+
+/* 文字光晕：透明面板上文字也清晰可读（凭空出字）。代码/输入/diff 保持锐利，不加晕 */
+.glass { text-shadow: var(--halo); }
+.glass code, .glass pre, .glass input, .glass textarea, .glass .dl, .glass .kbd, .glass .mono { text-shadow: none; }
 
 /* ===== 消息气泡 ===== */
 .msg { max-width: 86%; font-size: 13px; line-height: 1.5; padding: 8px 11px; border-radius: 13px; word-break: break-word; }
