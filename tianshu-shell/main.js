@@ -8,7 +8,19 @@ const USE_ACRYLIC = false
 let inputWin = null
 let cardSeq = 0
 let tray = null
-const log = (m) => console.log('[tianshu] ' + m)
+
+// 日志：打包后没有终端，console 看不到 → 同时写到 userData/tianshu.log（含 serve 自身输出）
+let logFile = null
+let logBytes = 0
+function log(m) {
+  try { console.log('[tianshu] ' + m) } catch {}
+  if (!logFile) return
+  try {
+    if (logBytes > 3 * 1024 * 1024) { fs.writeFileSync(logFile, ''); logBytes = 0 }   // 防无限增长
+    const line = '[' + new Date().toISOString() + '] ' + m + '\r\n'
+    fs.appendFileSync(logFile, line); logBytes += Buffer.byteLength(line)
+  } catch {}
+}
 
 // ===== 设置（主题 + 当前项目目录）=====
 let settingsFile = null
@@ -160,6 +172,7 @@ function buildTray() {
     { label: '卡坞 · 历史对话', click: openDock },
     { label: '切换深 / 浅主题', click: toggleTheme },
     { label: '设置…', click: openSettings },
+    { label: '打开日志', click: () => { if (logFile) shell.openPath(logFile).catch(() => {}) } },
     { type: 'separator' },
     { label: '退出', click: () => app.quit() },
   ]))
@@ -182,6 +195,9 @@ app.whenReady().then(() => {
   settings = loadSettings()
   historyFile = path.join(app.getPath('userData'), 'history.json')
   loadHistory()
+  logFile = path.join(app.getPath('userData'), 'tianshu.log')
+  try { logBytes = fs.existsSync(logFile) ? fs.statSync(logFile).size : 0; if (logBytes > 3 * 1024 * 1024) { fs.writeFileSync(logFile, ''); logBytes = 0 } } catch {}
+  log('=== tianshu ' + app.getVersion() + ' start (' + (app.isPackaged ? 'packaged' : 'dev') + ') userData=' + app.getPath('userData') + ' ===')
 
   // serve 启动命令：开发=opencode，打包 exe=bocomcode；可被环境变量或 settings.serveBin 覆盖
   const serveBin = process.env.TIANSHU_SERVE_BIN || settings.serveBin || (app.isPackaged ? 'bocomcode' : 'opencode')

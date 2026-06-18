@@ -58,8 +58,12 @@ function freePort(start) {
 let SERVE_BIN = 'opencode'
 function setServeBin(name) { if (name) SERVE_BIN = name }
 function spawnServe(cwd, port) {
-  return spawn(SERVE_BIN, ['serve', '--port', String(port), '--hostname', '127.0.0.1'],
-    { cwd: cwd || undefined, stdio: 'ignore', shell: process.platform === 'win32', windowsHide: true })
+  const args = ['serve', '--port', String(port), '--hostname', '127.0.0.1']
+  const opts = { cwd: cwd || undefined, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }
+  // Windows：显式走 cmd.exe（不读 %ComSpec%，避免它指向 PowerShell 时弹窗），窗口隐藏；
+  // stdio 用 pipe 把 serve 自己的输出收进日志文件，便于排查内网启动失败。
+  if (process.platform === 'win32') return spawn('cmd.exe', ['/d', '/s', '/c', SERVE_BIN, ...args], opts)
+  return spawn(SERVE_BIN, args, opts)
 }
 async function waitHealthy(base, getExit) {
   for (let i = 0; i < 60; i++) {
@@ -101,8 +105,10 @@ async function ensureServe(dir, handlers, log = console.log) {
     log(`starting serve for [${dir || '(home)'}] on :${port}`)
     info.proc = spawnServe(dir, port)
     let exitInfo = null
-    info.proc.on('exit', (code, sig) => { if (!exitInfo) exitInfo = { code, sig } })
+    info.proc.on('exit', (code, sig) => { if (!exitInfo) exitInfo = { code, sig }; log(`serve :${port} exited (code ${code}${sig ? ' ' + sig : ''})`) })
     info.proc.on('error', (e) => { if (!exitInfo) exitInfo = { error: e.message } })
+    const pipe = (s, tag) => { if (s) s.on('data', (d) => { const t = String(d).trim(); if (t) log(`[serve:${port}${tag}] ` + t) }) }
+    pipe(info.proc.stdout, ''); pipe(info.proc.stderr, '!')   // serve 自身输出进日志，便于排查
     await waitHealthy(info.base, () => exitInfo)
     info.permStyle = await detectPerm(info.base)
     log(`serve ready on :${port} (permission endpoint: ${info.permStyle})`)
@@ -211,6 +217,16 @@ function dispatch(ev, onPermission, onText) {
   }
 }
 
-function killAll() { for (const info of pool.values()) { try { info.proc && info.proc.kill() } catch {} } pool.clear() }
+function killAll() {
+  for (const info of pool.values()) {
+    try {
+      const p = info.proc; if (!p || !p.pid) continue
+      // Windows 经 cmd.exe 起的 serve 是孙进程，需按进程树杀，否则端口被占的旧 serve 残留
+      if (process.platform === 'win32') spawn('taskkill', ['/pid', String(p.pid), '/t', '/f'], { stdio: 'ignore', windowsHide: true })
+      else p.kill()
+    } catch {}
+  }
+  pool.clear()
+}
 
 module.exports = { ensureServe, createSession, sendMessage, abort, replyPermission, sessionExists, getMessages, killAll, setServeBin, AUTO_ALLOW }
