@@ -76,6 +76,21 @@
   .dl-del { background: var(--diff-del-bg); color: var(--diff-del); }
   .dl-hunk, .dl-meta { color: var(--txt3); }
 
+  /* 命令运行的折叠输出区（挂在命令块下） */
+  .rout { border-top: .5px solid var(--composer-border); }
+  .rout > summary { cursor: pointer; padding: 5px 10px; font-size: 11px; color: var(--txt2); list-style: none; }
+  .rout > summary::-webkit-details-marker { display: none; }
+  .rout > summary::before { content: '▸ '; }
+  .rout[open] > summary::before { content: '▾ '; }
+  .routbody { padding: 2px 10px 8px; font-size: 12px; max-height: 240px; overflow: auto; background: none; border: none; max-width: 100%; }
+  .routbody::-webkit-scrollbar { width: 5px; } .routbody::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+
+  /* findings 严重度徽标 */
+  .ai .sev { display: inline-block; font-size: 10px; font-weight: 600; padding: 0 6px; border-radius: 999px; margin-right: 6px; border: 1px solid; }
+  .ai .sev-must { color: var(--diff-del); border-color: var(--diff-del); background: var(--diff-del-bg); }
+  .ai .sev-sugg { color: var(--warn-txt); border-color: var(--warn-border); background: var(--warn-bg); }
+  .ai .sev-info { color: var(--txt3); border-color: var(--composer-border); background: var(--composer-bg); }
+
   /* 快捷指令条 */
   .quick { flex: none; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 1px; }
   .quick::-webkit-scrollbar { height: 0; }
@@ -182,7 +197,7 @@
   window.tianshu.onStream(({ kind, text, partID }) => {
     const key = partID || '_'
     if (kind === 'reasoning') {
-      if (!curReason && curAnswer) curReason = makeReason(curAnswer)
+      if (!curReason && curAnswer && curAnswer.parentNode === feed) curReason = makeReason(curAnswer)
       if (curReason) {
         if (reasonParts) reasonParts.set(key, text)
         curReason.body.textContent = reasonParts ? joinParts(reasonParts) : text
@@ -196,18 +211,21 @@
   })
 
   // 返回 true=本轮顺利完成（传输层无异常），false=出错。富结果动作据此落状态。
-  async function turn(text) {
-    const ai = addMsg('', 'ai'); ai.textContent = '思考中…'
+  // target 在场=把回答渲染进它（如命令块下的输出区），不新建气泡。
+  async function turn(text, target) {
+    const ai = target || addMsg('', 'ai')
+    const PH = target ? '运行中…' : '思考中…'; ai.textContent = PH
     curAnswer = ai; curReason = null; answerParts = new Map(); reasonParts = new Map(); setBusy(true)
     let ok = true
     try {
       const reply = await window.tianshu.cardSend(text)
       if (reply) ai.innerHTML = renderMarkdown(reply)
-      else if (!ai.textContent.trim()) ai.textContent = '（无文本输出）'
+      else if (!ai.textContent.trim() || ai.textContent === PH) ai.textContent = '（无文本输出）'
       if (curReason) curReason.el.open = false   // 答完自动折叠思考
     } catch (e) {
       ok = false
-      ai.className = 'msg ai err'; ai.textContent = '⚠ ' + (e.message || e)
+      if (!target) ai.className = 'msg ai err'
+      ai.textContent = '⚠ ' + (e.message || e)
     } finally { curAnswer = null; setBusy(false); feed.scrollTop = feed.scrollHeight }
     return ok
   }
@@ -258,10 +276,16 @@
       }
       btn.dataset.armed = ''; btn.classList.remove('danger')
       const orig = btn.innerHTML; btn.textContent = '运行中…'; btn.disabled = true
+      const blk = btn.closest('.rblk')
+      const old = blk.querySelector(':scope > .rout'); if (old) old.remove()   // 重跑刷新输出
+      const out = document.createElement('details'); out.className = 'rout'; out.open = true
+      out.innerHTML = '<summary>输出</summary><div class="ai routbody"></div>'
+      blk.appendChild(out)
       const p = '请运行下面这条命令并把输出原样返回：\n\n```bash\n' + raw + '\n```'
-      const ok = await turn(p)
+      const ok = await turn(p, out.querySelector('.routbody'))
       if (ok) { btn.textContent = '已运行 ✓'; btn.classList.add('done') }
       else { btn.innerHTML = orig; btn.disabled = false }
+      feed.scrollTop = feed.scrollHeight
     },
   })
 

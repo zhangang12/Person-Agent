@@ -166,6 +166,17 @@ function buildTray() {
   tray.on('click', toggleInput)
 }
 
+// 右键菜单：选中文字→复制；输入框→剪切/复制/粘贴/全选。覆盖所有窗口。
+function attachContextMenu(wc) {
+  wc.on('context-menu', (_e, p) => {
+    let tmpl = null
+    if (p.isEditable) tmpl = [{ role: 'cut', label: '剪切' }, { role: 'copy', label: '复制' }, { role: 'paste', label: '粘贴' }, { type: 'separator' }, { role: 'selectAll', label: '全选' }]
+    else if (p.selectionText && p.selectionText.trim()) tmpl = [{ role: 'copy', label: '复制' }, { type: 'separator' }, { role: 'selectAll', label: '全选' }]
+    if (tmpl) Menu.buildFromTemplate(tmpl).popup({ window: BrowserWindow.fromWebContents(wc) })
+  })
+}
+app.on('web-contents-created', (_e, wc) => attachContextMenu(wc))
+
 app.whenReady().then(() => {
   settingsFile = path.join(app.getPath('userData'), 'settings.json')
   settings = loadSettings()

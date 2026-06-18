@@ -12,6 +12,12 @@
     .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
     .replace(/`([^`]+)`/g, '<code>$1</code>')
 
+  // findings 严重度徽标：列表项以 必改/建议/可忽略 等开头时，染成彩色标签
+  const SEV = { '必改': 'must', '严重': 'must', '高危': 'must', '致命': 'must', '建议': 'sugg', '警告': 'sugg', '注意': 'sugg', '可忽略': 'info', '提示': 'info', 'nit': 'info' }
+  const sevBadge = (s) => s.replace(/^\s*\[?\s*(必改|严重|高危|致命|建议|警告|注意|可忽略|提示|nit)\s*\]?\s*[:：\-]?\s*/i, function (m, w) {
+    const c = SEV[w] || SEV[w.toLowerCase()]; return c ? '<span class="sev sev-' + c + '">' + w + '</span>' : m
+  })
+
   const SHELL = new Set(['bash', 'sh', 'shell', 'zsh', 'console', 'powershell', 'ps1', 'pwsh', 'cmd', 'bat'])
   const isDiff = (lang, code) => lang === 'diff' || lang === 'patch'
     || /^(diff --git |@@ )/m.test(code) || (/^[+-]/m.test(code) && /^@@/m.test(code))
@@ -109,8 +115,8 @@
       const hm = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/)
       if (hm) { const lv = Math.min(hm[1].length, 4); html += '<h' + lv + '>' + inline(hm[2]) + '</h' + lv + '>'; i++; continue }
       if (/^\s*([-*_])\1\1+\s*$/.test(line)) { html += '<hr>'; i++; continue }
-      if (/^\s*[-*+]\s+/.test(line)) { const it = []; while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) { it.push('<li>' + inline(lines[i].replace(/^\s*[-*+]\s+/, '')) + '</li>'); i++ } html += '<ul>' + it.join('') + '</ul>'; continue }
-      if (/^\s*\d+\.\s+/.test(line)) { const it = []; while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) { it.push('<li>' + inline(lines[i].replace(/^\s*\d+\.\s+/, '')) + '</li>'); i++ } html += '<ol>' + it.join('') + '</ol>'; continue }
+      if (/^\s*[-*+]\s+/.test(line)) { const it = []; while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) { it.push('<li>' + sevBadge(inline(lines[i].replace(/^\s*[-*+]\s+/, ''))) + '</li>'); i++ } html += '<ul>' + it.join('') + '</ul>'; continue }
+      if (/^\s*\d+\.\s+/.test(line)) { const it = []; while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) { it.push('<li>' + sevBadge(inline(lines[i].replace(/^\s*\d+\.\s+/, ''))) + '</li>'); i++ } html += '<ol>' + it.join('') + '</ol>'; continue }
       if (/^\s*>\s?/.test(line)) { const it = []; while (i < lines.length && /^\s*>\s?/.test(lines[i])) { it.push(inline(lines[i].replace(/^\s*>\s?/, ''))); i++ } html += '<blockquote>' + it.join('<br>') + '</blockquote>'; continue }
       if (/^\s*$/.test(line)) { i++; continue }
       const para = [line]; i++
