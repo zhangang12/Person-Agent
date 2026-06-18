@@ -36,12 +36,38 @@
     if (/^-/.test(l)) return 'dl-del'
     return ''
   }
-  function renderDiff(code) {
+  // 把统一 diff 按文件切片：优先 'diff --git' 边界，退化为成对的 '--- /+++' 文件头。
+  function splitDiffFiles(code) {
+    const lines = code.split('\n')
+    let bounds = []
+    lines.forEach((l, i) => { if (/^diff --git /.test(l)) bounds.push(i) })
+    if (bounds.length < 2) {
+      const idx = []
+      for (let i = 0; i < lines.length - 1; i++) if (/^--- /.test(lines[i]) && /^\+\+\+ /.test(lines[i + 1])) idx.push(i)
+      if (idx.length >= 2) bounds = idx
+    }
+    if (bounds.length < 2) return [code]
+    const chunks = []
+    for (let k = 0; k < bounds.length; k++) {
+      const end = k + 1 < bounds.length ? bounds[k + 1] : lines.length
+      chunks.push(lines.slice(bounds[k], end).join('\n').replace(/\n+$/, ''))
+    }
+    if (bounds[0] > 0) chunks[0] = lines.slice(0, bounds[0]).join('\n') + '\n' + chunks[0]  // 前导并入首段
+    return chunks
+  }
+  function renderOneDiff(code) {
     const { file, line } = diffMeta(code)
     const fileAttr = file ? ' data-file="' + esc(file) + '" data-line="' + line + '"' : ''
     const acts = actBtn('apply', '应用', true) + actBtn('copy', '复制') + (file ? actBtn('open', '打开') : '')
     const body = code.split('\n').map((l) => '<div class="dl ' + diffLineClass(l) + '" style="min-height:15px">' + esc(l) + '</div>').join('')
     return '<div class="rblk" data-type="diff">' + head(file || 'diff', fileAttr, acts) + '<div class="rbody rdiff">' + body + '</div></div>'
+  }
+  function renderDiff(code) {
+    const files = splitDiffFiles(code)
+    if (files.length <= 1) return renderOneDiff(code)
+    const bar = '<div class="rsetbar"><span class="rsetlabel mono">' + files.length + ' 个文件</span><span class="racts">'
+      + actBtn('applyall', '全部应用', true) + actBtn('copyall', '复制全部') + '</span></div>'
+    return '<div class="rdiffset">' + bar + files.map(renderOneDiff).join('') + '</div>'
   }
   function renderCmd(code, lang) {
     const acts = actBtn('run', '运行', true) + actBtn('copy', '复制')
@@ -105,8 +131,17 @@
   function wireActions(root, h) {
     root.addEventListener('click', (e) => {
       const btn = e.target.closest('button[data-act]'); if (!btn || btn.disabled) return
+      const act = btn.dataset.act
+      // 多文件 diff 的整组动作（按钮在 .rsetbar 里，不在某个 .rblk 内）
+      if (act === 'applyall' || act === 'copyall') {
+        const set = btn.closest('.rdiffset'); if (!set) return
+        const raw = Array.from(set.querySelectorAll('.rblk[data-type="diff"]')).map((f) => blockRaw(f, 'diff')).join('\n')
+        if (act === 'copyall') { try { navigator.clipboard.writeText(raw) } catch (_) {} copyFeedback(btn) }
+        else { h.apply && h.apply({ file: '', raw, all: true }, btn) }
+        return
+      }
       const blk = btn.closest('.rblk'); if (!blk) return
-      const type = blk.dataset.type, act = btn.dataset.act
+      const type = blk.dataset.type
       const fileEl = blk.querySelector('.rfile')
       const file = (fileEl && fileEl.dataset.file) || ''
       const line = (fileEl && fileEl.dataset.line) || '1'
