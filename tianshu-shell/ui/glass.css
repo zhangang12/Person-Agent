@@ -45,8 +45,10 @@ html[data-theme="dark"] {
 html, body {
   height: 100%; margin: 0; background: transparent; overflow: hidden;
   font-family: var(--font); color: var(--txt);
-  -webkit-user-select: none; user-select: none;
+  -webkit-user-select: none; user-select: none;   /* 默认不可选：拖拽手柄/标签更像原生应用 */
 }
+/* 但消息内容、输入框里的文字要能选中复制 */
+input, textarea, .selectable { -webkit-user-select: text; user-select: text; }
 body { padding: 24px; }
 
 .glass {
@@ -70,7 +72,8 @@ body { padding: 24px; }
 .ai { align-self: flex-start; background: var(--ai-bg); border: .5px solid var(--ai-border); border-bottom-left-radius: 5px; color: var(--ai-txt); }
 
 /* ===== 消息流 + 滚动条 ===== */
-.feed { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 2px 4px 2px 0; }
+.feed { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 2px 4px 2px 0; cursor: auto; -webkit-user-select: text; user-select: text; }
+.feed button, .feed a, .feed summary { -webkit-user-select: none; user-select: none; }   /* 动作按钮本身不参与选区 */
 .feed::-webkit-scrollbar { width: 6px; }
 .feed::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
 

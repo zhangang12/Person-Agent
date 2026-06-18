@@ -231,9 +231,19 @@ app.whenReady().then(() => {
     const w = BrowserWindow.fromWebContents(e.sender); if (!w) return false
     const v = !w.isAlwaysOnTop(); w.setAlwaysOnTop(v); return v
   })
+  // 放大/还原：透明无边框窗口的 isMaximized() 不可靠，改为自管 bounds，确保能还原
   ipcMain.handle('toggle-maximize', (e) => {
     const w = BrowserWindow.fromWebContents(e.sender); if (!w) return false
-    if (w.isMaximized()) w.unmaximize(); else w.maximize(); return w.isMaximized()
+    if (w._restoreBounds || w.isMaximized()) {          // 已放大 → 还原到放大前
+      const b = w._restoreBounds; w._restoreBounds = null
+      if (w.isMaximized()) w.unmaximize()
+      if (b) w.setBounds(b)
+      return false
+    }
+    w._restoreBounds = w.getBounds()                    // 记下当前 → 铺满工作区
+    const wa = screen.getDisplayMatching(w.getBounds()).workArea
+    w.setBounds({ x: wa.x, y: wa.y, width: wa.width, height: wa.height })
+    return true
   })
 
   // 卡片 ↔ 会话（绑定到当前项目的 serve）。opts.sid 在场 = 续接卡坞里的旧会话。
