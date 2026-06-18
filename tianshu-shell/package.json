@@ -1,6 +1,6 @@
 {
   "name": "tianshu-shell",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "天枢 Tianshu 桌面壳：可拖动透明玻璃卡片 + 全局输入框（Electron）",
   "main": "main.js",

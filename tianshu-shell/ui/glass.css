@@ -18,6 +18,7 @@
   --kbd-border: rgba(27,28,51,.18);
   --scroll: rgba(27,28,51,.22);
   --warn-bg: rgba(245,158,11,.13); --warn-border: rgba(245,158,11,.34); --warn-txt: #7c4a06; --warn-btn: #2563eb; --warn-btn-fg: #fff;
+  --diff-add: #0a7d57; --diff-add-bg: rgba(10,157,110,.13); --diff-del: #b3204a; --diff-del-bg: rgba(225,29,72,.12);
 }
 html[data-theme="dark"] {
   /* 墨玻璃 */
@@ -36,6 +37,7 @@ html[data-theme="dark"] {
   --kbd-border: rgba(255,255,255,.16);
   --scroll: rgba(255,255,255,.16);
   --warn-bg: rgba(255,207,107,.10); --warn-border: rgba(255,207,107,.30); --warn-txt: #f1e7cf; --warn-btn: #46e0ff; --warn-btn-fg: #06131c;
+  --diff-add: #6ee7b7; --diff-add-bg: rgba(84,224,168,.13); --diff-del: #ffb3bd; --diff-del-bg: rgba(255,122,138,.13);
 }
 
 /* ===== 基础 ===== */

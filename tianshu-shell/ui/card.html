@@ -42,6 +42,24 @@
   .ai pre.code::-webkit-scrollbar, .ai table::-webkit-scrollbar { height: 6px; }
   .ai pre.code::-webkit-scrollbar-thumb, .ai table::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
 
+  /* 富结果块 */
+  .rblk { margin: 8px 0; background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 10px; overflow: hidden; }
+  .rbhd { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 8px; border-bottom: .5px solid var(--composer-border); }
+  .rfile { font-size: 11px; color: var(--accent); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .racts { display: flex; gap: 6px; flex: none; }
+  .rbtn-primary { font-size: 11px; font-weight: 600; color: var(--send-fg); background: var(--brand); border: none; border-radius: 7px; padding: 3px 11px; cursor: pointer; }
+  .rbtn-ghost { font-size: 11px; color: var(--txt2); background: transparent; border: .5px solid var(--composer-border); border-radius: 7px; padding: 3px 9px; cursor: pointer; }
+  .rbtn-ghost:hover { color: var(--txt); }
+  .rbtn-primary:disabled, .rbtn-ghost:disabled { opacity: .65; cursor: default; }
+  .rbody { margin: 0; padding: 8px 10px; overflow-x: auto; }
+  .rbody code { font-family: var(--mono); font-size: 12px; white-space: pre; background: none; padding: 0; }
+  .rbody::-webkit-scrollbar { height: 6px; } .rbody::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  .rdiff { padding: 6px 0; }
+  .dl { font-family: var(--mono); font-size: 12px; padding: 1px 10px; white-space: pre; }
+  .dl-add { background: var(--diff-add-bg); color: var(--diff-add); }
+  .dl-del { background: var(--diff-del-bg); color: var(--diff-del); }
+  .dl-hunk, .dl-meta { color: var(--txt3); }
+
   .perm { display: flex; align-items: center; gap: 8px; background: var(--warn-bg); border: .5px solid var(--warn-border); border-radius: 11px; padding: 7px 9px; }
   .perm .t { flex: 1; font-size: 12px; color: var(--warn-txt); }
   .perm .ok { font-size: 11px; font-weight: 600; color: var(--warn-btn-fg); background: var(--warn-btn); padding: 4px 10px; border-radius: 7px; border: none; cursor: pointer; }
@@ -68,53 +86,12 @@
     </div>
   </div>
 </div>
+<script src="rich.js"></script>
 <script>
   window.tianshu.onTheme((t) => { document.documentElement.dataset.theme = t })
 
-  function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }
-  // 把 文件:行（需含字母扩展名，排除 URL/时间）渲染成可点链接
-  const FLOC = /([\w./\\-]+\.[A-Za-z]\w*):(\d+)/g
-  function linkify(s) { return s.replace(FLOC, function (m, f, l) { return '<a class="floc" data-file="' + f + '" data-line="' + l + '">' + m + '</a>' }) }
-  function inline(s) {
-    return linkify(esc(s))
-      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-      .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
-  }
-  function renderMarkdown(md) {
-    if (!md) return ''
-    const blocks = []
-    md = md.replace(/```(\w*)\r?\n?([\s\S]*?)```/g, function (m, lang, code) {
-      blocks.push('<pre class="code"><code>' + esc(code.replace(/\n$/, '')) + '</code></pre>')
-      return '@@CB' + (blocks.length - 1) + '@@'
-    })
-    const lines = md.replace(/\r/g, '').split('\n')
-    const sep = (s) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(s)
-    const cells = (s) => s.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim())
-    let html = '', i = 0
-    while (i < lines.length) {
-      const line = lines[i]
-      const ph = line.match(/^@@CB(\d+)@@$/)
-      if (ph) { html += blocks[+ph[1]]; i++; continue }
-      if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && sep(lines[i + 1])) {
-        const head = cells(line); i += 2; const rows = []
-        while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) { rows.push(cells(lines[i])); i++ }
-        html += '<table><thead><tr>' + head.map((c) => '<th>' + inline(c) + '</th>').join('') + '</tr></thead><tbody>' +
-          rows.map((r) => '<tr>' + r.map((c) => '<td>' + inline(c) + '</td>').join('') + '</tr>').join('') + '</tbody></table>'
-        continue
-      }
-      const hm = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/)
-      if (hm) { const lv = Math.min(hm[1].length, 4); html += '<h' + lv + '>' + inline(hm[2]) + '</h' + lv + '>'; i++; continue }
-      if (/^\s*([-*_])\1\1+\s*$/.test(line)) { html += '<hr>'; i++; continue }
-      if (/^\s*[-*+]\s+/.test(line)) { const it = []; while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) { it.push('<li>' + inline(lines[i].replace(/^\s*[-*+]\s+/, '')) + '</li>'); i++ } html += '<ul>' + it.join('') + '</ul>'; continue }
-      if (/^\s*\d+\.\s+/.test(line)) { const it = []; while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) { it.push('<li>' + inline(lines[i].replace(/^\s*\d+\.\s+/, '')) + '</li>'); i++ } html += '<ol>' + it.join('') + '</ol>'; continue }
-      if (/^\s*$/.test(line)) { i++; continue }
-      const para = [line]; i++
-      while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^\s*\|.*\|\s*$/.test(lines[i]) && !/^\s{0,3}#{1,6}\s/.test(lines[i]) && !/^\s*[-*+]\s/.test(lines[i]) && !/^\s*\d+\.\s/.test(lines[i]) && !/^@@CB\d+@@$/.test(lines[i])) { para.push(lines[i]); i++ }
-      html += '<p>' + para.map(inline).join('<br>') + '</p>'
-    }
-    return html.replace(/@@CB(\d+)@@/g, function (m, n) { return blocks[+n] })
-  }
+  // Markdown 渲染 + 富结果块识别已抽到 ui/rich.js（window.Rich）。
+  const renderMarkdown = (md) => window.Rich.renderMarkdown(md)
 
   const params = new URLSearchParams(location.search)
   const title = params.get('title') || '新对话'
@@ -199,6 +176,24 @@
 
   send.addEventListener('click', () => { if (busy) window.tianshu.cardAbort(); else submit() })
   ci.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit() })
+
+  // 富结果动作：应用/运行 = 向同一会话发指令（agent 用工具做、经内联权限）；复制/打开在 rich.js/本地
+  window.Rich.wireActions(feed, {
+    open: (file, line) => window.tianshu.openLoc(file, line),
+    apply: ({ file, raw }, btn) => {
+      if (busy) return
+      const orig = btn.innerHTML; btn.textContent = '应用中…'; btn.disabled = true
+      const p = '请把下面这段改动实际应用到' + (file ? '文件 ' + file : 'diff 中标注的文件')
+        + '（用编辑/补丁工具真的改文件，改完只回复"已应用"）：\n\n```diff\n' + raw + '\n```'
+      turn(p).then(() => { btn.textContent = '已应用 ✓' }).catch(() => { btn.innerHTML = orig; btn.disabled = false })
+    },
+    run: ({ raw }, btn) => {
+      if (busy) return
+      const orig = btn.innerHTML; btn.textContent = '运行中…'; btn.disabled = true
+      const p = '请运行下面这条命令并把输出原样返回：\n\n```bash\n' + raw + '\n```'
+      turn(p).then(() => { btn.textContent = '已运行 ✓' }).catch(() => { btn.innerHTML = orig; btn.disabled = false })
+    },
+  })
 
   ;(async () => {
     addMsg(title, 'me'); setBusy(true)
