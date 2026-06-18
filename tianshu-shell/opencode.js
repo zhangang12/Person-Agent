@@ -68,7 +68,15 @@ async function detectPerm(base) {
 // 取得（或惰性启动）某项目目录对应的 serve；handlers 在该 serve 的事件循环里用
 async function ensureServe(dir, handlers, log = console.log) {
   const key = dir || '__home__'
-  if (pool.has(key)) { const info = pool.get(key); await info.ready; return info }
+  const existing = pool.get(key)
+  if (existing) {
+    let alive = true
+    try { await existing.ready } catch { alive = false }                         // 上次启动失败 → 不再复用
+    if (alive && existing.proc && existing.proc.exitCode != null) alive = false   // 进程已退出 → 不再复用
+    if (alive) return existing
+    if (pool.get(key) === existing) pool.delete(key)
+    log(`serve for [${dir || '(home)'}] not alive; restarting`)                   // 自愈：下一张卡重启它
+  }
   const info = { dir, key, base: null, port: null, proc: null, permStyle: 'new' }
   info.ready = (async () => {
     const port = await freePort(4096)
@@ -84,7 +92,7 @@ async function ensureServe(dir, handlers, log = console.log) {
     runEventLoop(info.base, handlers, log)
   })()
   pool.set(key, info)
-  await info.ready
+  try { await info.ready } catch (e) { if (pool.get(key) === info) pool.delete(key); throw e }  // 失败不污染池
   return info
 }
 
