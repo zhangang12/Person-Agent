@@ -8,7 +8,8 @@
     "start": "electron .",
     "dist": "electron-builder --win",
     "compat": "node scripts/compat-check.mjs",
-    "permcheck": "node scripts/permission-probe.mjs"
+    "permcheck": "node scripts/permission-probe.mjs",
+    "jsonschema": "node scripts/json-schema-probe.mjs"
   },
   "devDependencies": {
     "electron": "^34.0.0",
