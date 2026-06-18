@@ -323,4 +323,46 @@ main()
 4. **权限策略化**：只读自动放行、写/执行排队确认、危险命令黑名单——策略写在能力里，集中可审。
 5. **以 `/doc` 为准**：端点/事件/字段以本机 OpenAPI 为最终事实，别迷信文档记忆。
 6. **复用 Wiki 记忆**：能力的 prompt 一律引用 glossary/capability-map/modules，把前期文档投入变现。
+
+---
+
+## 10. bocomcode 兼容契约（与公网 opencode 对齐）★
+
+> 背景：天枢在**公网 opencode**（1.14.40）上开发验证，但实际部署在 **bocomcode**（交行内网在 opencode 之上的衍生版）。
+> **第一要务：先保证 bocomcode 的 serve 提供下列特性、与公网 opencode 一致**，天枢才能正常工作。否则会在对应点静默失效。
+
+### 天枢依赖的 serve 特性（硬契约）
+
+| 能力 | 端点 / 行为 | 公网 opencode 实测 | 依赖度 |
+|---|---|---|---|
+| 健康/版本 | `GET /global/health` → `{healthy,version}` | ✓ | 必须 |
+| 建会话 | `POST /session` → `{id,...}` | ✓ | 必须 |
+| **发消息** | `POST /session/:id/message` body `{parts:[{type:"text",text}]}` → 最终消息 | ✓ | **必须（核心）** |
+| 中止 | `POST /session/:id/abort` | ✓ | 重要（停止键） |
+| **事件流** | `GET /event`（SSE）：`server.connected` / `message.part`（流式）/ `permission.asked` | ✓ | **必须（流式+权限）** |
+| **权限应答** | `POST /permission/:requestID/reply` body **`{reply: "once"\|"always"\|"reject"}`**（字段是 `reply` 不是 `response`） | ✓ | **必须（写/执行授权，缺则卡死）** |
+| 模型 | `GET /provider` 能看到至少一个可用模型 | ✓（145 个） | 必须（否则无模型可答） |
+| 工作目录 | serve 以**启动 cwd** 为会话工作目录（`directory` 参数不强制生效） | 用 cwd | 天枢以"**按目录建独立 serve**"规避，不依赖 directory 参数 |
+
+> 未知路由会返回 **SPA 网页(200)** 而非 404，故"端点是否存在"看返回是否为 HTML。
+
+### 怎么验证（一行命令）
+```powershell
+# 对着 bocomcode 的 serve 跑（内网），再对着公网 opencode 跑，两份报告一比即知差异：
+cd tianshu-shell
+npm run compat -- http://<bocomcode-serve-host>:<port>
+```
+工具：`tianshu-shell/scripts/compat-check.mjs`（零依赖）。**有 FAIL = bocomcode 缺该特性，需内网团队补齐到与公网 opencode 一致。**
+
+### 公网 opencode 1.14.40 基准
+`8 通过 / 1 警告 / 0 失败`——天枢所需特性全在。（WARN 项为"权限 body 字段用假 id 探测无法二次确认"，已知字段就是 `reply`，不影响。）
+
+### 天枢已做的兼容防御（容忍小差异）
+- 权限端点**新旧自动探测**（`/permission/:id/reply` 优先，回退 `/session/:id/permissions/:id`）。
+- 事件字段**多名兜底**（`sessionID/sessionId/session_id`、`requestID/id/permissionID`、`part.text` 等）。
+- 权限取值固定 `once|always|reject`，字段 `reply`。
+- 不依赖 `directory` 参数 → **按项目目录建独立 serve 连接池**（也顺带实现多项目隔离）。
+- 最终结果以 `POST /message` 返回为权威，流式解析失败也不致命。
+
+> 一句话：**bocomcode 只要在上表"必须"项上与公网 opencode 一致，天枢即可无改动运行；用 `npm run compat` 一键验。**
 ```
