@@ -61,5 +61,13 @@ const ac = new AbortController(); ac.abort()
 const r3 = await orchestrate('中止', { run: async (p, m) => m.kind === 'plan' ? '{"tasks":[{"id":"x","goal":"X"}],"done":false}' : 'y', signal: ac.signal, maxRounds: 2 })
 ok(r3.stopped === 'aborted' && r3.tasks.length === 0, '已中止：不规划不跑任务')
 
+console.log('人审检查点:')
+const apRun = async (p, m) => m.kind === 'plan' ? (m.round === 1 ? '{"tasks":[{"id":"p1","goal":"P"}],"done":false}' : '{"tasks":[],"done":true}') : (m.kind === 'reduce' ? 'R' : 'out')
+let asked = 0
+const rApprove = await orchestrate('审批通过', { run: apRun, maxRounds: 2, onBeforeBatch: async (round, tasks) => { asked++; return { tasks } } })
+ok(asked >= 1 && rApprove.tasks.find((t) => t.task.id === 'p1')?.output === 'out', '批准后任务执行')
+const rReject = await orchestrate('审批拒绝', { run: apRun, maxRounds: 2, onBeforeBatch: async () => ({ abort: true }) })
+ok(rReject.stopped === 'aborted' && rReject.tasks.length === 0, '拒绝则中止、不执行')
+
 console.log(`\n小结：${pass} 通过 / ${fail} 失败`)
 process.exit(fail ? 1 : 0)

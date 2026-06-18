@@ -38,6 +38,12 @@
   .perm .ok { font-size: 11px; font-weight: 600; color: var(--warn-btn-fg); background: var(--warn-btn); padding: 4px 10px; border-radius: 7px; border: none; cursor: pointer; }
   .perm .no { font-size: 11px; color: var(--txt2); background: transparent; border: none; cursor: pointer; padding: 4px 6px; }
   .stop { font-size: 11px; color: var(--diff-del); background: transparent; border: 1px solid var(--diff-del); border-radius: 7px; padding: 3px 10px; cursor: pointer; }
+  .approve { background: var(--composer-bg); border: 1px solid var(--accent); border-radius: 11px; padding: 9px 10px; display: flex; flex-direction: column; gap: 8px; }
+  .approve .t { font-size: 12px; color: var(--txt); }
+  .approve .btns { display: flex; gap: 7px; flex-wrap: wrap; }
+  .approve .go { font-size: 11.5px; font-weight: 600; color: var(--send-fg); background: var(--brand); border: none; border-radius: 8px; padding: 5px 13px; cursor: pointer; }
+  .approve .auto { font-size: 11.5px; color: var(--txt2); background: transparent; border: 1px solid var(--composer-border); border-radius: 8px; padding: 5px 11px; cursor: pointer; }
+  .approve .no { font-size: 11.5px; color: var(--diff-del); background: transparent; border: 1px solid var(--diff-del); border-radius: 8px; padding: 5px 11px; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -114,12 +120,22 @@
     box.append(t, ok, al, no); feed.appendChild(box); feed.scrollTop = feed.scrollHeight
   })
 
-  let runningBanner = banner('run', '正在规划与执行…')
+  let runningBanner = banner('run', '正在规划…')
   window.tianshu.onWorkflowEvent((ev) => {
     if (ev.type === 'plan') {
       if (ev.done && (!ev.tasks || !ev.tasks.length)) { ensureRound(ev.round); banner('run', '第 ' + ev.round + ' 轮：判定可收尾，正在汇总…'); return }
       ensureRound(ev.round)
       for (const t of ev.tasks || []) if (!tasks.has(t.id)) addTask(t)
+    } else if (ev.type === 'plan-approve') {
+      const box = document.createElement('div'); box.className = 'approve'
+      const t = document.createElement('div'); t.className = 't'; t.textContent = '第 ' + ev.round + ' 轮计划共 ' + ev.count + ' 个子任务，确认执行？'
+      const btns = document.createElement('div'); btns.className = 'btns'
+      const go = document.createElement('button'); go.className = 'go'; go.textContent = '批准执行'
+      const auto = document.createElement('button'); auto.className = 'auto'; auto.textContent = '自动·不再询问'
+      const no = document.createElement('button'); no.className = 'no'; no.textContent = '停止'
+      const reply = (decision, a) => { window.tianshu.wfApprove(ev.reqId, decision, a); box.remove() }
+      go.onclick = () => reply('run', false); auto.onclick = () => reply('run', true); no.onclick = () => reply('abort', false)
+      btns.append(go, auto, no); box.append(t, btns); feed.appendChild(box); feed.scrollTop = feed.scrollHeight
     } else if (ev.type === 'task') {
       setTask(ev.id, ev.status, ev.status === 'ok' ? (ev.chars + ' 字') : (ev.error ? ev.error.slice(0, 40) : ''))
     } else if (ev.type === 'final') {

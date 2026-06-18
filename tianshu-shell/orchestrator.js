@@ -157,7 +157,13 @@ async function orchestrate(goal, options) {
     if (plan.done || plan.tasks.length === 0) { done = true; break }
     const room = Math.max(0, opts.maxTasks - total)
     if (room === 0) { stopped = 'task-budget'; break }
-    const batch = plan.tasks.slice(0, room)
+    let batch = plan.tasks.slice(0, room)
+    if (opts.onBeforeBatch) {                                  // 人审检查点：批准/编辑/中止
+      const d = await opts.onBeforeBatch(round, batch)
+      if (aborted(opts) || (d && d.abort)) { stopped = 'aborted'; break }
+      if (d && Array.isArray(d.tasks)) batch = sanitizePlan(d.tasks, [...results.keys()])
+      if (!batch.length) { done = true; break }               // 一个都不批 → 收尾
+    }
     total += batch.length
     const r = await runDag(opts.run, batch, results, opts)
     unmet = r.unmet || []

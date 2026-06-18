@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('tianshu', {
   spawnWorkflow: (goal) => ipcRenderer.invoke('spawn-workflow', goal),
   runWorkflow: (goal) => ipcRenderer.invoke('run-workflow', goal),
   abortWorkflow: () => ipcRenderer.send('abort-workflow'),
+  wfApprove: (reqId, decision, auto) => ipcRenderer.send('wf-approve', { reqId, decision, auto }),
   onWorkflowEvent: (cb) => ipcRenderer.on('wf-event', (_e, p) => cb(p)),
   // 对话 ↔ opencode 会话
   cardInit: (opts) => ipcRenderer.invoke('card-init', opts || {}),
