@@ -1,6 +1,6 @@
-const { contextBridge, ipcRenderer } = require('electron')
+﻿const { contextBridge, ipcRenderer } = require('electron')
 
-contextBridge.exposeInMainWorld('tianshu', {
+contextBridge.exposeInMainWorld('BocomHermes', {
   // 窗口
   spawnCard: (title) => ipcRenderer.invoke('spawn-card', title),
   spawnFanout: (goal) => ipcRenderer.invoke('spawn-fanout', goal),

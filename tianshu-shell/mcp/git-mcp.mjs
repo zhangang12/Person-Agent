@@ -1,13 +1,13 @@
-// 天枢 · Git 工具 MCP（本地 stdio 服务，零依赖）
+﻿// 天枢 · Git 工具 MCP（本地 stdio 服务，零依赖）
 // 给 opencode/bocomcode 的 agent 提供 git 感知能力：
 //   git_status / git_log / git_diff / git_blame / git_show / git_branch
 // 实现：spawnSync 调系统 git，不依赖任何第三方库。
-// CWD 取 process.cwd()（serve 以项目目录启动），可用 TIANSHU_GIT_CWD 覆盖。
+// CWD 取 process.cwd()（serve 以项目目录启动），可用 BOCOMHERMES_GIT_CWD 覆盖。
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 
 const log = (...a) => process.stderr.write('[git-mcp] ' + a.join(' ') + '\n')
-const cwd = () => process.env.TIANSHU_GIT_CWD || process.cwd()
+const cwd = () => process.env.BOCOMHERMES_GIT_CWD || process.cwd()
 
 // 执行 git 命令，返回 stdout 字符串；失败抛错（含 stderr）
 function git(args) {
@@ -163,7 +163,7 @@ const fail  = (id, code, message) => write({ jsonrpc: '2.0', id, error: { code, 
 async function handle(msg) {
   const { id, method, params } = msg
   if (method === 'initialize')
-    return reply(id, { protocolVersion: (params && params.protocolVersion) || PROTO, capabilities: { tools: {} }, serverInfo: { name: 'tianshu-git', version: '1.0.0' } })
+    return reply(id, { protocolVersion: (params && params.protocolVersion) || PROTO, capabilities: { tools: {} }, serverInfo: { name: 'BocomHermes-git', version: '1.0.0' } })
   if (method === 'notifications/initialized' || method === 'initialized' || method === 'ping')
     return id != null ? reply(id, {}) : undefined
   if (method === 'tools/list')

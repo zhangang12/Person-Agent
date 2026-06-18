@@ -1,9 +1,9 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh">
 <head>
 <meta charset="utf-8" />
 <title>设置 · 个人桌面智能体</title>
-<script>try { document.documentElement.dataset.theme = window.tianshu.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
+<script>try { document.documentElement.dataset.theme = window.BocomHermes.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
 <link rel="stylesheet" href="glass.css" />
 <style>
   .set { display: flex; flex-direction: column; height: 100%; padding: 13px 16px 14px; gap: 13px; }
@@ -92,7 +92,7 @@
 <script>
   const $ = (id) => document.getElementById(id)
   let cur = {}
-  try { cur = window.tianshu.getSettings() || {} } catch (e) {}
+  try { cur = window.BocomHermes.getSettings() || {} } catch (e) {}
 
   // 主题（即时预览 + 广播）
   const seg = $('theme-seg')
@@ -100,9 +100,9 @@
   paintTheme(document.documentElement.dataset.theme)
   seg.addEventListener('click', (e) => {
     const b = e.target.closest('button[data-theme]'); if (!b) return
-    window.tianshu.setTheme(b.dataset.theme)
+    window.BocomHermes.setTheme(b.dataset.theme)
   })
-  window.tianshu.onTheme((t) => { document.documentElement.dataset.theme = t; paintTheme(t) })
+  window.BocomHermes.onTheme((t) => { document.documentElement.dataset.theme = t; paintTheme(t) })
 
   // 编辑器命令 + 预设
   const editorCmd = $('editorCmd'); editorCmd.value = cur.editorCmd || ''
@@ -122,8 +122,8 @@
       const c = document.createElement('button'); c.className = 'chip'; c.textContent = base(d); c.title = d
       if (d === cur.projectDir) c.classList.add('on')
       c.addEventListener('click', async () => {
-        proj.textContent = await window.tianshu.setProjectDir(d)
-        const s = window.tianshu.getSettings(); cur.recentDirs = s.recentDirs; cur.projectDir = s.projectDir; proj.title = s.projectDir || ''
+        proj.textContent = await window.BocomHermes.setProjectDir(d)
+        const s = window.BocomHermes.getSettings(); cur.recentDirs = s.recentDirs; cur.projectDir = s.projectDir; proj.title = s.projectDir || ''
         renderRecent()
       })
       box.appendChild(c)
@@ -132,26 +132,26 @@
   renderRecent()
   $('pick').addEventListener('click', async () => {
     try {
-      proj.textContent = await window.tianshu.pickProject()
-      const s = window.tianshu.getSettings(); cur.recentDirs = s.recentDirs; cur.projectDir = s.projectDir; proj.title = s.projectDir || ''
+      proj.textContent = await window.BocomHermes.pickProject()
+      const s = window.BocomHermes.getSettings(); cur.recentDirs = s.recentDirs; cur.projectDir = s.projectDir; proj.title = s.projectDir || ''
       renderRecent()
     } catch (e) {}
   })
-  window.tianshu.onProject((p) => { proj.textContent = p })
+  window.BocomHermes.onProject((p) => { proj.textContent = p })
 
   // 保存
   const msg = $('msg')
   async function save() {
     const patch = { editorCmd: editorCmd.value }
     if (!cur.serveBinLocked) patch.serveBin = serveBin.value
-    try { await window.tianshu.setSettings(patch); msg.textContent = '已保存 ✓'; setTimeout(() => { msg.textContent = '' }, 1800) }
+    try { await window.BocomHermes.setSettings(patch); msg.textContent = '已保存 ✓'; setTimeout(() => { msg.textContent = '' }, 1800) }
     catch (e) { msg.style.color = 'var(--diff-del)'; msg.textContent = '保存失败' }
   }
   $('save').addEventListener('click', save)
-  $('x').addEventListener('click', () => window.tianshu.closeSelf())
-  $('cancel').addEventListener('click', () => window.tianshu.closeSelf())
+  $('x').addEventListener('click', () => window.BocomHermes.closeSelf())
+  $('cancel').addEventListener('click', () => window.BocomHermes.closeSelf())
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') window.tianshu.closeSelf()
+    if (e.key === 'Escape') window.BocomHermes.closeSelf()
     else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) save()
   })
 </script>

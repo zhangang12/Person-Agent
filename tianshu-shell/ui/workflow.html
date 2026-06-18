@@ -1,8 +1,8 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh">
 <head>
 <meta charset="utf-8" />
-<script>try { document.documentElement.dataset.theme = window.tianshu.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
+<script>try { document.documentElement.dataset.theme = window.BocomHermes.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
 <link rel="stylesheet" href="glass.css" />
 <style>
   .card { display: flex; flex-direction: column; height: 100%; padding: 11px 13px 12px; gap: 8px; }
@@ -76,15 +76,15 @@
 </div>
 <script src="rich.js"></script>
 <script>
-  window.tianshu.onTheme((t) => { document.documentElement.dataset.theme = t })
+  window.BocomHermes.onTheme((t) => { document.documentElement.dataset.theme = t })
   const params = new URLSearchParams(location.search)
   const goal = params.get('goal') || '工作流'
   document.getElementById('goal').textContent = goal
   document.getElementById('ttl').title = goal
   const feed = document.getElementById('feed'), graphEl = document.getElementById('graph'), detailEl = document.getElementById('detail')
-  document.getElementById('x').addEventListener('click', () => window.tianshu.closeSelf())
-  document.getElementById('min').addEventListener('click', () => window.tianshu.minimizeSelf())
-  document.getElementById('max').addEventListener('click', () => window.tianshu.toggleMaximize())
+  document.getElementById('x').addEventListener('click', () => window.BocomHermes.closeSelf())
+  document.getElementById('min').addEventListener('click', () => window.BocomHermes.minimizeSelf())
+  document.getElementById('max').addEventListener('click', () => window.BocomHermes.toggleMaximize())
 
   // ---- DAG 图：按依赖深度分层，状态着色 ----
   const tasks = new Map()   // id -> { id, role, goal, deps, status }
@@ -140,19 +140,19 @@
   function banner(cls, text) { const b = document.createElement('div'); b.className = 'banner ' + cls; b.textContent = text; feed.appendChild(b); feed.scrollTop = feed.scrollHeight; return b }
 
   // 权限（worker 写/执行会路由到这里）
-  window.tianshu.onPermission(({ requestId, tool }) => {
+  window.BocomHermes.onPermission(({ requestId, tool }) => {
     const box = document.createElement('div'); box.className = 'perm'
     const t = document.createElement('span'); t.className = 't'; t.textContent = '某子任务请求执行：' + tool
     const ok = document.createElement('button'); ok.className = 'ok'; ok.textContent = '允许一次'
     const al = document.createElement('button'); al.className = 'no'; al.textContent = '总是'
     const no = document.createElement('button'); no.className = 'no'; no.textContent = '拒绝'
-    const reply = (d) => { window.tianshu.permissionReply(requestId, d); box.remove() }
+    const reply = (d) => { window.BocomHermes.permissionReply(requestId, d); box.remove() }
     ok.onclick = () => reply('once'); al.onclick = () => reply('always'); no.onclick = () => reply('reject')
     box.append(t, ok, al, no); feed.appendChild(box); feed.scrollTop = feed.scrollHeight
   })
 
   let runningBanner = banner('run', '正在规划…')
-  window.tianshu.onWorkflowEvent((ev) => {
+  window.BocomHermes.onWorkflowEvent((ev) => {
     if (ev.type === 'plan') {
       if (ev.done && (!ev.tasks || !ev.tasks.length)) { banner('run', '第 ' + ev.round + ' 轮：判定可收尾，正在汇总…'); return }
       for (const t of ev.tasks || []) if (!tasks.has(t.id)) tasks.set(t.id, { id: t.id, role: t.role, goal: t.goal, deps: t.deps || [], status: 'pending' })
@@ -177,7 +177,7 @@
       const go = document.createElement('button'); go.className = 'go'; go.textContent = '批准执行'
       const auto = document.createElement('button'); auto.className = 'auto'; auto.textContent = '自动·不再询问'
       const no = document.createElement('button'); no.className = 'no'; no.textContent = '停止'
-      const reply = (decision, a) => { window.tianshu.wfApprove(ev.reqId, decision, a); box.remove() }
+      const reply = (decision, a) => { window.BocomHermes.wfApprove(ev.reqId, decision, a); box.remove() }
       go.onclick = () => reply('run', false); auto.onclick = () => reply('run', true); no.onclick = () => reply('abort', false)
       btns.append(go, auto, no); box.append(t, tlist, btns); feed.appendChild(box); feed.scrollTop = feed.scrollHeight
     } else if (ev.type === 'task') {
@@ -194,9 +194,9 @@
       banner('err', '⚠ 出错：' + ev.error)
     }
   })
-  feed.addEventListener('click', (e) => { const a = e.target.closest('a.floc'); if (a) { e.preventDefault(); window.tianshu.openLoc(a.dataset.file, a.dataset.line) } })
-  document.getElementById('stop').addEventListener('click', () => { window.tianshu.abortWorkflow(); banner('err', '已请求停止…') })
-  ;(async () => { try { await window.tianshu.runWorkflow(goal) } catch (e) { banner('err', '⚠ ' + (e.message || e)) } })()
+  feed.addEventListener('click', (e) => { const a = e.target.closest('a.floc'); if (a) { e.preventDefault(); window.BocomHermes.openLoc(a.dataset.file, a.dataset.line) } })
+  document.getElementById('stop').addEventListener('click', () => { window.BocomHermes.abortWorkflow(); banner('err', '已请求停止…') })
+  ;(async () => { try { await window.BocomHermes.runWorkflow(goal) } catch (e) { banner('err', '⚠ ' + (e.message || e)) } })()
 </script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-// 天枢 · 浏览器自动化 MCP（本地 stdio 服务，零依赖）
+﻿// 天枢 · 浏览器自动化 MCP（本地 stdio 服务，零依赖）
 // 给 opencode/bocomcode 的 agent 扩能：导航/取文本/点击/输入/执行JS/截图。
 // 实现：用 CDP(Chrome DevTools Protocol) 驱动【系统已装的 Edge/Chrome】，
 //   不依赖 playwright、不下载浏览器；WebSocket 用 Node 内置全局(需 Node 22+)。
@@ -11,11 +11,11 @@ import os from 'node:os'
 import path from 'node:path'
 
 const log = (...a) => process.stderr.write('[browser-mcp] ' + a.join(' ') + '\n')   // 日志走 stderr，stdout 只发协议
-const HEADFUL = process.env.TIANSHU_BROWSER_HEADFUL === '1'
+const HEADFUL = process.env.BOCOMHERMES_BROWSER_HEADFUL === '1'
 
 // ---------- 浏览器发现 ----------
 const CANDS = [
-  process.env.TIANSHU_BROWSER,
+  process.env.BOCOMHERMES_BROWSER,
   'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
   'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -53,9 +53,9 @@ async function ensureBrowser() {
   if (B) return B
   if (typeof WebSocket === 'undefined') throw new Error('当前 Node 无内置 WebSocket（需 Node 22+），无法驱动浏览器')
   const exe = findBrowser()
-  if (!exe) throw new Error('未找到 Edge/Chrome，可设环境变量 TIANSHU_BROWSER 指向浏览器 exe')
+  if (!exe) throw new Error('未找到 Edge/Chrome，可设环境变量 BOCOMHERMES_BROWSER 指向浏览器 exe')
   const port = await freePort(9333)
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tianshu-br-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'BocomHermes-br-'))
   const args = ['--remote-debugging-port=' + port, '--user-data-dir=' + dir, '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--remote-allow-origins=*', 'about:blank']
   if (!HEADFUL) args.unshift('--headless=new', '--disable-gpu')
   log('launch', exe, 'port', port, HEADFUL ? '(headful)' : '(headless)')
@@ -122,7 +122,7 @@ async function callTool(name, args) {
   if (name === 'browser_eval') { const v = await evalJs(String(args.expression || '')); return typeof v === 'string' ? v : JSON.stringify(v) }
   if (name === 'browser_screenshot') {
     const b = await ensureBrowser(); const r = await b.cdp.send('Page.captureScreenshot', { format: 'png' })
-    const file = path.join(os.tmpdir(), 'tianshu-shot-' + Date.now() + '.png'); fs.writeFileSync(file, Buffer.from(r.data, 'base64'))
+    const file = path.join(os.tmpdir(), 'BocomHermes-shot-' + Date.now() + '.png'); fs.writeFileSync(file, Buffer.from(r.data, 'base64'))
     return '已截图：' + file
   }
   if (name === 'browser_close') { closeBrowser(); return '已关闭浏览器' }
@@ -137,7 +137,7 @@ function fail(id, code, message) { write({ jsonrpc: '2.0', id, error: { code, me
 
 async function handle(msg) {
   const { id, method, params } = msg
-  if (method === 'initialize') return reply(id, { protocolVersion: (params && params.protocolVersion) || PROTO, capabilities: { tools: {} }, serverInfo: { name: 'tianshu-browser', version: '0.1.0' } })
+  if (method === 'initialize') return reply(id, { protocolVersion: (params && params.protocolVersion) || PROTO, capabilities: { tools: {} }, serverInfo: { name: 'BocomHermes-browser', version: '0.1.0' } })
   if (method === 'notifications/initialized' || method === 'initialized') return
   if (method === 'ping') return reply(id, {})
   if (method === 'tools/list') return reply(id, { tools: TOOLS })

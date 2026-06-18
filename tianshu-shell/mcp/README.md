@@ -1,4 +1,4 @@
-# 天枢 · 本地 MCP 工具（浏览器自动化 + HTTP 抓包）
+﻿# 天枢 · 本地 MCP 工具（浏览器自动化 + HTTP 抓包）
 
 给 opencode/bocomcode 的 agent 扩能。任何 agent（包括动态工作流的 worker）注册后即可调用。
 - **浏览器自动化**：在内置无头浏览器里导航、取文本、点击、输入、执行 JS、截图。
@@ -22,11 +22,11 @@ npm run mcp:config
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "tianshu-browser": {
+    "BocomHermes-browser": {
       "type": "local",
       "command": ["node", "<本仓库>/mcp/browser-mcp.mjs"],
       "enabled": true,
-      "environment": { "TIANSHU_BROWSER_HEADFUL": "0" }
+      "environment": { "BOCOMHERMES_BROWSER_HEADFUL": "0" }
     }
   }
 }
@@ -35,7 +35,7 @@ npm run mcp:config
 > 注册 MCP 属于"给 agent 装本地工具"，不决定模型、数据不出网——与天枢"外层封装、工具一律本地"的原则一致。
 
 ## 工具
-**浏览器（tianshu-browser）** — 需 Node 22+ 与本机 Edge/Chrome
+**浏览器（BocomHermes-browser）** — 需 Node 22+ 与本机 Edge/Chrome
 | 工具 | 作用 |
 |---|---|
 | `browser_navigate {url}` | 打开网址，返回标题与最终 URL |
@@ -47,7 +47,7 @@ npm run mcp:config
 | `browser_screenshot {}` | 截图存临时 PNG，返回路径 |
 | `browser_close {}` | 关闭浏览器释放资源 |
 
-**HTTP 抓包（tianshu-httpcap）** — 零依赖，仅抓 HTTP
+**HTTP 抓包（BocomHermes-httpcap）** — 零依赖，仅抓 HTTP
 | 工具 | 作用 |
 |---|---|
 | `httpcap_start {port?}` | 启动本地 HTTP 代理，返回代理地址 |
@@ -65,8 +65,8 @@ npm run mcp:httpcap:test      # 抓包：起目标服务 + 经代理转发 + 捕
 npm run mcp:browser           # 以 stdio 独立启动（手动联调）
 npm run mcp:httpcap
 ```
-- 看见浏览器窗口：环境变量 `TIANSHU_BROWSER_HEADFUL=1`
-- 指定浏览器：`TIANSHU_BROWSER=C:/path/to/msedge.exe`
+- 看见浏览器窗口：环境变量 `BOCOMHERMES_BROWSER_HEADFUL=1`
+- 指定浏览器：`BOCOMHERMES_BROWSER=C:/path/to/msedge.exe`
 
 ## 安全
 两者均为本地工具、数据不出网；浏览器不改本地文件（除 `browser_screenshot` 写临时 PNG），抓包只读不改流量。

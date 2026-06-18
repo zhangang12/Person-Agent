@@ -1,4 +1,4 @@
-// HTTP 抓包 MCP 自测：起一个目标服务 + 通过代理发请求，验证捕获/查询。用法： node mcp/httpcap-selftest.mjs
+﻿// HTTP 抓包 MCP 自测：起一个目标服务 + 通过代理发请求，验证捕获/查询。用法： node mcp/httpcap-selftest.mjs
 import { spawn } from 'node:child_process'
 import http from 'node:http'
 import path from 'node:path'
@@ -22,7 +22,7 @@ const notify = (method, params) => srv.stdin.write(JSON.stringify({ jsonrpc: '2.
 
 try {
   const init = await req('initialize', { protocolVersion: '2024-11-05', capabilities: {} })
-  ok(init.result?.serverInfo?.name === 'tianshu-httpcap', 'initialize 返回 serverInfo')
+  ok(init.result?.serverInfo?.name === 'BocomHermes-httpcap', 'initialize 返回 serverInfo')
   notify('notifications/initialized')
   const list = await req('tools/list')
   ok(list.result?.tools?.some((t) => t.name === 'httpcap_start'), 'tools/list 含 httpcap_start（' + (list.result?.tools?.length || 0) + ' 个）')

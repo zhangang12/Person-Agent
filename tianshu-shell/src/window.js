@@ -1,4 +1,4 @@
-'use strict'
+﻿'use strict'
 const USE_ACRYLIC = false
 
 module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }) {
@@ -174,8 +174,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, screen, d
   ipcMain.on('get-settings', (e) => {
     e.returnValue = {
       theme: S.settings.theme, editorCmd: S.settings.editorCmd || '', serveBin: S.settings.serveBin || '',
-      serveBinEffective: process.env.TIANSHU_SERVE_BIN || S.settings.serveBin || (app.isPackaged ? 'bocomcode' : 'opencode'),
-      serveBinLocked: !!process.env.TIANSHU_SERVE_BIN,
+      serveBinEffective: process.env.BOCOMHERMES_SERVE_BIN || S.settings.serveBin || (app.isPackaged ? 'bocomcode' : 'opencode'),
+      serveBinLocked: !!process.env.BOCOMHERMES_SERVE_BIN,
       project: projName(), projectDir: S.settings.projectDir || '', recentDirs: S.settings.recentDirs || [],
     }
   })
@@ -183,7 +183,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, screen, d
     if (patch && typeof patch.editorCmd === 'string') S.settings.editorCmd = patch.editorCmd.trim()
     if (patch && typeof patch.serveBin === 'string') {
       S.settings.serveBin = patch.serveBin.trim()
-      if (!process.env.TIANSHU_SERVE_BIN && S.settings.serveBin) oc.setServeBin(S.settings.serveBin)
+      if (!process.env.BOCOMHERMES_SERVE_BIN && S.settings.serveBin) oc.setServeBin(S.settings.serveBin)
     }
     saveSettings(); return true
   })

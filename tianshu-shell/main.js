@@ -1,4 +1,4 @@
-'use strict'
+﻿'use strict'
 const { app, BrowserWindow, globalShortcut, ipcMain, screen, dialog, Tray, Menu, nativeImage, shell } = require('electron')
 const path = require('path')
 const fs = require('fs')
@@ -9,10 +9,10 @@ const initSession = require('./src/session')
 const initOrch    = require('./src/orch')
 const initTrigger = require('./src/trigger')
 
-// 日志：打包后没有终端，console 看不到 → 同时写到 userData/tianshu.log
+// 日志：打包后没有终端，console 看不到 → 同时写到 userData/BocomHermes.log
 let logFile = null, logBytes = 0
 function log(m) {
-  try { console.log('[tianshu] ' + m) } catch {}
+  try { console.log('[BocomHermes] ' + m) } catch {}
   if (!logFile) return
   try {
     if (logBytes > 3 * 1024 * 1024) { fs.writeFileSync(logFile, ''); logBytes = 0 }
@@ -36,9 +36,9 @@ const S = {
 app.whenReady().then(() => {
   S.settingsFile = path.join(app.getPath('userData'), 'settings.json')
   S.historyFile  = path.join(app.getPath('userData'), 'history.json')
-  S.logFile = logFile = path.join(app.getPath('userData'), 'tianshu.log')
+  S.logFile = logFile = path.join(app.getPath('userData'), 'BocomHermes.log')
   try { logBytes = fs.existsSync(logFile) ? fs.statSync(logFile).size : 0; if (logBytes > 3 * 1024 * 1024) { fs.writeFileSync(logFile, ''); logBytes = 0 } } catch {}
-  log('=== tianshu ' + app.getVersion() + ' start (' + (app.isPackaged ? 'packaged' : 'dev') + ') userData=' + app.getPath('userData') + ' ===')
+  log('=== BocomHermes ' + app.getVersion() + ' start (' + (app.isPackaged ? 'packaged' : 'dev') + ') userData=' + app.getPath('userData') + ' ===')
 
   const deps = { ipcMain, app, BrowserWindow, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }
   const { createInput, toggleInput, buildTray, recordHistory, touchHistory } = initWindow(S, deps)
@@ -48,7 +48,7 @@ app.whenReady().then(() => {
   initTrigger(S, { log })
 
   // serve 启动命令：开发=opencode，打包 exe=bocomcode；可被环境变量或 settings.serveBin 覆盖
-  const serveBin = process.env.TIANSHU_SERVE_BIN || S.settings.serveBin || (app.isPackaged ? 'bocomcode' : 'opencode')
+  const serveBin = process.env.BOCOMHERMES_SERVE_BIN || S.settings.serveBin || (app.isPackaged ? 'bocomcode' : 'opencode')
   oc.setServeBin(serveBin)
   log('serve binary: ' + serveBin + (app.isPackaged ? ' (packaged)' : ' (dev)'))
 

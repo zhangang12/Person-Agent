@@ -1,9 +1,9 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh">
 <head>
 <meta charset="utf-8" />
 <title>个人桌面智能体</title>
-<script>try { document.documentElement.dataset.theme = window.tianshu.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
+<script>try { document.documentElement.dataset.theme = window.BocomHermes.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
 <link rel="stylesheet" href="glass.css" />
 <style>
   .bar { display: flex; align-items: center; gap: 9px; height: 100%; padding: 0 10px; }
@@ -56,37 +56,37 @@
       q.value = ''
       if (e.ctrlKey) {
         // Ctrl+Enter → 三视角 fan-out 并行卡
-        try { await window.tianshu.spawnFanout(v) } catch (err) { console.error(err) }
+        try { await window.BocomHermes.spawnFanout(v) } catch (err) { console.error(err) }
       } else {
-        try { await window.tianshu.spawnCard(v) } catch (err) { console.error(err) }
+        try { await window.BocomHermes.spawnCard(v) } catch (err) { console.error(err) }
       }
-    } else if (e.key === 'Escape') { window.tianshu.hideSelf() }
+    } else if (e.key === 'Escape') { window.BocomHermes.hideSelf() }
   })
   window.addEventListener('focus', () => q.focus())
 
   // 主题
   document.getElementById('theme').addEventListener('click', () => {
     const cur = document.documentElement.dataset.theme
-    window.tianshu.setTheme(cur === 'dark' ? 'light' : 'dark')
+    window.BocomHermes.setTheme(cur === 'dark' ? 'light' : 'dark')
   })
-  window.tianshu.onTheme((t) => { document.documentElement.dataset.theme = t })
+  window.BocomHermes.onTheme((t) => { document.documentElement.dataset.theme = t })
 
   // 工作流：把当前输入作为目标跑动态编排
   document.getElementById('workflow').addEventListener('click', async () => {
     const v = q.value.trim(); if (!v) { q.focus(); return }
-    try { await window.tianshu.spawnWorkflow(v); q.value = '' } catch (e) { console.error(e) }
+    try { await window.BocomHermes.spawnWorkflow(v); q.value = '' } catch (e) { console.error(e) }
   })
   // 卡坞 + 设置
-  document.getElementById('dock').addEventListener('click', () => { try { window.tianshu.openDock() } catch (e) {} })
-  document.getElementById('settings').addEventListener('click', () => { try { window.tianshu.openSettings() } catch (e) {} })
+  document.getElementById('dock').addEventListener('click', () => { try { window.BocomHermes.openDock() } catch (e) {} })
+  document.getElementById('settings').addEventListener('click', () => { try { window.BocomHermes.openSettings() } catch (e) {} })
 
   // 项目目录
   const projName = document.getElementById('projname')
-  try { projName.textContent = window.tianshu.getProject() || '未选目录' } catch (e) {}
+  try { projName.textContent = window.BocomHermes.getProject() || '未选目录' } catch (e) {}
   document.getElementById('proj').addEventListener('click', async () => {
-    try { projName.textContent = await window.tianshu.pickProject() } catch (e) {}
+    try { projName.textContent = await window.BocomHermes.pickProject() } catch (e) {}
   })
-  window.tianshu.onProject((p) => { projName.textContent = p })
+  window.BocomHermes.onProject((p) => { projName.textContent = p })
 </script>
 </body>
 </html>

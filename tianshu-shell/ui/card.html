@@ -1,9 +1,9 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh">
 <head>
 <meta charset="utf-8" />
 <title>个人桌面智能体</title>
-<script>try { document.documentElement.dataset.theme = window.tianshu.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
+<script>try { document.documentElement.dataset.theme = window.BocomHermes.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
 <link rel="stylesheet" href="glass.css" />
 <style>
   .card { display: flex; flex-direction: column; height: 100%; padding: 11px 13px 12px; gap: 9px; }
@@ -127,7 +127,7 @@
 </div>
 <script src="rich.js"></script>
 <script>
-  window.tianshu.onTheme((t) => { document.documentElement.dataset.theme = t })
+  window.BocomHermes.onTheme((t) => { document.documentElement.dataset.theme = t })
 
   // Markdown 渲染 + 富结果块识别已抽到 ui/rich.js（window.Rich）。
   const renderMarkdown = (md) => window.Rich.renderMarkdown(md)
@@ -142,16 +142,16 @@
   const ci = document.getElementById('ci'), send = document.getElementById('send')
   const quick = document.getElementById('quick')
 
-  document.getElementById('x').addEventListener('click', () => window.tianshu.closeSelf())
-  document.getElementById('min').addEventListener('click', () => window.tianshu.minimizeSelf())
-  document.getElementById('max').addEventListener('click', () => window.tianshu.toggleMaximize())
+  document.getElementById('x').addEventListener('click', () => window.BocomHermes.closeSelf())
+  document.getElementById('min').addEventListener('click', () => window.BocomHermes.minimizeSelf())
+  document.getElementById('max').addEventListener('click', () => window.BocomHermes.toggleMaximize())
   const pinBtn = document.getElementById('pin')
-  pinBtn.addEventListener('click', async () => { const on = await window.tianshu.togglePin(); pinBtn.classList.toggle('on', on); pinBtn.title = on ? '已置顶（点击取消）' : '置顶' })
+  pinBtn.addEventListener('click', async () => { const on = await window.BocomHermes.togglePin(); pinBtn.classList.toggle('on', on); pinBtn.title = on ? '已置顶（点击取消）' : '置顶' })
 
   // 点 文件:行 链接 → 在编辑器打开
   feed.addEventListener('click', (e) => {
     const a = e.target.closest('a.floc'); if (!a) return
-    e.preventDefault(); window.tianshu.openLoc(a.dataset.file, a.dataset.line)
+    e.preventDefault(); window.BocomHermes.openLoc(a.dataset.file, a.dataset.line)
   })
 
   const ARROW = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>'
@@ -177,12 +177,12 @@
     const ok = document.createElement('button'); ok.className = 'ok'; ok.textContent = '允许一次'
     const al = document.createElement('button'); al.className = 'no'; al.textContent = '总是'
     const no = document.createElement('button'); no.className = 'no'; no.textContent = '拒绝'
-    const reply = (d) => { window.tianshu.permissionReply(requestId, d); box.remove() }
+    const reply = (d) => { window.BocomHermes.permissionReply(requestId, d); box.remove() }
     ok.onclick = () => reply('once'); al.onclick = () => reply('always'); no.onclick = () => reply('reject')
     box.append(t, ok, al, no)
     feed.appendChild(box); feed.scrollTop = feed.scrollHeight
   }
-  window.tianshu.onPermission(({ requestId, tool }) => showPermission(requestId, tool))
+  window.BocomHermes.onPermission(({ requestId, tool }) => showPermission(requestId, tool))
 
   // 流式：text → 答案气泡；reasoning → 思考折叠块（答案上方）
   // 一轮回答可能有多个 text 片段（文本→工具调用→文本），按 partID 累积、按到达顺序拼接，
@@ -195,7 +195,7 @@
     return { el: d, body: d.querySelector('.body') }
   }
   const joinParts = (m) => Array.from(m.values()).join('\n')
-  window.tianshu.onStream(({ kind, text, partID }) => {
+  window.BocomHermes.onStream(({ kind, text, partID }) => {
     const key = partID || '_'
     if (kind === 'reasoning') {
       if (!curReason && curAnswer && curAnswer.parentNode === feed) curReason = makeReason(curAnswer)
@@ -219,7 +219,7 @@
     curAnswer = ai; curReason = null; answerParts = new Map(); reasonParts = new Map(); setBusy(true)
     let ok = true
     try {
-      const reply = await window.tianshu.cardSend(text)
+      const reply = await window.BocomHermes.cardSend(text)
       if (reply) ai.innerHTML = renderMarkdown(reply)
       else if (!ai.textContent.trim() || ai.textContent === PH) ai.textContent = '（无文本输出）'
       if (curReason) curReason.el.open = false   // 答完自动折叠思考
@@ -234,7 +234,7 @@
   function autoGrow() { ci.style.height = 'auto'; ci.style.height = Math.min(ci.scrollHeight, 96) + 'px' }
   function submit() { const v = ci.value.trim(); if (!v || busy) return; ci.value = ''; autoGrow(); addMsg(v, 'me'); turn(v) }
 
-  send.addEventListener('click', () => { if (busy) window.tianshu.cardAbort(); else submit() })
+  send.addEventListener('click', () => { if (busy) window.BocomHermes.cardAbort(); else submit() })
   ci.addEventListener('input', autoGrow)
   ci.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } })
 
@@ -256,12 +256,12 @@
 
   // 富结果动作：应用/运行 = 向同一会话发指令（agent 用工具做、经内联权限）；复制/打开在 rich.js/本地
   window.Rich.wireActions(feed, {
-    open: (file, line) => window.tianshu.openLoc(file, line),
+    open: (file, line) => window.BocomHermes.openLoc(file, line),
     apply: async ({ file, raw, all }, btn) => {
       if (busy) return
       const orig = btn.innerHTML; btn.textContent = '应用中…'; btn.disabled = true
       try {
-        const results = await window.tianshu.applyDiff(raw)
+        const results = await window.BocomHermes.applyDiff(raw)
         const failed = results.filter(r => !r.ok)
         if (failed.length === 0) {
           const names = results.map(r => r.file.split(/[/\\]/).pop()).join('、')
@@ -305,7 +305,7 @@
     if (!sid) addMsg(initMsg, 'me')      // 全新卡：先显示任务（fan-out 时 msg≠title）
     const boot = addMsg('', 'ai'); boot.textContent = sid ? '正在续接对话…' : '正在启动引擎…（首次较慢，请稍候）'
     try {
-      const r = await window.tianshu.cardInit(sid ? { sid, title } : { title })
+      const r = await window.BocomHermes.cardInit(sid ? { sid, title } : { title })
       projEl.textContent = r.project || ''; projEl.title = r.project || ''
       boot.remove()
       if (sid) {

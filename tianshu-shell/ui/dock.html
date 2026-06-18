@@ -1,9 +1,9 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh">
 <head>
 <meta charset="utf-8" />
 <title>卡坞 · 个人桌面智能体</title>
-<script>try { document.documentElement.dataset.theme = window.tianshu.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
+<script>try { document.documentElement.dataset.theme = window.BocomHermes.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
 <link rel="stylesheet" href="glass.css" />
 <style>
   .dock { display: flex; flex-direction: column; height: 100%; padding: 13px 14px 12px; gap: 11px; }
@@ -57,7 +57,7 @@
   }
   function render() {
     let items = []
-    try { items = (window.tianshu.getHistory() || []).slice() } catch (e) {}
+    try { items = (window.BocomHermes.getHistory() || []).slice() } catch (e) {}
     items.sort((a, b) => (b.ts || 0) - (a.ts || 0))
     $('count').textContent = items.length ? items.length + ' 段' : ''
     if (!items.length) {
@@ -70,15 +70,15 @@
       el.innerHTML = '<span class="t">' + esc(it.title || '对话') + '</span>'
         + '<span class="meta"><span class="proj">' + esc(it.project || '未选目录') + '</span><span>' + rel(it.ts || it.created || Date.now()) + '</span></span>'
       el.title = '续接：' + (it.title || '') + (it.dir ? '\n' + it.dir : '')
-      el.addEventListener('click', async () => { try { await window.tianshu.openHistory(it.id, it.title || '续接对话') } catch (e) {} window.tianshu.closeSelf() })
+      el.addEventListener('click', async () => { try { await window.BocomHermes.openHistory(it.id, it.title || '续接对话') } catch (e) {} window.BocomHermes.closeSelf() })
       list.appendChild(el)
     }
   }
   render()
-  try { window.tianshu.onTheme((t) => { document.documentElement.dataset.theme = t }) } catch (e) {}
-  $('x').addEventListener('click', () => window.tianshu.closeSelf())
-  $('clear').addEventListener('click', async () => { try { await window.tianshu.clearHistory() } catch (e) {} render() })
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.tianshu.closeSelf() })
+  try { window.BocomHermes.onTheme((t) => { document.documentElement.dataset.theme = t }) } catch (e) {}
+  $('x').addEventListener('click', () => window.BocomHermes.closeSelf())
+  $('clear').addEventListener('click', async () => { try { await window.BocomHermes.clearHistory() } catch (e) {} render() })
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.BocomHermes.closeSelf() })
 </script>
 </body>
 </html>

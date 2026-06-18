@@ -1,4 +1,4 @@
-// 天枢 · HTTP 抓包 MCP（本地 stdio 服务，零依赖）
+﻿// 天枢 · HTTP 抓包 MCP（本地 stdio 服务，零依赖）
 // 给 agent 扩能：起一个本地 HTTP 正向代理，捕获经过它的 HTTP 请求/响应，供 agent 查询与分析。
 // 只抓 HTTP（内网开发环境无 HTTPS）；遇到 HTTPS(CONNECT) 仅盲隧道放行、不解析。数据不出网（全程本机转发）。
 // 用法：被测程序/浏览器把 HTTP 代理指向本代理地址即可。注册见 mcp/README.md。
@@ -93,7 +93,7 @@ const write = (m) => process.stdout.write(JSON.stringify(m) + '\n')
 const reply = (id, result) => write({ jsonrpc: '2.0', id, result })
 async function handle(msg) {
   const { id, method, params } = msg
-  if (method === 'initialize') return reply(id, { protocolVersion: (params && params.protocolVersion) || PROTO, capabilities: { tools: {} }, serverInfo: { name: 'tianshu-httpcap', version: '0.1.0' } })
+  if (method === 'initialize') return reply(id, { protocolVersion: (params && params.protocolVersion) || PROTO, capabilities: { tools: {} }, serverInfo: { name: 'BocomHermes-httpcap', version: '0.1.0' } })
   if (method === 'notifications/initialized' || method === 'initialized') return
   if (method === 'ping') return reply(id, {})
   if (method === 'tools/list') return reply(id, { tools: TOOLS })

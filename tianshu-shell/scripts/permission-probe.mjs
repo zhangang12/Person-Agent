@@ -1,4 +1,4 @@
-// 天枢 · 权限字段「真往返」确认（增强版）
+﻿// 天枢 · 权限字段「真往返」确认（增强版）
 // 一次触发多种工具（列目录/写文件/删文件），对每个权限请求都应答；
 // 用 {reply:"once"} 应答，若不被接受自动改试 {response}，直接判定 bocomcode 认哪个字段/端点。
 // 用法： node scripts/permission-probe.mjs [baseURL]   （默认 http://127.0.0.1:4096）
@@ -102,8 +102,8 @@ async function main() {
 
   const prompt = '请依次用工具实际执行（必须真的调用工具，不要凭空回答）：'
     + '1) 列出当前工作目录下的文件；'
-    + '2) 在当前目录创建文件 tianshu-probe.tmp，写入 ok；'
-    + '3) 删除 tianshu-probe.tmp。完成后只回复 DONE。'
+    + '2) 在当前目录创建文件 BocomHermes-probe.tmp，写入 ok；'
+    + '3) 删除 BocomHermes-probe.tmp。完成后只回复 DONE。'
   console.log('发送触发指令（列目录/写/删），等待权限往返…（最多 120s）')
   let finalText = '', sendErr = null
   try {

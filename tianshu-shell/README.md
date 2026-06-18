@@ -1,15 +1,15 @@
-# 个人桌面智能体（桌面壳 · Electron）
+﻿# 个人桌面智能体（桌面壳 · Electron）
 
-> 应用名「个人桌面智能体」；代码目录沿用 `tianshu-shell`，内部 API 命名空间 `window.tianshu` 不变。
+> 应用名「个人桌面智能体」；代码目录沿用 `BocomHermes-shell`，内部 API 命名空间 `window.BocomHermes` 不变。
 
 可在真实桌面上**自由拖动的透明玻璃卡片** + **全局输入框**。一句话开一张卡，多卡并行。
 选 Electron 而非 Tauri：**不需要 Rust、不需要 VS Build Tools 的 C++ 工具链**——Electron 是预编译二进制，`npm install` 即可，零原生编译。
 
 ```
-tianshu-shell/
+BocomHermes-shell/
 ├── main.js          # 主进程：建窗、全局热键、主题/项目、卡片↔会话 IPC
 ├── opencode.js      # 连 opencode serve：建会话/发消息/中止/事件流/权限
-├── preload.js       # 安全桥：window.tianshu.*
+├── preload.js       # 安全桥：window.BocomHermes.*
 ├── ui/
 │   ├── glass.css    # 双主题设计令牌 + 玻璃材质 + 组件样式
 │   ├── input.html   # 全局输入框（启动器）+ 主题/项目切换
@@ -21,11 +21,11 @@ tianshu-shell/
 - **Node.js**（你已是 v24）。Electron 内置 Chromium，**不需要** Rust / MSVC。
 - **serve 已装且配好一个模型**——卡片会真的去调它。本壳自动拉起 serve（按项目分端口，从 4096 起），只连本地、不碰模型配置。
 - **serve 命令可配**：开发环境默认 `opencode serve`，打包成 exe 后默认 `bocomcode serve`（由 `app.isPackaged` 自动区分）。
-  也可手动覆盖：环境变量 `TIANSHU_SERVE_BIN=bocomcode`，或 `userData/settings.json` 里 `"serveBin": "bocomcode"`。
+  也可手动覆盖：环境变量 `BOCOMHERMES_SERVE_BIN=bocomcode`，或 `userData/settings.json` 里 `"serveBin": "bocomcode"`。
 
 ## 运行
 ```powershell
-cd tianshu-shell
+cd BocomHermes-shell
 npm install        # 下载 Electron 预编译二进制（已配国内镜像，见下）
 npm start          # 启动
 ```
@@ -87,7 +87,7 @@ npm run dist
 - 应用图标 `build/icon.ico`；打包配置在 `package.json` 的 `build` 字段。
 
 目标机注意：
-- 需有 **`bocomcode`**（打包后默认）或 `opencode` 在 PATH，否则卡里报"引擎未就绪"。可用 `TIANSHU_SERVE_BIN` 或 settings.json `serveBin` 覆盖。
+- 需有 **`bocomcode`**（打包后默认）或 `opencode` 在 PATH，否则卡里报"引擎未就绪"。可用 `BOCOMHERMES_SERVE_BIN` 或 settings.json `serveBin` 覆盖。
 - 未做代码签名，首次运行 Windows SmartScreen 可能提示"未知发布者" → 更多信息 → 仍要运行。
 
 ## 后续可加（功能路线）
