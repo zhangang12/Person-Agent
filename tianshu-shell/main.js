@@ -3,6 +3,7 @@ const path = require('path')
 const fs = require('fs')
 const { exec } = require('child_process')
 const oc = require('./opencode')
+const orch = require('./orchestrator')
 
 const USE_ACRYLIC = false
 let inputWin = null
@@ -58,6 +59,7 @@ const sessionInfo = new Map()   // sessionId -> { wc, serve }   serve = 该项�
 const pendingPerm = new Map()   // requestId -> sessionId
 const streamBuf = new Map()     // sessionId -> { partID, text }
 const sentPrompt = new Map()    // sessionId -> 最近用户输入
+const workflows = new Map()     // 工作流卡 wc.id -> { ac(AbortController), serve, sessions:Set }
 
 // 事件回调（所有 serve 的事件循环共用；按 sessionId 路由回对应卡片 + 对应 serve）
 function onPermission({ sessionId, requestId, tool }) {
@@ -115,6 +117,24 @@ function spawnCard(title, sid) {
     const s = sessionByWc.get(wcId)
     if (s) { const si = sessionInfo.get(s); if (si) oc.abort(si.serve, s); sessionInfo.delete(s); streamBuf.delete(s); sentPrompt.delete(s) }
     sessionByWc.delete(wcId)
+  })
+  return id
+}
+
+// 工作流卡：跑动态编排，实时展示任务图
+function spawnWorkflow(goal) {
+  const id = ++cardSeq
+  const col = (id - 1) % 4, row = Math.floor((id - 1) / 4) % 4
+  const win = new BrowserWindow(baseOpts({
+    width: 560, height: 680, minWidth: 420, minHeight: 380, resizable: true,
+    alwaysOnTop: false, skipTaskbar: false,
+    x: 180 + col * 56, y: 80 + row * 50 + col * 18,
+  }))
+  const wcId = win.webContents.id
+  win.loadFile(path.join(__dirname, 'ui', 'workflow.html'), { query: { goal: goal || '未命名工作流', id: String(id) } })
+  win.on('closed', () => {
+    const w = workflows.get(wcId)
+    if (w) { try { w.ac.abort() } catch {}; for (const s of w.sessions) { try { oc.abort(w.serve, s) } catch {}; sessionInfo.delete(s) }; workflows.delete(wcId) }
   })
   return id
 }
@@ -247,6 +267,44 @@ app.whenReady().then(() => {
     }
     saveSettings()
     return true
+  })
+
+  // 工作流（动态编排）
+  ipcMain.handle('spawn-workflow', (_e, goal) => spawnWorkflow(goal))
+  ipcMain.on('abort-workflow', (e) => { const w = workflows.get(e.sender.id); if (w) { try { w.ac.abort() } catch {} } })
+  ipcMain.handle('run-workflow', async (e, goal) => {
+    const wc = e.sender
+    const dir = settings.projectDir || ''
+    const serve = await oc.ensureServe(dir, handlers, log)
+    const ac = new AbortController()
+    const entry = { ac, serve, sessions: new Set() }
+    workflows.set(wc.id, entry)
+    const send = (type, payload) => { if (!wc.isDestroyed()) wc.send('wf-event', { type, ...payload }) }
+    // 每个子任务 = 一个 opencode 会话；登记到 sessionInfo 让其权限/事件路由到这张工作流卡
+    const run = async (prompt, meta) => {
+      const sid = await oc.createSession(serve, '编排:' + (meta && meta.kind || 'task') + (meta && meta.id ? ':' + meta.id : ''))
+      if (!sid) throw new Error('createSession 失败')
+      sessionInfo.set(sid, { wc, serve }); entry.sessions.add(sid)
+      try { return await oc.sendMessage(serve, sid, prompt) }
+      finally { sessionInfo.delete(sid); entry.sessions.delete(sid); streamBuf.delete(sid) }
+    }
+    try {
+      const res = await orch.orchestrate(goal, {
+        run, signal: ac.signal, maxConcurrency: 2, maxRounds: 4, maxTasks: 16, maxBatch: 5, taskTimeoutMs: 240000,
+        onPlan: (round, plan) => send('plan', { round, done: plan.done, tasks: plan.tasks.map((t) => ({ id: t.id, role: t.role, goal: t.goal, deps: t.deps })) }),
+        onTaskStart: (t) => send('task', { id: t.id, status: 'running' }),
+        onTaskDone: (t, out, st) => send('task', { id: t.id, status: 'ok', chars: (out || '').length }),
+        onTaskError: (t, err, st) => send('task', { id: t.id, status: st || 'error', error: String(err && err.message || err) }),
+      })
+      send('final', { final: res.final, stopped: res.stopped, done: res.done, rounds: res.rounds, elapsedMs: res.elapsedMs, unmet: res.unmet })
+      return { ok: true }
+    } catch (err) {
+      send('error', { error: String(err && err.message || err) })
+      return { ok: false }
+    } finally {
+      for (const s of entry.sessions) sessionInfo.delete(s)
+      workflows.delete(wc.id)
+    }
   })
 
   // 开卡 / 窗口

@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<script>try { document.documentElement.dataset.theme = window.tianshu.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
+<link rel="stylesheet" href="glass.css" />
+<style>
+  .card { display: flex; flex-direction: column; height: 100%; padding: 11px 13px 12px; gap: 9px; }
+  .hd { display: flex; align-items: center; gap: 7px; flex: none; }
+  .ttl { flex: 1; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hbtn { border: none; background: transparent; color: var(--txt3); cursor: pointer; padding: 3px; border-radius: 6px; display: flex; }
+  .hbtn:hover { color: var(--txt); background: var(--composer-bg); }
+  .goal { flex: none; font-size: 12px; color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 9px; padding: 7px 10px; line-height: 1.45; }
+  .meta { flex: none; font-size: 11px; color: var(--txt3); display: flex; align-items: center; gap: 8px; }
+  .feed { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; padding-right: 2px; }
+  .feed::-webkit-scrollbar { width: 6px; } .feed::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  .round { font-size: 10.5px; color: var(--txt3); margin: 4px 0 1px; font-family: var(--mono); }
+  .task { display: flex; gap: 8px; align-items: flex-start; background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 10px; padding: 7px 9px; }
+  .task .ic { flex: none; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+  .task .tx { flex: 1; min-width: 0; }
+  .task .tg { font-size: 12px; color: var(--txt); line-height: 1.4; }
+  .task .tm { font-size: 10px; color: var(--txt3); font-family: var(--mono); margin-top: 2px; }
+  .task.ok { border-color: rgba(10,157,110,.3); } .task.err { border-color: var(--diff-del); }
+  .dep { color: var(--accent); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--txt3); }
+  .wf-final { background: var(--ai-bg); border: .5px solid var(--ai-border); border-radius: 11px; padding: 9px 11px; overflow-wrap: anywhere; line-height: 1.55; -webkit-user-select: text; user-select: text; }
+  .wf-final h1,.wf-final h2,.wf-final h3,.wf-final h4 { font-size: 13px; font-weight: 600; margin: 9px 0 4px; }
+  .wf-final p { margin: 5px 0; } .wf-final ul,.wf-final ol { margin: 5px 0; padding-left: 18px; }
+  .wf-final pre.code { background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 8px; padding: 9px 11px; overflow-x: auto; }
+  .wf-final table { border-collapse: collapse; margin: 7px 0; font-size: 12px; display: block; overflow-x: auto; }
+  .wf-final th,.wf-final td { border: .5px solid var(--composer-border); padding: 4px 8px; }
+  .banner { font-size: 12px; padding: 7px 10px; border-radius: 9px; }
+  .banner.run { background: var(--composer-bg); color: var(--txt2); }
+  .banner.done { background: rgba(10,157,110,.12); color: var(--green); }
+  .banner.err { background: var(--warn-bg); color: var(--warn-txt); border: .5px solid var(--warn-border); }
+  .perm { display: flex; align-items: center; gap: 8px; background: var(--warn-bg); border: .5px solid var(--warn-border); border-radius: 11px; padding: 7px 9px; }
+  .perm .t { flex: 1; font-size: 12px; color: var(--warn-txt); }
+  .perm .ok { font-size: 11px; font-weight: 600; color: var(--warn-btn-fg); background: var(--warn-btn); padding: 4px 10px; border-radius: 7px; border: none; cursor: pointer; }
+  .perm .no { font-size: 11px; color: var(--txt2); background: transparent; border: none; cursor: pointer; padding: 4px 6px; }
+  .stop { font-size: 11px; color: var(--diff-del); background: transparent; border: 1px solid var(--diff-del); border-radius: 7px; padding: 3px 10px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="glass">
+  <span class="hl"></span>
+  <div class="card">
+    <div class="hd">
+      <span class="icn" style="display:flex"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent)"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M6 8.5v3a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-3M12 13.5v2"/></svg></span>
+      <span id="ttl" class="ttl">工作流</span>
+      <button id="stop" class="stop nodrag">停止</button>
+      <button id="min" class="hbtn nodrag" title="最小化"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+      <button id="max" class="hbtn nodrag" title="最大化/还原"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></button>
+      <button id="x" class="hbtn nodrag" title="关闭"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div id="goal" class="goal nodrag"></div>
+    <div id="feed" class="feed nodrag"></div>
+  </div>
+</div>
+<script src="rich.js"></script>
+<script>
+  window.tianshu.onTheme((t) => { document.documentElement.dataset.theme = t })
+  const params = new URLSearchParams(location.search)
+  const goal = params.get('goal') || '工作流'
+  document.getElementById('goal').textContent = goal
+  document.getElementById('ttl').title = goal
+  const feed = document.getElementById('feed')
+  document.getElementById('x').addEventListener('click', () => window.tianshu.closeSelf())
+  document.getElementById('min').addEventListener('click', () => window.tianshu.minimizeSelf())
+  document.getElementById('max').addEventListener('click', () => window.tianshu.toggleMaximize())
+
+  const SPIN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" style="color:var(--accent);animation:spin 1s linear infinite"><path d="M12 3a9 9 0 1 0 9 9"/></svg>'
+  const OKI = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="color:var(--green)"><path d="M4 12l5 5L20 6"/></svg>'
+  const ERRI = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" style="color:var(--diff-del)"><path d="M6 6l12 12M18 6L6 18"/></svg>'
+  const TOI = '<span style="color:var(--warn-txt);font-size:12px">⏱</span>'
+  const icon = (st) => st === 'running' ? SPIN : st === 'ok' ? OKI : st === 'timeout' ? TOI : (st === 'error' || st === 'aborted') ? ERRI : '<span class="dot"></span>'
+
+  const tasks = new Map()   // id -> {el, ic, tm}
+  let curRound = 0
+  function ensureRound(r) {
+    if (r === curRound) return; curRound = r
+    const d = document.createElement('div'); d.className = 'round'; d.textContent = '— 第 ' + r + ' 轮规划 —'
+    feed.appendChild(d)
+  }
+  function addTask(t) {
+    const el = document.createElement('div'); el.className = 'task'
+    const deps = (t.deps && t.deps.length) ? ' <span class="dep">←' + t.deps.join(',') + '</span>' : ''
+    el.innerHTML = '<span class="ic"></span><div class="tx"><div class="tg"></div><div class="tm">' + t.id + ' · ' + (t.role || 'worker') + deps + '</div></div>'
+    el.querySelector('.tg').textContent = t.goal
+    el.querySelector('.ic').innerHTML = icon('pending')
+    feed.appendChild(el); feed.scrollTop = feed.scrollHeight
+    tasks.set(t.id, { el, ic: el.querySelector('.ic'), tm: el.querySelector('.tm') })
+  }
+  function setTask(id, st, extra) {
+    const o = tasks.get(id); if (!o) return
+    o.ic.innerHTML = icon(st)
+    o.el.classList.toggle('ok', st === 'ok'); o.el.classList.toggle('err', st === 'error' || st === 'timeout' || st === 'aborted')
+    if (extra) o.tm.insertAdjacentHTML('beforeend', ' · ' + extra)
+    feed.scrollTop = feed.scrollHeight
+  }
+  function banner(cls, text) {
+    const b = document.createElement('div'); b.className = 'banner ' + cls; b.textContent = text
+    feed.appendChild(b); feed.scrollTop = feed.scrollHeight; return b
+  }
+
+  // 权限（worker 写/执行类操作会路由到这里）
+  window.tianshu.onPermission(({ requestId, tool }) => {
+    const box = document.createElement('div'); box.className = 'perm'
+    const t = document.createElement('span'); t.className = 't'; t.textContent = '某子任务请求执行：' + tool
+    const ok = document.createElement('button'); ok.className = 'ok'; ok.textContent = '允许一次'
+    const al = document.createElement('button'); al.className = 'no'; al.textContent = '总是'
+    const no = document.createElement('button'); no.className = 'no'; no.textContent = '拒绝'
+    const reply = (d) => { window.tianshu.permissionReply(requestId, d); box.remove() }
+    ok.onclick = () => reply('once'); al.onclick = () => reply('always'); no.onclick = () => reply('reject')
+    box.append(t, ok, al, no); feed.appendChild(box); feed.scrollTop = feed.scrollHeight
+  })
+
+  let runningBanner = banner('run', '正在规划与执行…')
+  window.tianshu.onWorkflowEvent((ev) => {
+    if (ev.type === 'plan') {
+      if (ev.done && (!ev.tasks || !ev.tasks.length)) { ensureRound(ev.round); banner('run', '第 ' + ev.round + ' 轮：判定可收尾，正在汇总…'); return }
+      ensureRound(ev.round)
+      for (const t of ev.tasks || []) if (!tasks.has(t.id)) addTask(t)
+    } else if (ev.type === 'task') {
+      setTask(ev.id, ev.status, ev.status === 'ok' ? (ev.chars + ' 字') : (ev.error ? ev.error.slice(0, 40) : ''))
+    } else if (ev.type === 'final') {
+      if (runningBanner) runningBanner.remove()
+      const secs = ev.elapsedMs ? Math.round(ev.elapsedMs / 1000) + 's' : ''
+      banner('done', '完成 · ' + ev.rounds + ' 轮 · ' + secs + (ev.unmet && ev.unmet.length ? ' · 未满足依赖:' + ev.unmet.join(',') : ''))
+      const box = document.createElement('div'); box.className = 'wf-final'
+      box.innerHTML = window.Rich.renderMarkdown(ev.final || '(无最终成果)')
+      feed.appendChild(box); feed.scrollTop = feed.scrollHeight
+    } else if (ev.type === 'error') {
+      if (runningBanner) runningBanner.remove()
+      banner('err', '⚠ 出错：' + ev.error)
+    }
+  })
+  // 富结果里的 文件:行 跳转
+  feed.addEventListener('click', (e) => { const a = e.target.closest('a.floc'); if (a) { e.preventDefault(); window.tianshu.openLoc(a.dataset.file, a.dataset.line) } })
+
+  document.getElementById('stop').addEventListener('click', () => { window.tianshu.abortWorkflow(); banner('err', '已请求停止…') })
+  ;(async () => { try { await window.tianshu.runWorkflow(goal) } catch (e) { banner('err', '⚠ ' + (e.message || e)) } })()
+</script>
+</body>
+</html>

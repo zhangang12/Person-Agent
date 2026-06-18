@@ -26,6 +26,11 @@ contextBridge.exposeInMainWorld('tianshu', {
   getHistory: () => ipcRenderer.sendSync('get-history'),
   openHistory: (sid, title) => ipcRenderer.invoke('open-history', { sid, title }),
   clearHistory: () => ipcRenderer.invoke('clear-history'),
+  // 工作流（动态编排）
+  spawnWorkflow: (goal) => ipcRenderer.invoke('spawn-workflow', goal),
+  runWorkflow: (goal) => ipcRenderer.invoke('run-workflow', goal),
+  abortWorkflow: () => ipcRenderer.send('abort-workflow'),
+  onWorkflowEvent: (cb) => ipcRenderer.on('wf-event', (_e, p) => cb(p)),
   // 对话 ↔ opencode 会话
   cardInit: (opts) => ipcRenderer.invoke('card-init', opts || {}),
   cardSend: (text) => ipcRenderer.invoke('card-send', text),
