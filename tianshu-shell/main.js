@@ -100,6 +100,19 @@ function openInEditor(file, line) {
   exec(cmd, (err) => { if (err) shell.openPath(file).catch(() => {}) }) // 编辑器命令失败则用默认程序打开
 }
 
+// 设置面板（小玻璃卡）：主题 / 编辑器命令 / serve 二进制 / 当前项目
+let settingsWin = null
+function openSettings() {
+  if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.show(); settingsWin.focus(); return }
+  const { width } = screen.getPrimaryDisplay().workAreaSize
+  settingsWin = new BrowserWindow(baseOpts({
+    width: 460, height: 500, x: Math.round(width / 2 - 230), y: 140,
+    skipTaskbar: false, alwaysOnTop: true, resizable: false,
+  }))
+  settingsWin.loadFile(path.join(__dirname, 'ui', 'settings.html'))
+  settingsWin.on('closed', () => { settingsWin = null })
+}
+
 function buildTray() {
   const img = nativeImage.createFromPath(path.join(__dirname, 'assets', 'tray.png'))
   tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img)
@@ -107,6 +120,7 @@ function buildTray() {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '唤起输入框', accelerator: 'Ctrl+Shift+Space', click: () => { if (!inputWin) createInput(); else { inputWin.show(); inputWin.focus() } } },
     { label: '切换深 / 浅主题', click: toggleTheme },
+    { label: '设置…', click: openSettings },
     { type: 'separator' },
     { label: '退出天枢', click: () => app.quit() },
   ]))
@@ -139,6 +153,29 @@ app.whenReady().then(() => {
       for (const w of BrowserWindow.getAllWindows()) w.webContents.send('project-changed', projName())
     }
     return projName()
+  })
+
+  // 设置面板
+  ipcMain.handle('open-settings', () => openSettings())
+  ipcMain.on('get-settings', (e) => {
+    e.returnValue = {
+      theme: settings.theme,
+      editorCmd: settings.editorCmd || '',
+      serveBin: settings.serveBin || '',
+      serveBinEffective: process.env.TIANSHU_SERVE_BIN || settings.serveBin || (app.isPackaged ? 'bocomcode' : 'opencode'),
+      serveBinLocked: !!process.env.TIANSHU_SERVE_BIN,   // 环境变量在场时面板里只读
+      project: projName(),
+      projectDir: settings.projectDir || '',
+    }
+  })
+  ipcMain.handle('set-settings', (_e, patch) => {
+    if (patch && typeof patch.editorCmd === 'string') settings.editorCmd = patch.editorCmd.trim()
+    if (patch && typeof patch.serveBin === 'string') {
+      settings.serveBin = patch.serveBin.trim()
+      if (!process.env.TIANSHU_SERVE_BIN && settings.serveBin) oc.setServeBin(settings.serveBin) // 立即对新开 serve 生效（已起的不动）
+    }
+    saveSettings()
+    return true
   })
 
   // 开卡 / 窗口

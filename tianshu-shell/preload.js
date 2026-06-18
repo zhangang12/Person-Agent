@@ -16,6 +16,10 @@ contextBridge.exposeInMainWorld('tianshu', {
   getProject: () => ipcRenderer.sendSync('get-project'),
   pickProject: () => ipcRenderer.invoke('pick-project'),
   onProject: (cb) => ipcRenderer.on('project-changed', (_e, p) => cb(p)),
+  // 设置面板
+  openSettings: () => ipcRenderer.invoke('open-settings'),
+  getSettings: () => ipcRenderer.sendSync('get-settings'),
+  setSettings: (patch) => ipcRenderer.invoke('set-settings', patch),
   // 对话 ↔ opencode 会话
   cardInit: () => ipcRenderer.invoke('card-init'),
   cardSend: (text) => ipcRenderer.invoke('card-send', text),

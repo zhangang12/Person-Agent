@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<script>try { document.documentElement.dataset.theme = window.tianshu.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
+<link rel="stylesheet" href="glass.css" />
+<style>
+  .set { display: flex; flex-direction: column; height: 100%; padding: 13px 16px 14px; gap: 13px; }
+  .hd { display: flex; align-items: center; gap: 8px; flex: none; }
+  .hd .ttl { flex: 1; font-size: 14px; font-weight: 600; }
+  .hbtn { border: none; background: transparent; color: var(--txt3); cursor: pointer; padding: 4px; border-radius: 7px; display: flex; }
+  .hbtn:hover { color: var(--txt); background: var(--composer-bg); }
+  .body { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; padding-right: 2px; }
+  .body::-webkit-scrollbar { width: 6px; } .body::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  .fld { display: flex; flex-direction: column; gap: 6px; }
+  .lbl { font-size: 12px; font-weight: 600; color: var(--txt); }
+  .hint { font-size: 11px; color: var(--txt3); line-height: 1.45; }
+  .hint code { font-family: var(--mono); background: var(--composer-bg); padding: 1px 5px; border-radius: 4px; }
+  .in { width: 100%; background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 9px; padding: 7px 10px; color: var(--txt); font-size: 12.5px; font-family: var(--mono); outline: none; }
+  .in:focus { border-color: var(--accent); }
+  .in:disabled { opacity: .6; cursor: not-allowed; }
+  .row { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+  .seg { display: flex; background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 9px; padding: 2px; gap: 2px; }
+  .seg button { border: none; background: transparent; color: var(--txt2); font-size: 12px; padding: 5px 14px; border-radius: 7px; cursor: pointer; font-family: var(--font); }
+  .seg button.on { background: var(--brand); color: var(--send-fg); font-weight: 600; }
+  .chip { font-size: 11px; color: var(--txt2); background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 999px; padding: 4px 11px; cursor: pointer; font-family: var(--font); }
+  .chip:hover { color: var(--txt); border-color: var(--accent); }
+  .proj { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--txt2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ft { flex: none; display: flex; align-items: center; gap: 9px; }
+  .ft .msg { flex: 1; font-size: 11.5px; color: var(--green); }
+  .btn-primary { font-size: 12.5px; font-weight: 600; color: var(--send-fg); background: var(--brand); border: none; border-radius: 9px; padding: 7px 18px; cursor: pointer; }
+  .btn-ghost { font-size: 12.5px; color: var(--txt2); background: transparent; border: 1px solid var(--composer-border); border-radius: 9px; padding: 7px 14px; cursor: pointer; }
+  .btn-ghost:hover { color: var(--txt); }
+  .lock { font-size: 10.5px; color: var(--warn-txt); background: var(--warn-bg); border: .5px solid var(--warn-border); border-radius: 999px; padding: 2px 8px; }
+</style>
+</head>
+<body>
+<div class="glass">
+  <span class="hl"></span>
+  <div class="set">
+    <div class="hd">
+      <span class="ttl">设置</span>
+      <button id="x" class="hbtn nodrag" title="关闭" aria-label="关闭"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="body nodrag">
+      <div class="fld">
+        <span class="lbl">主题</span>
+        <div class="seg" id="theme-seg">
+          <button data-theme="light">浅磨砂</button>
+          <button data-theme="dark">墨玻璃</button>
+        </div>
+      </div>
+
+      <div class="fld">
+        <span class="lbl">编辑器命令<span class="hint" style="font-weight:400">（点「文件:行」时用它打开）</span></span>
+        <input id="editorCmd" class="in" placeholder='code -g "{file}:{line}"' spellcheck="false" />
+        <div class="row">
+          <button class="chip" data-ed='code -g "{file}:{line}"'>VS Code</button>
+          <button class="chip" data-ed='cursor -g "{file}:{line}"'>Cursor</button>
+          <button class="chip" data-ed='idea64 --line {line} "{file}"'>IDEA</button>
+        </div>
+        <span class="hint">占位符：<code>{file}</code> 文件路径、<code>{line}</code> 行号。留空用默认 VS Code；命令失败会退回系统默认程序打开。</span>
+      </div>
+
+      <div class="fld">
+        <span class="lbl">serve 二进制 <span id="lock" class="lock" style="display:none">环境变量锁定</span></span>
+        <input id="serveBin" class="in" placeholder="opencode / bocomcode" spellcheck="false" />
+        <span class="hint">天枢用它启动 <code>serve</code>。留空：打包版用 <code>bocomcode</code>、开发版用 <code>opencode</code>。改动只对<strong>之后新开</strong>的对话生效，已开的不变。</span>
+      </div>
+
+      <div class="fld">
+        <span class="lbl">当前项目目录</span>
+        <div class="row">
+          <span id="proj" class="proj">未选目录</span>
+          <button id="pick" class="chip">选择…</button>
+        </div>
+        <span class="hint">新开的卡片对这个仓库说话。每个项目目录用独立的 serve（任务隔离）。</span>
+      </div>
+    </div>
+    <div class="ft nodrag">
+      <span id="msg" class="msg"></span>
+      <button id="cancel" class="btn-ghost">关闭</button>
+      <button id="save" class="btn-primary">保存</button>
+    </div>
+  </div>
+</div>
+<script>
+  const $ = (id) => document.getElementById(id)
+  let cur = {}
+  try { cur = window.tianshu.getSettings() || {} } catch (e) {}
+
+  // 主题（即时预览 + 广播）
+  const seg = $('theme-seg')
+  function paintTheme(t) { for (const b of seg.children) b.classList.toggle('on', b.dataset.theme === t) }
+  paintTheme(document.documentElement.dataset.theme)
+  seg.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-theme]'); if (!b) return
+    window.tianshu.setTheme(b.dataset.theme)
+  })
+  window.tianshu.onTheme((t) => { document.documentElement.dataset.theme = t; paintTheme(t) })
+
+  // 编辑器命令 + 预设
+  const editorCmd = $('editorCmd'); editorCmd.value = cur.editorCmd || ''
+  document.querySelectorAll('.chip[data-ed]').forEach((c) => c.addEventListener('click', () => { editorCmd.value = c.dataset.ed; editorCmd.focus() }))
+
+  // serve 二进制（env 锁定时只读）
+  const serveBin = $('serveBin'); serveBin.value = cur.serveBin || ''
+  if (cur.serveBinLocked) { serveBin.disabled = true; serveBin.value = cur.serveBinEffective || ''; $('lock').style.display = 'inline-block' }
+  else { serveBin.placeholder = cur.serveBinEffective ? '默认：' + cur.serveBinEffective : 'opencode / bocomcode' }
+
+  // 当前项目
+  const proj = $('proj'); proj.textContent = cur.project || '未选目录'; proj.title = cur.projectDir || ''
+  $('pick').addEventListener('click', async () => { try { proj.textContent = await window.tianshu.pickProject() } catch (e) {} })
+  window.tianshu.onProject((p) => { proj.textContent = p })
+
+  // 保存
+  const msg = $('msg')
+  async function save() {
+    const patch = { editorCmd: editorCmd.value }
+    if (!cur.serveBinLocked) patch.serveBin = serveBin.value
+    try { await window.tianshu.setSettings(patch); msg.textContent = '已保存 ✓'; setTimeout(() => { msg.textContent = '' }, 1800) }
+    catch (e) { msg.style.color = 'var(--diff-del)'; msg.textContent = '保存失败' }
+  }
+  $('save').addEventListener('click', save)
+  $('x').addEventListener('click', () => window.tianshu.closeSelf())
+  $('cancel').addEventListener('click', () => window.tianshu.closeSelf())
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') window.tianshu.closeSelf()
+    else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) save()
+  })
+</script>
+</body>
+</html>
