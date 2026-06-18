@@ -109,6 +109,30 @@ async function sendMessage(info, sessionId, text) {
   return extractText(await api(info.base, 'POST', `/session/${sessionId}/message`, { parts: [{ type: 'text', text }] }))
 }
 async function abort(info, sessionId) { try { await api(info.base, 'POST', `/session/${sessionId}/abort`) } catch {} }
+
+// 重连用：会话是否还在（直接 GET 取不到就扫列表；未知路由会回 SPA HTML→JSON.parse 抛错→走兜底）
+async function sessionExists(info, sid) {
+  try { const s = await api(info.base, 'GET', `/session/${sid}`); if (sidOf(s) === sid) return true } catch {}
+  try { const list = await api(info.base, 'GET', '/session'); const arr = Array.isArray(list) ? list : (list && list.data) || []; return arr.some((s) => sidOf(s) === sid) } catch { return false }
+}
+// 重连用：取会话历史消息，归一成 [{role,text}]；端点形态不定，逐个尝试，失败返回 []
+function normalizeMessages(r) {
+  const list = Array.isArray(r) ? r : (Array.isArray(r && r.messages) ? r.messages : (Array.isArray(r && r.data) ? r.data : null))
+  if (!list) return null
+  const out = []
+  for (const m of list) {
+    const role = (m && m.info && m.info.role) || (m && m.role) || (m && m.data && m.data.info && m.data.info.role)
+    const text = extractText(m)
+    if (text && (role === 'user' || role === 'assistant')) out.push({ role, text })
+  }
+  return out
+}
+async function getMessages(info, sid) {
+  for (const p of [`/session/${sid}/message`, `/session/${sid}/messages`]) {
+    try { const arr = normalizeMessages(await api(info.base, 'GET', p)); if (arr) return arr } catch {}
+  }
+  return []
+}
 async function replyPermission(info, sessionId, requestId, decision) {
   const p = info.permStyle === 'new' ? `/permission/${requestId}/reply` : `/session/${sessionId}/permissions/${requestId}`
   try { await api(info.base, 'POST', p, { reply: decision }) } catch (e) { console.error('permission reply failed:', e.message) }
@@ -172,4 +196,4 @@ function dispatch(ev, onPermission, onText) {
 
 function killAll() { for (const info of pool.values()) { try { info.proc && info.proc.kill() } catch {} } pool.clear() }
 
-module.exports = { ensureServe, createSession, sendMessage, abort, replyPermission, killAll, setServeBin, AUTO_ALLOW }
+module.exports = { ensureServe, createSession, sendMessage, abort, replyPermission, sessionExists, getMessages, killAll, setServeBin, AUTO_ALLOW }

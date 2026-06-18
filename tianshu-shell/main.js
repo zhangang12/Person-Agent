@@ -26,6 +26,20 @@ function applyProject(dir) {
   for (const w of BrowserWindow.getAllWindows()) w.webContents.send('project-changed', projName())
 }
 
+// ===== 会话历史索引（天枢自己的轻量台账，不是 opencode 配置）=====
+// 只记 sessionId/标题/目录/时间，用于"卡坞"续接；真正的对话状态在 opencode 会话里。
+let historyFile = null
+let history = []   // [{ id, title, dir, project, ts, created }]，最近在前
+function loadHistory() { try { const a = JSON.parse(fs.readFileSync(historyFile, 'utf8')); if (Array.isArray(a)) history = a } catch {} }
+function saveHistory() { try { fs.writeFileSync(historyFile, JSON.stringify(history.slice(0, 50))) } catch {} }
+function recordHistory(id, title, dir) {
+  const t = (title || '对话').replace(/\s+/g, ' ').trim().slice(0, 80)
+  history = [{ id, title: t, dir: dir || '', project: dir ? path.basename(dir) : '未选目录', ts: Date.now(), created: Date.now() },
+    ...history.filter((h) => h.id !== id)].slice(0, 50)
+  saveHistory()
+}
+function touchHistory(id) { const h = history.find((x) => x.id === id); if (h) { h.ts = Date.now(); saveHistory() } }
+
 // ===== 会话映射（跨多 serve）=====
 const sessionByWc = new Map()   // webContents.id -> sessionId
 const sessionInfo = new Map()   // sessionId -> { wc, serve }   serve = 该项目的 serve 池信息
@@ -72,7 +86,7 @@ function createInput() {
   inputWin.on('closed', () => { inputWin = null })
 }
 
-function spawnCard(title) {
+function spawnCard(title, sid) {
   const id = ++cardSeq
   const col = (id - 1) % 4, row = Math.floor((id - 1) / 4) % 4
   const win = new BrowserWindow(baseOpts({
@@ -82,7 +96,9 @@ function spawnCard(title) {
     x: 160 + col * 56, y: 90 + row * 50 + col * 18,
   }))
   const wcId = win.webContents.id   // 先存下，closed 时 webContents 已销毁不能再访问
-  win.loadFile(path.join(__dirname, 'ui', 'card.html'), { query: { title: title || '未命名任务', id: String(id) } })
+  const query = { title: title || '未命名任务', id: String(id) }
+  if (sid) query.sid = sid          // 带 sid = 续接已有会话（卡坞打开）
+  win.loadFile(path.join(__dirname, 'ui', 'card.html'), { query })
   win.on('closed', () => {
     const s = sessionByWc.get(wcId)
     if (s) { const si = sessionInfo.get(s); if (si) oc.abort(si.serve, s); sessionInfo.delete(s); streamBuf.delete(s); sentPrompt.delete(s) }
@@ -122,12 +138,26 @@ function openSettings() {
   settingsWin.on('closed', () => { settingsWin = null })
 }
 
+// 卡坞（会话历史）窗口
+let dockWin = null
+function openDock() {
+  if (dockWin && !dockWin.isDestroyed()) { dockWin.show(); dockWin.focus(); return }
+  const { width } = screen.getPrimaryDisplay().workAreaSize
+  dockWin = new BrowserWindow(baseOpts({
+    width: 440, height: 540, x: Math.round(width / 2 - 220), y: 130,
+    skipTaskbar: false, alwaysOnTop: true, resizable: true, minWidth: 340, minHeight: 300,
+  }))
+  dockWin.loadFile(path.join(__dirname, 'ui', 'dock.html'))
+  dockWin.on('closed', () => { dockWin = null })
+}
+
 function buildTray() {
   const img = nativeImage.createFromPath(path.join(__dirname, 'assets', 'tray.png'))
   tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img)
   tray.setToolTip('天枢 Tianshu')
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '唤起输入框', accelerator: 'Ctrl+Shift+Space', click: () => { if (!inputWin) createInput(); else { inputWin.show(); inputWin.focus() } } },
+    { label: '卡坞 · 历史对话', click: openDock },
     { label: '切换深 / 浅主题', click: toggleTheme },
     { label: '设置…', click: openSettings },
     { type: 'separator' },
@@ -139,6 +169,8 @@ function buildTray() {
 app.whenReady().then(() => {
   settingsFile = path.join(app.getPath('userData'), 'settings.json')
   settings = loadSettings()
+  historyFile = path.join(app.getPath('userData'), 'history.json')
+  loadHistory()
 
   // serve 启动命令：开发=opencode，打包 exe=bocomcode；可被环境变量或 settings.serveBin 覆盖
   const serveBin = process.env.TIANSHU_SERVE_BIN || settings.serveBin || (app.isPackaged ? 'bocomcode' : 'opencode')
@@ -204,22 +236,50 @@ app.whenReady().then(() => {
     if (w.isMaximized()) w.unmaximize(); else w.maximize(); return w.isMaximized()
   })
 
-  // 卡片 ↔ 会话（绑定到当前项目的 serve）
-  ipcMain.handle('card-init', async (e) => {
+  // 卡片 ↔ 会话（绑定到当前项目的 serve）。opts.sid 在场 = 续接卡坞里的旧会话。
+  ipcMain.handle('card-init', async (e, opts) => {
+    const sid = opts && opts.sid
+    const wantTitle = (opts && opts.title) || ''
+    if (sid) {
+      const h = history.find((x) => x.id === sid)
+      const dir = (h && h.dir) || settings.projectDir || ''
+      const serve = await oc.ensureServe(dir, handlers, log)
+      const proj = dir ? path.basename(dir) : projName()
+      if (await oc.sessionExists(serve, sid)) {                 // 会话还在 → 重连 + 回放
+        sessionByWc.set(e.sender.id, sid)
+        sessionInfo.set(sid, { wc: e.sender, serve })
+        touchHistory(sid)
+        let messages = []; try { messages = await oc.getMessages(serve, sid) } catch {}
+        return { sessionId: sid, project: proj, reattached: true, messages }
+      }
+      const ns = await oc.createSession(serve, wantTitle || (h && h.title) || '天枢对话')  // 已不在 → 新开一段
+      if (!ns) throw new Error('create session failed')
+      sessionByWc.set(e.sender.id, ns)
+      sessionInfo.set(ns, { wc: e.sender, serve })
+      recordHistory(ns, wantTitle || (h && h.title), dir)
+      return { sessionId: ns, project: proj, reattached: false, stale: true }
+    }
     const dir = settings.projectDir || ''
     const serve = await oc.ensureServe(dir, handlers, log)
     const sessionId = await oc.createSession(serve, '天枢对话')
     if (!sessionId) throw new Error('create session failed')
     sessionByWc.set(e.sender.id, sessionId)
     sessionInfo.set(sessionId, { wc: e.sender, serve })
-    return { sessionId, project: projName() }
+    recordHistory(sessionId, wantTitle, dir)
+    return { sessionId, project: projName(), reattached: false }
   })
   ipcMain.handle('card-send', async (e, text) => {
     const sessionId = sessionByWc.get(e.sender.id); const si = sessionId && sessionInfo.get(sessionId)
     if (!si) throw new Error('session not ready')
     sentPrompt.set(sessionId, text); streamBuf.delete(sessionId)
+    touchHistory(sessionId)
     return await oc.sendMessage(si.serve, sessionId, text)
   })
+  // 卡坞：历史列表 + 打开
+  ipcMain.handle('open-dock', () => openDock())
+  ipcMain.on('get-history', (e) => { e.returnValue = history })
+  ipcMain.handle('open-history', (_e, { sid, title }) => spawnCard(title, sid))
+  ipcMain.handle('clear-history', () => { history = []; saveHistory(); return true })
   ipcMain.on('card-abort', (e) => {
     const sessionId = sessionByWc.get(e.sender.id); const si = sessionId && sessionInfo.get(sessionId)
     if (si) oc.abort(si.serve, sessionId)

@@ -263,17 +263,29 @@
     },
   })
 
+  const sid = params.get('sid') || ''   // 带 sid = 从卡坞续接旧会话
   ;(async () => {
-    addMsg(title, 'me'); setBusy(true)
-    const boot = addMsg('', 'ai'); boot.textContent = '正在启动引擎…'   // serve 冷启动可能数秒
+    setBusy(true)
+    if (!sid) addMsg(title, 'me')        // 全新卡：先显示任务
+    const boot = addMsg('', 'ai'); boot.textContent = sid ? '正在续接对话…' : '正在启动引擎…'
     try {
-      const { project } = await window.tianshu.cardInit()
-      projEl.textContent = project || ''; projEl.title = project || ''
+      const r = await window.tianshu.cardInit(sid ? { sid, title } : { title })
+      projEl.textContent = r.project || ''; projEl.title = r.project || ''
       boot.remove()
-      await turn(title)
+      if (sid) {
+        if (r.reattached) {
+          if (r.messages && r.messages.length) r.messages.forEach((m) => addMsg(m.text, m.role === 'user' ? 'me' : 'ai'))
+          else addMsg('（历史消息未能载入，可直接继续这段对话）', 'ai')
+        } else {
+          addMsg('（原对话已不在引擎中，已为你新开一段，标题：' + title + '）', 'ai')
+        }
+        setBusy(false); feed.scrollTop = feed.scrollHeight
+      } else {
+        await turn(title)
+      }
     } catch (e) {
       boot.className = 'msg ai err'
-      boot.textContent = '⚠ 引擎未就绪：' + (e.message || e) + '（确认 opencode/bocomcode 已装、模型已配）'
+      boot.textContent = '⚠ ' + (sid ? '无法续接：' : '引擎未就绪：') + (e.message || e) + (sid ? '' : '（确认 opencode/bocomcode 已装、模型已配）')
       setBusy(false)
     }
   })()

@@ -31,6 +31,9 @@
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
       <span id="projname" class="projname">未选目录</span>
     </button>
+    <button id="dock" class="tbtn nodrag" title="卡坞 · 历史对话" aria-label="卡坞">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>
+    </button>
     <button id="theme" class="tbtn nodrag" title="切换深/浅主题" aria-label="切换主题">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none"/></svg>
     </button>
@@ -58,7 +61,8 @@
   })
   window.tianshu.onTheme((t) => { document.documentElement.dataset.theme = t })
 
-  // 设置
+  // 卡坞 + 设置
+  document.getElementById('dock').addEventListener('click', () => { try { window.tianshu.openDock() } catch (e) {} })
   document.getElementById('settings').addEventListener('click', () => { try { window.tianshu.openSettings() } catch (e) {} })
 
   // 项目目录

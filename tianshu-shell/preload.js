@@ -21,8 +21,13 @@ contextBridge.exposeInMainWorld('tianshu', {
   openSettings: () => ipcRenderer.invoke('open-settings'),
   getSettings: () => ipcRenderer.sendSync('get-settings'),
   setSettings: (patch) => ipcRenderer.invoke('set-settings', patch),
+  // 卡坞 / 会话历史
+  openDock: () => ipcRenderer.invoke('open-dock'),
+  getHistory: () => ipcRenderer.sendSync('get-history'),
+  openHistory: (sid, title) => ipcRenderer.invoke('open-history', { sid, title }),
+  clearHistory: () => ipcRenderer.invoke('clear-history'),
   // 对话 ↔ opencode 会话
-  cardInit: () => ipcRenderer.invoke('card-init'),
+  cardInit: (opts) => ipcRenderer.invoke('card-init', opts || {}),
   cardSend: (text) => ipcRenderer.invoke('card-send', text),
   cardAbort: () => ipcRenderer.send('card-abort'),
   onStream: (cb) => ipcRenderer.on('card-stream', (_e, p) => cb(p)),
