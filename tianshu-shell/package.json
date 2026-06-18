@@ -9,7 +9,9 @@
     "dist": "electron-builder --win",
     "compat": "node scripts/compat-check.mjs",
     "permcheck": "node scripts/permission-probe.mjs",
-    "jsonschema": "node scripts/json-schema-probe.mjs"
+    "jsonschema": "node scripts/json-schema-probe.mjs",
+    "orch:test": "node scripts/orchestrator-selftest.mjs",
+    "orch:run": "node scripts/orchestrator-run.mjs"
   },
   "devDependencies": {
     "electron": "^34.0.0",
