@@ -61,6 +61,13 @@
   .dl-del { background: var(--diff-del-bg); color: var(--diff-del); }
   .dl-hunk, .dl-meta { color: var(--txt3); }
 
+  /* 快捷指令条 */
+  .quick { flex: none; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 1px; }
+  .quick::-webkit-scrollbar { height: 0; }
+  .quick.hidden { display: none; }
+  .qchip { flex: none; font-size: 11px; color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 999px; padding: 4px 11px; cursor: pointer; white-space: nowrap; }
+  .qchip:hover { color: var(--txt); border-color: var(--accent); }
+
   .perm { display: flex; align-items: center; gap: 8px; background: var(--warn-bg); border: .5px solid var(--warn-border); border-radius: 11px; padding: 7px 9px; }
   .perm .t { flex: 1; font-size: 12px; color: var(--warn-txt); }
   .perm .ok { font-size: 11px; font-weight: 600; color: var(--warn-btn-fg); background: var(--warn-btn); padding: 4px 10px; border-radius: 7px; border: none; cursor: pointer; }
@@ -81,6 +88,7 @@
       <button id="x" class="hbtn nodrag" title="关闭" aria-label="关闭"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <div id="feed" class="feed nodrag"></div>
+    <div id="quick" class="quick nodrag"></div>
     <div class="composer nodrag">
       <input id="ci" placeholder="继续对话…" />
       <button id="send" class="send" aria-label="发送"></button>
@@ -100,6 +108,7 @@
   const projEl = document.getElementById('proj')
   const feed = document.getElementById('feed'), st = document.getElementById('st')
   const ci = document.getElementById('ci'), send = document.getElementById('send')
+  const quick = document.getElementById('quick')
 
   document.getElementById('x').addEventListener('click', () => window.tianshu.closeSelf())
   document.getElementById('min').addEventListener('click', () => window.tianshu.minimizeSelf())
@@ -118,7 +127,7 @@
   const SPIN = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" style="color:var(--accent);animation:spin 1s linear infinite"><path d="M12 3a9 9 0 1 0 9 9"/></svg>'
   const DONE = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="color:var(--green)"><path d="M4 12l5 5L20 6"/></svg>'
   let busy = false
-  function setBusy(b) { busy = b; st.innerHTML = b ? SPIN : DONE; send.innerHTML = b ? STOP : ARROW }
+  function setBusy(b) { busy = b; st.innerHTML = b ? SPIN : DONE; send.innerHTML = b ? STOP : ARROW; quick.classList.toggle('hidden', b) }
   setBusy(false)
 
   function addMsg(text, who) {
@@ -181,6 +190,19 @@
 
   send.addEventListener('click', () => { if (busy) window.tianshu.cardAbort(); else submit() })
   ci.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit() })
+
+  // 快捷指令：常用追问的模板（在这个数组里增删即可迭代）。首条引导出可一键应用的 diff。
+  const QUICK = [
+    { label: '改成可应用 diff', text: '把你上面给出的修改整理成统一 diff：用 ```diff 围栏，包含 +++/--- 文件头和 @@ 行号，便于我一键应用到对应文件。' },
+    { label: '补单元测试', text: '为刚才的改动补充单元测试，覆盖正常路径与边界场景。' },
+    { label: '加中文注释', text: '给刚才的代码补上必要的中文注释，解释关键逻辑，但不要改变行为。' },
+    { label: '查风险', text: '审视刚才的改动是否存在空指针、并发、SQL 注入、事务边界等风险，逐条列出（必改/建议）并给修法。' },
+  ]
+  QUICK.forEach((q) => {
+    const b = document.createElement('button'); b.className = 'qchip'; b.textContent = q.label; b.title = q.text
+    b.addEventListener('click', () => { if (busy) return; addMsg(q.text, 'me'); turn(q.text) })
+    quick.appendChild(b)
+  })
 
   // 富结果动作：应用/运行 = 向同一会话发指令（agent 用工具做、经内联权限）；复制/打开在 rich.js/本地
   window.Rich.wireActions(feed, {
