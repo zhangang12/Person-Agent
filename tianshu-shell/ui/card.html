@@ -293,7 +293,7 @@
   ;(async () => {
     setBusy(true)
     if (!sid) addMsg(title, 'me')        // 全新卡：先显示任务
-    const boot = addMsg('', 'ai'); boot.textContent = sid ? '正在续接对话…' : '正在启动引擎…'
+    const boot = addMsg('', 'ai'); boot.textContent = sid ? '正在续接对话…' : '正在启动引擎…（首次较慢，请稍候）'
     try {
       const r = await window.tianshu.cardInit(sid ? { sid, title } : { title })
       projEl.textContent = r.project || ''; projEl.title = r.project || ''

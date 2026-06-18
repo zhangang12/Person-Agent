@@ -342,7 +342,8 @@ app.whenReady().then(() => {
 
   createInput()
   buildTray()
-  if (settings.projectDir) oc.ensureServe(settings.projectDir, handlers, log).catch((e) => log('prewarm failed: ' + e.message))
+  // 启动即预热引擎（即便没选项目也预热 home serve），等用户敲字时多半已就绪
+  oc.ensureServe(settings.projectDir || '', handlers, log).catch((e) => log('prewarm failed: ' + e.message))
 
   if (!globalShortcut.register('Control+Shift+Space', toggleInput)) log('global shortcut register failed (maybe in use)')
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createInput() })

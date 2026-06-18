@@ -65,14 +65,16 @@ function spawnServe(cwd, port) {
   if (process.platform === 'win32') return spawn('cmd.exe', ['/d', '/s', '/c', SERVE_BIN, ...args], opts)
   return spawn(SERVE_BIN, args, opts)
 }
-async function waitHealthy(base, getExit) {
-  for (let i = 0; i < 60; i++) {
+async function waitHealthy(base, getExit, log) {
+  const MAX = 240   // 120s：内网首次冷启动(二进制加载 + 模型/网络握手)可能很慢，别太早判失败
+  for (let i = 0; i < MAX; i++) {
     if (await healthAt(base)) return
-    const ex = getExit && getExit()   // 进程提前退出（多半是找不到二进制）→ 快速失败，别空等 30s
+    const ex = getExit && getExit()   // 进程真的退出了（多半是找不到二进制）→ 立即失败，不空等
     if (ex) throw new Error('serve 进程提前退出（' + (ex.error || ('code ' + ex.code)) + '）：请确认 ' + SERVE_BIN + ' 已安装并在 PATH 中')
+    if (log && i > 0 && i % 20 === 0) log(`serve 仍在启动中… ${i / 2}s`)
     await sleep(500)
   }
-  throw new Error('opencode serve start timeout (30s)')
+  throw new Error('serve 启动超时（120s）：可能模型/网络握手过慢或二进制异常，请看日志里 [serve:] 行')
 }
 async function detectPerm(base) {
   const real = async (p) => {
@@ -109,13 +111,14 @@ async function ensureServe(dir, handlers, log = console.log) {
     info.proc.on('error', (e) => { if (!exitInfo) exitInfo = { error: e.message } })
     const pipe = (s, tag) => { if (s) s.on('data', (d) => { const t = String(d).trim(); if (t) log(`[serve:${port}${tag}] ` + t) }) }
     pipe(info.proc.stdout, ''); pipe(info.proc.stderr, '!')   // serve 自身输出进日志，便于排查
-    await waitHealthy(info.base, () => exitInfo)
+    await waitHealthy(info.base, () => exitInfo, log)
     info.permStyle = await detectPerm(info.base)
     log(`serve ready on :${port} (permission endpoint: ${info.permStyle})`)
     runEventLoop(info.base, handlers, log)
   })()
   pool.set(key, info)
-  try { await info.ready } catch (e) { if (pool.get(key) === info) pool.delete(key); throw e }  // 失败不污染池
+  try { await info.ready }
+  catch (e) { killProc(info.proc); if (pool.get(key) === info) pool.delete(key); throw e }  // 失败：杀掉进程(别泄漏成孤儿占端口) + 不污染池
   return info
 }
 
@@ -217,16 +220,14 @@ function dispatch(ev, onPermission, onText) {
   }
 }
 
-function killAll() {
-  for (const info of pool.values()) {
-    try {
-      const p = info.proc; if (!p || !p.pid) continue
-      // Windows 经 cmd.exe 起的 serve 是孙进程，需按进程树杀，否则端口被占的旧 serve 残留
-      if (process.platform === 'win32') spawn('taskkill', ['/pid', String(p.pid), '/t', '/f'], { stdio: 'ignore', windowsHide: true })
-      else p.kill()
-    } catch {}
-  }
-  pool.clear()
+// 杀掉一个 serve：Windows 经 cmd.exe 起的是孙进程，必须按进程树杀，否则端口被旧 serve 占住
+function killProc(proc) {
+  if (!proc || !proc.pid) return
+  try {
+    if (process.platform === 'win32') spawn('taskkill', ['/pid', String(proc.pid), '/t', '/f'], { stdio: 'ignore', windowsHide: true })
+    else proc.kill()
+  } catch {}
 }
+function killAll() { for (const info of pool.values()) killProc(info.proc); pool.clear() }
 
 module.exports = { ensureServe, createSession, sendMessage, abort, replyPermission, sessionExists, getMessages, killAll, setServeBin, AUTO_ALLOW }
