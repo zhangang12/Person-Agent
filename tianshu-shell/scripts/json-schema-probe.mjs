@@ -58,7 +58,7 @@ function tryJson(text) {
   return null
 }
 // 发消息 + 同时听 /event 把流式回复收回来（format 请求的结果走流，不在 POST 响应里）
-async function runWithStream(sid, body, ms = 40000) {
+async function runWithStream(sid, body, ms = 30000) {
   const ac = new AbortController()
   const buf = {}
   let last = Date.now()
@@ -90,9 +90,17 @@ async function runWithStream(sid, body, ms = 40000) {
   await sleep(350)
   let postStatus = 0, postText = ''
   try { const r = await api('POST', `/session/${sid}/message`, body); postStatus = r.status; postText = r.text } catch (e) { postStatus = -1; postText = String(e.message) }
-  const start = Date.now()
-  while (Date.now() - start < ms) { await sleep(400); const got = Object.values(buf).join('\n').trim(); if (got && Date.now() - last > 3500) break }
-  ac.abort(); await loop.catch(() => {})
+  const fin = async () => { ac.abort(); await loop.catch(() => {}) }
+  // 非 2xx（如 400 字段被拒）→ 不用等流，立刻返回
+  if (postStatus < 200 || postStatus >= 300) { await fin(); return { postStatus, postText, streamed: '' } }
+  const postAt = Date.now()
+  while (Date.now() - postAt < ms) {
+    await sleep(300)
+    const got = Object.values(buf).join('\n').trim()
+    if (got && Date.now() - last > 3000) break              // 收到文本后静默 3s = 这轮答完
+    if (!got && Date.now() - postAt > 8000) break            // POST 后 8s 没任何流事件 = 无输出/不支持，别空等 40s
+  }
+  await fin()
   return { postStatus, postText, streamed: Object.values(buf).filter((t) => t.trim() !== PROMPT).join('\n').trim() }
 }
 const safeJson = (t) => { try { return JSON.parse(t) } catch { return null } }
