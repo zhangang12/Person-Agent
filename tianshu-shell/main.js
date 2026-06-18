@@ -40,7 +40,7 @@ function onText({ sessionId, text, role, partID, kind }) {
   const prev = buf[partID] || ''
   const full = prev && !text.startsWith(prev) ? prev + text : text   // 兼容累积/增量
   buf[partID] = full
-  si.wc.send('card-stream', { kind: kind || 'text', text: full })
+  si.wc.send('card-stream', { kind: kind || 'text', text: full, partID })
 }
 const handlers = { onPermission, onText }
 

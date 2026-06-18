@@ -167,19 +167,28 @@
   window.tianshu.onPermission(({ requestId, tool }) => showPermission(requestId, tool))
 
   // 流式：text → 答案气泡；reasoning → 思考折叠块（答案上方）
-  let curAnswer = null, curReason = null
+  // 一轮回答可能有多个 text 片段（文本→工具调用→文本），按 partID 累积、按到达顺序拼接，
+  // 避免后到的片段把先到的覆盖掉（与最终 reply 的拼接口径一致：用 \n 连接）。
+  let curAnswer = null, curReason = null, answerParts = null, reasonParts = null
   function makeReason(beforeEl) {
     const d = document.createElement('details'); d.className = 'reason'; d.open = true
     d.innerHTML = '<summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>思考过程</summary><div class="body"></div>'
     feed.insertBefore(d, beforeEl)
     return { el: d, body: d.querySelector('.body') }
   }
-  window.tianshu.onStream(({ kind, text }) => {
+  const joinParts = (m) => Array.from(m.values()).join('\n')
+  window.tianshu.onStream(({ kind, text, partID }) => {
+    const key = partID || '_'
     if (kind === 'reasoning') {
       if (!curReason && curAnswer) curReason = makeReason(curAnswer)
-      if (curReason) { curReason.body.textContent = text; curReason.body.scrollTop = curReason.body.scrollHeight }
+      if (curReason) {
+        if (reasonParts) reasonParts.set(key, text)
+        curReason.body.textContent = reasonParts ? joinParts(reasonParts) : text
+        curReason.body.scrollTop = curReason.body.scrollHeight
+      }
     } else if (curAnswer) {
-      curAnswer.innerHTML = renderMarkdown(text)
+      if (answerParts) answerParts.set(key, text)
+      curAnswer.innerHTML = renderMarkdown(answerParts ? joinParts(answerParts) : text)
     }
     feed.scrollTop = feed.scrollHeight
   })
@@ -187,7 +196,7 @@
   // 返回 true=本轮顺利完成（传输层无异常），false=出错。富结果动作据此落状态。
   async function turn(text) {
     const ai = addMsg('', 'ai'); ai.textContent = '思考中…'
-    curAnswer = ai; curReason = null; setBusy(true)
+    curAnswer = ai; curReason = null; answerParts = new Map(); reasonParts = new Map(); setBusy(true)
     let ok = true
     try {
       const reply = await window.tianshu.cardSend(text)
