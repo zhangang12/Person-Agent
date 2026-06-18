@@ -111,9 +111,10 @@
       if (/^\s*([-*_])\1\1+\s*$/.test(line)) { html += '<hr>'; i++; continue }
       if (/^\s*[-*+]\s+/.test(line)) { const it = []; while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) { it.push('<li>' + inline(lines[i].replace(/^\s*[-*+]\s+/, '')) + '</li>'); i++ } html += '<ul>' + it.join('') + '</ul>'; continue }
       if (/^\s*\d+\.\s+/.test(line)) { const it = []; while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) { it.push('<li>' + inline(lines[i].replace(/^\s*\d+\.\s+/, '')) + '</li>'); i++ } html += '<ol>' + it.join('') + '</ol>'; continue }
+      if (/^\s*>\s?/.test(line)) { const it = []; while (i < lines.length && /^\s*>\s?/.test(lines[i])) { it.push(inline(lines[i].replace(/^\s*>\s?/, ''))); i++ } html += '<blockquote>' + it.join('<br>') + '</blockquote>'; continue }
       if (/^\s*$/.test(line)) { i++; continue }
       const para = [line]; i++
-      while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^\s*\|.*\|\s*$/.test(lines[i]) && !/^\s{0,3}#{1,6}\s/.test(lines[i]) && !/^\s*[-*+]\s/.test(lines[i]) && !/^\s*\d+\.\s/.test(lines[i]) && !/^@@CB\d+@@$/.test(lines[i])) { para.push(lines[i]); i++ }
+      while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^\s*\|.*\|\s*$/.test(lines[i]) && !/^\s{0,3}#{1,6}\s/.test(lines[i]) && !/^\s*[-*+]\s/.test(lines[i]) && !/^\s*\d+\.\s/.test(lines[i]) && !/^\s*>\s?/.test(lines[i]) && !/^@@CB\d+@@$/.test(lines[i])) { para.push(lines[i]); i++ }
       html += '<p>' + para.map(inline).join('<br>') + '</p>'
     }
     return html.replace(/@@CB(\d+)@@/g, function (m, n) { return blocks[+n] })
