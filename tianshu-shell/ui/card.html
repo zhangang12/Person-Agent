@@ -246,13 +246,15 @@
 
   ;(async () => {
     addMsg(title, 'me'); setBusy(true)
+    const boot = addMsg('', 'ai'); boot.textContent = '正在启动引擎…'   // serve 冷启动可能数秒
     try {
       const { project } = await window.tianshu.cardInit()
       projEl.textContent = project || ''; projEl.title = project || ''
+      boot.remove()
       await turn(title)
     } catch (e) {
-      const ai = addMsg('', 'ai'); ai.className = 'msg ai err'
-      ai.textContent = '⚠ 引擎未就绪：' + (e.message || e) + '（确认 opencode/bocomcode 已装、模型已配）'
+      boot.className = 'msg ai err'
+      boot.textContent = '⚠ 引擎未就绪：' + (e.message || e) + '（确认 opencode/bocomcode 已装、模型已配）'
       setBusy(false)
     }
   })()
