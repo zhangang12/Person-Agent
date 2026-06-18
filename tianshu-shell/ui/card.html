@@ -15,6 +15,13 @@
   .hbtn.on { color: var(--accent); }
   .err { color: var(--txt2); }
 
+  /* 卡片输入框：自增高多行 */
+  .composer { align-items: flex-end; }
+  .composer textarea { flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: var(--txt); font-size: 13px; font-family: var(--font); resize: none; line-height: 1.45; max-height: 96px; overflow-y: auto; padding: 4px 0; }
+  .composer textarea::placeholder { color: var(--txt3); }
+  .composer textarea::-webkit-scrollbar { width: 5px; } .composer textarea::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  .composer .send { margin-bottom: 1px; }
+
   /* 思考链折叠块 */
   .reason { align-self: flex-start; max-width: 92%; background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 11px; }
   .reason > summary { cursor: pointer; padding: 7px 12px; color: var(--txt2); font-size: 12px; list-style: none; display: flex; align-items: center; gap: 7px; user-select: none; }
@@ -97,7 +104,7 @@
     <div id="feed" class="feed nodrag"></div>
     <div id="quick" class="quick nodrag"></div>
     <div class="composer nodrag">
-      <input id="ci" placeholder="继续对话…" />
+      <textarea id="ci" rows="1" placeholder="继续对话…（Enter 发送，Shift+Enter 换行）"></textarea>
       <button id="send" class="send" aria-label="发送"></button>
     </div>
   </div>
@@ -193,10 +200,13 @@
     } finally { curAnswer = null; setBusy(false); feed.scrollTop = feed.scrollHeight }
     return ok
   }
-  function submit() { const v = ci.value.trim(); if (!v || busy) return; ci.value = ''; addMsg(v, 'me'); turn(v) }
+  // 输入框自增高（1~约5 行）
+  function autoGrow() { ci.style.height = 'auto'; ci.style.height = Math.min(ci.scrollHeight, 96) + 'px' }
+  function submit() { const v = ci.value.trim(); if (!v || busy) return; ci.value = ''; autoGrow(); addMsg(v, 'me'); turn(v) }
 
   send.addEventListener('click', () => { if (busy) window.tianshu.cardAbort(); else submit() })
-  ci.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit() })
+  ci.addEventListener('input', autoGrow)
+  ci.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } })
 
   // 快捷指令：常用追问的模板（在这个数组里增删即可迭代）。首条引导出可一键应用的 diff。
   const QUICK = [
