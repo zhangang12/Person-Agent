@@ -28,7 +28,7 @@ const ids = (ev) => {
   return {
     sessionId: p.sessionID ?? p.sessionId ?? p.session_id,
     requestId: p.requestID ?? p.id ?? p.permissionID ?? p.permissionId,
-    tool: p.tool ?? p.type ?? p.title ?? (p.permission && p.permission.type) ?? '?',
+    tool: (typeof p.permission === 'string' && p.permission) || (typeof p.tool === 'string' && p.tool) || (p.tool && p.tool.name) || p.type || p.title || '?',
   }
 }
 function permPath(style, sessionId, requestId) {

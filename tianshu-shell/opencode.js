@@ -129,7 +129,10 @@ function dispatch(ev, onPermission, onText) {
   if (type.includes('permission') && !type.includes('replied') && !type.includes('response')) {
     const sessionId = p.sessionID ?? p.sessionId ?? p.session_id
     const requestId = p.requestID ?? p.id ?? p.permissionID ?? p.permissionId
-    const tool = p.tool ?? p.type ?? p.title ?? (p.permission && p.permission.type) ?? 'unknown'
+    // 工具名：bocomcode 放在 permission(字符串)、tool 是对象；公网 opencode 放在 tool(字符串)。两者兼容。
+    const tn = (s) => (typeof s === 'string' && s) ? s : null
+    const tool = tn(p.permission) || tn(p.tool) || (p.tool && p.tool.name) || tn(p.type) || tn(p.title)
+      || (p.permission && p.permission.type) || 'unknown'
     if (requestId && onPermission) onPermission({ sessionId, requestId, tool })
     return
   }
