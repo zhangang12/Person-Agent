@@ -65,6 +65,17 @@ function sanitizePlan(tasks, knownIds) {
   return out
 }
 
+// ---- 角色专属引导语 ----
+const ROLE_PROMPTS = {
+  analyst:   '你是一名需求分析师。职责：梳理业务逻辑、识别边界条件与潜在歧义、澄清需求意图。',
+  architect: '你是一名软件架构师。职责：设计模块边界与交互方式、选择技术方案、确保可扩展性与可维护性。',
+  coder:     '你是一名高级开发工程师。职责：编写高质量、可读、可测的代码，实现具体功能，注重边界处理与异常路径。',
+  tester:    '你是一名测试工程师。职责：设计测试用例（含正常路径与边界场景）、识别潜在缺陷、给出测试代码或测试清单。',
+  reviewer:  '你是一名代码评审专家。职责：审查代码质量与逻辑正确性，给出分级建议（必改/建议/可忽略）并附修改方案。',
+  writer:    '你是一名技术文档工程师。职责：撰写清晰准确的技术文档、注释或说明，读者是有一定技术基础的工程师。',
+  worker:    '你是一个通用任务执行者。',
+}
+
 // ---- 提示词 ----
 function buildPlanPrompt(goal, doneSummary, maxBatch) {
   return [
@@ -73,14 +84,15 @@ function buildPlanPrompt(goal, doneSummary, maxBatch) {
     '已完成子任务及结果摘要：\n' + doneSummary,
     '',
     `请只输出"还需要做的下一批子任务"(<=${maxBatch} 个)。严格只输出 JSON，不要解释、不要 markdown、不要 <think>：`,
-    '{"tasks":[{"id":"短id","role":"角色如 analyst/coder/writer/reviewer","goal":"具体做什么","deps":["同批依赖id，可空"]}],"done":false}',
+    '{"tasks":[{"id":"短id","role":"角色如 analyst/architect/coder/tester/reviewer/writer","goal":"具体做什么","deps":["同批依赖id，可空"]}],"done":false}',
     '若目标已可收尾、无需更多子任务，请输出：{"tasks":[],"done":true}',
   ].join('\n')
 }
 function buildWorkPrompt(task, ctx, goal) {
+  const roleHint = ROLE_PROMPTS[task.role] || ROLE_PROMPTS.worker
   return [
+    roleHint,
     '总目标：' + goal,
-    '你的角色：' + (task.role || 'worker'),
     '你的子任务：' + task.goal,
     ctx ? '可参考的上游结果：\n' + ctx : '',
     '请完成这个子任务并直接给出结果（可用你的工具读代码/查文件）。',

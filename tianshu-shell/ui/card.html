@@ -134,6 +134,7 @@
 
   const params = new URLSearchParams(location.search)
   const title = params.get('title') || '新对话'
+  const initMsg = params.get('msg') || title    // msg 在场时发送内容不同于标题（fan-out）
   const ttl = document.getElementById('ttl'); ttl.textContent = title; ttl.title = title
   document.title = title + ' · 个人桌面智能体'   // 任务栏/Alt+Tab 区分各卡
   const projEl = document.getElementById('proj')
@@ -259,12 +260,21 @@
     apply: async ({ file, raw, all }, btn) => {
       if (busy) return
       const orig = btn.innerHTML; btn.textContent = '应用中…'; btn.disabled = true
-      const target = all ? '下面这个多文件 diff 标注的所有文件' : (file ? '文件 ' + file : 'diff 中标注的文件')
-      const p = '请把下面这段改动实际应用到' + target
-        + '（用编辑/补丁工具真的改文件，改完只回复"已应用"）：\n\n```diff\n' + raw + '\n```'
-      const ok = await turn(p)
-      if (ok) { btn.textContent = '已应用 ✓'; btn.classList.add('done') }
-      else { btn.innerHTML = orig; btn.disabled = false }   // 失败：复原按钮可重试
+      try {
+        const results = await window.tianshu.applyDiff(raw)
+        const failed = results.filter(r => !r.ok)
+        if (failed.length === 0) {
+          const names = results.map(r => r.file.split(/[/\\]/).pop()).join('、')
+          btn.textContent = '已写入 ✓ ' + names; btn.classList.add('done')
+        } else {
+          const msg = failed.map(r => r.file + '：' + r.error).join('\n')
+          btn.innerHTML = orig; btn.disabled = false
+          addMsg('⚠ 应用失败：\n' + msg, 'ai')
+        }
+      } catch (e) {
+        btn.innerHTML = orig; btn.disabled = false
+        addMsg('⚠ 应用出错：' + (e.message || e), 'ai')
+      }
     },
     run: async ({ raw }, btn) => {
       if (busy) return
@@ -292,7 +302,7 @@
   const sid = params.get('sid') || ''   // 带 sid = 从卡坞续接旧会话
   ;(async () => {
     setBusy(true)
-    if (!sid) addMsg(title, 'me')        // 全新卡：先显示任务
+    if (!sid) addMsg(initMsg, 'me')      // 全新卡：先显示任务（fan-out 时 msg≠title）
     const boot = addMsg('', 'ai'); boot.textContent = sid ? '正在续接对话…' : '正在启动引擎…（首次较慢，请稍候）'
     try {
       const r = await window.tianshu.cardInit(sid ? { sid, title } : { title })
@@ -307,7 +317,7 @@
         }
         setBusy(false); feed.scrollTop = feed.scrollHeight
       } else {
-        await turn(title)
+        await turn(initMsg)
       }
     } catch (e) {
       boot.className = 'msg ai err'

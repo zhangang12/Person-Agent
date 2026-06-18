@@ -27,7 +27,7 @@
         <path fill="url(#g)" d="M12 2l1.7 6.1L20 10l-6.3 1.9L12 18l-1.7-6.1L4 10l6.3-1.9z"/>
       </svg>
     </span>
-    <input id="q" class="nodrag" placeholder="描述一个任务，回车开一个新对话…" autofocus />
+    <input id="q" class="nodrag" placeholder="回车 → 新对话   Ctrl+回车 → 三视角并行评审   工作流按钮 → 多 Agent 编排" autofocus />
     <button id="proj" class="tbtn nodrag" title="选择代码仓库（卡片对它说话）">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
       <span id="projname" class="projname">未选目录</span>
@@ -52,8 +52,14 @@
   q.focus()
   q.addEventListener('keydown', async (e) => {
     if (e.key === 'Enter' && q.value.trim()) {
-      try { await window.tianshu.spawnCard(q.value.trim()) } catch (err) { console.error(err) }
+      const v = q.value.trim()
       q.value = ''
+      if (e.ctrlKey) {
+        // Ctrl+Enter → 三视角 fan-out 并行卡
+        try { await window.tianshu.spawnFanout(v) } catch (err) { console.error(err) }
+      } else {
+        try { await window.tianshu.spawnCard(v) } catch (err) { console.error(err) }
+      }
     } else if (e.key === 'Escape') { window.tianshu.hideSelf() }
   })
   window.addEventListener('focus', () => q.focus())

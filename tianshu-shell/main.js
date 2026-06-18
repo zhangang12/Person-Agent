@@ -100,7 +100,7 @@ function createInput() {
   inputWin.on('closed', () => { inputWin = null })
 }
 
-function spawnCard(title, sid) {
+function spawnCard(title, sid, msg) {
   const id = ++cardSeq
   const col = (id - 1) % 4, row = Math.floor((id - 1) / 4) % 4
   const win = new BrowserWindow(baseOpts({
@@ -112,6 +112,7 @@ function spawnCard(title, sid) {
   const wcId = win.webContents.id   // 先存下，closed 时 webContents 已销毁不能再访问
   const query = { title: title || '未命名任务', id: String(id) }
   if (sid) query.sid = sid          // 带 sid = 续接已有会话（卡坞打开）
+  if (msg) query.msg = msg          // 带 msg = 发送内容不同于标题（fan-out 专用）
   win.loadFile(path.join(__dirname, 'ui', 'card.html'), { query })
   win.on('closed', () => {
     const s = sessionByWc.get(wcId)
@@ -119,6 +120,18 @@ function spawnCard(title, sid) {
     sessionByWc.delete(wcId)
   })
   return id
+}
+
+// Fan-out：同一目标以多视角并行开卡
+function spawnFanout(goal) {
+  const views = [
+    ['安全·风险', '请从安全漏洞、边界处理、异常情况、权限校验等角度深度审视以下内容，逐条列出问题（必改/建议/可忽略）并给出修法：\n\n' + goal],
+    ['性能·质量', '请从性能瓶颈、代码质量、可读性、可维护性等角度深度审视以下内容，逐条列出改进点（必改/建议/可忽略）：\n\n' + goal],
+    ['业务·逻辑', '请从业务逻辑正确性、需求覆盖度、边界场景、数据一致性等角度深度审视以下内容，逐条列出问题（必改/建议/可忽略）：\n\n' + goal],
+  ]
+  const shortGoal = goal.length > 28 ? goal.slice(0, 27) + '…' : goal
+  views.forEach(([label, msg]) => spawnCard(label + ' · ' + shortGoal, null, msg))
+  return views.length
 }
 
 // 工作流卡：跑动态编排，实时展示任务图
@@ -148,6 +161,67 @@ function toggleInput() {
 function toggleTheme() {
   settings.theme = settings.theme === 'dark' ? 'light' : 'dark'; saveSettings()
   for (const w of BrowserWindow.getAllWindows()) w.webContents.send('theme-changed', settings.theme)
+}
+
+// ===== Unified diff 解析 + 直接写文件 =====
+// 解析 unified diff → [{path, hunks:[{oldStart,oldCount,lines[]}]}]
+function parseDiff(text) {
+  const files = [], lines = text.split(/\r?\n/)
+  let file = null, hunk = null
+  for (const line of lines) {
+    if (line.startsWith('diff --git ')) {
+      if (file && file.path) files.push(file)
+      file = { path: '', hunks: [] }; hunk = null
+    } else if (line.startsWith('+++ ') && !line.includes('\t/dev/null')) {
+      const m = line.match(/^\+\+\+\s+(?:[ab]\/)?(.+?)(?:\t.*)?$/)
+      if (m) { if (!file) file = { path: '', hunks: [] }; file.path = m[1].trim() }
+    } else if (line.startsWith('@@ ') && file) {
+      const m = line.match(/@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/)
+      if (m) { hunk = { oldStart: parseInt(m[1]), oldCount: m[2] !== undefined ? parseInt(m[2]) : 1, lines: [] }; file.hunks.push(hunk) }
+    } else if (hunk) {
+      if (line.startsWith('+') || line.startsWith('-') || line.startsWith(' ')) hunk.lines.push(line)
+      else if (!line.startsWith('\\')) hunk = null  // "\ No newline" 忽略，其余结束当前 hunk
+    }
+  }
+  if (file && file.path) files.push(file)
+  return files.filter(f => f.path && !f.path.includes('/dev/null') && f.hunks.length)
+}
+
+// 将 hunks 应用到文件行数组（带 offset 跟踪，支持多 hunk）
+function applyHunksToLines(lines, hunks) {
+  let result = [...lines], offset = 0
+  for (const hunk of hunks) {
+    const start = hunk.oldStart - 1 + offset   // 0-indexed
+    const newLines = []
+    for (const ln of hunk.lines) {
+      if (ln.startsWith('+')) newLines.push(ln.slice(1))
+      else if (ln.startsWith(' ')) newLines.push(ln.slice(1))
+      // '-' 行跳过（删除）
+    }
+    result = [...result.slice(0, start), ...newLines, ...result.slice(start + hunk.oldCount)]
+    offset += newLines.length - hunk.oldCount
+  }
+  return result
+}
+
+// 把一段 diff text 应用到磁盘；返回 [{file, ok, error?}]
+function applyDiffToDisk(baseDir, diffText) {
+  const parsed = parseDiff(diffText)
+  if (!parsed.length) return [{ file: '(无法解析 diff，请确认格式为 unified diff 含 +++ 文件头)', ok: false, error: '未解析到文件' }]
+  return parsed.map(({ path: relPath, hunks }) => {
+    let fullPath = relPath
+    try {
+      if (!require('path').isAbsolute(relPath) && baseDir) fullPath = require('path').join(baseDir, relPath)
+      const eol = '\n'
+      let lines = fs.existsSync(fullPath) ? fs.readFileSync(fullPath, 'utf8').replace(/\r\n/g, '\n').split('\n') : []
+      // 末尾空行去掉再处理，避免与 diff 行数不匹配
+      if (lines.length && lines[lines.length - 1] === '') lines.pop()
+      lines = applyHunksToLines(lines, hunks)
+      fs.writeFileSync(fullPath, lines.join(eol) + eol, 'utf8')
+      log('apply-diff ok: ' + fullPath)
+      return { file: relPath, ok: true }
+    } catch (e) { log('apply-diff err ' + fullPath + ': ' + e.message); return { file: relPath, ok: false, error: e.message } }
+  })
 }
 
 // 在编辑器里打开 文件:行（默认 VS Code；可在 settings.editorCmd 配 IDEA 等）
@@ -321,6 +395,7 @@ app.whenReady().then(() => {
 
   // 开卡 / 窗口
   ipcMain.handle('spawn-card', (_e, title) => spawnCard(title))
+  ipcMain.handle('spawn-fanout', (_e, goal) => spawnFanout(goal))
   ipcMain.on('close-self', (e) => BrowserWindow.fromWebContents(e.sender)?.close())
   ipcMain.on('hide-self', (e) => BrowserWindow.fromWebContents(e.sender)?.hide())
   ipcMain.on('minimize-self', (e) => BrowserWindow.fromWebContents(e.sender)?.minimize())
@@ -408,6 +483,13 @@ app.whenReady().then(() => {
     let full = file
     try { if (!path.isAbsolute(file) && baseDir) full = path.join(baseDir, file) } catch {}
     openInEditor(full, line)
+  })
+
+  // 直接将 unified diff 写入文件（不经过 AI 二次执行）
+  ipcMain.handle('apply-diff', (e, diffText) => {
+    const sessionId = sessionByWc.get(e.sender.id); const si = sessionId && sessionInfo.get(sessionId)
+    const baseDir = (si && si.serve && si.serve.dir) || settings.projectDir || ''
+    return applyDiffToDisk(baseDir, String(diffText || ''))
   })
 
   createInput()

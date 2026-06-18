@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron')
 contextBridge.exposeInMainWorld('tianshu', {
   // 窗口
   spawnCard: (title) => ipcRenderer.invoke('spawn-card', title),
+  spawnFanout: (goal) => ipcRenderer.invoke('spawn-fanout', goal),
   closeSelf: () => ipcRenderer.send('close-self'),
   hideSelf: () => ipcRenderer.send('hide-self'),
   minimizeSelf: () => ipcRenderer.send('minimize-self'),
@@ -38,6 +39,7 @@ contextBridge.exposeInMainWorld('tianshu', {
   cardAbort: () => ipcRenderer.send('card-abort'),
   onStream: (cb) => ipcRenderer.on('card-stream', (_e, p) => cb(p)),
   openLoc: (file, line) => ipcRenderer.invoke('open-loc', { file, line }),
+  applyDiff: (diffText) => ipcRenderer.invoke('apply-diff', diffText),
   onPermission: (cb) => ipcRenderer.on('permission-request', (_e, p) => cb(p)),
   permissionReply: (requestId, decision) => ipcRenderer.send('permission-reply', { requestId, decision }),
 })

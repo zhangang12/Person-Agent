@@ -18,12 +18,16 @@
   #graph::-webkit-scrollbar, #feed::-webkit-scrollbar { width: 7px; height: 7px; }
   #graph::-webkit-scrollbar-thumb, #feed::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
   .node rect { fill: var(--ai-bg); stroke: var(--composer-border); stroke-width: 1.2; }
-  .node .nid { font: 600 11px var(--mono); fill: var(--txt2); }
-  .node .ng { font: 11px var(--font); fill: var(--txt); }
+  .node .nid { font: 600 10px var(--mono); fill: var(--txt2); }
+  .node .ng { font: 11.5px var(--font); fill: var(--txt); }
+  .node .nst { font: 10px var(--font); fill: var(--txt3); }
   .node { cursor: pointer; }
   .node.running rect { stroke: var(--accent); stroke-width: 1.8; animation: tw 1.4s ease-in-out infinite; }
+  .node.running .nst { fill: var(--accent); }
   .node.ok rect { stroke: var(--green); stroke-width: 1.6; }
+  .node.ok .nst { fill: var(--green); }
   .node.error rect, .node.timeout rect, .node.aborted rect { stroke: var(--diff-del); stroke-width: 1.6; }
+  .node.error .nst, .node.timeout .nst, .node.aborted .nst { fill: var(--diff-del); }
   .node.sel rect { stroke: var(--accent); stroke-width: 2.2; }
   .edge { fill: none; stroke: var(--txt3); stroke-width: 1.3; opacity: .7; }
   .detail { flex: none; font-size: 11.5px; color: var(--txt); background: var(--composer-bg); border: .5px solid var(--accent); border-radius: 9px; padding: 7px 9px; line-height: 1.45; display: none; }
@@ -87,7 +91,7 @@
   let selId = null
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const STt = { pending: '等待', running: '运行中', ok: '完成', error: '失败', timeout: '超时', aborted: '已停' }
-  const NW = 152, NH = 44, GX = 52, GY = 14, PAD = 12
+  const NW = 158, NH = 56, GX = 52, GY = 14, PAD = 12
   function draw() {
     const memo = new Map()
     const layerOf = (id, seen) => {
@@ -113,10 +117,13 @@
         edges += `<path class="edge" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" marker-end="url(#ah)"/>`
       }
       const role = (t.role || 'worker')
+      const goalShort = t.goal.length > 17 ? t.goal.slice(0, 16) + '…' : t.goal
+      const statusLabel = STt[t.status] || '等待'
       nodes += `<g class="node ${t.status || 'pending'}${selId === t.id ? ' sel' : ''}" data-id="${esc(t.id)}" transform="translate(${p.x},${p.y})">`
         + `<rect width="${NW}" height="${NH}" rx="9"/>`
-        + `<text class="nid" x="10" y="17">${esc(t.id)} · ${esc(role)}</text>`
-        + `<text class="ng" x="10" y="33">${esc((STt[t.status] || '等待'))}</text></g>`
+        + `<text class="nid" x="10" y="15">${esc(t.id)} · ${esc(role)}</text>`
+        + `<text class="ng" x="10" y="30">${esc(goalShort)}</text>`
+        + `<text class="nst" x="10" y="46">${esc(statusLabel)}</text></g>`
     }
     graphEl.innerHTML = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg"><defs>`
       + `<marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--txt3)"/></marker>`
@@ -152,14 +159,27 @@
       draw()
     } else if (ev.type === 'plan-approve') {
       const box = document.createElement('div'); box.className = 'approve'
-      const t = document.createElement('div'); t.className = 't'; t.textContent = '第 ' + ev.round + ' 轮计划共 ' + ev.count + ' 个子任务，确认执行？'
+      const t = document.createElement('div'); t.className = 't'
+      t.textContent = '第 ' + ev.round + ' 轮 · ' + ev.count + ' 个子任务，确认执行？'
+      // 任务列表预览
+      const tlist = document.createElement('div'); tlist.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin:2px 0;'
+      for (const task of (ev.tasks || [])) {
+        const item = document.createElement('div')
+        item.style.cssText = 'font-size:11px;color:var(--txt2);background:var(--composer-bg);border:.5px solid var(--composer-border);border-radius:7px;padding:4px 8px;line-height:1.4;'
+        const badge = document.createElement('span')
+        badge.style.cssText = 'font-family:var(--mono);font-size:10px;color:var(--accent);margin-right:5px;'
+        badge.textContent = task.role || 'worker'
+        item.appendChild(badge)
+        item.appendChild(document.createTextNode(task.goal))
+        tlist.appendChild(item)
+      }
       const btns = document.createElement('div'); btns.className = 'btns'
       const go = document.createElement('button'); go.className = 'go'; go.textContent = '批准执行'
       const auto = document.createElement('button'); auto.className = 'auto'; auto.textContent = '自动·不再询问'
       const no = document.createElement('button'); no.className = 'no'; no.textContent = '停止'
       const reply = (decision, a) => { window.tianshu.wfApprove(ev.reqId, decision, a); box.remove() }
       go.onclick = () => reply('run', false); auto.onclick = () => reply('run', true); no.onclick = () => reply('abort', false)
-      btns.append(go, auto, no); box.append(t, btns); feed.appendChild(box); feed.scrollTop = feed.scrollHeight
+      btns.append(go, auto, no); box.append(t, tlist, btns); feed.appendChild(box); feed.scrollTop = feed.scrollHeight
     } else if (ev.type === 'task') {
       const t = tasks.get(ev.id); if (t) { t.status = ev.status; draw() }
     } else if (ev.type === 'final') {
