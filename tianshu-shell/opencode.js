@@ -44,8 +44,13 @@ function spawnServe(cwd, port) {
   return spawn(SERVE_BIN, ['serve', '--port', String(port), '--hostname', '127.0.0.1'],
     { cwd: cwd || undefined, stdio: 'ignore', shell: process.platform === 'win32', windowsHide: true })
 }
-async function waitHealthy(base) {
-  for (let i = 0; i < 60; i++) { if (await healthAt(base)) return; await sleep(500) }
+async function waitHealthy(base, getExit) {
+  for (let i = 0; i < 60; i++) {
+    if (await healthAt(base)) return
+    const ex = getExit && getExit()   // 进程提前退出（多半是找不到二进制）→ 快速失败，别空等 30s
+    if (ex) throw new Error('serve 进程提前退出（' + (ex.error || ('code ' + ex.code)) + '）：请确认 ' + SERVE_BIN + ' 已安装并在 PATH 中')
+    await sleep(500)
+  }
   throw new Error('opencode serve start timeout (30s)')
 }
 async function detectPerm(base) {
@@ -70,7 +75,10 @@ async function ensureServe(dir, handlers, log = console.log) {
     info.port = port; info.base = `http://127.0.0.1:${port}`
     log(`starting serve for [${dir || '(home)'}] on :${port}`)
     info.proc = spawnServe(dir, port)
-    await waitHealthy(info.base)
+    let exitInfo = null
+    info.proc.on('exit', (code, sig) => { if (!exitInfo) exitInfo = { code, sig } })
+    info.proc.on('error', (e) => { if (!exitInfo) exitInfo = { error: e.message } })
+    await waitHealthy(info.base, () => exitInfo)
     info.permStyle = await detectPerm(info.base)
     log(`serve ready on :${port} (permission endpoint: ${info.permStyle})`)
     runEventLoop(info.base, handlers, log)
