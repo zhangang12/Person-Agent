@@ -1,6 +1,6 @@
 {
   "name": "tianshu-shell",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "description": "个人桌面智能体：可拖动透明玻璃卡片 + 全局输入框（Electron，基于 opencode serve）",
   "main": "main.js",
@@ -11,7 +11,10 @@
     "permcheck": "node scripts/permission-probe.mjs",
     "jsonschema": "node scripts/json-schema-probe.mjs",
     "orch:test": "node scripts/orchestrator-selftest.mjs",
-    "orch:run": "node scripts/orchestrator-run.mjs"
+    "orch:run": "node scripts/orchestrator-run.mjs",
+    "mcp:browser": "node mcp/browser-mcp.mjs",
+    "mcp:browser:test": "node mcp/selftest.mjs",
+    "mcp:browser:config": "node mcp/print-config.mjs"
   },
   "devDependencies": {
     "electron": "^34.0.0",
@@ -24,10 +27,13 @@
       "main.js",
       "preload.js",
       "opencode.js",
+      "orchestrator.js",
       "ui/**/*",
       "assets/**/*",
+      "mcp/**/*",
       "package.json"
     ],
+    "asarUnpack": ["mcp/**/*"],
     "win": {
       "target": ["nsis", "portable"],
       "icon": "build/icon.ico"
