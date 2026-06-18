@@ -52,6 +52,7 @@
   .rbtn-ghost:hover { color: var(--txt); }
   .rbtn-primary:disabled, .rbtn-ghost:disabled { opacity: .65; cursor: default; }
   .rbtn-primary.done, .rbtn-ghost.done { background: var(--composer-bg); color: var(--green); border: .5px solid var(--composer-border); opacity: 1; }
+  .rbtn-primary.danger { background: var(--diff-del-bg); color: var(--diff-del); border: 1px solid var(--diff-del); padding: 2px 10px; }
   .rbody { margin: 0; padding: 8px 10px; overflow-x: auto; }
   .rbody code { font-family: var(--mono); font-size: 12px; white-space: pre; background: none; padding: 0; }
   .rbody::-webkit-scrollbar { height: 6px; } .rbody::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
@@ -209,6 +210,9 @@
     quick.appendChild(b)
   })
 
+  // 破坏性命令特征（误触前先红字拦一道；不替代 bash 权限确认）
+  const DANGER = /(\brm\s+-[rf]+|\bmkfs\b|\bdd\s+if=|:\(\)\s*\{|\b(drop|truncate)\s+(table|database)\b|\bshutdown\b|\breboot\b|\bformat\s+[a-z]:|\bdel\s+\/[sq]|\brd\s+\/s|\b(git\s+)?reset\s+--hard|\bgit\s+clean\s+-[a-z]*f)/i
+
   // 富结果动作：应用/运行 = 向同一会话发指令（agent 用工具做、经内联权限）；复制/打开在 rich.js/本地
   window.Rich.wireActions(feed, {
     open: (file, line) => window.tianshu.openLoc(file, line),
@@ -224,6 +228,13 @@
     },
     run: async ({ raw }, btn) => {
       if (busy) return
+      // 破坏性命令客户端二次确认（最终仍走 bash 权限条，这里只防误触）
+      if (DANGER.test(raw) && btn.dataset.armed !== '1') {
+        const o = btn.textContent; btn.dataset.armed = '1'; btn.textContent = '危险·再点确认'; btn.classList.add('danger')
+        setTimeout(() => { if (btn.dataset.armed === '1') { btn.dataset.armed = ''; btn.textContent = o; btn.classList.remove('danger') } }, 4000)
+        return
+      }
+      btn.dataset.armed = ''; btn.classList.remove('danger')
       const orig = btn.innerHTML; btn.textContent = '运行中…'; btn.disabled = true
       const p = '请运行下面这条命令并把输出原样返回：\n\n```bash\n' + raw + '\n```'
       const ok = await turn(p)
