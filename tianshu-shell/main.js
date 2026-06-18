@@ -294,7 +294,13 @@ app.whenReady().then(() => {
     if (!si) throw new Error('session not ready')
     sentPrompt.set(sessionId, text); streamBuf.delete(sessionId)
     touchHistory(sessionId)
-    return await oc.sendMessage(si.serve, sessionId, text)
+    try { return await oc.sendMessage(si.serve, sessionId, text) }
+    catch (err) {
+      const m = String((err && err.message) || err)
+      if (/ECONNREFUSED|ECONNRESET|socket hang up|ENOTFOUND|EPIPE|fetch failed/i.test(m))
+        throw new Error('引擎连接中断（serve 可能已退出）。关掉这张卡重开即可（已自动准备重启 serve）。')
+      throw err
+    }
   })
   // 卡坞：历史列表 + 打开
   ipcMain.handle('open-dock', () => openDock())

@@ -6,6 +6,7 @@
 // 终端日志一律英文，避免 Windows 控制台乱码。
 const { spawn } = require('child_process')
 const net = require('net')
+const http = require('http')
 
 const AUTO_ALLOW = new Set(['read', 'grep', 'glob', 'list', 'ls', 'find', 'tree'])
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -14,14 +15,30 @@ const pool = new Map()      // dirKey -> info { dir, base, port, proc, permStyle
 let sampleLogged = false
 const seenPartTypes = new Set()   // 每种 part 类型打印一次（确认 reasoning/text 等）
 
-async function api(base, method, path, body) {
-  const res = await fetch(base + path, {
-    method, headers: { 'content-type': 'application/json' },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+// 用 Node http 而非 fetch：智能体一轮可能跑几分钟，POST /message 在结束前一直挂着，
+// 而 fetch(undici) 默认 5 分钟 headersTimeout 会把它判超时抛 "fetch failed"。http 无此超时。
+function api(base, method, path, body) {
+  return new Promise((resolve, reject) => {
+    let u
+    try { u = new URL(base + path) } catch (e) { return reject(e) }
+    const data = body !== undefined ? Buffer.from(JSON.stringify(body)) : null
+    const req = http.request({
+      hostname: u.hostname, port: u.port, path: u.pathname + u.search, method,
+      headers: { 'content-type': 'application/json', ...(data ? { 'content-length': data.length } : {}) },
+    }, (res) => {
+      let txt = ''; res.setEncoding('utf8')
+      res.on('data', (c) => { txt += c })
+      res.on('end', () => {
+        const code = res.statusCode || 0
+        if (code < 200 || code >= 300) return reject(new Error(`${method} ${path} -> ${code}: ${txt.slice(0, 200)}`))
+        try { resolve(txt ? JSON.parse(txt) : undefined) } catch (e) { reject(new Error(`${method} ${path} -> 非 JSON 响应: ${txt.slice(0, 120)}`)) }
+      })
+    })
+    req.on('error', reject)
+    req.setTimeout(0)            // 不超时：长任务期间连接保持
+    if (data) req.write(data)
+    req.end()
   })
-  const txt = await res.text()
-  if (!res.ok) throw new Error(`${method} ${path} -> ${res.status}: ${txt.slice(0, 200)}`)
-  return txt ? JSON.parse(txt) : undefined
 }
 async function healthAt(base) { try { await api(base, 'GET', '/global/health'); return true } catch { return false } }
 
