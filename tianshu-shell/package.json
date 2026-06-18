@@ -14,7 +14,9 @@
     "orch:run": "node scripts/orchestrator-run.mjs",
     "mcp:browser": "node mcp/browser-mcp.mjs",
     "mcp:browser:test": "node mcp/selftest.mjs",
-    "mcp:browser:config": "node mcp/print-config.mjs"
+    "mcp:httpcap": "node mcp/httpcap-mcp.mjs",
+    "mcp:httpcap:test": "node mcp/httpcap-selftest.mjs",
+    "mcp:config": "node mcp/print-config.mjs"
   },
   "devDependencies": {
     "electron": "^34.0.0",
