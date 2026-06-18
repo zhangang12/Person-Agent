@@ -154,14 +154,14 @@ function openDock() {
 function buildTray() {
   const img = nativeImage.createFromPath(path.join(__dirname, 'assets', 'tray.png'))
   tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img)
-  tray.setToolTip('天枢 Tianshu')
+  tray.setToolTip('个人桌面智能体')
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '唤起输入框', accelerator: 'Ctrl+Shift+Space', click: () => { if (!inputWin) createInput(); else { inputWin.show(); inputWin.focus() } } },
     { label: '卡坞 · 历史对话', click: openDock },
     { label: '切换深 / 浅主题', click: toggleTheme },
     { label: '设置…', click: openSettings },
     { type: 'separator' },
-    { label: '退出天枢', click: () => app.quit() },
+    { label: '退出', click: () => app.quit() },
   ]))
   tray.on('click', toggleInput)
 }
