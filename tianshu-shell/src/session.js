@@ -2,6 +2,14 @@
 const { exec } = require('child_process')
 
 module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, recordHistory, touchHistory }) {
+  // ── 个人记忆库 ──────────────────────────────────────────────────────────────
+  const memoryFile = path.join(require('electron').app.getPath('userData'), 'memory.md')
+  function loadMemory() {
+    try { const t = fs.readFileSync(memoryFile, 'utf8').trim(); return t ? `<个人记忆>\n${t}\n</个人记忆>\n\n` : '' } catch { return '' }
+  }
+  ipcMain.handle('memory-read', () => { try { return fs.readFileSync(memoryFile, 'utf8') } catch { return '' } })
+  ipcMain.handle('memory-write', (_e, text) => { try { fs.writeFileSync(memoryFile, text, 'utf8'); return true } catch { return false } })
+
   // ── 项目上下文注入 ──────────────────────────────────────────────────────────
   function loadProjectContext(dir) {
     if (!dir) return ''
@@ -127,7 +135,7 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
       if (!ns) throw new Error('create session failed')
       S.sessionByWc.set(e.sender.id, ns)
       S.sessionInfo.set(ns, { wc: e.sender, serve })
-      const ctx1 = loadProjectContext(dir); if (ctx1) S.firstMsgCtx.set(ns, ctx1)
+      const ctx1 = loadMemory() + loadProjectContext(dir); if (ctx1) S.firstMsgCtx.set(ns, ctx1)
       recordHistory(ns, wantTitle || (h && h.title), dir)
       return { sessionId: ns, project: proj, reattached: false, stale: true }
     }
@@ -137,7 +145,7 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
     if (!sessionId) throw new Error('create session failed')
     S.sessionByWc.set(e.sender.id, sessionId)
     S.sessionInfo.set(sessionId, { wc: e.sender, serve })
-    const ctx0 = loadProjectContext(dir); if (ctx0) S.firstMsgCtx.set(sessionId, ctx0)
+    const ctx0 = loadMemory() + loadProjectContext(dir); if (ctx0) S.firstMsgCtx.set(sessionId, ctx0)
     recordHistory(sessionId, wantTitle, dir)
     return { sessionId, project: S.settings.projectDir ? path.basename(S.settings.projectDir) : '未选目录', reattached: false }
   })

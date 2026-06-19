@@ -1,5 +1,5 @@
 ﻿'use strict'
-const { app, BrowserWindow, globalShortcut, ipcMain, screen, dialog, Tray, Menu, nativeImage, shell } = require('electron')
+const { app, BrowserWindow, globalShortcut, ipcMain, screen, dialog, Tray, Menu, nativeImage, shell, clipboard } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const oc = require('./opencode')
@@ -58,6 +58,14 @@ app.whenReady().then(() => {
   oc.ensureServe(S.settings.projectDir || '', S.handlers, log).catch((e) => log('prewarm failed: ' + e.message))
 
   if (!globalShortcut.register('Control+Shift+Space', toggleInput)) log('global shortcut register failed (maybe in use)')
+
+  // Ctrl+Shift+V：把剪贴板内容带入输入框（"选中即问"快捷路径）
+  globalShortcut.register('Control+Shift+V', () => {
+    const text = clipboard.readText().trim()
+    if (!text) return
+    if (!S.inputWin || !S.inputWin.isVisible()) { createInput() }
+    if (S.inputWin) { S.inputWin.show(); S.inputWin.focus(); S.inputWin.webContents.send('fill-input', text) }
+  })
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createInput() })
 })
 

@@ -16,9 +16,30 @@
   .tbtn:hover { color: var(--txt); background: var(--composer-bg); }
   .projname { font-size: 11px; font-family: var(--mono); max-width: 82px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .kbd { font-size: 11px; color: var(--txt3); font-family: var(--mono); border: 1px solid var(--kbd-border); border-radius: 7px; padding: 3px 8px; white-space: nowrap; }
+
+  /* 角色选择面板 */
+  #role-panel { position: fixed; bottom: 116px; left: 10px; right: 10px; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 14px; padding: 10px 12px; display: none; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); z-index: 100; box-shadow: 0 8px 32px rgba(0,0,0,.18); }
+  #role-panel.show { display: block; }
+  .rp-title { font-size: 11px; color: var(--txt2); margin-bottom: 8px; }
+  .rp-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .rchip { font-size: 12px; color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 999px; padding: 4px 12px; cursor: pointer; user-select: none; transition: all .12s; }
+  .rchip:hover { color: var(--txt); border-color: var(--accent); }
+  .rchip.sel { color: var(--send-fg); background: var(--brand); border-color: var(--brand); }
+  .rp-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .rp-go { font-size: 12px; font-weight: 600; color: var(--send-fg); background: var(--brand); border: none; border-radius: 8px; padding: 5px 16px; cursor: pointer; }
+  .rp-cancel { font-size: 12px; color: var(--txt2); background: transparent; border: .5px solid var(--composer-border); border-radius: 8px; padding: 5px 12px; cursor: pointer; }
 </style>
 </head>
 <body>
+<!-- 角色选择面板（Ctrl+Enter 触发） -->
+<div id="role-panel">
+  <div class="rp-title">选择并行评审角色（可多选，默认：安全 · 性能 · 业务）</div>
+  <div id="rp-chips" class="rp-chips"></div>
+  <div class="rp-actions">
+    <button class="rp-cancel" id="rp-cancel">取消</button>
+    <button class="rp-go" id="rp-go">开始并行评审 →</button>
+  </div>
+</div>
 <div class="glass">
   <div class="bar">
     <span class="orb" title="拖动我移动位置">
@@ -27,7 +48,7 @@
         <path fill="url(#g)" d="M12 2l1.7 6.1L20 10l-6.3 1.9L12 18l-1.7-6.1L4 10l6.3-1.9z"/>
       </svg>
     </span>
-    <input id="q" class="nodrag" placeholder="回车 → 新对话   Ctrl+回车 → 三视角并行评审   工作流按钮 → 多 Agent 编排" autofocus />
+    <input id="q" class="nodrag" placeholder="回车 → 新对话   Ctrl+回车 → 选角色并行评审   Ctrl+V → 粘贴代码即问" autofocus />
     <button id="proj" class="tbtn nodrag" title="选择代码仓库（卡片对它说话）">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
       <span id="projname" class="projname">未选目录</span>
@@ -50,17 +71,57 @@
 <script>
   const q = document.getElementById('q')
   q.focus()
+
+  // ── 角色面板 ──────────────────────────────────────────────────────────────
+  const panel = document.getElementById('role-panel')
+  const chipsEl = document.getElementById('rp-chips')
+  let allRoles = [], selectedRoles = new Set(['security', 'perf', 'biz'])
+  let pendingGoal = ''
+
+  async function initRoles() {
+    try {
+      allRoles = await window.BocomHermes.getFanoutRoles()
+      chipsEl.innerHTML = ''
+      allRoles.forEach(({ key, label }) => {
+        const c = document.createElement('span'); c.className = 'rchip' + (selectedRoles.has(key) ? ' sel' : '')
+        c.textContent = label; c.dataset.key = key
+        c.addEventListener('click', () => {
+          if (selectedRoles.has(key)) { if (selectedRoles.size > 1) { selectedRoles.delete(key); c.classList.remove('sel') } }
+          else { selectedRoles.add(key); c.classList.add('sel') }
+        })
+        chipsEl.appendChild(c)
+      })
+    } catch {}
+  }
+  initRoles()
+
+  function showRolePanel(goal) {
+    pendingGoal = goal
+    panel.classList.add('show')
+  }
+  function hideRolePanel() { panel.classList.remove('show') }
+
+  document.getElementById('rp-cancel').addEventListener('click', hideRolePanel)
+  document.getElementById('rp-go').addEventListener('click', async () => {
+    hideRolePanel()
+    if (!pendingGoal) return
+    const roles = [...selectedRoles]
+    q.value = ''
+    try { await window.BocomHermes.spawnFanoutRoles(pendingGoal, roles) } catch (err) { console.error(err) }
+  })
+
   q.addEventListener('keydown', async (e) => {
+    if (e.key === 'Escape') { if (panel.classList.contains('show')) { hideRolePanel(); return } window.BocomHermes.hideSelf(); return }
     if (e.key === 'Enter' && q.value.trim()) {
       const v = q.value.trim()
-      q.value = ''
       if (e.ctrlKey) {
-        // Ctrl+Enter → 三视角 fan-out 并行卡
-        try { await window.BocomHermes.spawnFanout(v) } catch (err) { console.error(err) }
+        // Ctrl+Enter → 弹出角色选择面板
+        showRolePanel(v)
       } else {
+        q.value = ''
         try { await window.BocomHermes.spawnCard(v) } catch (err) { console.error(err) }
       }
-    } else if (e.key === 'Escape') { window.BocomHermes.hideSelf() }
+    }
   })
   window.addEventListener('focus', () => q.focus())
 
@@ -87,6 +148,17 @@
     try { projName.textContent = await window.BocomHermes.pickProject() } catch (e) {}
   })
   window.BocomHermes.onProject((p) => { projName.textContent = p })
+
+  // 主进程推送剪贴板内容（Ctrl+Shift+V 全局热键）
+  window.BocomHermes.onFillInput((text) => {
+    q.value = text.slice(0, 500)   // 截断避免过长
+    q.focus(); q.select()
+  })
+
+  // 粘贴即问按钮：读剪贴板填入输入框
+  document.getElementById('paste-btn') && document.getElementById('paste-btn').addEventListener('click', async () => {
+    try { const t = await window.BocomHermes.readClipboard(); if (t.trim()) { q.value = t.slice(0, 500); q.focus() } } catch {}
+  })
 </script>
 </body>
 </html>

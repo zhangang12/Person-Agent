@@ -159,7 +159,7 @@
   const SPIN = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" style="color:var(--accent);animation:spin 1s linear infinite"><path d="M12 3a9 9 0 1 0 9 9"/></svg>'
   const DONE = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="color:var(--green)"><path d="M4 12l5 5L20 6"/></svg>'
   let busy = false
-  function setBusy(b) { busy = b; st.innerHTML = b ? SPIN : DONE; send.innerHTML = b ? STOP : ARROW; quick.classList.toggle('hidden', b) }
+  function setBusy(b) { busy = b; st.innerHTML = b ? SPIN : DONE; send.innerHTML = b ? STOP : ARROW; quick.classList.toggle('hidden', b); try { window.BocomHermes.reportBusy(b) } catch {} }
   setBusy(false)
 
   function addMsg(text, who) {
@@ -238,18 +238,32 @@
   ci.addEventListener('input', autoGrow)
   ci.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } })
 
-  // 快捷指令：常用追问的模板（在这个数组里增删即可迭代）。首条引导出可一键应用的 diff。
+  // 快捷指令：常用追问的模板（在这个数组里增删即可迭代）
   const QUICK = [
     { label: '改成可应用 diff', text: '把你上面给出的修改整理成统一 diff：用 ```diff 围栏，包含 +++/--- 文件头和 @@ 行号，便于我一键应用到对应文件。' },
     { label: '补单元测试', text: '为刚才的改动补充单元测试，覆盖正常路径与边界场景。' },
     { label: '加中文注释', text: '给刚才的代码补上必要的中文注释，解释关键逻辑，但不要改变行为。' },
     { label: '查风险', text: '审视刚才的改动是否存在空指针、并发、SQL 注入、事务边界等风险，逐条列出（必改/建议）并给修法。' },
+    { label: '解释代码', text: '用简洁的中文解释上面的代码：目的是什么，关键步骤，有哪些潜在的坑。' },
+    { label: '写提交信息', text: '根据刚才的改动，给我一条符合 Conventional Commits 规范的 git commit message（中文描述）。' },
+    { label: '排查报错', text: '帮我分析这个报错的根因，给出最可能的修法，优先考虑内网环境下的常见原因。' },
   ]
   QUICK.forEach((q) => {
     const b = document.createElement('button'); b.className = 'qchip'; b.textContent = q.label; b.title = q.text
     b.addEventListener('click', () => { if (busy) return; addMsg(q.text, 'me'); turn(q.text) })
     quick.appendChild(b)
   })
+
+  // 记忆管理命令：/memory 打开编辑弹窗
+  const memBtn = document.createElement('button'); memBtn.className = 'qchip'; memBtn.textContent = '📌 我的记忆'; memBtn.title = '查看 / 编辑个人记忆（每张新卡会自动注入）'
+  memBtn.addEventListener('click', async () => {
+    const cur = await window.BocomHermes.memoryRead()
+    const next = prompt('个人记忆（新卡自动注入，留空清除）：', cur)
+    if (next === null) return
+    await window.BocomHermes.memoryWrite(next)
+    addMsg('✓ 记忆已更新，下一张新卡起生效。', 'ai')
+  })
+  quick.appendChild(memBtn)
 
   // 破坏性命令特征（误触前先红字拦一道；不替代 bash 权限确认）
   const DANGER = /(\brm\s+-[rf]+|\bmkfs\b|\bdd\s+if=|:\(\)\s*\{|\b(drop|truncate)\s+(table|database)\b|\bshutdown\b|\breboot\b|\bformat\s+[a-z]:|\bdel\s+\/[sq]|\brd\s+\/s|\b(git\s+)?reset\s+--hard|\bgit\s+clean\s+-[a-z]*f)/i

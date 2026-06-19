@@ -1,5 +1,6 @@
 ﻿'use strict'
 const USE_ACRYLIC = false
+const { clipboard } = require('electron')
 
 module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }) {
   // ── 设置 ────────────────────────────────────────────────────────────────────
@@ -69,15 +70,25 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, screen, d
     return id
   }
 
-  function spawnFanout(goal) {
-    const views = [
-      ['安全·风险', '请从安全漏洞、边界处理、异常情况、权限校验等角度深度审视以下内容，逐条列出问题（必改/建议/可忽略）并给出修法：\n\n' + goal],
-      ['性能·质量', '请从性能瓶颈、代码质量、可读性、可维护性等角度深度审视以下内容，逐条列出改进点（必改/建议/可忽略）：\n\n' + goal],
-      ['业务·逻辑', '请从业务逻辑正确性、需求覆盖度、边界场景、数据一致性等角度深度审视以下内容，逐条列出问题（必改/建议/可忽略）：\n\n' + goal],
-    ]
+  // 预设角色库（label、提示词前缀）
+  const ROLES = {
+    security:  ['安全·风险',   '请从安全漏洞、边界处理、异常情况、权限校验等角度深度审视以下内容，逐条列出问题（必改/建议/可忽略）并给出修法：\n\n'],
+    perf:      ['性能·质量',   '请从性能瓶颈、代码质量、可读性、可维护性等角度深度审视以下内容，逐条列出改进点（必改/建议/可忽略）：\n\n'],
+    biz:       ['业务·逻辑',   '请从业务逻辑正确性、需求覆盖度、边界场景、数据一致性等角度深度审视以下内容，逐条列出问题（必改/建议/可忽略）：\n\n'],
+    arch:      ['架构·设计',   '请从系统架构、模块划分、接口设计、扩展性等角度深度评审以下内容，给出架构层面的建议与风险：\n\n'],
+    test:      ['测试·覆盖',   '请为以下内容设计完整的测试方案，包含单元/集成/边界用例，并指出当前可能缺失的测试场景：\n\n'],
+    doc:       ['文档·注释',   '请为以下内容生成完整的中文技术文档（包含功能说明、参数、返回值、使用示例、注意事项）：\n\n'],
+    refactor:  ['重构·简化',   '请审视以下代码，找出可以简化、消除重复、提升可读性的点，给出重构建议并写出重构后的代码：\n\n'],
+  }
+
+  function spawnFanout(goal, roleKeys) {
+    const keys = (roleKeys && roleKeys.length) ? roleKeys : ['security', 'perf', 'biz']
     const shortGoal = goal.length > 28 ? goal.slice(0, 27) + '…' : goal
-    views.forEach(([label, msg]) => spawnCard(label + ' · ' + shortGoal, null, msg))
-    return views.length
+    keys.forEach((k) => {
+      const [label, prefix] = ROLES[k] || [k, '']
+      spawnCard(label + ' · ' + shortGoal, null, prefix + goal)
+    })
+    return keys.length
   }
 
   function spawnWorkflow(goal) {
@@ -189,8 +200,36 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, screen, d
   })
 
   ipcMain.handle('spawn-card', (_e, title) => spawnCard(title))
-  ipcMain.handle('spawn-fanout', (_e, goal) => spawnFanout(goal))
+  ipcMain.handle('spawn-fanout', (_e, goal, roles) => spawnFanout(goal, roles))
+  ipcMain.handle('spawn-fanout-roles', (_e, { goal, roles }) => spawnFanout(goal, roles))
+  ipcMain.handle('get-fanout-roles', () => Object.entries(ROLES).map(([k, [label]]) => ({ key: k, label })))
   ipcMain.handle('spawn-workflow', (_e, goal) => spawnWorkflow(goal))
+
+  // ── 任务完成通知 ────────────────────────────────────────────────────────────
+  const busyCards = new Set()   // 正在运行任务的 webContents id
+  function updateTrayBusy() {
+    if (!S.tray) return
+    const n = busyCards.size
+    S.tray.setToolTip(n > 0 ? `个人桌面智能体 · ${n} 个任务运行中` : '个人桌面智能体')
+  }
+  ipcMain.on('card-busy', (e, busy) => {
+    const wcId = e.sender.id
+    const wasBusy = busyCards.has(wcId)
+    if (busy) {
+      busyCards.add(wcId)
+    } else {
+      busyCards.delete(wcId)
+      // 完成时：若卡片不在前台则闪烁提醒
+      if (wasBusy) {
+        const win = BrowserWindow.fromWebContents(e.sender)
+        if (win && !win.isDestroyed() && !win.isFocused()) {
+          win.flashFrame(true)
+          win.once('focus', () => win.flashFrame(false))
+        }
+      }
+    }
+    updateTrayBusy()
+  })
 
   ipcMain.on('close-self', (e) => BrowserWindow.fromWebContents(e.sender)?.close())
   ipcMain.on('hide-self', (e) => BrowserWindow.fromWebContents(e.sender)?.hide())
@@ -211,6 +250,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, screen, d
     const wa = screen.getDisplayMatching(w.getBounds()).workArea
     w.setBounds({ x: wa.x, y: wa.y, width: wa.width, height: wa.height }); return true
   })
+
+  ipcMain.handle('read-clipboard', () => clipboard.readText())
 
   ipcMain.handle('open-dock', () => openDock())
   ipcMain.on('get-history', (e) => { e.returnValue = S.history })

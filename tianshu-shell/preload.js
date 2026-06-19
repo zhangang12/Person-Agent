@@ -4,6 +4,8 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   // 窗口
   spawnCard: (title) => ipcRenderer.invoke('spawn-card', title),
   spawnFanout: (goal) => ipcRenderer.invoke('spawn-fanout', goal),
+  spawnFanoutRoles: (goal, roles) => ipcRenderer.invoke('spawn-fanout-roles', { goal, roles }),
+  getFanoutRoles: () => ipcRenderer.invoke('get-fanout-roles'),
   closeSelf: () => ipcRenderer.send('close-self'),
   hideSelf: () => ipcRenderer.send('hide-self'),
   minimizeSelf: () => ipcRenderer.send('minimize-self'),
@@ -42,4 +44,13 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   applyDiff: (diffText) => ipcRenderer.invoke('apply-diff', diffText),
   onPermission: (cb) => ipcRenderer.on('permission-request', (_e, p) => cb(p)),
   permissionReply: (requestId, decision) => ipcRenderer.send('permission-reply', { requestId, decision }),
+  // 任务状态上报（busy 切换时通知主进程，用于托盘徽标 + 完成提醒）
+  reportBusy: (busy) => ipcRenderer.send('card-busy', busy),
+  // 个人记忆库
+  memoryRead: () => ipcRenderer.invoke('memory-read'),
+  memoryWrite: (text) => ipcRenderer.invoke('memory-write', text),
+  // 剪贴板（供输入框"粘贴即问"使用）
+  readClipboard: () => ipcRenderer.invoke('read-clipboard'),
+  // 主进程通知输入框填充内容（Ctrl+Shift+V 全局热键触发）
+  onFillInput: (cb) => ipcRenderer.on('fill-input', (_e, text) => cb(text)),
 })
