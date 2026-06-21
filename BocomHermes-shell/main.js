@@ -25,7 +25,7 @@ function log(m) {
 // 共享可变状态（各模块通过同一对象引用读写）
 const S = {
   settingsFile: null, historyFile: null, logFile: null,
-  settings: { theme: 'light', projectDir: '', serveBin: '', editorCmd: '', recentDirs: [] },
+  settings: { theme: 'light', projectDir: '', backendDir: '', serveBin: '', editorCmd: '', recentDirs: [] },
   history: [],
   cardSeq: 0,
   inputWin: null, settingsWin: null, dockWin: null, tray: null,

@@ -780,23 +780,47 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       dbgNote(cardWc, `🧭 分诊：难度 ${v.difficulty}/5 · 层面 [${(v.layers || []).map(k => DBG_TAG[k] || k).join('、') || '未定'}] · ${v.strategy === 'multi' ? '启动多 agent 对抗分析' : '单 agent 直接定位'}${v.reason ? '\n' + v.reason : ''}`, 'info')
       if (v.strategy !== 'multi') { inj(bundlePrompt); return }
       // 选 2~3 个假设角度（不足两个时补 frontend/contract 形成对抗）
+      // 后端仓库：opencode 一 serve 一目录，跨前后端必须分 serve。配了就让后端调查/修复在它自己的 serve 上跑
+      const backendDir = S.settings.backendDir || ''
+      let backendServe = null
+      if (backendDir) { try { backendServe = await oc.ensureServe(backendDir, S.handlers, log) } catch (e) { dbgNote(cardWc, `后端仓库 serve 启动失败：${e.message}`, 'muted') } }
       let lenses = (v.layers || []).filter(k => DBG_LENS[k])
       for (const k of ['frontend', 'contract', 'backend']) { if (lenses.length >= 2) break; if (!lenses.includes(k)) lenses.push(k) }
       lenses = lenses.slice(0, 3)
-      lenses.forEach(k => dbgNote(cardWc, `🤖 假设·${DBG_TAG[k]} 调查中…`, 'muted'))
+      if (backendServe && !lenses.includes('backend')) lenses = [...lenses.slice(0, 2), 'backend']   // 配了后端仓库必查后端
+      lenses.forEach(k => dbgNote(cardWc, `🤖 假设·${DBG_TAG[k]} 调查中…${k === 'backend' && backendServe ? '（后端仓库）' : ''}`, 'muted'))
       const findings = await Promise.all(lenses.map(async (k) => {
+        const useServe = (k === 'backend' && backendServe) ? backendServe : serve
+        const repo = useServe === backendServe ? '后端仓库' : '前端仓库'
         let sid
         try {
-          sid = await oc.createSession(serve, '调查:' + k)
-          S.sessionInfo.set(sid, { wc: cardWc, serve })   // 只读工具自动放行；写权限请求回到本卡
-          const out = await oc.sendMessage(serve, sid, DBG_LENS[k] + '\n\n## 复现上下文\n' + bundlePrompt + '\n\n只聚焦你这个假设，简洁给出证据与判断，不要修改任何文件。')
+          sid = await oc.createSession(useServe, '调查:' + k)
+          S.sessionInfo.set(sid, { wc: cardWc, serve: useServe })   // 只读工具自动放行；权限回本卡
+          const out = await oc.sendMessage(useServe, sid, DBG_LENS[k] + `\n（你正在【${repo}】里，只能读到这个仓库的源码）\n\n## 复现上下文\n` + bundlePrompt + '\n\n只聚焦你这个假设，简洁给出证据（文件:行）与判断，不要修改任何文件。')
           dbgNote(cardWc, `✓ 假设·${DBG_TAG[k]} 完成`, 'muted')
-          return { k, out }
-        } catch (e) { dbgNote(cardWc, `✗ 假设·${DBG_TAG[k]} 失败：${e.message}`, 'muted'); return { k, out: '(调查失败：' + e.message + ')' } }
+          return { k, out, repo }
+        } catch (e) { dbgNote(cardWc, `✗ 假设·${DBG_TAG[k]} 失败：${e.message}`, 'muted'); return { k, out: '(调查失败：' + e.message + ')', repo } }
         finally { if (sid) { S.sessionInfo.delete(sid); S.streamBuf.delete(sid) } }
       }))
-      const merged = findings.map(f => `### 假设·${DBG_TAG[f.k]}\n${f.out}`).join('\n\n')
-      inj(`下面是 ${findings.length} 路 agent 对同一问题各持一个假设做的并行调查。请交叉验证、互相反驳，定出最可能的【唯一根因】，然后**直接用编辑工具修改源码完成修复**（我会逐次确认写入），改完说明改了哪些文件、为什么；证据不足的假设请明确否定。\n\n## 原始复现上下文\n${bundlePrompt}\n\n## 各路调查结论\n${merged}`)
+      const merged = findings.map(f => `### 假设·${DBG_TAG[f.k] || f.k}（${f.repo}）\n${f.out}`).join('\n\n')
+
+      // 后端修复：卡片会话在前端仓库改不到后端，所以由后端仓库 serve 上的 agent 判断并直接改后端源码（权限回本卡）
+      if (backendServe) {
+        dbgNote(cardWc, '🔧 后端 agent 正在判断是否需要改后端…', 'muted')
+        let bsid
+        try {
+          bsid = await oc.createSession(backendServe, '后端修复')
+          S.sessionInfo.set(bsid, { wc: cardWc, serve: backendServe })
+          const bout = await oc.sendMessage(backendServe, bsid,
+            `你在【后端仓库】里。下面是一个从前端复现的问题 + 多路调查结论。如果根因/修复在后端，请直接用编辑工具修改后端源码完成修复（我会逐次确认写入），改完用一两句话说明改了哪些文件、为什么；如果与后端无关，只回复"后端无需改动"。\n\n## 复现上下文\n${bundlePrompt}\n\n## 各路调查结论\n${merged}`)
+          dbgNote(cardWc, '🔧 后端 agent：' + String(bout || '').replace(/\s+/g, ' ').slice(0, 500), 'muted')
+          findings.push({ k: 'backend-fix', out: bout, repo: '后端仓库' })
+        } catch (e) { dbgNote(cardWc, `后端修复失败：${e.message}`, 'muted') }
+        finally { if (bsid) { S.sessionInfo.delete(bsid); S.streamBuf.delete(bsid) } }
+      }
+
+      const mergedAll = findings.map(f => `### ${f.k === 'backend-fix' ? '后端修复结果' : '假设·' + (DBG_TAG[f.k] || f.k)}（${f.repo}）\n${f.out}`).join('\n\n')
+      inj(`下面是对同一问题的多路并行调查${backendServe ? '（跨前后端两个仓库）+ 后端 agent 的修复结果' : ''}。请交叉验证、定出最可能的【唯一根因】。**前端改动你直接用编辑工具修改（你在前端仓库）**；${backendServe ? '后端已由后端 agent 在后端仓库处理，你据其结果说明后端结论即可，不要试图改后端文件；' : ''}改完总结根因与各端改动。\n\n## 原始复现上下文\n${bundlePrompt}\n\n## 各路调查结论\n${mergedAll}`)
     } catch (e) {
       log('runDebugFlow err: ' + e.message)
       dbgNote(cardWc, '⚠ 分析流程出错：' + e.message + '（回退为单 agent）', 'info')
@@ -871,8 +895,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         if (bad.length) difficulty = 3
         if (layers.length >= 2) difficulty = 4
         if (fe && be) difficulty = 5
-        const strategy = (layers.length >= 2 || difficulty >= 4) ? 'multi' : 'single'
-        const summary = `URL：${tab.url || '(空白页)'}\n控制台错误/警告：${errs.length} 条${hasJsErr ? '（含 JS 错误）' : ''}\n网络异常：${bad.length} 条${be ? '（含 5xx/失败）' : ''}${ct ? '（含 4xx/CORS）' : ''}\n疑似层面：${layers.join('、') || '未定'}`
+        const backendDir = S.settings.backendDir || ''
+        // 配了后端仓库且有后端/契约信号 → 强制多 agent（这样后端调查/修复会在后端仓库 serve 上跑）
+        const strategy = (layers.length >= 2 || difficulty >= 4 || (backendDir && (be || ct))) ? 'multi' : 'single'
+        const summary = `URL：${tab.url || '(空白页)'}\n控制台错误/警告：${errs.length} 条${hasJsErr ? '（含 JS 错误）' : ''}\n网络异常：${bad.length} 条${be ? '（含 5xx/失败）' : ''}${ct ? '（含 4xx/CORS）' : ''}\n疑似层面：${layers.join('、') || '未定'}${backendDir ? '\n已配置后端仓库：可跨前后端调查/修复' : ''}`
         runDebugFlow({ cardWc: b.cardView.webContents, serve: cardSi.serve, bundlePrompt: prompt, disp, heur: { layers, difficulty, strategy }, summary })   // 后台异步，不阻塞按钮
       } else {
         b.cardView.webContents.send('card-inject', { text: prompt, disp })   // 会话还没就绪 → 退化为直接注入
@@ -1037,6 +1063,13 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     else { S.settings.recentDirs = (S.settings.recentDirs || []).filter((d) => d !== dir); saveSettings() }
     return projName()
   })
+  // 后端仓库（跨前后端调查/修复时，后端 agent 在它自己的 serve 上读/改后端源码）
+  ipcMain.handle('pick-backend', async () => {
+    const r = await dialog.showOpenDialog({ title: '选择后端代码仓库（Agent 跨前后端调查/修复时读它）', properties: ['openDirectory'] })
+    if (!r.canceled && r.filePaths[0]) { S.settings.backendDir = r.filePaths[0]; saveSettings(); oc.ensureServe(r.filePaths[0], S.handlers, log).catch((e) => log('backend prewarm failed: ' + e.message)) }
+    return S.settings.backendDir || ''
+  })
+  ipcMain.handle('clear-backend', () => { S.settings.backendDir = ''; saveSettings(); return '' })
 
   ipcMain.handle('open-settings', () => openSettings())
   ipcMain.on('get-settings', (e) => {
@@ -1046,6 +1079,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       serveBinEffective: process.env.BOCOMHERMES_SERVE_BIN || S.settings.serveBin || (app.isPackaged ? 'bocomcode' : 'opencode'),
       serveBinLocked: !!process.env.BOCOMHERMES_SERVE_BIN,
       project: projName(), projectDir: S.settings.projectDir || '', recentDirs: S.settings.recentDirs || [],
+      backendDir: S.settings.backendDir || '',
       imap: { host: im.host || '', port: im.port || 993, secure: im.secure !== false, allowSelf: !!im.allowSelfSigned, user: im.user || '', hasPass: !!im.passEncrypted, scheduleHour: im.scheduleHour ?? 9 },
     }
   })
@@ -1125,6 +1159,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
 
   // ── Settings: IMAP 字段读写 ───────────────────────────────────────────────
   ipcMain.handle('set-settings', (_e, patch) => {
+    if (patch && typeof patch.backendDir === 'string') S.settings.backendDir = patch.backendDir.trim()
     if (patch && typeof patch.editorCmd === 'string') S.settings.editorCmd = patch.editorCmd.trim()
     if (patch && typeof patch.serveBin === 'string') {
       S.settings.serveBin = patch.serveBin.trim()

@@ -105,6 +105,16 @@
         <div id="recent" class="row"></div>
         <span class="hint">新开的卡片对这个仓库说话。每个项目目录用独立的 serve（任务隔离）。下方为最近用过的仓库，点一下即切换。</span>
       </div>
+
+      <div class="fld">
+        <span class="lbl">后端代码仓库 <span class="hint" style="font-weight:400">（可选 · 跨前后端调查 / 修复）</span></span>
+        <div class="row">
+          <span id="backend" class="proj">未配置</span>
+          <button id="pickBackend" class="chip">选择…</button>
+          <button id="clearBackend" class="chip" style="display:none">清除</button>
+        </div>
+        <span class="hint">配置后，「发给 Agent」遇到后端 / 接口问题会自动在<strong>后端仓库</strong>里另起一个 agent 调查并修复（opencode 一个 serve 只认一个目录，所以前后端各用各的）。前端 = 上面「当前项目目录」，后端 = 这里。</span>
+      </div>
     </div>
     <div class="ft nodrag">
       <span id="msg" class="msg"></span>
@@ -162,6 +172,20 @@
     } catch (e) {}
   })
   window.BocomHermes.onProject((p) => { proj.textContent = p })
+
+  // 后端仓库（跨前后端调查/修复）
+  const backend = $('backend')
+  function paintBackend(dir) {
+    backend.textContent = dir ? base(dir) : '未配置'; backend.title = dir || ''
+    $('clearBackend').style.display = dir ? '' : 'none'
+  }
+  paintBackend(cur.backendDir || '')
+  $('pickBackend').addEventListener('click', async () => {
+    try { const d = await window.BocomHermes.pickBackend(); cur.backendDir = d; paintBackend(d) } catch (e) {}
+  })
+  $('clearBackend').addEventListener('click', async () => {
+    try { await window.BocomHermes.clearBackend(); cur.backendDir = ''; paintBackend('') } catch (e) {}
+  })
 
   // IMAP 字段初始化
   const im = cur.imap || {}
