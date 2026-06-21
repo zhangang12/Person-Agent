@@ -453,12 +453,14 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       rec.ms = Math.max(0, (p.timestamp - rec.t0) * 1000)
       netSend(tab, 'upd', rec)
     } else if (method === 'Runtime.consoleAPICalled') {
-      const f = p.stackTrace && p.stackTrace.callFrames && p.stackTrace.callFrames[0]
-      pushConsole(tab, { level: cdpConsoleLevel(p.type), message: (p.args || []).map(fmtRO).join(' '), source: f ? f.url : '', line: f ? (f.lineNumber + 1) : 0 })
+      const frames = ((p.stackTrace && p.stackTrace.callFrames) || []).map((c) => ({ url: c.url, line: c.lineNumber, col: c.columnNumber, fn: c.functionName }))
+      const f = frames[0]
+      pushConsole(tab, { level: cdpConsoleLevel(p.type), message: (p.args || []).map(fmtRO).join(' '), source: f ? f.url : '', line: f ? (f.line + 1) : 0, frames })
     } else if (method === 'Runtime.exceptionThrown') {
       const d = p.exceptionDetails || {}
-      const f = d.stackTrace && d.stackTrace.callFrames && d.stackTrace.callFrames[0]
-      pushConsole(tab, { level: 3, message: fmtException(d), source: f ? f.url : (d.url || ''), line: f ? (f.lineNumber + 1) : ((d.lineNumber || 0) + 1) })
+      const frames = ((d.stackTrace && d.stackTrace.callFrames) || []).map((c) => ({ url: c.url, line: c.lineNumber, col: c.columnNumber, fn: c.functionName }))
+      const f = frames[0]
+      pushConsole(tab, { level: 3, message: fmtException(d), source: f ? f.url : (d.url || ''), line: f ? (f.line + 1) : ((d.lineNumber || 0) + 1), frames })
     }
   }
   function attachDbg(tab) {
@@ -490,6 +492,75 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     }
     try { const v = await tab.view.webContents.executeJavaScript(expr, true); return { result: typeof v === 'string' ? v : JSON.stringify(v) } }
     catch (e) { return { error: String(e.message || e), isErr: true } }
+  }
+
+  // ── Source map：把打包文件的堆栈帧还原成源码 文件:行（零依赖 VLQ 解码）──────────
+  const SM_B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+  function vlqDecode(str) {
+    const out = []; let shift = 0, value = 0
+    for (let i = 0; i < str.length; i++) {
+      const d = SM_B64.indexOf(str[i]); if (d < 0) continue
+      value += (d & 31) << shift
+      if (d & 32) shift += 5
+      else { out.push((value & 1) ? -(value >> 1) : (value >> 1)); value = 0; shift = 0 }
+    }
+    return out
+  }
+  function buildSourceMap(map) {
+    const lines = []; let srcIdx = 0, srcLine = 0, srcCol = 0
+    for (const rowStr of (map.mappings || '').split(';')) {
+      let genCol = 0; const arr = []
+      for (const seg of rowStr.split(',')) {
+        if (!seg) continue
+        const f = vlqDecode(seg); genCol += f[0] || 0
+        if (f.length >= 4) { srcIdx += f[1]; srcLine += f[2]; srcCol += f[3]; arr.push({ genCol, srcIdx, srcLine, srcCol }) }
+        else arr.push({ genCol })
+      }
+      lines.push(arr)
+    }
+    return { sources: map.sources || [], sourceRoot: map.sourceRoot || '', lines }
+  }
+  function smLookup(sm, genLine, genCol) {
+    const row = sm.lines[genLine]; if (!row || !row.length) return null
+    let best = null
+    for (const s of row) { if (s.srcIdx === undefined) continue; if (s.genCol <= genCol) best = s; else if (best) break }
+    if (!best) for (const s of row) if (s.srcIdx !== undefined) { best = s; break }
+    if (!best) return null
+    let src = sm.sources[best.srcIdx] || ''
+    if (sm.sourceRoot && !/^https?:|^\//.test(src)) src = sm.sourceRoot.replace(/\/$/, '') + '/' + src
+    return { source: src, line: best.srcLine + 1 }
+  }
+  const smCache = new Map()   // jsUrl -> sm | null
+  async function smFetch(url, headers) { try { const r = await fetch(url, headers ? { headers } : undefined); if (!r.ok && r.status !== 206) return null; return await r.text() } catch { return null } }
+  async function getSourceMap(jsUrl) {
+    if (smCache.has(jsUrl)) return smCache.get(jsUrl)
+    let sm = null
+    try {
+      const js = (await smFetch(jsUrl, { Range: 'bytes=-4096' })) || (await smFetch(jsUrl))   // 先取尾部 4KB 找注释，失败再整取
+      if (js) {
+        const all = [...js.matchAll(/sourceMappingURL=([^\s'"]+)/g)]
+        const smu = all.length ? all[all.length - 1][1] : null
+        let mapJson = null
+        if (smu && smu.startsWith('data:')) {
+          const body = smu.slice(smu.indexOf(',') + 1)
+          mapJson = JSON.parse(smu.includes(';base64,') ? Buffer.from(body, 'base64').toString('utf8') : decodeURIComponent(body))
+        } else {
+          const mapUrl = smu ? new URL(smu, jsUrl).href : jsUrl + '.map'
+          const t = await smFetch(mapUrl); if (t) mapJson = JSON.parse(t)
+        }
+        if (mapJson && mapJson.mappings) sm = buildSourceMap(mapJson)
+      }
+    } catch {}
+    if (smCache.size > 60) smCache.clear()
+    smCache.set(jsUrl, sm)
+    return sm
+  }
+  async function resolveFrame(url, line, col) {   // line/col 为 CDP 的 0 基
+    if (!url || !/^https?:/.test(url)) return null
+    const sm = await getSourceMap(url); if (!sm) return null
+    const o = smLookup(sm, line, col || 0); if (!o) return null
+    const src = o.source.replace(/^webpack:\/\/\/?/, '').replace(/^(\.\/|\/@fs\/|\/@id\/)/, '')
+    return src + ':' + o.line
   }
 
   function newTab(url) {
@@ -725,7 +796,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         finally { if (sid) { S.sessionInfo.delete(sid); S.streamBuf.delete(sid) } }
       }))
       const merged = findings.map(f => `### 假设·${DBG_TAG[f.k]}\n${f.out}`).join('\n\n')
-      inj(`下面是 ${findings.length} 路 agent 对同一问题各持一个假设做的并行调查。请交叉验证、互相反驳，给出最可能的【唯一根因】与【具体修复方案】（能给 \`\`\`diff 就给，并指明文件:行）；证据不足的假设请明确否定。\n\n## 原始复现上下文\n${bundlePrompt}\n\n## 各路调查结论\n${merged}`)
+      inj(`下面是 ${findings.length} 路 agent 对同一问题各持一个假设做的并行调查。请交叉验证、互相反驳，定出最可能的【唯一根因】，然后**直接用编辑工具修改源码完成修复**（我会逐次确认写入），改完说明改了哪些文件、为什么；证据不足的假设请明确否定。\n\n## 原始复现上下文\n${bundlePrompt}\n\n## 各路调查结论\n${merged}`)
     } catch (e) {
       log('runDebugFlow err: ' + e.message)
       dbgNote(cardWc, '⚠ 分析流程出错：' + e.message + '（回退为单 agent）', 'info')
@@ -763,19 +834,27 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       }
       netText = lines.join('\n')
     }
+    // source-map 还原报错堆栈 → 源码 文件:行（每条报错取首个能还原的帧），让 Agent 直接定位真实源码
+    const smLocs = []
+    for (const c of errs.slice(-8)) {
+      if (!c.frames || !c.frames.length) continue
+      for (const fr of c.frames.slice(0, 4)) { const loc = await resolveFrame(fr.url, fr.line, fr.col); if (loc) { smLocs.push(loc + (fr.fn ? '  (' + fr.fn + ')' : '')); break } }
+    }
+    const smText = [...new Set(smLocs)].join('\n')
     const prompt =
       `我正在用内嵌浏览器复现一个问题，请你作为资深全栈工程师帮我定位根因并给出修复方案。\n\n` +
       `页面地址：${tab.url || '(空白页)'}\n页面标题：${dom.title || tab.title}\n` +
       (dom.desc ? `页面描述：${dom.desc}\n` : '') +
       `\n## 控制台报错（${errs.length} 条）\n${errText}\n\n` +
+      (smText ? `## 报错对应的源码位置（已由 source-map 还原，优先据此定位源码）\n${smText}\n\n` : '') +
       `## 网络异常请求（${bad.length} 条失败/4xx/5xx）\n${netText}\n\n` +
       `## 页面 DOM 结构（截断）\n\`\`\`html\n${dom.html || '(无法获取)'}\n\`\`\`\n\n` +
-      `请按以下步骤分析：\n` +
+      `请按以下步骤帮我修复：\n` +
       `1. 先判断问题主要在前端、后端，还是接口契约层面\n` +
-      `2. 结合控制台报错 + 失败请求的状态码/响应体，定位最可能的根因\n` +
-      `3. 给出具体修复建议（指明涉及的源码文件/函数方向，能给 diff 更好）\n` +
+      `2. 结合控制台报错（含堆栈）+ 失败请求的状态码/响应体，定位最可能的根因\n` +
+      `3. 用工具读相关源码，确认根因所在的具体文件与行\n` +
       `4. 若是常见坑（CORS、空指针、异步时序、CSS 布局、4xx 参数错误、5xx 后端异常）请点明\n` +
-      `5. 当前项目目录就是相关工程时，直接用工具读源码定位到文件给出修法`
+      `5. **直接用编辑工具修改源码完成修复**（我会逐次确认每处写入），改完用一两句话说明改了哪些文件、为什么；改动较大或不确定时先说方案再动手`
     const disp = `🔍 已复现并发送：${tab.url || '(空白页)'}\n（${errs.length} 条控制台报错 + ${bad.length} 条网络异常 + 页面 DOM 上下文）`
     const b = S.browser
     if (b.mode === 'workspace' && b.cardView && !b.cardView.webContents.isDestroyed()) {
@@ -801,6 +880,47 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     } else {
       spawnCard('前端调试分析', null, prompt, disp)                          // 独立浏览器：另开一张分析卡
     }
+  }
+
+  // 闭环验证：重载复现页 → 重新采集 console/网络 → 把"修复后状态"回灌左侧 Agent 让它确认或继续修
+  async function verifyFix() {
+    const b = S.browser
+    if (b.mode !== 'workspace' || !b.cardView || b.cardView.webContents.isDestroyed()) return
+    const tab = brActive(); if (!tab) return
+    const cardWc = b.cardView.webContents
+    const url = tab.url || '(当前页)'
+    dbgNote(cardWc, '🔁 正在重载页面验证修复效果…', 'info')
+    const wc = tab.view.webContents
+    await new Promise((resolve) => {
+      let done = false
+      const finish = () => { if (done) return; done = true; try { wc.off('did-stop-loading', onStop) } catch {} resolve() }
+      const onStop = () => setTimeout(finish, 2500)   // 等异步报错/请求浮现
+      wc.once('did-stop-loading', onStop)
+      setTimeout(finish, 12000)                        // 兜底：加载迟迟不完成
+      try { wc.reload() } catch { finish() }
+    })
+    const errs = tab.console.filter((c) => c.level >= 2)
+    const bad = tab.net.filter((r) => r.state === 'failed' || (r.status && r.status >= 400))
+    const errText = errs.length ? errs.slice(-20).map((c) => (c.level === 3 ? '✗ ' : '⚠ ') + c.message).join('\n') : '（无 warning / error）'
+    let netText = '（无失败 / 4xx / 5xx 请求）'
+    if (bad.length) {
+      const lines = []
+      for (const r of bad.slice(-6)) {
+        let body = ''
+        try { const d = await brNetBody(r.id); if (d && d.body && !d.base64) body = String(d.body).slice(0, 800) } catch {}
+        const st = r.state === 'failed' ? ('失败 ' + (r.failText || '')) : (r.status + ' ' + (r.statusText || ''))
+        lines.push(`- [${r.method}] ${st}  ${r.url}` + (body ? `\n    响应体：${body}` : ''))
+      }
+      netText = lines.join('\n')
+    }
+    const clean = !errs.length && !bad.length
+    const disp = `🔁 已重载验证：${url}\n（${errs.length} 报错 + ${bad.length} 网络异常）`
+    const prompt =
+      `我已重载页面验证你刚才的修复。重载后的当前状态：\n\n## 控制台报错（${errs.length} 条）\n${errText}\n\n## 网络异常（${bad.length} 条）\n${netText}\n\n` +
+      (clean
+        ? `控制台与网络都干净了。请确认问题是否已解决；若仍有未覆盖的边界或隐患，请指出。`
+        : `仍有上述报错/异常。请判断是这次修复没生效、引入了新问题、还是另有根因，然后继续用编辑工具修复（我会逐次确认写入），直到干净为止。`)
+    cardWc.send('card-inject', { text: prompt, disp })
   }
 
   function createBrowser(initialUrl) {
@@ -1109,6 +1229,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   ipcMain.handle('browser-pick-element', async () => await brPickElement())
   // 控制台 REPL 求值
   ipcMain.handle('browser-eval', async (_e, expr) => await brEval(String(expr || '')))
+  // 闭环验证：重载复现页并把修复后状态回灌 Agent
+  ipcMain.handle('browser-verify', async () => { await verifyFix() })
   // 复制到剪贴板（供网络面板「复制 URL / 复制 cURL」、拾取「复制选择器」）
   ipcMain.handle('browser-copy', (_e, text) => { clipboard.writeText(String(text || '')); return true })
 

@@ -196,11 +196,12 @@
     feed.appendChild(d); feed.scrollTop = feed.scrollHeight
     return d
   }
-  function showPermission(requestId, tool) {
+  function showPermission(requestId, tool, detail) {
     const box = document.createElement('div'); box.className = 'perm'
     const t = document.createElement('span'); t.className = 't'
-    t.innerHTML = '请求执行 <span style="font-family:var(--mono)"></span>'
-    t.querySelector('span').textContent = tool
+    t.innerHTML = '请求执行 <span class="pt" style="font-family:var(--mono)"></span>'
+    t.querySelector('.pt').textContent = tool
+    if (detail) { const d = document.createElement('span'); d.style.cssText = 'display:block;font-family:var(--mono);font-size:11px;color:var(--txt2);margin-top:3px;word-break:break-all;opacity:.92'; d.textContent = detail; t.appendChild(d) }
     const ok = document.createElement('button'); ok.className = 'ok'; ok.textContent = '允许一次'
     const al = document.createElement('button'); al.className = 'no'; al.textContent = '总是'
     const no = document.createElement('button'); no.className = 'no'; no.textContent = '拒绝'
@@ -209,7 +210,7 @@
     box.append(t, ok, al, no)
     feed.appendChild(box); feed.scrollTop = feed.scrollHeight
   }
-  window.BocomHermes.onPermission(({ requestId, tool }) => showPermission(requestId, tool))
+  window.BocomHermes.onPermission(({ requestId, tool, detail }) => showPermission(requestId, tool, detail))
 
   // 流式：text → 答案气泡；reasoning → 思考折叠块（答案上方）
   // 一轮回答可能有多个 text 片段（文本→工具调用→文本），按 partID 累积、按到达顺序拼接，

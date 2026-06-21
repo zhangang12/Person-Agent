@@ -283,6 +283,7 @@ body.wsdrag{cursor:col-resize}
   <button class="tb ico" id="bdt" title="开发者工具"><svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>
   <button class="tb ico" id="bcl" title="控制台"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/></svg><span class="bdg e" id="eb"></span><span class="bdg w" id="wb"></span></button>
   <button class="tb ico" id="bnet" title="网络请求面板"><svg viewBox="0 0 24 24"><path d="M3 12h4l2.5 7 5-14 2.5 7H21"/></svg><span class="bdg i" id="nbb"></span></button>
+  <button class="tb" id="bverify" style="display:none" title="重载复现页，把修复后的状态交给 Agent 确认是否真的修好"><svg viewBox="0 0 24 24"><path d="M20.5 15a9 9 0 1 1-2.4-9.2L23 10"/><polyline points="23 4 23 10 17 10"/><polyline points="8.5 12.5 11 15 15.5 10"/></svg>验证</button>
   <button class="tb ai" id="bai" title="把当前页面报错 + DOM 交给 AI 分析"><svg viewBox="0 0 24 24"><path d="M12 2l2.4 5.6L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.6-1.4z"/></svg>AI 分析</button>
 </div>
 
@@ -715,6 +716,13 @@ if (WS) {
   document.body.classList.add('ws')
   const bai = $('bai'); if (bai.lastChild) bai.lastChild.nodeValue = '发给 Agent'
   bai.title = '把当前页面的控制台报错 + 网络异常 + DOM 发给左侧 Agent 分析'
+  // 闭环验证按钮（仅工作台）：重载复现页 → 把修复后状态交给左侧 Agent 确认
+  const bverify = $('bverify'); bverify.style.display = ''
+  bverify.addEventListener('click', async () => {
+    bverify.style.pointerEvents = 'none'; showToast('正在重载页面验证修复…')
+    try { await H.browserVerify() } catch {}
+    setTimeout(() => { bverify.style.pointerEvents = '' }, 1500)
+  })
   H.onBrowserSplitSet(w => document.documentElement.style.setProperty('--wsleftw', w + 'px'))
   const sp = $('wssplit'); let wsDrag = false
   const clampW = x => Math.max(320, Math.min(window.innerWidth - 440, x))

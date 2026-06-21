@@ -199,7 +199,17 @@ function dispatch(ev, onPermission, onText) {
     const tn = (s) => (typeof s === 'string' && s) ? s : null
     const tool = tn(p.permission) || tn(p.tool) || (p.tool && p.tool.name) || tn(p.type) || tn(p.title)
       || (p.permission && p.permission.type) || 'unknown'
-    if (requestId && onPermission) onPermission({ sessionId, requestId, tool })
+    // 要改的文件 / 要跑的命令：从各种可能的字段里尽力提取，给"知情审批"用（不同 serve 字段名不一，逐个兜底）
+    const argOf = (o) => {
+      if (!o || typeof o !== 'object') return ''
+      const inp = o.input || o.args || o.arguments || o.params || o.metadata || o
+      return (inp && typeof inp === 'object')
+        ? (inp.filePath || inp.path || inp.file || inp.targetFile || inp.command || inp.cmd || inp.pattern || '')
+        : ''
+    }
+    const detail = argOf(p.tool) || argOf(p.permission) || argOf(p.metadata) || argOf(p)
+      || (typeof p.title === 'string' && p.title !== tool ? p.title : '') || ''
+    if (requestId && onPermission) onPermission({ sessionId, requestId, tool, detail: String(detail).slice(0, 200) })
     return
   }
   if (onText && type.includes('part')) {

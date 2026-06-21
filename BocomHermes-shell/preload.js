@@ -92,6 +92,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   browserPickElement:   ()    => ipcRenderer.invoke('browser-pick-element'),
   browserCopy:          (text) => ipcRenderer.invoke('browser-copy', text),
   browserEval:          (expr) => ipcRenderer.invoke('browser-eval', expr),
+  browserVerify:        ()    => ipcRenderer.invoke('browser-verify'),
   // 工作台分隔条（左 Agent / 右浏览器）
   browserSplit:         (arg) => ipcRenderer.send('browser-split', arg),
   onBrowserSplitSet:    (cb)  => ipcRenderer.on('browser-split-set', (_e, w) => cb(w)),

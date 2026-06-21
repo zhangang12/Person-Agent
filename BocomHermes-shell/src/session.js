@@ -29,12 +29,12 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
   }
 
   // ── 事件路由（所有 serve 共用，按 sessionId 路由到对应卡）─────────────────
-  function onPermission({ sessionId, requestId, tool }) {
+  function onPermission({ sessionId, requestId, tool, detail }) {
     const si = S.sessionInfo.get(sessionId); if (!si) return
     if (oc.AUTO_ALLOW.has(tool)) { oc.replyPermission(si.serve, sessionId, requestId, 'once'); return }
     if (!si.wc || si.wc.isDestroyed()) { oc.replyPermission(si.serve, sessionId, requestId, 'reject'); return }
     S.pendingPerm.set(requestId, sessionId)
-    si.wc.send('permission-request', { requestId, tool })
+    si.wc.send('permission-request', { requestId, tool, detail: detail || '' })   // detail=要改的文件/要跑的命令，便于知情审批
   }
   function onText({ sessionId, text, role, partID, kind }) {
     const si = S.sessionInfo.get(sessionId); if (!si || !si.wc || si.wc.isDestroyed()) return
@@ -71,20 +71,40 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
     return files.filter(f => f.path && !f.path.includes('/dev/null') && f.hunks.length)
   }
 
-  function applyHunksToLines(lines, hunks) {
-    let result = [...lines], offset = 0
-    for (const hunk of hunks) {
-      const start = hunk.oldStart - 1 + offset   // 0-indexed
-      const newLines = []
-      for (const ln of hunk.lines) {
-        if (ln.startsWith('+')) newLines.push(ln.slice(1))
-        else if (ln.startsWith(' ')) newLines.push(ln.slice(1))
-        // '-' 行跳过（删除）
+  // 按【上下文】定位 hunk 真正该改的位置（容忍行号漂移），而非死信 oldStart —— 避免改错/改乱文件。
+  // 从 guess 处向两侧搜索 oldBlock(上下文+删除行) 的精确匹配，再退化到去空白匹配；找不到则该 hunk 跳过（不破坏文件）。
+  function findBlock(lines, block, guess) {
+    if (!block.length) return Math.max(0, Math.min(guess, lines.length))   // 纯插入
+    const max = lines.length - block.length
+    if (max < 0) return -1
+    const exact = (i) => { for (let j = 0; j < block.length; j++) if (lines[i + j] !== block[j]) return false; return true }
+    const loose = (i) => { for (let j = 0; j < block.length; j++) if ((lines[i + j] || '').trim() !== block[j].trim()) return false; return true }
+    for (const test of [exact, loose]) {
+      for (let d = 0; d <= lines.length; d++) {
+        const a = guess + d, b = guess - d
+        if (a >= 0 && a <= max && test(a)) return a
+        if (d > 0 && b >= 0 && b <= max && test(b)) return b
+        if (a > max && b < 0) break
       }
-      result = [...result.slice(0, start), ...newLines, ...result.slice(start + hunk.oldCount)]
-      offset += newLines.length - hunk.oldCount
     }
-    return result
+    return -1
+  }
+
+  function applyHunksToLines(lines, hunks) {
+    let result = [...lines], drift = 0, failed = 0
+    for (const hunk of hunks) {
+      const oldBlock = [], newLines = []
+      for (const ln of hunk.lines) {
+        const tag = ln[0], content = ln.slice(1)
+        if (tag === '-' || tag === ' ') oldBlock.push(content)
+        if (tag === '+' || tag === ' ') newLines.push(content)
+      }
+      const at = findBlock(result, oldBlock, hunk.oldStart - 1 + drift)
+      if (at < 0) { failed++; continue }                       // 定位不到 → 安全跳过该 hunk
+      result = [...result.slice(0, at), ...newLines, ...result.slice(at + oldBlock.length)]
+      drift += newLines.length - oldBlock.length
+    }
+    return { result, failed }
   }
 
   function applyDiffToDisk(baseDir, diffText) {
@@ -94,13 +114,13 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
       let fullPath = relPath
       try {
         if (!path.isAbsolute(relPath) && baseDir) fullPath = path.join(baseDir, relPath)
-        const eol = '\n'
         let lines = fs.existsSync(fullPath) ? fs.readFileSync(fullPath, 'utf8').replace(/\r\n/g, '\n').split('\n') : []
         if (lines.length && lines[lines.length - 1] === '') lines.pop()
-        lines = applyHunksToLines(lines, hunks)
-        fs.writeFileSync(fullPath, lines.join(eol) + eol, 'utf8')
-        log('apply-diff ok: ' + fullPath)
-        return { file: relPath, ok: true }
+        const { result, failed } = applyHunksToLines(lines, hunks)
+        if (failed === hunks.length) return { file: relPath, ok: false, error: '无法在文件中定位要修改的代码（文件可能已变化，请让 Agent 重新读取后修改）' }
+        fs.writeFileSync(fullPath, result.join('\n') + '\n', 'utf8')
+        log('apply-diff ' + (failed ? '(部分:' + failed + ' 个 hunk 未匹配) ' : '') + 'ok: ' + fullPath)
+        return failed ? { file: relPath, ok: true, warn: failed + ' 处未能匹配，已跳过' } : { file: relPath, ok: true }
       } catch (e) {
         log('apply-diff err ' + fullPath + ': ' + e.message)
         return { file: relPath, ok: false, error: e.message }
