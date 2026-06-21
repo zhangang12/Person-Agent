@@ -91,6 +91,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   // 元素拾取 + 复制
   browserPickElement:   ()    => ipcRenderer.invoke('browser-pick-element'),
   browserCopy:          (text) => ipcRenderer.invoke('browser-copy', text),
+  browserEval:          (expr) => ipcRenderer.invoke('browser-eval', expr),
   // 工作台分隔条（左 Agent / 右浏览器）
   browserSplit:         (arg) => ipcRenderer.send('browser-split', arg),
   onBrowserSplitSet:    (cb)  => ipcRenderer.on('browser-split-set', (_e, w) => cb(w)),
@@ -107,6 +108,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   // orb 窗口控制
   setOrbMousePassthrough: (pass) => ipcRenderer.send('orb-passthrough', pass),
   moveOrbBy: (dx, dy) => ipcRenderer.send('orb-move', { dx, dy }),
+  dragOrb: (dx, dy) => ipcRenderer.send('orb-drag', { dx, dy }),
   snapOrbToCorner: () => ipcRenderer.send('orb-snap'),
   toggleOrbInput: (mode) => ipcRenderer.invoke('toggle-orb-input', mode),
   closeOrbInput: () => ipcRenderer.invoke('close-orb-input'),

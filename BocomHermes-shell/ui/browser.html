@@ -192,6 +192,15 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 .ce .sr{flex:none;color:var(--txt3);font-size:10px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cempty{color:var(--txt3);font-size:12px;text-align:center;padding:28px;font-family:-apple-system,sans-serif}
 
+/* 控制台 REPL 输入 + 求值回显 */
+#cevalrow{flex:none;display:flex;align-items:center;gap:7px;padding:5px 12px;border-top:1px solid var(--line);background:rgba(255,255,255,.02)}
+.cevp{color:var(--accent);font-family:'SF Mono',monospace;font-weight:700;font-size:12px;flex:none}
+#ceval{flex:1;min-width:0;border:none;outline:none;background:transparent;color:var(--txt);font-family:'SF Mono',Menlo,monospace;font-size:11.5px}
+#ceval::placeholder{color:var(--txt3)}
+.ce.evin{color:var(--accent)}.ce.evin .ic{color:var(--accent)}
+.ce.evout{color:var(--txt)}.ce.evout .ic{color:var(--ok)}
+.ce.everr{color:#ff9b9b;background:rgba(255,80,80,.05);border-left-color:var(--err)}.ce.everr .ic{color:var(--err)}
+
 /* 网络列表 */
 #nhead,.nrow{display:grid;grid-template-columns:62px 56px 1fr 88px 70px 62px;gap:8px;align-items:center}
 #nhead{flex:none;padding:4px 12px;font-size:10px;color:var(--txt3);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--line)}
@@ -330,6 +339,7 @@ body.wsdrag{cursor:col-resize}
 
   <div id="cbody">
     <div id="clist"><div class="cempty">控制台输出会显示在这里</div></div>
+    <div id="cevalrow"><span class="cevp">›</span><input id="ceval" placeholder="在页面里执行 JS（Enter 运行 · ↑↓ 历史 · 支持 $ $$ $x copy / $el=已拾取元素）" spellcheck="false" autocomplete="off"></div>
   </div>
 
   <div id="nbody" style="display:none">
@@ -410,28 +420,33 @@ function setBadges(e, w) {
 function levelCls(l){ return 'l' + l }
 function levelIcon(l){ return l === 3 ? '✕' : l === 2 ? '⚠' : l === 1 ? 'ℹ' : '›' }
 function matchFilter(l){ if (conFilter==='all') return true; if (conFilter==='log') return l<2; return String(l)===conFilter }
+function consoleVisible(c){ return c.kind ? true : matchFilter(c.level) }   // REPL 回显不受等级筛选影响
+function ceLine(c){
+  if (c.kind === 'evin')  return `<div class="ce evin"><span class="ic">›</span><span class="ms">${esc(c.message)}</span></div>`
+  if (c.kind === 'evout') return `<div class="ce evout"><span class="ic">⮐</span><span class="ms">${esc(c.message)}</span></div>`
+  if (c.kind === 'everr') return `<div class="ce everr"><span class="ic">⮐</span><span class="ms">${esc(c.message)}</span></div>`
+  const sr = c.source ? esc(String(c.source).split('/').pop() + (c.line ? ':' + c.line : '')) : ''
+  return `<div class="ce ${levelCls(c.level)}"><span class="ic">${levelIcon(c.level)}</span><span class="ms">${esc(c.message)}</span><span class="sr">${sr}</span></div>`
+}
 function renderConsole() {
   const list = $('clist')
-  const vis = conEntries.filter(c => matchFilter(c.level))
+  const vis = conEntries.filter(consoleVisible)
   if (!vis.length) { list.innerHTML = '<div class="cempty">' + (conEntries.length ? '当前筛选下无输出' : '控制台输出会显示在这里') + '</div>'; return }
-  list.innerHTML = vis.map(c => {
-    const sr = c.source ? esc(String(c.source).split('/').pop() + (c.line ? ':' + c.line : '')) : ''
-    return `<div class="ce ${levelCls(c.level)}"><span class="ic">${levelIcon(c.level)}</span><span class="ms">${esc(c.message)}</span><span class="sr">${sr}</span></div>`
-  }).join('')
+  list.innerHTML = vis.map(ceLine).join('')
   list.scrollTop = list.scrollHeight
 }
-H.onBrowserConsoleSnapshot(({ entries, errN, warnN }) => { conEntries = entries.slice(); if (dockTab==='console') renderConsole(); setBadges(errN, warnN) })
-H.onBrowserConsoleAdd(entry => {
-  conEntries.push(entry)
+function appendConsole(c){
+  conEntries.push(c)
   const cc = $('ccount'); cc.textContent = conEntries.length; cc.classList.add('show')
-  if (conOpen && dockTab==='console' && matchFilter(entry.level)) {
+  if (conOpen && dockTab==='console' && consoleVisible(c)) {
     const list = $('clist'); const empty = list.querySelector('.cempty'); if (empty) list.innerHTML = ''
-    const sr = entry.source ? esc(String(entry.source).split('/').pop() + (entry.line ? ':' + entry.line : '')) : ''
     const near = list.scrollTop + list.clientHeight > list.scrollHeight - 30
-    list.insertAdjacentHTML('beforeend', `<div class="ce ${levelCls(entry.level)}"><span class="ic">${levelIcon(entry.level)}</span><span class="ms">${esc(entry.message)}</span><span class="sr">${sr}</span></div>`)
-    if (near) list.scrollTop = list.scrollHeight
+    list.insertAdjacentHTML('beforeend', ceLine(c))
+    if (near || c.kind) list.scrollTop = list.scrollHeight
   }
-})
+}
+H.onBrowserConsoleSnapshot(({ entries, errN, warnN }) => { conEntries = entries.slice(); if (dockTab==='console') renderConsole(); setBadges(errN, warnN) })
+H.onBrowserConsoleAdd(entry => appendConsole(entry))
 H.onBrowserBadge(({ errN, warnN }) => setBadges(errN, warnN))
 
 $('cfilter').addEventListener('click', e => {
@@ -565,6 +580,27 @@ $('cclose').addEventListener('click', () => setDock(false))
 $('cclear').addEventListener('click', () => {
   if(dockTab==='net'){ H.browserNetClear() }
   else { conEntries = []; renderConsole(); setBadges(0, 0) }
+})
+
+/* ── 控制台 REPL：在页面里执行 JS ── */
+const ceval = $('ceval'); let evalHist = [], evalIdx = 0
+ceval.addEventListener('keydown', async e => {
+  if (e.key === 'Enter') {
+    const expr = ceval.value.trim(); if (!expr) return
+    ceval.value = ''; evalHist.push(expr); evalIdx = evalHist.length
+    appendConsole({ kind: 'evin', message: expr })
+    try {
+      const r = await H.browserEval(expr)
+      if (r && r.isErr) appendConsole({ kind: 'everr', message: r.error || '(错误)' })
+      else appendConsole({ kind: 'evout', message: (r && r.result != null) ? r.result : 'undefined' })
+    } catch (err) { appendConsole({ kind: 'everr', message: String(err && err.message || err) }) }
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    if (evalIdx > 0) { evalIdx--; ceval.value = evalHist[evalIdx] || ''; requestAnimationFrame(() => ceval.setSelectionRange(ceval.value.length, ceval.value.length)) }
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    if (evalIdx < evalHist.length - 1) { evalIdx++; ceval.value = evalHist[evalIdx] || '' } else { evalIdx = evalHist.length; ceval.value = '' }
+  }
 })
 
 /* ── URL 栏 ── */

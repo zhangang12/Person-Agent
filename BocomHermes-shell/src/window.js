@@ -60,14 +60,30 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     S.inputWin.on('closed', () => { S.inputWin = null })
   }
 
-  function snapOrbToCorner() {
+  // 自由拖动：可在桌面任意位置；只做轻量夹取，避免球被拖出屏幕外抓不回来
+  function clampOrbPos(x, y) {
+    const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
+    const C = 140, M = 24   // 球心位于 280 窗口中心，保证球心离屏幕边 ≥M
+    return [Math.max(M - C, Math.min(sw - C - M, x)), Math.max(M - C, Math.min(sh - C - M, y))]
+  }
+  function snapOrbToCorner() {   // 名字保留；拖动结束后只把球夹回可见区，不再吸附边/角
     if (!S.inputWin || S.inputWin.isDestroyed()) return
     const [x, y] = S.inputWin.getPosition()
-    const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
-    const W = 280, M = 20
-    const nx = (x + W / 2) < sw / 2 ? M : sw - W - M
-    const ny = (y + W / 2) < sh / 2 ? M : sh - W - M
+    const [nx, ny] = clampOrbPos(x, y)
     S.inputWin.setPosition(nx, ny)
+  }
+
+  // 功能窗口「从智能体长出来」：算出球心相对该窗口的 transform-origin + 朝球方向的初始位移，
+  // 作为 query 传给窗口（glass.css 的 orbGrow 据此从球的方向放大长出）
+  function orbAnchorFor(winX, winY, winW, winH) {
+    if (!S.inputWin || S.inputWin.isDestroyed()) return {}
+    const [ox, oy] = S.inputWin.getPosition()
+    const cx = ox + 140, cy = oy + 140                                   // 球心屏幕坐标
+    const gox = Math.max(0, Math.min(winW, Math.round(cx - winX)))
+    const goy = Math.max(0, Math.min(winH, Math.round(cy - winY)))
+    const gfx = cx < winX ? -16 : cx > winX + winW ? 16 : 0
+    const gfy = cy < winY ? -16 : cy > winY + winH ? 16 : 0
+    return { gox: gox + 'px', goy: goy + 'px', gfx: gfx + 'px', gfy: gfy + 'px' }
   }
 
   function createOrbInput(mode) {
@@ -81,10 +97,14 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (px < 10) px = 10
     if (px + pw > sw - 10) px = sw - pw - 10
     const py = (oy - ph - M) < 10 ? oy + 280 + M : oy - ph - M
+    const above = py < oy                                                          // 输入框在球上方 → 从底边长出，否则从顶边
+    const anchorX = Math.max(20, Math.min(pw - 20, Math.round(ox + 140 - px)))     // 球心相对输入框左边的 x
+    const query = { dir: above ? 'up' : 'down', ax: String(anchorX) }
+    if (mode) query.mode = mode
     S.orbInputWin = new BrowserWindow(baseOpts({
       width: pw, height: ph, x: Math.round(px), y: Math.round(py), skipTaskbar: true,
     }))
-    S.orbInputWin.loadFile(path.join(__dirname, '..', 'ui', 'orb-input.html'), mode ? { query: { mode } } : undefined)
+    S.orbInputWin.loadFile(path.join(__dirname, '..', 'ui', 'orb-input.html'), { query })
     S.orbInputWin.on('closed', () => { S.orbInputWin = null })
   }
 
@@ -93,13 +113,13 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   function spawnCard(title, sid, msg, disp) {
     const id = ++S.cardSeq
     const col = (id - 1) % 4, row = Math.floor((id - 1) / 4) % 4
+    const wx = 160 + col * 56, wy = 90 + row * 50 + col * 18
     const win = new BrowserWindow(baseOpts({
       width: 480, height: 600, minWidth: 360, minHeight: 320, resizable: true,
-      alwaysOnTop: false, skipTaskbar: false,
-      x: 160 + col * 56, y: 90 + row * 50 + col * 18,
+      alwaysOnTop: false, skipTaskbar: false, x: wx, y: wy,
     }))
     const wcId = win.webContents.id
-    const query = { title: title || '未命名任务', id: String(id) }
+    const query = { title: title || '未命名任务', id: String(id), ...orbAnchorFor(wx, wy, 480, 600) }
     if (sid) query.sid = sid
     if (msg) query.msg = msg
     if (disp) query.disp = disp
@@ -166,8 +186,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   function openTodos() {
     if (S.todosWin && !S.todosWin.isDestroyed()) { S.todosWin.show(); S.todosWin.focus(); return }
     const { width } = screen.getPrimaryDisplay().workAreaSize
-    S.todosWin = new BrowserWindow(baseOpts({ width: 400, height: 560, x: Math.round(width / 2 - 200), y: 120, skipTaskbar: false, alwaysOnTop: true, resizable: true, minWidth: 320, minHeight: 300 }))
-    S.todosWin.loadFile(path.join(__dirname, '..', 'ui', 'todos.html'))
+    const tx = Math.round(width / 2 - 200), ty = 120
+    S.todosWin = new BrowserWindow(baseOpts({ width: 400, height: 560, x: tx, y: ty, skipTaskbar: false, alwaysOnTop: true, resizable: true, minWidth: 320, minHeight: 300 }))
+    S.todosWin.loadFile(path.join(__dirname, '..', 'ui', 'todos.html'), { query: orbAnchorFor(tx, ty, 400, 560) })
     S.todosWin.on('closed', () => { S.todosWin = null })
   }
 
@@ -182,16 +203,18 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   function openSettings() {
     if (S.settingsWin && !S.settingsWin.isDestroyed()) { S.settingsWin.show(); S.settingsWin.focus(); return }
     const { width } = screen.getPrimaryDisplay().workAreaSize
-    S.settingsWin = new BrowserWindow(baseOpts({ width: 460, height: 500, x: Math.round(width / 2 - 230), y: 140, skipTaskbar: false, alwaysOnTop: true, resizable: false }))
-    S.settingsWin.loadFile(path.join(__dirname, '..', 'ui', 'settings.html'))
+    const sx = Math.round(width / 2 - 230), sy = 140
+    S.settingsWin = new BrowserWindow(baseOpts({ width: 460, height: 500, x: sx, y: sy, skipTaskbar: false, alwaysOnTop: true, resizable: false }))
+    S.settingsWin.loadFile(path.join(__dirname, '..', 'ui', 'settings.html'), { query: orbAnchorFor(sx, sy, 460, 500) })
     S.settingsWin.on('closed', () => { S.settingsWin = null })
   }
 
   function openDock() {
     if (S.dockWin && !S.dockWin.isDestroyed()) { S.dockWin.show(); S.dockWin.focus(); return }
     const { width } = screen.getPrimaryDisplay().workAreaSize
-    S.dockWin = new BrowserWindow(baseOpts({ width: 440, height: 540, x: Math.round(width / 2 - 220), y: 130, skipTaskbar: false, alwaysOnTop: true, resizable: true, minWidth: 340, minHeight: 300 }))
-    S.dockWin.loadFile(path.join(__dirname, '..', 'ui', 'dock.html'))
+    const dx = Math.round(width / 2 - 220), dy = 130
+    S.dockWin = new BrowserWindow(baseOpts({ width: 440, height: 540, x: dx, y: dy, skipTaskbar: false, alwaysOnTop: true, resizable: true, minWidth: 340, minHeight: 300 }))
+    S.dockWin.loadFile(path.join(__dirname, '..', 'ui', 'dock.html'), { query: orbAnchorFor(dx, dy, 440, 540) })
     S.dockWin.on('closed', () => { S.dockWin = null })
   }
 
@@ -292,28 +315,27 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
 
     // 主框架导航开始 → 清空网络记录（除非用户开了「保留日志」），对齐 DevTools 默认行为
     wc.on('did-start-navigation', (_e, navUrl, isInPlace, isMainFrame) => {
-      if (isMainFrame && !isInPlace && !tab.preserveNet) {
+      if (isMainFrame && !isInPlace && !tab.preserveNet) {   // 对齐 DevTools：导航即清空网络 + 控制台（除非「保留日志」）
         tab.net = []; tab.netById = new Map()
-        if (tab.id === b.activeId) sendNetSnapshot(tab)
+        tab.console = []; tab.errN = 0; tab.warnN = 0
+        if (tab.id === b.activeId && b.win && !b.win.isDestroyed()) {
+          sendNetSnapshot(tab)
+          b.win.webContents.send('browser-console-snapshot', { entries: [], errN: 0, warnN: 0 })
+          b.win.webContents.send('browser-badge', { errN: 0, warnN: 0 })
+        }
       }
     })
 
-    // 控制台（全等级捕获，存在 tab 上，活动标签实时推送）
+    // 控制台降级路径：附上 CDP 调试器后由 Runtime.consoleAPICalled 接管（更丰富），这里仅在无调试器时兜底
     wc.on('console-message', (...args) => {
+      if (tab.dbg) return
       let level, message, line, source
       if (args.length === 1 && args[0] && typeof args[0] === 'object') {
         const d = args[0]; level = brNormLevel(d.level); message = d.message; line = d.lineNumber; source = d.sourceId
       } else {
         level = brNormLevel(args[1]); message = args[2]; line = args[3]; source = args[4]
       }
-      const entry = { level, message: String(message || '').slice(0, 4000), line, source: source || '', ts: Date.now() }
-      tab.console.push(entry)
-      if (tab.console.length > 500) tab.console.shift()
-      if (level === 3) tab.errN++; else if (level === 2) tab.warnN++
-      if (tab.id === b.activeId && b.win && !b.win.isDestroyed()) {
-        b.win.webContents.send('browser-console-add', entry)
-        b.win.webContents.send('browser-badge', { errN: tab.errN, warnN: tab.warnN })
-      }
+      pushConsole(tab, { level, message, line, source })
     })
 
     // 页面焦点下的浏览器级快捷键
@@ -347,6 +369,58 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (!b.win || b.win.isDestroyed()) return
     b.win.webContents.send('browser-net-snapshot', { items: tab.net.map(slimRec) })
   }
+  // ── 富控制台：把 CDP RemoteObject 格式化成可读文本（对象/数组预览 + 异常堆栈）──
+  function cdpConsoleLevel(t) { return (t === 'error' || t === 'assert') ? 3 : t === 'warning' ? 2 : (t === 'debug' || t === 'trace') ? 0 : 1 }
+  function fmtPreviewProp(p) {
+    if (p.type === 'string') return JSON.stringify(p.value)
+    if (p.type === 'object') return p.subtype === 'array' ? (p.value || 'Array') : (p.value || '{…}')
+    return p.value
+  }
+  function fmtPreview(pv) {
+    if (!pv) return ''
+    if (pv.subtype === 'array') return '[' + (pv.properties || []).map(fmtPreviewProp).join(', ') + (pv.overflow ? ', …' : '') + ']'
+    const cls = pv.description && pv.description !== 'Object' ? pv.description + ' ' : ''
+    return cls + '{' + (pv.properties || []).map((p) => p.name + ': ' + fmtPreviewProp(p)).join(', ') + (pv.overflow ? ', …' : '') + '}'
+  }
+  function fmtRO(ro) {
+    if (!ro) return ''
+    switch (ro.type) {
+      case 'string': return ro.value
+      case 'number': case 'boolean': return String(ro.value)
+      case 'undefined': return 'undefined'
+      case 'bigint': return (ro.description || ro.unserializableValue || '') + ''
+      case 'symbol': return ro.description || 'Symbol()'
+      case 'function': return ro.description ? String(ro.description).split('{')[0].trim() + ' {…}' : 'ƒ'
+      case 'object':
+        if (ro.subtype === 'null') return 'null'
+        if (ro.preview) return fmtPreview(ro.preview)
+        return ro.description || (ro.subtype === 'array' ? 'Array' : 'Object')
+      default: return ro.description || String(ro.value == null ? '' : ro.value)
+    }
+  }
+  function fmtException(d) {
+    if (!d) return 'Uncaught'
+    if (d.exception && d.exception.description) return d.exception.description     // 通常已含完整堆栈
+    let s = d.text || 'Uncaught'
+    if (d.exception && d.exception.value !== undefined) s += ' ' + JSON.stringify(d.exception.value)
+    if (d.url) s += '  (' + d.url + ':' + ((d.lineNumber || 0) + 1) + ')'
+    return s
+  }
+  // 统一的控制台落库 + 推送（console-message 降级路径与 CDP 富路径共用）
+  function pushConsole(tab, entry) {
+    entry.ts = Date.now()
+    entry.message = String(entry.message == null ? '' : entry.message).slice(0, 8000)
+    entry.line = entry.line || 0; entry.source = entry.source || ''
+    tab.console.push(entry)
+    if (tab.console.length > 600) tab.console.shift()
+    if (entry.level === 3) tab.errN++; else if (entry.level === 2) tab.warnN++
+    const b = S.browser
+    if (tab.id === b.activeId && b.win && !b.win.isDestroyed()) {
+      b.win.webContents.send('browser-console-add', entry)
+      b.win.webContents.send('browser-badge', { errN: tab.errN, warnN: tab.warnN })
+    }
+  }
+
   function onCdp(tab, method, p) {
     if (method === 'Network.requestWillBeSent') {
       const url = (p.request && p.request.url) || ''
@@ -378,6 +452,13 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       rec.state = p.canceled ? 'canceled' : 'failed'; rec.failText = p.errorText || ''
       rec.ms = Math.max(0, (p.timestamp - rec.t0) * 1000)
       netSend(tab, 'upd', rec)
+    } else if (method === 'Runtime.consoleAPICalled') {
+      const f = p.stackTrace && p.stackTrace.callFrames && p.stackTrace.callFrames[0]
+      pushConsole(tab, { level: cdpConsoleLevel(p.type), message: (p.args || []).map(fmtRO).join(' '), source: f ? f.url : '', line: f ? (f.lineNumber + 1) : 0 })
+    } else if (method === 'Runtime.exceptionThrown') {
+      const d = p.exceptionDetails || {}
+      const f = d.stackTrace && d.stackTrace.callFrames && d.stackTrace.callFrames[0]
+      pushConsole(tab, { level: 3, message: fmtException(d), source: f ? f.url : (d.url || ''), line: f ? (f.lineNumber + 1) : ((d.lineNumber || 0) + 1) })
     }
   }
   function attachDbg(tab) {
@@ -389,9 +470,27 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     tab._dbgReady = Promise.all([
       dbg.sendCommand('Network.enable', { maxTotalBufferSize: 64 * 1024 * 1024, maxResourceBufferSize: 16 * 1024 * 1024 }).catch(() => {}),
       dbg.sendCommand('Page.enable').catch(() => {}),
+      dbg.sendCommand('Runtime.enable').catch(() => {}),   // 富控制台 + 未捕获异常堆栈 + REPL 求值
     ])
   }
   function detachDbg(tab) { try { tab.view.webContents.debugger.detach() } catch {} tab.dbg = false }
+
+  // 控制台 REPL：在活动标签的页面上下文求值（含 CLI API：$ $$ $x copy keys values；$el=已拾取元素）
+  async function brEval(expr) {
+    const tab = brActive(); if (!tab) return { error: '无活动标签页', isErr: true }
+    if (tab.dbg) {
+      try {
+        const r = await tab.view.webContents.debugger.sendCommand('Runtime.evaluate', {
+          expression: expr, includeCommandLineAPI: true, replMode: true, objectGroup: 'console',
+          awaitPromise: true, userGesture: true, allowUnsafeEvalBlockedByCSP: true, generatePreview: true, returnByValue: false,
+        })
+        if (r.exceptionDetails) return { error: fmtException(r.exceptionDetails), isErr: true }
+        return { result: fmtRO(r.result) }
+      } catch (e) { return { error: String(e.message || e), isErr: true } }
+    }
+    try { const v = await tab.view.webContents.executeJavaScript(expr, true); return { result: typeof v === 'string' ? v : JSON.stringify(v) } }
+    catch (e) { return { error: String(e.message || e), isErr: true } }
+  }
 
   function newTab(url) {
     const b = S.browser
@@ -545,7 +644,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     }
     function cleanup() { try { ov.remove(); tip.remove(); } catch (e) {} root.style.cursor = prevCur;
       D.removeEventListener('mousemove', move, true); D.removeEventListener('click', click, true); D.removeEventListener('keydown', key, true); window.removeEventListener('beforeunload', bye); }
-    function click(e) { e.preventDefault(); e.stopPropagation(); const el = cur || D.elementFromPoint(e.clientX, e.clientY); const out = el ? info(el) : null; cleanup(); resolve(out); }
+    function click(e) { e.preventDefault(); e.stopPropagation(); const el = cur || D.elementFromPoint(e.clientX, e.clientY); try { window.$el = el } catch (_e) {} const out = el ? info(el) : null; cleanup(); resolve(out); }
     function key(e) { if (e.key === 'Escape') { e.preventDefault(); cleanup(); resolve(null); } }
     function bye() { cleanup(); resolve(null); }
     D.addEventListener('mousemove', move, true); D.addEventListener('click', click, true); D.addEventListener('keydown', key, true); window.addEventListener('beforeunload', bye);
@@ -936,13 +1035,15 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   ipcMain.on('orb-passthrough', (_e, pass) => {
     if (S.inputWin && !S.inputWin.isDestroyed()) S.inputWin.setIgnoreMouseEvents(pass, { forward: true })
   })
-  ipcMain.on('orb-move', (_e, { dx, dy }) => {
+  // 拖拽：在桌面内自由移动（仅夹取在可见区）
+  ipcMain.on('orb-drag', (_e, { dx, dy }) => {
     if (!S.inputWin || S.inputWin.isDestroyed()) return
     const [x, y] = S.inputWin.getPosition()
-    S.inputWin.setPosition(x + dx, y + dy)
+    const [nx, ny] = clampOrbPos(x + dx, y + dy)
+    S.inputWin.setPosition(nx, ny)
     if (S.orbInputWin && !S.orbInputWin.isDestroyed()) {
       const [px, py] = S.orbInputWin.getPosition()
-      S.orbInputWin.setPosition(px + dx, py + dy)
+      S.orbInputWin.setPosition(px + (nx - x), py + (ny - y))
     }
   })
   ipcMain.on('orb-snap', () => snapOrbToCorner())
@@ -1006,6 +1107,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   ipcMain.on('browser-net-preserve', (_e, on) => { const tab = brActive(); if (tab) tab.preserveNet = !!on })
   // 元素拾取
   ipcMain.handle('browser-pick-element', async () => await brPickElement())
+  // 控制台 REPL 求值
+  ipcMain.handle('browser-eval', async (_e, expr) => await brEval(String(expr || '')))
   // 复制到剪贴板（供网络面板「复制 URL / 复制 cURL」、拾取「复制选择器」）
   ipcMain.handle('browser-copy', (_e, text) => { clipboard.writeText(String(text || '')); return true })
 

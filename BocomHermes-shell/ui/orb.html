@@ -85,14 +85,15 @@ html,body{width:280px;height:280px;background:transparent;overflow:hidden;user-s
   letter-spacing:.02em;font-family:-apple-system,BlinkMacSystemFont,sans-serif;
 }
 
-/* 展开 */
+/* 展开（7 个功能均匀环绕球体）*/
 .stage:hover .ri{opacity:1;pointer-events:all}
-.stage:hover .ri:nth-child(1){transform:translate(0,-100px) scale(1);transition-delay:.04s}
-.stage:hover .ri:nth-child(2){transform:translate(88px,-52px) scale(1);transition-delay:.07s}
-.stage:hover .ri:nth-child(3){transform:translate(88px,50px) scale(1);transition-delay:.10s}
-.stage:hover .ri:nth-child(4){transform:translate(0,98px) scale(1);transition-delay:.13s}
-.stage:hover .ri:nth-child(5){transform:translate(-88px,50px) scale(1);transition-delay:.16s}
-.stage:hover .ri:nth-child(6){transform:translate(-88px,-52px) scale(1);transition-delay:.19s}
+.stage:hover .ri:nth-child(1){transform:translate(0,-100px) scale(1);transition-delay:.03s}
+.stage:hover .ri:nth-child(2){transform:translate(78px,-62px) scale(1);transition-delay:.06s}
+.stage:hover .ri:nth-child(3){transform:translate(97px,22px) scale(1);transition-delay:.09s}
+.stage:hover .ri:nth-child(4){transform:translate(43px,90px) scale(1);transition-delay:.12s}
+.stage:hover .ri:nth-child(5){transform:translate(-43px,90px) scale(1);transition-delay:.15s}
+.stage:hover .ri:nth-child(6){transform:translate(-97px,22px) scale(1);transition-delay:.18s}
+.stage:hover .ri:nth-child(7){transform:translate(-78px,-62px) scale(1);transition-delay:.21s}
 
 /* hover 状态：轻微提亮 */
 .ri:hover{
@@ -102,6 +103,18 @@ html,body{width:280px;height:280px;background:transparent;overflow:hidden;user-s
 }
 .ri:hover svg{stroke:rgba(255,255,255,.98)}
 .ri:hover .ri-lbl{color:rgba(255,255,255,.7)}
+
+/* 点击反馈：按下回弹 + 涟漪脉冲（解决"点了没反应、很生硬"）*/
+.ri svg,.ri .ri-lbl{transition:transform .13s cubic-bezier(.34,1.56,.64,1),color .13s,stroke .13s}
+.ri:active{background:rgba(34,58,128,.96);border-color:rgba(130,175,255,.55)}
+.ri:active svg{transform:scale(.8)}
+.ri:active .ri-lbl{color:rgba(255,255,255,.92)}
+.ri::after{content:'';position:absolute;inset:0;border-radius:14px;pointer-events:none;opacity:0}
+.ri.tap::after{animation:riTap .45s ease-out}
+@keyframes riTap{
+  0%{opacity:.75;box-shadow:0 0 0 0 rgba(90,180,255,.6),inset 0 0 14px rgba(90,180,255,.55)}
+  100%{opacity:0;box-shadow:0 0 0 15px rgba(90,180,255,0),inset 0 0 14px rgba(90,180,255,0)}
+}
 </style>
 </head>
 <body>
@@ -113,7 +126,13 @@ html,body{width:280px;height:280px;background:transparent;overflow:hidden;user-s
     <span class="ri-lbl">新对话</span>
   </div>
 
-  <!-- 功能模块 2: 卡坞 -->
+  <!-- 功能模块 2: 调试工作台（左 Agent + 右内嵌浏览器）-->
+  <div class="ri" id="ri-workspace" title="调试工作台：左侧 Agent + 右侧内嵌浏览器">
+    <svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 9h20"/><path d="M11 9v11"/></svg>
+    <span class="ri-lbl">浏览器</span>
+  </div>
+
+  <!-- 功能模块 3: 卡坞 -->
   <div class="ri" id="ri-dock">
     <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.2"/><rect x="14" y="3" width="7" height="7" rx="1.2"/><rect x="3" y="14" width="7" height="7" rx="1.2"/><rect x="14" y="14" width="7" height="7" rx="1.2"/></svg>
     <span class="ri-lbl">卡坞</span>
@@ -165,19 +184,18 @@ document.addEventListener('mousemove', e => {
 })
 document.addEventListener('mouseleave', () => H.setOrbMousePassthrough(true))
 
-// ── 拖拽 ──
-let dragging = false, moved = false, startX, startY
+// ── 拖拽（在桌面内自由移动）──
+let dragging = false, moved = false, downX = 0, downY = 0, lastX = 0, lastY = 0
 sphere.addEventListener('mousedown', e => {
   if (e.button !== 0) return
-  dragging = true; moved = false; startX = e.screenX; startY = e.screenY
+  dragging = true; moved = false; downX = lastX = e.screenX; downY = lastY = e.screenY
   e.preventDefault()
 })
 document.addEventListener('mousemove', e => {
   if (!dragging) return
-  const dx = e.screenX - startX, dy = e.screenY - startY
-  startX = e.screenX; startY = e.screenY
-  if (Math.abs(dx) + Math.abs(dy) > 3) moved = true
-  if (moved) H.moveOrbBy(dx, dy)
+  const dx = e.screenX - lastX, dy = e.screenY - lastY; lastX = e.screenX; lastY = e.screenY
+  if (Math.abs(e.screenX - downX) + Math.abs(e.screenY - downY) > 3) moved = true
+  if (moved) H.dragOrb(dx, dy)
 })
 document.addEventListener('mouseup', () => {
   if (!dragging) return
@@ -189,11 +207,20 @@ document.addEventListener('mouseup', () => {
 
 // ── 功能模块 ──
 document.getElementById('ri-chat').addEventListener('click', () => H.toggleOrbInput())
+document.getElementById('ri-workspace').addEventListener('click', () => H.openBrowser())
 document.getElementById('ri-dock').addEventListener('click', () => H.openDock())
 document.getElementById('ri-email').addEventListener('click', () => H.triggerEmailSummary().catch(() => {}))
 document.getElementById('ri-todos').addEventListener('click', () => H.openTodos())
 document.getElementById('ri-fanout').addEventListener('click', () => H.toggleOrbInput('fanout'))
 document.getElementById('ri-settings').addEventListener('click', () => H.openSettings())
+
+// 点击反馈：按下即播放涟漪脉冲（解决"点了没反应、生硬"）
+document.querySelectorAll('.ri').forEach(el => {
+  el.addEventListener('pointerdown', () => {
+    el.classList.remove('tap'); void el.offsetWidth; el.classList.add('tap')
+    setTimeout(() => el.classList.remove('tap'), 450)
+  })
+})
 
 // ── 状态变化 ──
 H.onOrbState(state => {
