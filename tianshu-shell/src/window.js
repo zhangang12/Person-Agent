@@ -7,9 +7,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // 额外窗口引用
   S.todosWin = null
   S.orbInputWin = null
-  S.browserWin = null
-  S.browserView = null
-  S.browserConsoleH = 0
+  S.browser = { win: null, tabs: [], activeId: null, consoleH: 0, seq: 0 }
   // ── 设置 ────────────────────────────────────────────────────────────────────
   function loadSettings() { try { return { ...S.settings, ...JSON.parse(fs.readFileSync(S.settingsFile, 'utf8')) } } catch { return { ...S.settings } } }
   function saveSettings() { try { fs.writeFileSync(S.settingsFile, JSON.stringify(S.settings)) } catch {} }
@@ -92,7 +90,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
 
   function toggleOrbInput(mode) { createOrbInput(mode) }
 
-  function spawnCard(title, sid, msg) {
+  function spawnCard(title, sid, msg, disp) {
     const id = ++S.cardSeq
     const col = (id - 1) % 4, row = Math.floor((id - 1) / 4) % 4
     const win = new BrowserWindow(baseOpts({
@@ -104,6 +102,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const query = { title: title || '未命名任务', id: String(id) }
     if (sid) query.sid = sid
     if (msg) query.msg = msg
+    if (disp) query.disp = disp
     win.loadFile(path.join(__dirname, '..', 'ui', 'card.html'), { query })
     win.on('closed', () => {
       const s = S.sessionByWc.get(wcId)
@@ -196,70 +195,275 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     S.dockWin.on('closed', () => { S.dockWin = null })
   }
 
-  // ── 内嵌浏览器 ──────────────────────────────────────────────────────────────
-  function normalizeUrl(url) {
-    url = String(url).trim()
-    if (!url || url === 'about:blank') return 'about:blank'
-    if (/^https?:\/\//.test(url)) return url
-    if (/^(localhost|127\.|192\.|10\.\d)/.test(url)) return 'http://' + url
-    return 'https://' + url
+  // ── 内嵌浏览器（多标签 + 设备模拟 + 控制台 + AI 分析）──────────────────────
+  const BR_TOP_H = 82   // 标签栏 38 + 工具栏 44
+  const BR_DEVICES = {
+    desktop: { label: '桌面',      w: 0,   h: 0,    dpr: 0, touch: false },
+    mobile:  { label: '手机 390',  w: 390, h: 844,  dpr: 3, touch: true  },
+    tablet:  { label: '平板 834',  w: 834, h: 1112, dpr: 2, touch: true  },
   }
 
-  function resizeBrowserView() {
-    if (!S.browserWin || S.browserWin.isDestroyed() || !S.browserView) return
-    const [cw, ch] = S.browserWin.getContentSize()
-    const TOOLBAR_H = 48
-    S.browserView.setBounds({ x: 0, y: TOOLBAR_H, width: cw, height: Math.max(0, ch - TOOLBAR_H - S.browserConsoleH) })
+  function normalizeUrl(url) {
+    url = String(url || '').trim()
+    if (!url) return ''
+    if (url === 'about:blank' || url.startsWith('file://') || url.startsWith('about:')) return url
+    if (/^https?:\/\//i.test(url)) return url
+    if (/^localhost(:\d+)?(\/|$)/i.test(url) || /^127\.|^192\.168\.|^10\.\d|^172\.(1[6-9]|2\d|3[01])\./.test(url)) return 'http://' + url
+    // 含空格或无点号 → 当作搜索（内网无搜索引擎时仍按 URL 处理）
+    if (/\s/.test(url) || !/\./.test(url)) return 'http://' + url
+    return 'http://' + url
+  }
+
+  const brActive = () => S.browser.tabs.find(t => t.id === S.browser.activeId) || null
+
+  function brLayout() {
+    const b = S.browser
+    if (!b.win || b.win.isDestroyed()) return
+    const tab = brActive(); if (!tab) return
+    const [cw, ch] = b.win.getContentSize()
+    const areaH = Math.max(0, ch - BR_TOP_H - b.consoleH)
+    const d = tab.device
+    if (d && d.w) {
+      const dw = Math.min(d.w, cw)
+      const dh = d.h ? Math.min(d.h, areaH) : areaH
+      tab.view.setBounds({ x: Math.round((cw - dw) / 2), y: BR_TOP_H, width: dw, height: dh })
+    } else {
+      tab.view.setBounds({ x: 0, y: BR_TOP_H, width: cw, height: areaH })
+    }
+  }
+
+  function brSendTabs() {
+    const b = S.browser
+    if (!b.win || b.win.isDestroyed()) return
+    b.win.webContents.send('browser-tabs', {
+      tabs: b.tabs.map(t => ({ id: t.id, title: t.title, loading: t.loading, favicon: t.favicon || '' })),
+      activeId: b.activeId,
+    })
+  }
+
+  function brSendNav(tab) {
+    const b = S.browser
+    if (!b.win || b.win.isDestroyed() || tab.id !== b.activeId) return
+    const dkey = Object.keys(BR_DEVICES).find(k => BR_DEVICES[k] === tab.device) || 'desktop'
+    b.win.webContents.send('browser-nav', {
+      url: tab.view.webContents.getURL(),
+      canBack: tab.view.webContents.canGoBack(),
+      canForward: tab.view.webContents.canGoForward(),
+      loading: tab.loading,
+      zoom: Math.round((tab.zoom || 1) * 100),
+      device: dkey,
+      errN: tab.errN, warnN: tab.warnN,
+    })
+  }
+
+  // 把 Electron 的 level（数字或字符串）归一化为 0=log 1=info 2=warn 3=error
+  function brNormLevel(lvl) {
+    if (typeof lvl === 'number') return lvl
+    const m = { verbose: 0, debug: 0, log: 0, info: 1, warning: 2, warn: 2, error: 3 }
+    return m[String(lvl).toLowerCase()] ?? 1
+  }
+
+  function brWireTab(tab) {
+    const wc = tab.view.webContents
+    const b = S.browser
+    const onNav = () => {
+      tab.title = wc.getTitle() || tab.title
+      tab.url = wc.getURL()
+      brSendTabs(); brSendNav(tab)
+    }
+    wc.on('did-navigate', onNav)
+    wc.on('did-navigate-in-page', onNav)
+    wc.on('page-title-updated', () => { tab.title = wc.getTitle(); brSendTabs(); brSendNav(tab) })
+    wc.on('did-start-loading', () => { tab.loading = true; brSendTabs(); brSendNav(tab) })
+    wc.on('did-stop-loading', () => { tab.loading = false; brSendTabs(); brSendNav(tab) })
+    wc.on('page-favicon-updated', (_e, icons) => { tab.favicon = icons && icons[0] || ''; brSendTabs() })
+    wc.on('found-in-page', (_e, r) => {
+      if (tab.id === b.activeId && b.win && !b.win.isDestroyed())
+        b.win.webContents.send('browser-find-result', { active: r.activeMatchOrdinal, matches: r.matches })
+    })
+    wc.setWindowOpenHandler(({ url }) => { newTab(url); return { action: 'deny' } })
+
+    // 控制台（全等级捕获，存在 tab 上，活动标签实时推送）
+    wc.on('console-message', (...args) => {
+      let level, message, line, source
+      if (args.length === 1 && args[0] && typeof args[0] === 'object') {
+        const d = args[0]; level = brNormLevel(d.level); message = d.message; line = d.lineNumber; source = d.sourceId
+      } else {
+        level = brNormLevel(args[1]); message = args[2]; line = args[3]; source = args[4]
+      }
+      const entry = { level, message: String(message || '').slice(0, 4000), line, source: source || '', ts: Date.now() }
+      tab.console.push(entry)
+      if (tab.console.length > 500) tab.console.shift()
+      if (level === 3) tab.errN++; else if (level === 2) tab.warnN++
+      if (tab.id === b.activeId && b.win && !b.win.isDestroyed()) {
+        b.win.webContents.send('browser-console-add', entry)
+        b.win.webContents.send('browser-badge', { errN: tab.errN, warnN: tab.warnN })
+      }
+    })
+
+    // 页面焦点下的浏览器级快捷键
+    wc.on('before-input-event', (e, input) => {
+      if (input.type !== 'keyDown') return
+      const mod = input.control || input.meta
+      if (!mod) return
+      const k = (input.key || '').toLowerCase()
+      const handle = (fn) => { e.preventDefault(); fn() }
+      if (k === 't') handle(() => newTab(''))
+      else if (k === 'w') handle(() => closeTab(b.activeId))
+      else if (k === 'r') handle(() => wc.reload())
+      else if (k === 'l') handle(() => b.win.webContents.send('browser-focus-url'))
+      else if (k === 'f') handle(() => b.win.webContents.send('browser-open-find'))
+      else if (k === '=' || k === '+') handle(() => brZoom('in'))
+      else if (k === '-') handle(() => brZoom('out'))
+      else if (k === '0') handle(() => brZoom('reset'))
+    })
+  }
+
+  function newTab(url) {
+    const b = S.browser
+    if (!b.win || b.win.isDestroyed()) return
+    const id = ++b.seq
+    const view = new WebContentsView({ webPreferences: { nodeIntegration: false, contextIsolation: true, devTools: true, sandbox: true } })
+    const tab = { id, view, title: '新标签页', url: '', loading: false, favicon: '', console: [], errN: 0, warnN: 0, zoom: 1, device: null }
+    b.tabs.push(tab)
+    brWireTab(tab)
+    activateTab(id)
+    const u = normalizeUrl(url)
+    if (u) view.webContents.loadURL(u)
+    else view.webContents.loadFile(path.join(__dirname, '..', 'ui', 'newtab.html'))
+    return tab
+  }
+
+  function activateTab(id) {
+    const b = S.browser
+    if (!b.win || b.win.isDestroyed()) return
+    const tab = b.tabs.find(t => t.id === id); if (!tab) return
+    const prev = brActive()
+    if (prev && prev.id !== id) { try { b.win.contentView.removeChildView(prev.view) } catch {} }
+    b.activeId = id
+    try { b.win.contentView.addChildView(tab.view) } catch {}
+    brLayout()
+    brSendTabs()
+    brSendNav(tab)
+    // 切换标签 → 重发该标签的控制台快照
+    b.win.webContents.send('browser-console-snapshot', { entries: tab.console, errN: tab.errN, warnN: tab.warnN })
+  }
+
+  function closeTab(id) {
+    const b = S.browser
+    const idx = b.tabs.findIndex(t => t.id === id); if (idx === -1) return
+    const tab = b.tabs[idx]
+    const wasActive = b.activeId === id
+    try { b.win.contentView.removeChildView(tab.view) } catch {}
+    try { tab.view.webContents.destroy() } catch {}
+    b.tabs.splice(idx, 1)
+    if (b.tabs.length === 0) { b.win.close(); return }
+    if (wasActive) activateTab(b.tabs[Math.min(idx, b.tabs.length - 1)].id)
+    else brSendTabs()
+  }
+
+  function brZoom(dir) {
+    const tab = brActive(); if (!tab) return
+    let z = tab.zoom || 1
+    if (dir === 'in') z = Math.min(3, +(z + 0.1).toFixed(2))
+    else if (dir === 'out') z = Math.max(0.3, +(z - 0.1).toFixed(2))
+    else z = 1
+    tab.zoom = z
+    tab.view.webContents.setZoomFactor(z)
+    brSendNav(tab)
+  }
+
+  function brSetDevice(key) {
+    const tab = brActive(); if (!tab) return
+    const dev = BR_DEVICES[key] || BR_DEVICES.desktop
+    tab.device = key === 'desktop' ? null : dev
+    const wc = tab.view.webContents
+    try {
+      if (tab.device && tab.device.w) {
+        wc.enableDeviceEmulation({
+          screenPosition: 'mobile',
+          screenSize: { width: tab.device.w, height: tab.device.h },
+          viewSize: { width: tab.device.w, height: tab.device.h },
+          deviceScaleFactor: tab.device.dpr || 0,
+          viewPosition: { x: 0, y: 0 }, scale: 1,
+        })
+      } else {
+        wc.disableDeviceEmulation()
+      }
+    } catch {}
+    brLayout()
+    brSendNav(tab)
+  }
+
+  function brRotateDevice() {
+    const tab = brActive(); if (!tab || !tab.device || !tab.device.w) return
+    tab.device = { ...tab.device, w: tab.device.h, h: tab.device.w }
+    brLayout()
+  }
+
+  async function brScreenshot() {
+    const tab = brActive(); if (!tab) return null
+    try {
+      const img = await tab.view.webContents.capturePage()
+      const fp = path.join(app.getPath('downloads'), 'BocomHermes-' + Date.now() + '.png')
+      fs.writeFileSync(fp, img.toPNG())
+      return fp
+    } catch (e) { log('browser screenshot err: ' + e.message); return null }
+  }
+
+  async function brAnalyze() {
+    const tab = brActive(); if (!tab) return
+    const wc = tab.view.webContents
+    let dom = { title: '', desc: '', html: '' }
+    try {
+      dom = await wc.executeJavaScript(`(()=>{
+        const h=document.documentElement.outerHTML;
+        const d=document.querySelector('meta[name="description"]');
+        return { title:document.title, desc:d?d.content:'', html: h.length>9000 ? h.slice(0,9000)+'\\n<!-- …(已截断) -->' : h };
+      })()`, true)
+    } catch {}
+    const errs = tab.console.filter(c => c.level >= 2)
+    const errText = errs.length
+      ? errs.slice(-30).map(c => (c.level === 3 ? '✗ ' : '⚠ ') + c.message + (c.source ? `  (${String(c.source).split('/').pop()}:${c.line || ''})` : '')).join('\n')
+      : '（无 warning / error）'
+    const prompt =
+      `我正在用内嵌浏览器调试一个前端页面，请你作为资深前端工程师帮我分析并定位问题。\n\n` +
+      `页面地址：${tab.url || '(空白页)'}\n页面标题：${dom.title || tab.title}\n` +
+      (dom.desc ? `页面描述：${dom.desc}\n` : '') +
+      `\n## 控制台报错（${errs.length} 条）\n${errText}\n\n` +
+      `## 页面 DOM 结构（截断）\n\`\`\`html\n${dom.html || '(无法获取)'}\n\`\`\`\n\n` +
+      `请：\n1. 根据控制台报错定位最可能的根因\n` +
+      `2. 给出具体修复建议（指明涉及的代码/文件方向，能给 diff 更好）\n` +
+      `3. 若是常见前端坑（CORS、空指针、异步时序、CSS 布局、资源 404）请点明\n` +
+      `4. 如果当前项目目录就是这个前端工程，请直接定位到源码文件给出修法`
+    const disp = `🔍 分析当前页面：${tab.url || '(空白页)'}\n（含 ${errs.length} 条控制台报错 + 页面 DOM 上下文）`
+    spawnCard('前端调试分析', null, prompt, disp)
   }
 
   function createBrowser(initialUrl) {
-    if (S.browserWin && !S.browserWin.isDestroyed()) {
-      S.browserWin.focus()
-      if (initialUrl) S.browserView.webContents.loadURL(normalizeUrl(initialUrl))
+    const b = S.browser
+    if (b.win && !b.win.isDestroyed()) {
+      b.win.focus()
+      if (initialUrl) newTab(initialUrl)
       return
     }
     const win = new BrowserWindow({
-      width: 1280, height: 860, minWidth: 900, minHeight: 600,
+      width: 1320, height: 880, minWidth: 920, minHeight: 600,
       title: 'BocomHermes · 浏览器',
-      titleBarStyle: 'hiddenInset',
-      trafficLightPosition: { x: 12, y: 14 },
+      titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
+      trafficLightPosition: { x: 13, y: 12 },
       backgroundColor: '#0d0e1a',
       webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false },
     })
-    S.browserWin = win
-    S.browserConsoleH = 0
+    b.win = win; b.tabs = []; b.activeId = null; b.consoleH = 0
     win.loadFile(path.join(__dirname, '..', 'ui', 'browser.html'))
-    win.on('closed', () => { S.browserWin = null; S.browserView = null; S.browserConsoleH = 0 })
-
-    const view = new WebContentsView({ webPreferences: { nodeIntegration: false, contextIsolation: true, devTools: true } })
-    S.browserView = view
-    win.contentView.addChildView(view)
-    resizeBrowserView()
-    win.on('resize', resizeBrowserView)
-
-    if (initialUrl) view.webContents.loadURL(normalizeUrl(initialUrl))
-
-    // 导航事件 → chrome
-    const sendNav = () => {
-      if (win.isDestroyed()) return
-      win.webContents.send('browser-nav', {
-        url: view.webContents.getURL(),
-        canBack: view.webContents.canGoBack(),
-        canForward: view.webContents.canGoForward(),
-        loading: view.webContents.isLoading(),
-      })
-    }
-    view.webContents.on('did-navigate', sendNav)
-    view.webContents.on('did-navigate-in-page', sendNav)
-    view.webContents.on('page-title-updated', sendNav)
-    view.webContents.on('did-start-loading', sendNav)
-    view.webContents.on('did-stop-loading', sendNav)
-
-    // 控制台消息（warning/error）
-    view.webContents.on('console-message', (_e, level, message, line, sourceId) => {
-      if (win.isDestroyed() || level < 2) return
-      win.webContents.send('browser-console', { level, message, line, source: sourceId })
+    win.on('resize', brLayout)
+    win.on('closed', () => {
+      for (const t of b.tabs) { try { t.view.webContents.destroy() } catch {} }
+      S.browser = { win: null, tabs: [], activeId: null, consoleH: 0, seq: 0 }
     })
+    // chrome 加载完后再建首个标签（保证 IPC 能收到）
+    win.webContents.once('did-finish-load', () => newTab(initialUrl || ''))
   }
 
   function buildTray() {
@@ -443,28 +647,28 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   })
 
   // ── 浏览器 IPC ───────────────────────────────────────────────────────────
+  const brWC = () => { const t = brActive(); return t && !t.view.webContents.isDestroyed() ? t.view.webContents : null }
   ipcMain.handle('open-browser', (_e, url) => createBrowser(url))
-  ipcMain.handle('browser-navigate', (_e, url) => {
-    if (!S.browserView || S.browserView.webContents.isDestroyed()) return
-    const u = normalizeUrl(url)
-    if (u !== 'about:blank') S.browserView.webContents.loadURL(u)
+  ipcMain.handle('browser-navigate', (_e, url) => { const wc = brWC(); const u = normalizeUrl(url); if (wc && u) wc.loadURL(u) })
+  ipcMain.on('browser-back',    () => { const wc = brWC(); if (wc && wc.canGoBack()) wc.goBack() })
+  ipcMain.on('browser-forward', () => { const wc = brWC(); if (wc && wc.canGoForward()) wc.goForward() })
+  ipcMain.on('browser-reload',  () => { const wc = brWC(); if (wc) wc.isLoading() ? wc.stop() : wc.reload() })
+  ipcMain.on('browser-devtools', () => { const wc = brWC(); if (wc) wc.isDevToolsOpened() ? wc.closeDevTools() : wc.openDevTools({ mode: 'detach' }) })
+  ipcMain.on('browser-new-tab', (_e, url) => newTab(url || ''))
+  ipcMain.on('browser-close-tab', (_e, id) => closeTab(id))
+  ipcMain.on('browser-activate-tab', (_e, id) => activateTab(id))
+  ipcMain.on('browser-set-device', (_e, key) => brSetDevice(key))
+  ipcMain.on('browser-rotate', () => brRotateDevice())
+  ipcMain.on('browser-zoom', (_e, dir) => brZoom(dir))
+  ipcMain.on('browser-console-resize', (_e, h) => { S.browser.consoleH = h || 0; brLayout() })
+  ipcMain.on('browser-find', (_e, { text, findNext, forward }) => {
+    const wc = brWC(); if (!wc) return
+    if (!text) { wc.stopFindInPage('clearSelection'); return }
+    wc.findInPage(text, { findNext: !!findNext, forward: forward !== false })
   })
-  ipcMain.on('browser-back',    () => S.browserView?.webContents.canGoBack()    && S.browserView.webContents.goBack())
-  ipcMain.on('browser-forward', () => S.browserView?.webContents.canGoForward() && S.browserView.webContents.goForward())
-  ipcMain.on('browser-reload',  () => {
-    if (!S.browserView || S.browserView.webContents.isDestroyed()) return
-    S.browserView.webContents.isLoading() ? S.browserView.webContents.stop() : S.browserView.webContents.reload()
-  })
-  ipcMain.on('browser-devtools', () => {
-    if (!S.browserView || S.browserView.webContents.isDestroyed()) return
-    S.browserView.webContents.isDevToolsOpened()
-      ? S.browserView.webContents.closeDevTools()
-      : S.browserView.webContents.openDevTools({ mode: 'detach' })
-  })
-  ipcMain.on('browser-console-resize', (_e, h) => {
-    S.browserConsoleH = h || 0
-    resizeBrowserView()
-  })
+  ipcMain.on('browser-find-stop', () => { const wc = brWC(); if (wc) wc.stopFindInPage('clearSelection') })
+  ipcMain.handle('browser-screenshot', async () => await brScreenshot())
+  ipcMain.handle('browser-analyze', async () => { await brAnalyze() })
 
   ipcMain.handle('open-dock', () => openDock())
   ipcMain.on('get-history', (e) => { e.returnValue = S.history })

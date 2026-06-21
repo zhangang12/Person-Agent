@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>新标签页</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:#0b0c16;color:rgba(255,255,255,.9);
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:34px;
+  background-image:radial-gradient(circle at 50% 38%,rgba(74,168,255,.07),transparent 55%)}
+.logo{display:flex;flex-direction:column;align-items:center;gap:14px}
+.orb{width:64px;height:64px;border-radius:50%;
+  background:radial-gradient(circle at 42% 30%,rgba(100,140,220,.12),transparent 45%),radial-gradient(circle at 50% 50%,#0a0a14,#020208);
+  box-shadow:-12px 0 26px rgba(0,230,255,.5),14px 0 26px rgba(60,80,255,.45),0 0 50px rgba(0,160,255,.1)}
+.brand{font-size:15px;letter-spacing:.04em;color:rgba(255,255,255,.5)}
+
+.searchwrap{width:440px;max-width:80vw}
+#s{width:100%;height:46px;border-radius:12px;border:1px solid rgba(255,255,255,.1);
+  background:rgba(255,255,255,.05);color:rgba(255,255,255,.9);font-size:14px;padding:0 18px;outline:none}
+#s:focus{border-color:#4aa8ff;background:rgba(255,255,255,.07)}
+#s::placeholder{color:rgba(255,255,255,.3)}
+
+.sec{width:560px;max-width:86vw}
+.sec h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:11px;font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.card{display:flex;align-items:center;gap:11px;padding:13px 14px;border-radius:12px;
+  background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);
+  text-decoration:none;color:inherit;transition:background .14s,border-color .14s,transform .14s}
+.card:hover{background:rgba(255,255,255,.08);border-color:rgba(74,168,255,.35);transform:translateY(-1px)}
+.ic{width:34px;height:34px;flex:none;border-radius:9px;display:flex;align-items:center;justify-content:center;
+  font-size:15px;font-weight:700;color:#fff}
+.nm{font-size:13px;font-weight:600;line-height:1.2}
+.pt{font-size:11px;color:rgba(255,255,255,.4);font-family:'SF Mono',monospace}
+</style>
+</head>
+<body>
+<div class="logo"><div class="orb"></div><div class="brand">BocomHermes 浏览器</div></div>
+
+<form class="searchwrap" id="f"><input id="s" placeholder="输入网址，回车访问…" spellcheck="false" autofocus></form>
+
+<div class="sec">
+  <h3>本地开发服务器</h3>
+  <div class="grid">
+    <a class="card" href="http://localhost:5173"><span class="ic" style="background:#646cff">V</span><div><div class="nm">Vite</div><div class="pt">localhost:5173</div></div></a>
+    <a class="card" href="http://localhost:3000"><span class="ic" style="background:#000;border:1px solid #333">N</span><div><div class="nm">Next / React</div><div class="pt">localhost:3000</div></div></a>
+    <a class="card" href="http://localhost:8080"><span class="ic" style="background:#42b883">Vu</span><div><div class="nm">Vue CLI</div><div class="pt">localhost:8080</div></div></a>
+    <a class="card" href="http://localhost:4200"><span class="ic" style="background:#dd0031">A</span><div><div class="nm">Angular</div><div class="pt">localhost:4200</div></div></a>
+    <a class="card" href="http://localhost:8000"><span class="ic" style="background:#306998">8k</span><div><div class="nm">Python / 通用</div><div class="pt">localhost:8000</div></div></a>
+    <a class="card" href="http://localhost:4096"><span class="ic" style="background:#4aa8ff">OC</span><div><div class="nm">opencode serve</div><div class="pt">localhost:4096</div></div></a>
+  </div>
+</div>
+
+<script>
+document.getElementById('f').addEventListener('submit', e => {
+  e.preventDefault()
+  let v = document.getElementById('s').value.trim()
+  if (!v) return
+  if (!/^https?:\/\//i.test(v)) v = (/^localhost|^127\.|^192\.168\.|^10\./.test(v) ? 'http://' : 'http://') + v
+  location.href = v
+})
+</script>
+</body>
+</html>

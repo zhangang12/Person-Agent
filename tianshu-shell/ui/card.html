@@ -138,6 +138,7 @@
   const params = new URLSearchParams(location.search)
   const title = params.get('title') || '新对话'
   const initMsg = params.get('msg') || title    // msg 在场时发送内容不同于标题（fan-out）
+  const dispMsg = params.get('disp') || initMsg // disp 在场时用户气泡展示它（发送仍是 initMsg，如 AI 分析含大段 DOM）
   const ttl = document.getElementById('ttl'); ttl.textContent = title; ttl.title = title
   document.title = title + ' · BocomHermes'   // 任务栏/Alt+Tab 区分各卡
   const projEl = document.getElementById('proj')
@@ -327,7 +328,7 @@
   const sid = params.get('sid') || ''   // 带 sid = 从卡坞续接旧会话
   ;(async () => {
     setBusy(true)
-    if (!sid) addMsg(initMsg, 'me')      // 全新卡：先显示任务（fan-out 时 msg≠title）
+    if (!sid) addMsg(dispMsg, 'me')      // 全新卡：先显示任务（disp 在场时只展示摘要，不展示大段上下文）
     const boot = addMsg('', 'ai'); boot.textContent = sid ? '正在续接对话…' : '正在启动引擎…（首次较慢，请稍候）'
     try {
       const r = await window.BocomHermes.cardInit(sid ? { sid, title } : { title })
