@@ -361,6 +361,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, screen, d
     if (!S.inputWin || S.inputWin.isDestroyed()) return
     const [x, y] = S.inputWin.getPosition()
     S.inputWin.setPosition(x + dx, y + dy)
+    if (S.orbInputWin && !S.orbInputWin.isDestroyed()) {
+      const [px, py] = S.orbInputWin.getPosition()
+      S.orbInputWin.setPosition(px + dx, py + dy)
+    }
   })
   ipcMain.on('orb-snap', () => snapOrbToCorner())
   ipcMain.handle('toggle-orb-input', (_e, mode) => toggleOrbInput(mode))
