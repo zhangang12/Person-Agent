@@ -84,18 +84,21 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 .zoom .zv{font-size:11px;color:var(--txt2);min-width:38px;text-align:center;cursor:pointer;font-variant-numeric:tabular-nums}
 .zoom .zv:hover{color:var(--txt)}
 
-.tb{flex:none;height:30px;padding:0 11px;border:1px solid var(--line);border-radius:8px;
+.tb{flex:none;height:30px;padding:0 11px;border:1px solid var(--line);border-radius:8px;position:relative;
   background:rgba(255,255,255,.04);color:var(--txt2);font-size:12px;cursor:pointer;
   display:flex;align-items:center;gap:5px;transition:background .12s,color .12s,border-color .12s}
 .tb:hover{background:rgba(255,255,255,.08);color:var(--txt)}
 .tb svg{width:13px;height:13px}
+.tb.ico{padding:0 9px}
 .tb.ai{background:linear-gradient(135deg,rgba(157,123,255,.2),rgba(74,168,255,.18));border-color:rgba(157,123,255,.35);color:#c9b6ff}
 .tb.ai:hover{background:linear-gradient(135deg,rgba(157,123,255,.3),rgba(74,168,255,.26))}
 .tb.on{background:var(--accent-dim);border-color:rgba(74,168,255,.3);color:var(--accent)}
-.bdg{display:none;min-width:15px;height:15px;padding:0 4px;border-radius:8px;font-size:10px;font-weight:700;
+.bdg{position:absolute;top:-5px;right:-5px;display:none;min-width:15px;height:15px;padding:0 4px;border-radius:8px;font-size:10px;font-weight:700;
   line-height:15px;text-align:center}
-.bdg.e{background:rgba(255,80,80,.25);color:#ff9b9b}
-.bdg.w{background:rgba(255,170,0,.22);color:#ffcf6b}
+.bdg.e{background:rgba(255,80,80,.9);color:#fff}
+.bdg.w{background:rgba(255,170,0,.9);color:#241500}
+.bdg.i{background:rgba(74,168,255,.85);color:#04203f}
+#bcl .bdg.e{right:9px}
 
 /* ── 进度条 ── */
 #prog{height:2px;flex:none;background:transparent;overflow:hidden;position:relative}
@@ -118,6 +121,23 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 #find .fb:hover{background:rgba(255,255,255,.1);color:var(--txt)}
 #find .fb svg{width:12px;height:12px}
 
+/* 元素拾取结果卡 */
+#pickcard{position:absolute;top:12px;left:14px;z-index:55;width:312px;background:#10131f;border:1px solid var(--line);
+  border-radius:12px;box-shadow:0 14px 44px rgba(0,0,0,.62);display:none;overflow:hidden}
+#pickcard.show{display:block}
+.pk-hd{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line);font-size:12px;color:var(--txt2)}
+.pk-hd .tag{color:var(--accent);font-family:'SF Mono',monospace;font-weight:600}
+.pk-hd .x{margin-left:auto;width:20px;height:20px;border:none;background:transparent;color:var(--txt3);cursor:pointer;border-radius:5px;display:flex;align-items:center;justify-content:center}
+.pk-hd .x:hover{background:rgba(255,255,255,.1);color:var(--txt)}.pk-hd .x svg{width:11px;height:11px}
+.pk-sel{padding:9px 12px;font-family:'SF Mono',Menlo,monospace;font-size:11.5px;color:#cfe3ff;word-break:break-all;cursor:pointer;border-bottom:1px solid var(--line);background:rgba(74,168,255,.06)}
+.pk-sel:hover{background:rgba(74,168,255,.12)}
+.pk-grid{padding:9px 12px;display:flex;flex-wrap:wrap;gap:5px 14px;font-size:11px;color:var(--txt2)}
+.pk-grid b{color:var(--txt);font-weight:600;font-variant-numeric:tabular-nums}
+.pk-box{margin:2px 12px 10px;border:1px dashed rgba(255,170,64,.4);border-radius:6px;padding:6px;font-family:'SF Mono',monospace;font-size:10px;color:var(--warn);text-align:center}
+.pk-box .inner{border:1px dashed rgba(61,220,132,.45);border-radius:4px;padding:5px;color:var(--ok);margin-top:3px}
+.pk-box .core{border:1px solid rgba(74,168,255,.5);border-radius:3px;padding:5px;color:var(--accent);margin-top:3px;font-variant-numeric:tabular-nums}
+.pk-act{display:flex;gap:6px;padding:9px 12px;border-top:1px solid var(--line)}
+
 /* toast */
 #toast{position:absolute;bottom:18px;left:50%;transform:translateX(-50%) translateY(20px);z-index:60;
   background:#1a1c2e;border:1px solid var(--line);border-radius:10px;padding:9px 16px;font-size:12.5px;color:var(--txt);
@@ -125,25 +145,43 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 #toast .ok{color:var(--ok)}
 
-/* ── 控制台 ── */
+/* ── 底部面板（控制台 / 网络）── */
 #console{height:0;flex:none;overflow:hidden;display:flex;flex-direction:column;
   background:#080910;border-top:1px solid var(--line);transition:height .14s ease}
-#console.open{height:220px}
+#console.open{height:248px}
 #chdr{height:34px;flex:none;display:flex;align-items:center;gap:8px;padding:0 11px;
   border-bottom:1px solid var(--line)}
-.cfilter{display:flex;gap:3px}
-.cfilter button{border:none;background:transparent;color:var(--txt3);font-size:11px;cursor:pointer;
+.dtabs{display:flex;gap:2px;flex:none}
+.dtab{border:none;background:transparent;color:var(--txt3);font-size:12px;cursor:pointer;padding:4px 10px;border-radius:7px;
+  display:flex;align-items:center;gap:6px;transition:background .12s,color .12s}
+.dtab:hover{color:var(--txt2)}
+.dtab.on{background:rgba(255,255,255,.08);color:var(--txt)}
+.tbadge{min-width:16px;height:15px;padding:0 4px;border-radius:8px;font-size:10px;line-height:15px;text-align:center;
+  background:rgba(255,255,255,.1);color:var(--txt2);font-variant-numeric:tabular-nums;display:none}
+.tbadge.show{display:inline-block}
+.dsep{width:1px;height:16px;background:var(--line);flex:none}
+.cfilter,.nfilter{display:flex;gap:3px}
+.cfilter button,.nfilter button{border:none;background:transparent;color:var(--txt3);font-size:11px;cursor:pointer;
   padding:3px 8px;border-radius:6px;display:flex;align-items:center;gap:4px;transition:background .12s,color .12s}
-.cfilter button:hover{background:rgba(255,255,255,.06);color:var(--txt2)}
-.cfilter button.on{background:rgba(255,255,255,.08);color:var(--txt)}
+.cfilter button:hover,.nfilter button:hover{background:rgba(255,255,255,.06);color:var(--txt2)}
+.cfilter button.on,.nfilter button.on{background:rgba(255,255,255,.08);color:var(--txt)}
 .cfilter .dot{width:6px;height:6px;border-radius:50%}
 .cfilter .dot.e{background:var(--err)}.cfilter .dot.w{background:var(--warn)}.cfilter .dot.l{background:var(--txt3)}
+#nsearch{height:22px;width:150px;border:1px solid var(--line);border-radius:6px;background:rgba(255,255,255,.05);
+  color:var(--txt);font-size:11px;padding:0 8px;outline:none}
+#nsearch:focus{border-color:var(--accent)}
+.preserve{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--txt3);cursor:pointer}
+.preserve input{cursor:pointer}
 .csp{flex:1}
 .hb{border:none;background:rgba(255,255,255,.05);border-radius:6px;color:var(--txt3);font-size:11px;
   cursor:pointer;padding:3px 9px;transition:background .12s,color .12s}
 .hb:hover{background:rgba(255,255,255,.1);color:var(--txt2)}
+
+#cbody,#nbody{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+#nbody{position:relative}
 #clist{flex:1;overflow-y:auto;padding:2px 0;font-family:'SF Mono',Menlo,monospace;font-size:11.5px}
-#clist::-webkit-scrollbar{width:8px}#clist::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:4px}
+#clist::-webkit-scrollbar,#nlist::-webkit-scrollbar,.nd-body::-webkit-scrollbar{width:8px}
+#clist::-webkit-scrollbar-thumb,#nlist::-webkit-scrollbar-thumb,.nd-body::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:4px}
 .ce{display:flex;align-items:baseline;gap:8px;padding:3px 12px;border-left:2px solid transparent;line-height:1.5}
 .ce:hover{background:rgba(255,255,255,.025)}
 .ce.l3{border-left-color:var(--err);color:#ff9b9b;background:rgba(255,80,80,.04)}
@@ -153,9 +191,54 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 .ce .ms{flex:1;min-width:0;word-break:break-all;white-space:pre-wrap}
 .ce .sr{flex:none;color:var(--txt3);font-size:10px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cempty{color:var(--txt3);font-size:12px;text-align:center;padding:28px;font-family:-apple-system,sans-serif}
+
+/* 网络列表 */
+#nhead,.nrow{display:grid;grid-template-columns:62px 56px 1fr 88px 70px 62px;gap:8px;align-items:center}
+#nhead{flex:none;padding:4px 12px;font-size:10px;color:var(--txt3);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--line)}
+#nhead .r{text-align:right}
+#nlist{flex:1;overflow-y:auto;font-family:'SF Mono',Menlo,monospace;font-size:11.5px}
+.nrow{padding:3px 12px;cursor:pointer;border-left:2px solid transparent}
+.nrow:hover{background:rgba(255,255,255,.04)}
+.nrow.sel{background:var(--accent-dim);border-left-color:var(--accent)}
+.nrow .st{font-variant-numeric:tabular-nums}
+.nrow .st.ok{color:var(--ok)}.nrow .st.redir{color:var(--txt2)}.nrow .st.err{color:var(--err)}.nrow .st.pend{color:var(--txt3)}
+.nrow .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--txt)}
+.nrow .mt,.nrow .ty{color:var(--txt2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nrow .sz,.nrow .tm{color:var(--txt2);text-align:right;font-variant-numeric:tabular-nums}
+
+/* 网络详情抽屉 */
+#ndetail{position:absolute;top:0;right:0;bottom:0;width:56%;min-width:330px;background:#0c0e18;border-left:1px solid var(--line);
+  transform:translateX(101%);transition:transform .16s ease;display:flex;flex-direction:column;z-index:10}
+#ndetail.open{transform:none}
+.nd-hd{display:flex;align-items:center;gap:8px;padding:8px 11px;border-bottom:1px solid var(--line)}
+#ndtitle{flex:1;min-width:0;font-size:12px;font-family:'SF Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--txt)}
+.nd-hd .x{width:22px;height:22px;border:none;background:transparent;color:var(--txt3);cursor:pointer;border-radius:6px;display:flex;align-items:center;justify-content:center;flex:none}
+.nd-hd .x:hover{background:rgba(255,255,255,.1);color:var(--txt)}.nd-hd .x svg{width:12px;height:12px}
+.nd-tabs{display:flex;gap:2px;padding:6px 11px 0;flex:none}
+.nd-tabs button{border:none;background:transparent;color:var(--txt3);font-size:11.5px;cursor:pointer;padding:4px 9px;border-radius:6px 6px 0 0}
+.nd-tabs button:hover{color:var(--txt2)}
+.nd-tabs button.on{background:rgba(255,255,255,.06);color:var(--txt)}
+.nd-body{flex:1;overflow:auto;padding:9px 12px}
+.nd-row{display:flex;gap:10px;padding:2px 0;font-size:11px;font-family:'SF Mono',monospace;align-items:baseline}
+.nd-k{color:var(--txt3);flex:none;min-width:120px;max-width:160px;word-break:break-all}
+.nd-v{color:var(--txt);flex:1;word-break:break-all}
+.nd-sub{margin:10px 0 5px;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--txt3)}
+.nd-pre{font-family:'SF Mono',monospace;font-size:11px;white-space:pre-wrap;word-break:break-all;color:var(--txt);line-height:1.55}
+.nd-empty{color:var(--txt3);font-size:11.5px;padding:10px 0;font-family:-apple-system,sans-serif}
+.nd-act{display:flex;gap:6px;padding:8px 11px;border-top:1px solid var(--line);flex:none}
+
+/* ── 工作台模式（左 Agent 会话 + 右浏览器并排，整个 chrome 右移给 cardView 让位）── */
+:root{--wsleftw:460px}
+body.ws{padding-left:calc(var(--wsleftw) + 6px)}
+body.ws #tabbar{padding-left:8px}
+#wssplit{position:fixed;top:0;bottom:0;left:var(--wsleftw);width:6px;cursor:col-resize;background:var(--line);z-index:200;display:none}
+body.ws #wssplit{display:block}
+#wssplit:hover,body.wsdrag #wssplit{background:var(--accent)}
+body.wsdrag{cursor:col-resize}
 </style>
 </head>
 <body>
+<div id="wssplit" title="拖动调整左右宽度"></div>
 <div id="tabbar">
   <button id="newtab" title="新标签页 (⌘T)"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
 </div>
@@ -186,9 +269,11 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
     <button class="nb" id="zi" title="放大 (⌘+)"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
   </div>
 
-  <button class="tb" id="bshot" title="截图当前页面"><svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></button>
-  <button class="tb" id="bdt" title="开发者工具"><svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>
-  <button class="tb" id="bcl" title="控制台"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/></svg><span class="bdg e" id="eb"></span><span class="bdg w" id="wb"></span></button>
+  <button class="tb ico" id="bpick" title="拾取元素（点选页面元素看选择器/尺寸/盒模型）"><svg viewBox="0 0 24 24"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><circle cx="12" cy="12" r="3.4"/></svg></button>
+  <button class="tb ico" id="bshot" title="整页截图（含视口外内容，存到下载目录）"><svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></button>
+  <button class="tb ico" id="bdt" title="开发者工具"><svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>
+  <button class="tb ico" id="bcl" title="控制台"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/></svg><span class="bdg e" id="eb"></span><span class="bdg w" id="wb"></span></button>
+  <button class="tb ico" id="bnet" title="网络请求面板"><svg viewBox="0 0 24 24"><path d="M3 12h4l2.5 7 5-14 2.5 7H21"/></svg><span class="bdg i" id="nbb"></span></button>
   <button class="tb ai" id="bai" title="把当前页面报错 + DOM 交给 AI 分析"><svg viewBox="0 0 24 24"><path d="M12 2l2.4 5.6L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.6-1.4z"/></svg>AI 分析</button>
 </div>
 
@@ -202,22 +287,68 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
     <button class="fb" id="findnext" title="下一个"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></button>
     <button class="fb" id="findx" title="关闭 (Esc)"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
   </div>
+
+  <div id="pickcard">
+    <div class="pk-hd"><span class="tag" id="pktag"></span><span id="pkmeta"></span><button class="x" id="pkx"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+    <div class="pk-sel" id="pksel" title="点击复制选择器"></div>
+    <div class="pk-grid" id="pkgrid"></div>
+    <div class="pk-box" id="pkbox"></div>
+    <div class="pk-act"><button class="hb" id="pkcopy">复制选择器</button><button class="hb" id="pkagain">再拾取</button></div>
+  </div>
+
   <div id="toast"></div>
 </div>
 
 <div id="console">
   <div id="chdr">
+    <div class="dtabs">
+      <button class="dtab on" data-d="console">控制台 <span class="tbadge" id="ccount"></span></button>
+      <button class="dtab" data-d="net">网络 <span class="tbadge" id="ncount"></span></button>
+    </div>
+    <div class="dsep"></div>
     <div class="cfilter" id="cfilter">
       <button data-f="all" class="on">全部</button>
       <button data-f="3"><span class="dot e"></span>错误</button>
       <button data-f="2"><span class="dot w"></span>警告</button>
       <button data-f="log"><span class="dot l"></span>日志</button>
     </div>
+    <div class="nfilter" id="nfilter" style="display:none">
+      <button data-nf="all" class="on">全部</button>
+      <button data-nf="xhr">Fetch/XHR</button>
+      <button data-nf="js">JS</button>
+      <button data-nf="css">CSS</button>
+      <button data-nf="img">图片</button>
+      <button data-nf="doc">文档</button>
+      <button data-nf="other">其他</button>
+    </div>
+    <input id="nsearch" placeholder="过滤 URL" spellcheck="false" style="display:none">
     <div class="csp"></div>
+    <label class="preserve" id="preservewrap" style="display:none"><input type="checkbox" id="preserve">保留日志</label>
     <button class="hb" id="cclear">清除</button>
     <button class="hb" id="cclose">收起</button>
   </div>
-  <div id="clist"><div class="cempty">控制台输出会显示在这里</div></div>
+
+  <div id="cbody">
+    <div id="clist"><div class="cempty">控制台输出会显示在这里</div></div>
+  </div>
+
+  <div id="nbody" style="display:none">
+    <div id="nhead">
+      <span>状态</span><span>方法</span><span>名称</span><span>类型</span><span class="r">大小</span><span class="r">耗时</span>
+    </div>
+    <div id="nlist"><div class="cempty">刷新页面后，网络请求会显示在这里</div></div>
+    <div id="ndetail">
+      <div class="nd-hd"><span id="ndtitle"></span><button class="x" id="ndx"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+      <div class="nd-tabs" id="ndtabs">
+        <button data-t="general" class="on">概览</button>
+        <button data-t="reqh">请求头</button>
+        <button data-t="resh">响应头</button>
+        <button data-t="body">响应</button>
+      </div>
+      <div class="nd-body" id="ndbody"></div>
+      <div class="nd-act"><button class="hb" id="ndurl">复制 URL</button><button class="hb" id="ndcurl">复制 cURL</button></div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -229,13 +360,12 @@ const RELOAD = '<polyline points="23 4 23 10 17 10"/><path d="M20.5 15a9 9 0 1 1
 const STOP = '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
 
-let loading = false, conOpen = false, conFilter = 'all', findOpen = false, activeTabId = null
+let loading = false, conOpen = false, conFilter = 'all', findOpen = false, activeTabId = null, dockTab = 'console'
 
 /* ── 标签栏渲染 ── */
 H.onBrowserTabs(({ tabs, activeId }) => {
   activeTabId = activeId
   const bar = $('tabbar')
-  // 移除旧 tab 元素（保留 newtab 按钮）
   bar.querySelectorAll('.tab').forEach(e => e.remove())
   const addBtn = $('newtab')
   for (const t of tabs) {
@@ -263,7 +393,6 @@ H.onBrowserNav(({ url, canBack, canForward, loading: ld, zoom, device, errN, war
   $('prog').classList.toggle('go', ld)
   $('lock').style.color = (url || '').startsWith('https://') ? 'var(--ok)' : 'var(--txt3)'
   $('zv').textContent = (zoom || 100) + '%'
-  // 设备段
   document.querySelectorAll('#devseg button[data-dev]').forEach(b => b.classList.toggle('on', b.dataset.dev === (device || 'desktop')))
   const showRot = device && device !== 'desktop'
   $('rotbtn').style.display = showRot ? '' : 'none'
@@ -276,6 +405,7 @@ let conEntries = []
 function setBadges(e, w) {
   $('eb').textContent = e || ''; $('eb').style.display = e ? '' : 'none'
   $('wb').textContent = w || ''; $('wb').style.display = w ? '' : 'none'
+  const cc = $('ccount'); cc.textContent = conEntries.length || ''; cc.classList.toggle('show', conEntries.length > 0)
 }
 function levelCls(l){ return 'l' + l }
 function levelIcon(l){ return l === 3 ? '✕' : l === 2 ? '⚠' : l === 1 ? 'ℹ' : '›' }
@@ -290,10 +420,11 @@ function renderConsole() {
   }).join('')
   list.scrollTop = list.scrollHeight
 }
-H.onBrowserConsoleSnapshot(({ entries, errN, warnN }) => { conEntries = entries.slice(); renderConsole(); setBadges(errN, warnN) })
+H.onBrowserConsoleSnapshot(({ entries, errN, warnN }) => { conEntries = entries.slice(); if (dockTab==='console') renderConsole(); setBadges(errN, warnN) })
 H.onBrowserConsoleAdd(entry => {
   conEntries.push(entry)
-  if (conOpen && matchFilter(entry.level)) {
+  const cc = $('ccount'); cc.textContent = conEntries.length; cc.classList.add('show')
+  if (conOpen && dockTab==='console' && matchFilter(entry.level)) {
     const list = $('clist'); const empty = list.querySelector('.cempty'); if (empty) list.innerHTML = ''
     const sr = entry.source ? esc(String(entry.source).split('/').pop() + (entry.line ? ':' + entry.line : '')) : ''
     const near = list.scrollTop + list.clientHeight > list.scrollHeight - 30
@@ -309,10 +440,132 @@ $('cfilter').addEventListener('click', e => {
   document.querySelectorAll('#cfilter button').forEach(x => x.classList.toggle('on', x === b))
   renderConsole()
 })
-$('cclear').addEventListener('click', () => { conEntries = []; renderConsole(); setBadges(0, 0) })
-function setConsole(o){ conOpen = o; $('console').classList.toggle('open', o); $('bcl').classList.toggle('on', o); H.browserConsoleResize(o ? 220 : 0); if (o) renderConsole() }
-$('bcl').addEventListener('click', () => setConsole(!conOpen))
-$('cclose').addEventListener('click', () => setConsole(false))
+
+/* ── 网络面板 ── */
+let netMap = new Map(), netOrder = [], nfilter = 'all', nsearch = '', netSel = null, netRAF = 0
+function fmtSize(n){ if(!n) return '—'; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(1)+' KB'; return (n/1048576).toFixed(2)+' MB' }
+function fmtMs(n){ if(!n) return '—'; if(n<1000) return Math.round(n)+' ms'; return (n/1000).toFixed(2)+' s' }
+function nameOf(u){ try{ const x=new URL(u); const last=x.pathname.split('/').filter(Boolean).pop(); return (last||x.hostname)+(x.search||'') }catch{ return u } }
+function netGroup(t){ t=(t||'').toLowerCase()
+  if(t==='xhr'||t==='fetch') return 'xhr'
+  if(t==='script') return 'js'
+  if(t==='stylesheet') return 'css'
+  if(t==='image'||t==='media'||t==='font') return 'img'
+  if(t==='document') return 'doc'
+  return 'other' }
+function stClass(r){ if(r.state==='failed') return 'err'; if(r.state==='canceled') return 'pend'; if(!r.status) return 'pend'; if(r.status>=400) return 'err'; if(r.status>=300) return 'redir'; return 'ok' }
+function stText(r){ if(r.state==='failed') return '失败'; if(r.state==='canceled') return '取消'; if(!r.status) return r.state==='pending'?'…':'—'; return String(r.status) }
+function netMatch(r){ if(nfilter!=='all' && netGroup(r.type)!==nfilter) return false; if(nsearch && !r.url.toLowerCase().includes(nsearch)) return false; return true }
+function updateNetCount(){
+  const n = netOrder.length
+  const nc = $('ncount'); nc.textContent = n || ''; nc.classList.toggle('show', n>0)
+  const bb = $('nbb'); bb.textContent = n > 999 ? '999+' : (n||''); bb.style.display = n ? '' : 'none'
+}
+function renderNet(){
+  const list = $('nlist')
+  const rows = netOrder.map(id => netMap.get(id)).filter(r => r && netMatch(r))
+  if(!rows.length){ list.innerHTML = '<div class="cempty">'+(netOrder.length?'当前筛选下无请求':'刷新页面后，网络请求会显示在这里')+'</div>'; return }
+  const near = list.scrollTop + list.clientHeight > list.scrollHeight - 40
+  list.innerHTML = rows.map(r => `<div class="nrow ${r.id===netSel?'sel':''}" data-id="${esc(r.id)}">`
+    + `<span class="st ${stClass(r)}">${esc(stText(r))}</span>`
+    + `<span class="mt">${esc(r.method)}</span>`
+    + `<span class="nm" title="${esc(r.url)}">${esc(nameOf(r.url))}</span>`
+    + `<span class="ty">${esc(r.type)}</span>`
+    + `<span class="sz">${r.fromCache?'缓存':fmtSize(r.size)}</span>`
+    + `<span class="tm">${fmtMs(r.ms)}</span></div>`).join('')
+  if(near) list.scrollTop = list.scrollHeight
+}
+function scheduleNet(){ if(netRAF) return; netRAF = requestAnimationFrame(() => { netRAF = 0; if(conOpen && dockTab==='net') renderNet(); updateNetCount() }) }
+H.onBrowserNetSnapshot(({ items }) => {
+  netMap = new Map(); netOrder = []
+  for(const r of items){ netMap.set(r.id, r); netOrder.push(r.id) }
+  closeDetail()
+  if(conOpen && dockTab==='net') renderNet()
+  updateNetCount()
+})
+H.onBrowserNetAdd(({ kind, rec }) => {
+  if(!netMap.has(rec.id)) netOrder.push(rec.id)
+  netMap.set(rec.id, Object.assign(netMap.get(rec.id) || {}, rec))
+  scheduleNet()
+})
+$('nfilter').addEventListener('click', e => {
+  const b = e.target.closest('button[data-nf]'); if(!b) return
+  nfilter = b.dataset.nf
+  document.querySelectorAll('#nfilter button').forEach(x => x.classList.toggle('on', x===b))
+  renderNet()
+})
+$('nsearch').addEventListener('input', e => { nsearch = e.target.value.trim().toLowerCase(); renderNet() })
+$('preserve').addEventListener('change', e => H.browserNetPreserve(e.target.checked))
+$('nlist').addEventListener('click', e => { const row = e.target.closest('.nrow'); if(row) openDetail(row.dataset.id) })
+
+/* 网络详情抽屉 */
+let curDetail = null, detailTab = 'general'
+function kvRows(obj){ const ks = Object.keys(obj||{}); if(!ks.length) return '<div class="nd-empty">（无）</div>'
+  return ks.map(k => `<div class="nd-row"><span class="nd-k">${esc(k)}</span><span class="nd-v">${esc(String(obj[k]))}</span></div>`).join('') }
+function renderDetail(){
+  const d = curDetail; if(!d) return; const body = $('ndbody')
+  if(detailTab==='general'){
+    const g = { '请求 URL': d.url, '方法': d.method, '状态': (d.status||'—') + (d.statusText?' '+d.statusText:'') + (d.state==='failed'?'（失败）':''),
+      '类型': d.type, 'MIME': d.mime||'—', '远端 IP': d.remoteIP||'—', '大小': fmtSize(d.size), '耗时': fmtMs(d.ms) }
+    body.innerHTML = kvRows(g)
+  } else if(detailTab==='reqh'){
+    body.innerHTML = kvRows(d.reqHeaders) + (d.postData ? '<div class="nd-sub">请求体</div><div class="nd-pre">'+esc(d.postData)+'</div>' : '')
+  } else if(detailTab==='resh'){
+    body.innerHTML = kvRows(d.respHeaders)
+  } else {
+    if(d.base64) body.innerHTML = '<div class="nd-empty">二进制响应（base64，'+fmtSize(d.size)+'），此处不预览</div>'
+    else if(d.body==null) body.innerHTML = '<div class="nd-empty">（无响应体，或请求尚未完成）</div>'
+    else body.innerHTML = '<div class="nd-pre">'+esc(d.body)+'</div>'
+  }
+  document.querySelectorAll('#ndtabs button').forEach(b => b.classList.toggle('on', b.dataset.t===detailTab))
+}
+async function openDetail(id){
+  netSel = id; renderNet()
+  const d = await H.browserNetGet(id); if(!d) return
+  curDetail = d; detailTab = 'general'; $('ndtitle').textContent = nameOf(d.url)
+  renderDetail(); $('ndetail').classList.add('open')
+}
+function closeDetail(){ $('ndetail').classList.remove('open'); if(netSel!=null){ netSel = null; if(conOpen && dockTab==='net') renderNet() } }
+$('ndtabs').addEventListener('click', e => { const b = e.target.closest('button[data-t]'); if(!b) return; detailTab = b.dataset.t; renderDetail() })
+$('ndx').addEventListener('click', closeDetail)
+function curlOf(d){
+  let s = "curl '" + d.url + "'"
+  if(d.method && d.method!=='GET') s += ' -X ' + d.method
+  for(const k in (d.reqHeaders||{})){ if(k.startsWith(':')) continue; s += " \\\n  -H '" + k + ': ' + String(d.reqHeaders[k]).replace(/'/g,"'\\''") + "'" }
+  if(d.postData) s += " \\\n  --data-raw '" + String(d.postData).replace(/'/g,"'\\''") + "'"
+  return s
+}
+$('ndurl').addEventListener('click', () => { if(curDetail){ H.browserCopy(curDetail.url); showToast('<span class="ok">✓</span> 已复制 URL') } })
+$('ndcurl').addEventListener('click', () => { if(curDetail){ H.browserCopy(curlOf(curDetail)); showToast('<span class="ok">✓</span> 已复制 cURL 命令') } })
+
+/* ── 底部面板开合 / 切换 ── */
+function setDock(o){
+  conOpen = o; $('console').classList.toggle('open', o); H.browserConsoleResize(o ? 248 : 0)
+  $('bcl').classList.toggle('on', o && dockTab==='console')
+  $('bnet').classList.toggle('on', o && dockTab==='net')
+  if(o){ dockTab==='net' ? renderNet() : renderConsole() }
+}
+function switchDock(t){
+  dockTab = t; const con = t==='console'
+  $('cbody').style.display = con ? '' : 'none'
+  $('nbody').style.display = con ? 'none' : ''
+  $('cfilter').style.display = con ? '' : 'none'
+  $('nfilter').style.display = con ? 'none' : ''
+  $('nsearch').style.display = con ? 'none' : ''
+  $('preservewrap').style.display = con ? 'none' : ''
+  document.querySelectorAll('.dtab').forEach(b => b.classList.toggle('on', b.dataset.d===t))
+  $('bcl').classList.toggle('on', conOpen && con)
+  $('bnet').classList.toggle('on', conOpen && !con)
+  if(conOpen){ con ? renderConsole() : renderNet() }
+}
+$('chdr').querySelector('.dtabs').addEventListener('click', e => { const b = e.target.closest('.dtab'); if(b) switchDock(b.dataset.d) })
+$('bcl').addEventListener('click', () => { if(conOpen && dockTab==='console') setDock(false); else { switchDock('console'); setDock(true) } })
+$('bnet').addEventListener('click', () => { if(conOpen && dockTab==='net') setDock(false); else { switchDock('net'); setDock(true) } })
+$('cclose').addEventListener('click', () => setDock(false))
+$('cclear').addEventListener('click', () => {
+  if(dockTab==='net'){ H.browserNetClear() }
+  else { conEntries = []; renderConsole(); setBadges(0, 0) }
+})
 
 /* ── URL 栏 ── */
 const url = $('url')
@@ -341,14 +594,41 @@ $('zi').addEventListener('click', () => H.browserZoom('in'))
 $('zo').addEventListener('click', () => H.browserZoom('out'))
 $('zv').addEventListener('click', () => H.browserZoom('reset'))
 
-/* ── 截图 ── */
+/* ── 整页截图 ── */
 $('bshot').addEventListener('click', async () => {
-  const fp = await H.browserScreenshot()
-  if (fp) showToast('<span class="ok">✓</span> 截图已保存：' + fp.split('/').pop())
+  showToast('正在生成整页截图…')
+  const fp = await H.browserScreenshot(true)
+  if (fp) showToast('<span class="ok">✓</span> 整页截图已保存：' + fp.split('/').pop())
   else showToast('截图失败')
 })
 let toastT = null
 function showToast(html){ const t = $('toast'); t.innerHTML = html; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2600) }
+
+/* ── 元素拾取 ── */
+function box4(a){ return a.join(' · ') }
+function showPick(info){
+  $('pktag').textContent = '<' + info.tag + '>'
+  $('pkmeta').textContent = (info.id ? '#'+info.id+'  ' : '') + info.w + '×' + info.h
+  $('pksel').textContent = info.selector || info.tag
+  $('pkgrid').innerHTML = `<span>尺寸 <b>${info.w}×${info.h}</b></span><span>位置 <b>${info.x},${info.y}</b></span>`
+    + `<span>字号 <b>${esc(info.font||'')}</b></span><span>文字 <b>${esc(info.color||'')}</b></span><span>背景 <b>${esc(info.bg||'')}</b></span>`
+  $('pkbox').innerHTML = `margin ${box4(info.margin)}<div class="inner">border ${box4(info.border)} · padding ${box4(info.padding)}<div class="core">${info.w-(info.padding[1]+info.padding[3])-(info.border[1]+info.border[3])}×${info.h-(info.padding[0]+info.padding[2])-(info.border[0]+info.border[2])}</div></div>`
+  pickSelector = info.selector || info.tag
+  $('pickcard').classList.add('show')
+}
+let pickSelector = ''
+async function runPick(){
+  $('pickcard').classList.remove('show')
+  showToast('在页面上点选一个元素…（Esc 取消）')
+  const info = await H.browserPickElement()
+  if(info) { showPick(info); $('toast').classList.remove('show') }
+  else showToast('已取消拾取')
+}
+$('bpick').addEventListener('click', runPick)
+$('pkagain').addEventListener('click', runPick)
+$('pkx').addEventListener('click', () => $('pickcard').classList.remove('show'))
+$('pksel').addEventListener('click', () => { H.browserCopy(pickSelector); showToast('<span class="ok">✓</span> 已复制选择器') })
+$('pkcopy').addEventListener('click', () => { H.browserCopy(pickSelector); showToast('<span class="ok">✓</span> 已复制选择器') })
 
 /* ── AI 分析 ── */
 $('bai').addEventListener('click', async () => {
@@ -379,7 +659,7 @@ H.onBrowserOpenFind(() => openFind())
 /* ── chrome 有焦点时的快捷键 ── */
 document.addEventListener('keydown', e => {
   const mod = e.ctrlKey || e.metaKey
-  if (!mod) { if (e.key === 'Escape' && findOpen) closeFind(); return }
+  if (!mod) { if (e.key === 'Escape') { if (findOpen) closeFind(); else if ($('pickcard').classList.contains('show')) $('pickcard').classList.remove('show') } return }
   const k = e.key.toLowerCase()
   if (k === 't') { e.preventDefault(); H.browserNewTab('') }
   else if (k === 'w') { e.preventDefault(); if (activeTabId != null) H.browserCloseTab(activeTabId) }
@@ -392,6 +672,20 @@ document.addEventListener('keydown', e => {
   else if (k === '[') { e.preventDefault(); H.browserBack() }
   else if (k === ']') { e.preventDefault(); H.browserForward() }
 })
+
+/* ── 工作台模式：左 Agent 会话 + 右浏览器，可拖分隔条；「AI 分析」→「发给 Agent」── */
+const WS = new URLSearchParams(location.search).get('workspace') === '1'
+if (WS) {
+  document.body.classList.add('ws')
+  const bai = $('bai'); if (bai.lastChild) bai.lastChild.nodeValue = '发给 Agent'
+  bai.title = '把当前页面的控制台报错 + 网络异常 + DOM 发给左侧 Agent 分析'
+  H.onBrowserSplitSet(w => document.documentElement.style.setProperty('--wsleftw', w + 'px'))
+  const sp = $('wssplit'); let wsDrag = false
+  const clampW = x => Math.max(320, Math.min(window.innerWidth - 440, x))
+  sp.addEventListener('mousedown', e => { wsDrag = true; document.body.classList.add('wsdrag'); H.browserSplit({ phase: 'start' }); e.preventDefault() })
+  window.addEventListener('mousemove', e => { if (!wsDrag) return; document.documentElement.style.setProperty('--wsleftw', clampW(e.clientX) + 'px') })
+  window.addEventListener('mouseup', e => { if (!wsDrag) return; wsDrag = false; document.body.classList.remove('wsdrag'); const w = clampW(e.clientX); document.documentElement.style.setProperty('--wsleftw', w + 'px'); H.browserSplit({ phase: 'end', leftW: w }) })
+}
 </script>
 </body>
 </html>

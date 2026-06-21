@@ -105,6 +105,10 @@
   .perm .t { flex: 1; font-size: 12px; color: var(--warn-txt); }
   .perm .ok { font-size: 11px; font-weight: 600; color: var(--warn-btn-fg); background: var(--warn-btn); padding: 4px 10px; border-radius: 7px; border: none; cursor: pointer; }
   .perm .no { font-size: 11px; color: var(--txt2); background: transparent; border: none; cursor: pointer; padding: 4px 6px; }
+
+  /* 分诊 / 进度播报行 */
+  .note { align-self: flex-start; max-width: 92%; font-size: 11.5px; color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-left: 2.5px solid var(--accent); border-radius: 0 9px 9px 0; padding: 5px 10px; white-space: pre-wrap; line-height: 1.45; }
+  .note.muted { border-left-color: var(--txt3); color: var(--txt3); }
 </style>
 </head>
 <body>
@@ -146,6 +150,10 @@
   const ci = document.getElementById('ci'), send = document.getElementById('send')
   const quick = document.getElementById('quick')
 
+  // 工作台内嵌：隐藏自带窗口控件（由工作台窗口的系统边框负责），不自动发首条消息
+  const embedded = params.get('embedded') === '1'
+  if (embedded) ['pin', 'max', 'min', 'x'].forEach((id) => { const el = document.getElementById(id); if (el) el.style.display = 'none' })
+
   document.getElementById('x').addEventListener('click', () => window.BocomHermes.closeSelf())
   document.getElementById('min').addEventListener('click', () => window.BocomHermes.minimizeSelf())
   document.getElementById('max').addEventListener('click', () => window.BocomHermes.toggleMaximize())
@@ -165,6 +173,20 @@
   let busy = false
   function setBusy(b) { busy = b; st.innerHTML = b ? SPIN : DONE; send.innerHTML = b ? STOP : ARROW; quick.classList.toggle('hidden', b); try { window.BocomHermes.reportBusy(b) } catch {} }
   setBusy(false)
+
+  // 工作台：右侧浏览器一键把调试上下文注入这个会话（会话忙/未就绪时排队，逐条发送）
+  let cardReady = false
+  const pendingInjects = []
+  function maybeDrain() { if (cardReady && !busy && pendingInjects.length) { const n = pendingInjects.shift(); if (n.disp) addMsg(n.disp, 'me'); turn(n.text) } }
+  function injectMessage(text, disp) { pendingInjects.push({ text, disp }); maybeDrain() }
+  // 分诊 / 进度提示行（不是一轮对话，只是过程播报）
+  function addNote(text, tone) {
+    if (tone === 'user') { addMsg(text, 'me'); return }
+    const d = document.createElement('div'); d.className = 'note' + (tone === 'muted' ? ' muted' : '')
+    d.textContent = text; feed.appendChild(d); feed.scrollTop = feed.scrollHeight
+  }
+  try { window.BocomHermes.onCardInject(({ text, disp }) => injectMessage(text, disp)) } catch {}
+  try { window.BocomHermes.onCardNote(({ text, tone }) => addNote(text, tone)) } catch {}
 
   function addMsg(text, who) {
     const d = document.createElement('div')
@@ -231,7 +253,7 @@
       ok = false
       if (!target) ai.className = 'msg ai err'
       ai.textContent = '⚠ ' + (e.message || e)
-    } finally { curAnswer = null; setBusy(false); feed.scrollTop = feed.scrollHeight }
+    } finally { curAnswer = null; setBusy(false); feed.scrollTop = feed.scrollHeight; maybeDrain() }
     return ok
   }
   // 输入框自增高（1~约5 行）
@@ -328,12 +350,13 @@
   const sid = params.get('sid') || ''   // 带 sid = 从卡坞续接旧会话
   ;(async () => {
     setBusy(true)
-    if (!sid) addMsg(dispMsg, 'me')      // 全新卡：先显示任务（disp 在场时只展示摘要，不展示大段上下文）
-    const boot = addMsg('', 'ai'); boot.textContent = sid ? '正在续接对话…' : '正在启动引擎…（首次较慢，请稍候）'
+    if (!sid && !embedded) addMsg(dispMsg, 'me')      // 全新卡：先显示任务（disp 在场时只展示摘要，不展示大段上下文）
+    const boot = addMsg('', 'ai'); boot.textContent = sid ? '正在续接对话…' : embedded ? '正在连接调试助手…' : '正在启动引擎…（首次较慢，请稍候）'
     try {
       const r = await window.BocomHermes.cardInit(sid ? { sid, title } : { title })
       projEl.textContent = r.project || ''; projEl.title = r.project || ''
       boot.remove()
+      cardReady = true
       if (sid) {
         if (r.reattached) {
           if (r.messages && r.messages.length) r.messages.forEach((m) => addMsg(m.text, m.role === 'user' ? 'me' : 'ai'))
@@ -342,9 +365,13 @@
           addMsg('（原对话已不在引擎中，已为你新开一段，标题：' + title + '）', 'ai')
         }
         setBusy(false); feed.scrollTop = feed.scrollHeight
+      } else if (embedded) {
+        setBusy(false)
+        addMsg('我是你的调试助手。在右侧浏览器复现问题后点「发给 Agent」，我会拿到控制台报错、网络异常和页面结构来定位；也可以直接在下面提问。', 'ai')
       } else {
         await turn(initMsg)
       }
+      maybeDrain()
     } catch (e) {
       boot.className = 'msg ai err'
       boot.textContent = '⚠ ' + (sid ? '无法续接：' : '引擎未就绪：') + (e.message || e) + (sid ? '' : '（确认 opencode/bocomcode 已装、模型已配）')
