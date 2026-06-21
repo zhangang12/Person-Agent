@@ -1,4 +1,4 @@
-# 天枢 Tianshu — 个人桌面研发智能体
+# BocomHermes — 个人桌面研发智能体
 
 > 一个跑在你桌面、用**内网私有化模型**、**数据永不出门**的个人 AI 研发智能体。
 > 形态：可拖动的**透明玻璃对话卡**，多卡并行 = 多个隔离会话。
@@ -11,17 +11,17 @@
 ## 仓库结构
 ```
 .
-├── tianshu-shell/      ← 产品代码（Electron 桌面壳）。运行/打包见其 README
+├── BocomHermes-shell/      ← 产品代码（Electron 桌面壳）。运行/打包见其 README
 ├── desktop-agent/      ← 参考：零依赖 TS host 脚手架（CLI/REST 入口的雏形）
-├── 天枢Tianshu-产品蓝图.md          ← 愿景 / 三级跳 / 五招牌 / Backlog / KPI / 风险 / 竞品借鉴
-├── 天枢Tianshu-产品设计规范.md       ← 设计系统：玻璃材质 / 色彩 / 字体 / 动效 / 组件 / 双主题
+├── BocomHermes-产品蓝图.md          ← 愿景 / 三级跳 / 五招牌 / Backlog / KPI / 风险 / 竞品借鉴
+├── BocomHermes-产品设计规范.md       ← 设计系统：玻璃材质 / 色彩 / 字体 / 动效 / 组件 / 双主题
 ├── 桌面智能体架构-基于OpenCodeServe.md ← 技术架构 + opencode serve API 参考（实测）
 └── 信贷系统Wiki生成手册-OpenCode执行版.md ← 项目知识底座（给智能体喂的业务/代码地图）
 ```
 
 ## 快速开始
 ```powershell
-cd tianshu-shell
+cd BocomHermes-shell
 npm install          # 国内 Electron 镜像见该目录 README
 npm start            # 开发运行
 npm run dist         # 打包出 exe（dist/）
@@ -31,10 +31,10 @@ npm run dist         # 打包出 exe（dist/）
 ## 文档导航
 | 文档 | 看它解决什么 |
 |---|---|
-| [产品蓝图](天枢Tianshu-产品蓝图.md) | 这产品要长成什么样、怎么排期（含对标 Hermes/OpenClaw） |
-| [产品设计规范](天枢Tianshu-产品设计规范.md) | 长什么样、怎么实现一致的视觉与交互 |
+| [产品蓝图](BocomHermes-产品蓝图.md) | 这产品要长成什么样、怎么排期（含对标 Hermes/OpenClaw） |
+| [产品设计规范](BocomHermes-产品设计规范.md) | 长什么样、怎么实现一致的视觉与交互 |
 | [架构与 serve API](桌面智能体架构-基于OpenCodeServe.md) | 外壳怎么跟 opencode serve 对接 |
-| [tianshu-shell/README](tianshu-shell/README.md) | 怎么跑、怎么打包、怎么接真引擎 |
+| [BocomHermes-shell/README](BocomHermes-shell/README.md) | 怎么跑、怎么打包、怎么接真引擎 |
 | [信贷系统 Wiki 手册](信贷系统Wiki生成手册-OpenCode执行版.md) | 怎么让智能体看懂这套信贷代码 |
 
 ## 设计铁律

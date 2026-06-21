@@ -1,5 +1,5 @@
-// 天枢 · serve 兼容自检
-// 把它指向 bocomcode 或公网 opencode 的 serve，检查天枢依赖的 API 特性是否齐备/一致。
+// BocomHermes · serve 兼容自检
+// 把它指向 bocomcode 或公网 opencode 的 serve，检查BocomHermes 依赖的 API 特性是否齐备/一致。
 // 用法： node scripts/compat-check.mjs [baseURL]   （默认 http://127.0.0.1:4096）
 // 在内网对着 bocomcode 跑一遍、在外网对着 opencode 跑一遍，对比两份报告即可发现差异。
 // 零依赖：仅用 Node 内置 fetch（Node 18+）。
@@ -25,7 +25,7 @@ async function api(method, path, body) {
 }
 
 async function main() {
-  console.log('== 天枢 serve 兼容自检 ==')
+  console.log('== BocomHermes serve 兼容自检 ==')
   console.log('target:', BASE, '\n')
 
   // 1) 健康 + 版本
@@ -55,7 +55,7 @@ async function main() {
       const dir = r.json.directory || (r.json.data && r.json.data.directory)
       if (!dir) WARN('session.directory 参数', '响应未回显 directory')
       else if (norm(dir) === norm(sent)) PASS('session.directory 参数', '按传入目录生效：' + dir)
-      else WARN('session.directory 参数', `传入 ${sent} 但回显 ${dir}（serve 用自身 cwd；天枢以"按目录建独立 serve"规避，不阻塞）`)
+      else WARN('session.directory 参数', `传入 ${sent} 但回显 ${dir}（serve 用自身 cwd；BocomHermes 以"按目录建独立 serve"规避，不阻塞）`)
     } else FAIL('POST /session', 'status=' + r.status + '，无 id 字段')
   } catch (e) { FAIL('POST /session', e.message) }
 
@@ -115,9 +115,9 @@ function dump() {
   }
   const c = (s) => results.filter((r) => r[0] === s).length
   console.log(`\n小结：${c('PASS')} 通过 / ${c('WARN')} 警告 / ${c('FAIL')} 失败`)
-  if (c('FAIL')) console.log('→ 有 FAIL：bocomcode 缺关键特性，天枢会在该处不正常 —— 需 bocomcode 侧补齐到与公网 opencode 一致。')
-  else if (c('WARN')) console.log('→ 有 WARN：建议人工核对，多数不致命（天枢已对部分差异做防御）。')
-  else console.log('→ 全通过：与天枢所需的 opencode serve 特性一致。')
+  if (c('FAIL')) console.log('→ 有 FAIL：bocomcode 缺关键特性，BocomHermes 会在该处不正常 —— 需 bocomcode 侧补齐到与公网 opencode 一致。')
+  else if (c('WARN')) console.log('→ 有 WARN：建议人工核对，多数不致命（BocomHermes 已对部分差异做防御）。')
+  else console.log('→ 全通过：与BocomHermes 所需的 opencode serve 特性一致。')
   process.exit(c('FAIL') ? 1 : 0)
 }
 

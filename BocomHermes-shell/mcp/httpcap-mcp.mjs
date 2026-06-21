@@ -1,4 +1,4 @@
-﻿// 天枢 · HTTP 抓包 MCP（本地 stdio 服务，零依赖）
+﻿// BocomHermes · HTTP 抓包 MCP（本地 stdio 服务，零依赖）
 // 给 agent 扩能：起一个本地 HTTP 正向代理，捕获经过它的 HTTP 请求/响应，供 agent 查询与分析。
 // 只抓 HTTP（内网开发环境无 HTTPS）；遇到 HTTPS(CONNECT) 仅盲隧道放行、不解析。数据不出网（全程本机转发）。
 // 用法：被测程序/浏览器把 HTTP 代理指向本代理地址即可。注册见 mcp/README.md。

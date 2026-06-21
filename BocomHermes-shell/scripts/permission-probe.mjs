@@ -1,4 +1,4 @@
-﻿// 天枢 · 权限字段「真往返」确认（增强版）
+﻿// BocomHermes · 权限字段「真往返」确认（增强版）
 // 一次触发多种工具（列目录/写文件/删文件），对每个权限请求都应答；
 // 用 {reply:"once"} 应答，若不被接受自动改试 {response}，直接判定 bocomcode 认哪个字段/端点。
 // 用法： node scripts/permission-probe.mjs [baseURL]   （默认 http://127.0.0.1:4096）
@@ -70,7 +70,7 @@ async function runEvents(onEvent, signal) {
 }
 
 async function main() {
-  console.log('== 天枢 权限字段真往返确认（增强版）==')
+  console.log('== BocomHermes 权限字段真往返确认（增强版）==')
   console.log('target:', BASE, '\n')
   try { const h = await api('GET', '/global/health'); console.log('serve version:', h.json?.version || '?') }
   catch (e) { console.log('✗ serve 不可达：', e.message); process.exit(2) }
@@ -119,7 +119,7 @@ async function main() {
   console.log('收到权限事件数：', permCount)
   if (!firstEvent) {
     console.log('! 整个任务未触发任何权限事件 —— 该 serve 对这些工具默认放行（无需授权）。')
-    console.log('  → 这种配置下天枢的权限应答路径用不到，字段问题不会发生；任务执行：' + (finalText.includes('DONE') ? '成功' : '未确认'))
+    console.log('  → 这种配置下BocomHermes 的权限应答路径用不到，字段问题不会发生；任务执行：' + (finalText.includes('DONE') ? '成功' : '未确认'))
     console.log('  → 若 bocomcode 实际是"要授权"的配置，请确保它配置了 ask，再重跑本探针。')
   } else if (verdict && !verdict.failed) {
     console.log('✓ 权限事件名：' + firstEvent.type)
@@ -128,15 +128,15 @@ async function main() {
     console.log('✓ 应答被接受：端点=' + (verdict.style === 'old' ? '/session/:id/permissions/:id（旧）' : '/permission/:id/reply（新）')
       + '  body 字段 = { ' + verdict.field + ': "once" }  status=' + verdict.status)
     if (verdict.field !== 'reply' || verdict.style !== 'new') {
-      console.log('  ⚠ 与天枢默认（新端点 + reply 字段）不同！需在 opencode.js 的 replyPermission 调整为上面这套。把本段贴我即可。')
+      console.log('  ⚠ 与BocomHermes 默认（新端点 + reply 字段）不同！需在 opencode.js 的 replyPermission 调整为上面这套。把本段贴我即可。')
     } else {
-      console.log('  ✓ 与天枢默认完全一致（新端点 + reply 字段）——无需改任何代码。')
+      console.log('  ✓ 与BocomHermes 默认完全一致（新端点 + reply 字段）——无需改任何代码。')
     }
     console.log('端到端：' + (finalText.includes('DONE') ? '✓ 权限放行后任务跑完（彻底确认）' : '! 应答已被接受，但未见 DONE（可能模型表述不同，不影响字段结论）'))
   } else {
     console.log('✗ 抓到权限事件但应答都不被接受。尝试记录：')
     for (const t of (verdict?.tried || [])) console.log('   ', JSON.stringify(t))
-    console.log('  → 把上面这段贴给我，我据此在天枢侧改字段/端点。')
+    console.log('  → 把上面这段贴给我，我据此在BocomHermes 侧改字段/端点。')
   }
   if (sendErr) console.log('（发送阶段：' + sendErr + '）')
   process.exit(0)

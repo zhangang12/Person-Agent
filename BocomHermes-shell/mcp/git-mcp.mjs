@@ -1,4 +1,4 @@
-﻿// 天枢 · Git 工具 MCP（本地 stdio 服务，零依赖）
+﻿// BocomHermes · Git 工具 MCP（本地 stdio 服务，零依赖）
 // 给 opencode/bocomcode 的 agent 提供 git 感知能力：
 //   git_status / git_log / git_diff / git_blame / git_show / git_branch
 // 实现：spawnSync 调系统 git，不依赖任何第三方库。

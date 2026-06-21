@@ -1,4 +1,4 @@
-// 天枢 · 结构化输出(json_schema)支持探针
+// BocomHermes · 结构化输出(json_schema)支持探针
 // 目的：确认 bocomcode / opencode 的 POST /session/:id/message 是否支持「强制结构化输出」，
 //      以及到底吃哪种字段形状（不同版本不一样）。动态编排的 Planner 想稳定吐"任务图"就靠它。
 // 用法： node scripts/json-schema-probe.mjs [baseURL]   （默认 http://127.0.0.1:4096）

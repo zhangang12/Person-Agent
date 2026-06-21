@@ -1,4 +1,4 @@
-﻿// 天枢 · 浏览器自动化 MCP（本地 stdio 服务，零依赖）
+﻿// BocomHermes · 浏览器自动化 MCP（本地 stdio 服务，零依赖）
 // 给 opencode/bocomcode 的 agent 扩能：导航/取文本/点击/输入/执行JS/截图。
 // 实现：用 CDP(Chrome DevTools Protocol) 驱动【系统已装的 Edge/Chrome】，
 //   不依赖 playwright、不下载浏览器；WebSocket 用 Node 内置全局(需 Node 22+)。

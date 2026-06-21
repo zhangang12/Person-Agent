@@ -1,4 +1,4 @@
-﻿# 天枢 · 本地 MCP 工具（浏览器自动化 + HTTP 抓包）
+﻿# BocomHermes · 本地 MCP 工具（浏览器自动化 + HTTP 抓包）
 
 给 opencode/bocomcode 的 agent 扩能。任何 agent（包括动态工作流的 worker）注册后即可调用。
 - **浏览器自动化**：在内置无头浏览器里导航、取文本、点击、输入、执行 JS、截图。
@@ -32,7 +32,7 @@ npm run mcp:config
 }
 ```
 
-> 注册 MCP 属于"给 agent 装本地工具"，不决定模型、数据不出网——与天枢"外层封装、工具一律本地"的原则一致。
+> 注册 MCP 属于"给 agent 装本地工具"，不决定模型、数据不出网——与BocomHermes"外层封装、工具一律本地"的原则一致。
 
 ## 工具
 **浏览器（BocomHermes-browser）** — 需 Node 22+ 与本机 Edge/Chrome
@@ -70,4 +70,4 @@ npm run mcp:httpcap
 
 ## 安全
 两者均为本地工具、数据不出网；浏览器不改本地文件（除 `browser_screenshot` 写临时 PNG），抓包只读不改流量。
-权限仍由 opencode 管控——在天枢工作流卡里，这些调用会路由到卡内联确认。
+权限仍由 opencode 管控——在BocomHermes 工作流卡里，这些调用会路由到卡内联确认。
