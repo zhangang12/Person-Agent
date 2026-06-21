@@ -1,5 +1,5 @@
 ﻿'use strict'
-const { app, BrowserWindow, globalShortcut, ipcMain, screen, dialog, Tray, Menu, nativeImage, shell, clipboard } = require('electron')
+const { app, BrowserWindow, WebContentsView, globalShortcut, ipcMain, screen, dialog, Tray, Menu, nativeImage, shell, clipboard } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const oc = require('./opencode')
@@ -41,8 +41,8 @@ app.whenReady().then(() => {
   try { logBytes = fs.existsSync(logFile) ? fs.statSync(logFile).size : 0; if (logBytes > 3 * 1024 * 1024) { fs.writeFileSync(logFile, ''); logBytes = 0 } } catch {}
   log('=== BocomHermes ' + app.getVersion() + ' start (' + (app.isPackaged ? 'packaged' : 'dev') + ') userData=' + app.getPath('userData') + ' ===')
 
-  const deps = { ipcMain, app, BrowserWindow, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }
-  const { createOrb, toggleOrbInput, buildTray, spawnEmailCard, recordHistory, touchHistory } = initWindow(S, deps)
+  const deps = { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }
+  const { createOrb, createBrowser, toggleOrbInput, buildTray, spawnEmailCard, recordHistory, touchHistory } = initWindow(S, deps)
 
   initSession(S, { ipcMain, path, fs, shell, oc, log, recordHistory, touchHistory })
   initOrch(S, { ipcMain, oc, orch, log })
@@ -60,6 +60,7 @@ app.whenReady().then(() => {
   oc.ensureServe(S.settings.projectDir || '', S.handlers, log).catch((e) => log('prewarm failed: ' + e.message))
 
   if (!globalShortcut.register('Control+Shift+Space', toggleOrbInput)) log('global shortcut register failed (maybe in use)')
+  globalShortcut.register('Control+Shift+B', () => createBrowser())
 
   // Ctrl+Shift+V：把剪贴板内容带入输入框（"选中即问"快捷路径）
   globalShortcut.register('Control+Shift+V', () => {

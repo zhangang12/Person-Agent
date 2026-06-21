@@ -3,10 +3,13 @@ const USE_ACRYLIC = false
 const { clipboard } = require('electron')
 const email = require('./email')
 
-module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }) {
+module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }) {
   // 额外窗口引用
   S.todosWin = null
   S.orbInputWin = null
+  S.browserWin = null
+  S.browserView = null
+  S.browserConsoleH = 0
   // ── 设置 ────────────────────────────────────────────────────────────────────
   function loadSettings() { try { return { ...S.settings, ...JSON.parse(fs.readFileSync(S.settingsFile, 'utf8')) } } catch { return { ...S.settings } } }
   function saveSettings() { try { fs.writeFileSync(S.settingsFile, JSON.stringify(S.settings)) } catch {} }
@@ -193,12 +196,79 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, screen, d
     S.dockWin.on('closed', () => { S.dockWin = null })
   }
 
+  // ── 内嵌浏览器 ──────────────────────────────────────────────────────────────
+  function normalizeUrl(url) {
+    url = String(url).trim()
+    if (!url || url === 'about:blank') return 'about:blank'
+    if (/^https?:\/\//.test(url)) return url
+    if (/^(localhost|127\.|192\.|10\.\d)/.test(url)) return 'http://' + url
+    return 'https://' + url
+  }
+
+  function resizeBrowserView() {
+    if (!S.browserWin || S.browserWin.isDestroyed() || !S.browserView) return
+    const [cw, ch] = S.browserWin.getContentSize()
+    const TOOLBAR_H = 48
+    S.browserView.setBounds({ x: 0, y: TOOLBAR_H, width: cw, height: Math.max(0, ch - TOOLBAR_H - S.browserConsoleH) })
+  }
+
+  function createBrowser(initialUrl) {
+    if (S.browserWin && !S.browserWin.isDestroyed()) {
+      S.browserWin.focus()
+      if (initialUrl) S.browserView.webContents.loadURL(normalizeUrl(initialUrl))
+      return
+    }
+    const win = new BrowserWindow({
+      width: 1280, height: 860, minWidth: 900, minHeight: 600,
+      title: 'BocomHermes · 浏览器',
+      titleBarStyle: 'hiddenInset',
+      trafficLightPosition: { x: 12, y: 14 },
+      backgroundColor: '#0d0e1a',
+      webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false },
+    })
+    S.browserWin = win
+    S.browserConsoleH = 0
+    win.loadFile(path.join(__dirname, '..', 'ui', 'browser.html'))
+    win.on('closed', () => { S.browserWin = null; S.browserView = null; S.browserConsoleH = 0 })
+
+    const view = new WebContentsView({ webPreferences: { nodeIntegration: false, contextIsolation: true, devTools: true } })
+    S.browserView = view
+    win.contentView.addChildView(view)
+    resizeBrowserView()
+    win.on('resize', resizeBrowserView)
+
+    if (initialUrl) view.webContents.loadURL(normalizeUrl(initialUrl))
+
+    // 导航事件 → chrome
+    const sendNav = () => {
+      if (win.isDestroyed()) return
+      win.webContents.send('browser-nav', {
+        url: view.webContents.getURL(),
+        canBack: view.webContents.canGoBack(),
+        canForward: view.webContents.canGoForward(),
+        loading: view.webContents.isLoading(),
+      })
+    }
+    view.webContents.on('did-navigate', sendNav)
+    view.webContents.on('did-navigate-in-page', sendNav)
+    view.webContents.on('page-title-updated', sendNav)
+    view.webContents.on('did-start-loading', sendNav)
+    view.webContents.on('did-stop-loading', sendNav)
+
+    // 控制台消息（warning/error）
+    view.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+      if (win.isDestroyed() || level < 2) return
+      win.webContents.send('browser-console', { level, message, line, source: sourceId })
+    })
+  }
+
   function buildTray() {
     const img = nativeImage.createFromPath(path.join(__dirname, '..', 'assets', 'tray.png'))
     S.tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img)
     S.tray.setToolTip('BocomHermes')
     S.tray.setContextMenu(Menu.buildFromTemplate([
       { label: '唤起输入框', accelerator: 'Ctrl+Shift+Space', click: toggleInput },
+      { label: '🌐 内嵌浏览器', accelerator: 'Ctrl+Shift+B', click: () => createBrowser() },
       { label: '📧 邮件摘要', click: () => spawnEmailCard().catch((e) => log('email card err: ' + e.message)) },
       { label: '📋 待办事项', click: openTodos },
       { label: '卡坞 · 历史对话', click: openDock },
@@ -372,10 +442,34 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, screen, d
     if (S.orbInputWin && !S.orbInputWin.isDestroyed()) { S.orbInputWin.close(); S.orbInputWin = null }
   })
 
+  // ── 浏览器 IPC ───────────────────────────────────────────────────────────
+  ipcMain.handle('open-browser', (_e, url) => createBrowser(url))
+  ipcMain.handle('browser-navigate', (_e, url) => {
+    if (!S.browserView || S.browserView.webContents.isDestroyed()) return
+    const u = normalizeUrl(url)
+    if (u !== 'about:blank') S.browserView.webContents.loadURL(u)
+  })
+  ipcMain.on('browser-back',    () => S.browserView?.webContents.canGoBack()    && S.browserView.webContents.goBack())
+  ipcMain.on('browser-forward', () => S.browserView?.webContents.canGoForward() && S.browserView.webContents.goForward())
+  ipcMain.on('browser-reload',  () => {
+    if (!S.browserView || S.browserView.webContents.isDestroyed()) return
+    S.browserView.webContents.isLoading() ? S.browserView.webContents.stop() : S.browserView.webContents.reload()
+  })
+  ipcMain.on('browser-devtools', () => {
+    if (!S.browserView || S.browserView.webContents.isDestroyed()) return
+    S.browserView.webContents.isDevToolsOpened()
+      ? S.browserView.webContents.closeDevTools()
+      : S.browserView.webContents.openDevTools({ mode: 'detach' })
+  })
+  ipcMain.on('browser-console-resize', (_e, h) => {
+    S.browserConsoleH = h || 0
+    resizeBrowserView()
+  })
+
   ipcMain.handle('open-dock', () => openDock())
   ipcMain.on('get-history', (e) => { e.returnValue = S.history })
   ipcMain.handle('open-history', (_e, { sid, title }) => spawnCard(title, sid))
   ipcMain.handle('clear-history', () => { S.history = []; saveHistory(); return true })
 
-  return { createOrb, spawnCard, spawnFanout, spawnWorkflow, spawnEmailCard, toggleInput, toggleOrbInput, buildTray, openDock, openTodos, openSettings, applyProject, projName, recordHistory, touchHistory }
+  return { createOrb, createBrowser, spawnCard, spawnFanout, spawnWorkflow, spawnEmailCard, toggleInput, toggleOrbInput, buildTray, openDock, openTodos, openSettings, applyProject, projName, recordHistory, touchHistory }
 }

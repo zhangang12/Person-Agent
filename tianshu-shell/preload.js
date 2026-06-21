@@ -64,6 +64,16 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   triggerEmailSummary: () => ipcRenderer.invoke('trigger-email-summary'),
   emailTest: () => ipcRenderer.invoke('email-test'),
   openTodos: () => ipcRenderer.invoke('open-todos'),
+  // 内嵌浏览器
+  openBrowser: (url) => ipcRenderer.invoke('open-browser', url),
+  browserNavigate:      (url) => ipcRenderer.invoke('browser-navigate', url),
+  browserBack:          ()    => ipcRenderer.send('browser-back'),
+  browserForward:       ()    => ipcRenderer.send('browser-forward'),
+  browserReload:        ()    => ipcRenderer.send('browser-reload'),
+  browserDevTools:      ()    => ipcRenderer.send('browser-devtools'),
+  browserConsoleResize: (h)   => ipcRenderer.send('browser-console-resize', h),
+  onBrowserNav:         (cb)  => ipcRenderer.on('browser-nav',     (_e, p) => cb(p)),
+  onBrowserConsole:     (cb)  => ipcRenderer.on('browser-console', (_e, p) => cb(p)),
   // orb 窗口控制
   setOrbMousePassthrough: (pass) => ipcRenderer.send('orb-passthrough', pass),
   moveOrbBy: (dx, dy) => ipcRenderer.send('orb-move', { dx, dy }),
