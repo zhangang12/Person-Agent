@@ -2,7 +2,7 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8" />
-<title>个人桌面智能体</title>
+<title>BocomHermes</title>
 <script>try { document.documentElement.dataset.theme = window.BocomHermes.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
 <link rel="stylesheet" href="glass.css" />
 <style>
@@ -52,6 +52,12 @@
     <button id="proj" class="tbtn nodrag" title="选择代码仓库（卡片对它说话）">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
       <span id="projname" class="projname">未选目录</span>
+    </button>
+    <button id="email" class="tbtn nodrag" title="拉取未读邮件，生成摘要和待办（IMAP）" aria-label="邮件摘要">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 7l10 7 10-7"/></svg>
+    </button>
+    <button id="todos" class="tbtn nodrag" title="待办事项" aria-label="待办">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
     </button>
     <button id="workflow" class="tbtn nodrag" title="把这句话作为目标，跑动态编排工作流（多 agent 并行）" aria-label="工作流">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="12" cy="18" r="2.2"/><path d="M6 8.2v2.3a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8.2M12 12.5v3.3"/></svg>
@@ -137,6 +143,21 @@
     const v = q.value.trim(); if (!v) { q.focus(); return }
     try { await window.BocomHermes.spawnWorkflow(v); q.value = '' } catch (e) { console.error(e) }
   })
+  // 邮件摘要
+  const emailBtn = document.getElementById('email')
+  emailBtn.addEventListener('click', async () => {
+    emailBtn.style.color = 'var(--accent)'
+    try {
+      const n = await window.BocomHermes.triggerEmailSummary()
+      if (n === 0) { emailBtn.title = '今日暂无未读邮件'; setTimeout(() => { emailBtn.title = '拉取未读邮件，生成摘要和待办（IMAP）' }, 3000) }
+    } catch (e) {
+      emailBtn.title = e.message || '邮件拉取失败'; setTimeout(() => { emailBtn.title = '拉取未读邮件，生成摘要和待办（IMAP）' }, 4000)
+    } finally { emailBtn.style.color = '' }
+  })
+
+  // 待办面板
+  document.getElementById('todos').addEventListener('click', () => { try { window.BocomHermes.openTodos() } catch (e) {} })
+
   // 卡坞 + 设置
   document.getElementById('dock').addEventListener('click', () => { try { window.BocomHermes.openDock() } catch (e) {} })
   document.getElementById('settings').addEventListener('click', () => { try { window.BocomHermes.openSettings() } catch (e) {} })

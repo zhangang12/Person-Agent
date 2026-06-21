@@ -49,8 +49,26 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   // 个人记忆库
   memoryRead: () => ipcRenderer.invoke('memory-read'),
   memoryWrite: (text) => ipcRenderer.invoke('memory-write', text),
-  // 剪贴板（供输入框"粘贴即问"使用）
+  // 剪贴板
   readClipboard: () => ipcRenderer.invoke('read-clipboard'),
-  // 主进程通知输入框填充内容（Ctrl+Shift+V 全局热键触发）
   onFillInput: (cb) => ipcRenderer.on('fill-input', (_e, text) => cb(text)),
+  // 待办
+  todoList: () => ipcRenderer.invoke('todo-list'),
+  todoAdd: (item) => ipcRenderer.invoke('todo-add', item),
+  todoToggle: (id) => ipcRenderer.invoke('todo-toggle', id),
+  todoDelete: (id) => ipcRenderer.invoke('todo-delete', id),
+  todoClearDone: () => ipcRenderer.invoke('todo-clear-done'),
+  notifyTodosUpdated: () => ipcRenderer.send('todos-updated'),
+  onTodosUpdated: (cb) => ipcRenderer.on('todos-updated', () => cb()),
+  // 邮件摘要
+  triggerEmailSummary: () => ipcRenderer.invoke('trigger-email-summary'),
+  emailTest: () => ipcRenderer.invoke('email-test'),
+  openTodos: () => ipcRenderer.invoke('open-todos'),
+  // orb 窗口控制
+  setOrbMousePassthrough: (pass) => ipcRenderer.send('orb-passthrough', pass),
+  moveOrbBy: (dx, dy) => ipcRenderer.send('orb-move', { dx, dy }),
+  snapOrbToCorner: () => ipcRenderer.send('orb-snap'),
+  toggleOrbInput: (mode) => ipcRenderer.invoke('toggle-orb-input', mode),
+  closeOrbInput: () => ipcRenderer.invoke('close-orb-input'),
+  onOrbState: (cb) => ipcRenderer.on('orb-state', (_e, state) => cb(state)),
 })

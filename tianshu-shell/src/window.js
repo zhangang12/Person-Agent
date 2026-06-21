@@ -1,8 +1,12 @@
 ﻿'use strict'
 const USE_ACRYLIC = false
 const { clipboard } = require('electron')
+const email = require('./email')
 
 module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }) {
+  // 额外窗口引用
+  S.todosWin = null
+  S.orbInputWin = null
   // ── 设置 ────────────────────────────────────────────────────────────────────
   function loadSettings() { try { return { ...S.settings, ...JSON.parse(fs.readFileSync(S.settingsFile, 'utf8')) } } catch { return { ...S.settings } } }
   function saveSettings() { try { fs.writeFileSync(S.settingsFile, JSON.stringify(S.settings)) } catch {} }
@@ -42,12 +46,48 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, screen, d
     return opts
   }
 
-  function createInput() {
-    const { width } = screen.getPrimaryDisplay().workAreaSize
-    S.inputWin = new BrowserWindow(baseOpts({ width: 600, height: 112, x: Math.round(width / 2 - 300), y: 84, skipTaskbar: false }))
-    S.inputWin.loadFile(path.join(__dirname, '..', 'ui', 'input.html'))
+  function createOrb() {
+    const { width, height } = screen.getPrimaryDisplay().workAreaSize
+    const W = 280
+    S.inputWin = new BrowserWindow(baseOpts({
+      width: W, height: W,
+      x: width - W - 20, y: height - W - 20,
+      skipTaskbar: true, hasShadow: false,
+    }))
+    S.inputWin.setIgnoreMouseEvents(true, { forward: true })
+    S.inputWin.loadFile(path.join(__dirname, '..', 'ui', 'orb.html'))
     S.inputWin.on('closed', () => { S.inputWin = null })
   }
+
+  function snapOrbToCorner() {
+    if (!S.inputWin || S.inputWin.isDestroyed()) return
+    const [x, y] = S.inputWin.getPosition()
+    const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
+    const W = 280, M = 20
+    const nx = (x + W / 2) < sw / 2 ? M : sw - W - M
+    const ny = (y + W / 2) < sh / 2 ? M : sh - W - M
+    S.inputWin.setPosition(nx, ny)
+  }
+
+  function createOrbInput(mode) {
+    if (S.orbInputWin && !S.orbInputWin.isDestroyed()) {
+      S.orbInputWin.close(); S.orbInputWin = null; return
+    }
+    const pw = 520, ph = 56, M = 12
+    const [ox, oy] = S.inputWin ? S.inputWin.getPosition() : [100, 100]
+    const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
+    let px = ox + (280 - pw) / 2
+    if (px < 10) px = 10
+    if (px + pw > sw - 10) px = sw - pw - 10
+    const py = (oy - ph - M) < 10 ? oy + 280 + M : oy - ph - M
+    S.orbInputWin = new BrowserWindow(baseOpts({
+      width: pw, height: ph, x: Math.round(px), y: Math.round(py), skipTaskbar: true,
+    }))
+    S.orbInputWin.loadFile(path.join(__dirname, '..', 'ui', 'orb-input.html'), mode ? { query: { mode } } : undefined)
+    S.orbInputWin.on('closed', () => { S.orbInputWin = null })
+  }
+
+  function toggleOrbInput(mode) { createOrbInput(mode) }
 
   function spawnCard(title, sid, msg) {
     const id = ++S.cardSeq
@@ -108,11 +148,28 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, screen, d
     return id
   }
 
-  function toggleInput() {
-    if (!S.inputWin) { createInput(); return }
-    if (S.inputWin.isVisible()) S.inputWin.hide()
-    else { S.inputWin.show(); S.inputWin.focus() }
+  // ── 邮件摘要卡 ─────────────────────────────────────────────────────────────
+  async function spawnEmailCard() {
+    const imap = S.settings.imap
+    if (!imap || !imap.host || !imap.user || !imap.passEncrypted) throw new Error('IMAP 未配置')
+    log('email: fetching unread emails…')
+    const emails = await email.fetchUnread(imap)
+    if (!emails.length) { log('email: no unread emails'); return 0 }
+    log('email: fetched ' + emails.length + ' emails')
+    const prompt = email.formatEmailPrompt(emails)
+    spawnCard('📧 邮件摘要 · ' + new Date().toLocaleDateString('zh-CN'), null, prompt)
+    return emails.length
   }
+
+  function openTodos() {
+    if (S.todosWin && !S.todosWin.isDestroyed()) { S.todosWin.show(); S.todosWin.focus(); return }
+    const { width } = screen.getPrimaryDisplay().workAreaSize
+    S.todosWin = new BrowserWindow(baseOpts({ width: 400, height: 560, x: Math.round(width / 2 - 200), y: 120, skipTaskbar: false, alwaysOnTop: true, resizable: true, minWidth: 320, minHeight: 300 }))
+    S.todosWin.loadFile(path.join(__dirname, '..', 'ui', 'todos.html'))
+    S.todosWin.on('closed', () => { S.todosWin = null })
+  }
+
+  function toggleInput() { toggleOrbInput() }
 
   function toggleTheme() {
     S.settings.theme = S.settings.theme === 'dark' ? 'light' : 'dark'; saveSettings()
@@ -139,9 +196,11 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, screen, d
   function buildTray() {
     const img = nativeImage.createFromPath(path.join(__dirname, '..', 'assets', 'tray.png'))
     S.tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img)
-    S.tray.setToolTip('个人桌面智能体')
+    S.tray.setToolTip('BocomHermes')
     S.tray.setContextMenu(Menu.buildFromTemplate([
       { label: '唤起输入框', accelerator: 'Ctrl+Shift+Space', click: toggleInput },
+      { label: '📧 邮件摘要', click: () => spawnEmailCard().catch((e) => log('email card err: ' + e.message)) },
+      { label: '📋 待办事项', click: openTodos },
       { label: '卡坞 · 历史对话', click: openDock },
       { label: '切换深 / 浅主题', click: toggleTheme },
       { label: '设置…', click: openSettings },
@@ -149,7 +208,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, screen, d
       { type: 'separator' },
       { label: '退出', click: () => app.quit() },
     ]))
-    S.tray.on('click', toggleInput)
+    S.tray.on('click', toggleOrbInput)
   }
 
   function attachContextMenu(wc) {
@@ -183,22 +242,15 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, screen, d
 
   ipcMain.handle('open-settings', () => openSettings())
   ipcMain.on('get-settings', (e) => {
+    const im = S.settings.imap || {}
     e.returnValue = {
       theme: S.settings.theme, editorCmd: S.settings.editorCmd || '', serveBin: S.settings.serveBin || '',
       serveBinEffective: process.env.BOCOMHERMES_SERVE_BIN || S.settings.serveBin || (app.isPackaged ? 'bocomcode' : 'opencode'),
       serveBinLocked: !!process.env.BOCOMHERMES_SERVE_BIN,
       project: projName(), projectDir: S.settings.projectDir || '', recentDirs: S.settings.recentDirs || [],
+      imap: { host: im.host || '', port: im.port || 993, secure: im.secure !== false, allowSelf: !!im.allowSelfSigned, user: im.user || '', hasPass: !!im.passEncrypted, scheduleHour: im.scheduleHour ?? 9 },
     }
   })
-  ipcMain.handle('set-settings', (_e, patch) => {
-    if (patch && typeof patch.editorCmd === 'string') S.settings.editorCmd = patch.editorCmd.trim()
-    if (patch && typeof patch.serveBin === 'string') {
-      S.settings.serveBin = patch.serveBin.trim()
-      if (!process.env.BOCOMHERMES_SERVE_BIN && S.settings.serveBin) oc.setServeBin(S.settings.serveBin)
-    }
-    saveSettings(); return true
-  })
-
   ipcMain.handle('spawn-card', (_e, title) => spawnCard(title))
   ipcMain.handle('spawn-fanout', (_e, goal, roles) => spawnFanout(goal, roles))
   ipcMain.handle('spawn-fanout-roles', (_e, { goal, roles }) => spawnFanout(goal, roles))
@@ -207,10 +259,14 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, screen, d
 
   // ── 任务完成通知 ────────────────────────────────────────────────────────────
   const busyCards = new Set()   // 正在运行任务的 webContents id
+  function sendOrbState(state) {
+    if (S.inputWin && !S.inputWin.isDestroyed()) S.inputWin.webContents.send('orb-state', state)
+  }
   function updateTrayBusy() {
     if (!S.tray) return
     const n = busyCards.size
-    S.tray.setToolTip(n > 0 ? `个人桌面智能体 · ${n} 个任务运行中` : '个人桌面智能体')
+    S.tray.setToolTip(n > 0 ? `BocomHermes · ${n} 个任务运行中` : 'BocomHermes')
+    sendOrbState(n > 0 ? 'thinking' : 'idle')
   }
   ipcMain.on('card-busy', (e, busy) => {
     const wcId = e.sender.id
@@ -219,16 +275,21 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, screen, d
       busyCards.add(wcId)
     } else {
       busyCards.delete(wcId)
-      // 完成时：若卡片不在前台则闪烁提醒
       if (wasBusy) {
         const win = BrowserWindow.fromWebContents(e.sender)
         if (win && !win.isDestroyed() && !win.isFocused()) {
           win.flashFrame(true)
           win.once('focus', () => win.flashFrame(false))
         }
+        // 所有任务完成时闪绿眼
+        if (busyCards.size === 0) {
+          sendOrbState('done')
+          setTimeout(() => { if (busyCards.size === 0) sendOrbState('idle') }, 2200)
+        }
       }
     }
-    updateTrayBusy()
+    if (busyCards.size > 0) updateTrayBusy()
+    else if (S.tray) S.tray.setToolTip('BocomHermes')
   })
 
   ipcMain.on('close-self', (e) => BrowserWindow.fromWebContents(e.sender)?.close())
@@ -253,10 +314,64 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, screen, d
 
   ipcMain.handle('read-clipboard', () => clipboard.readText())
 
+  // ── 邮件 IPC ─────────────────────────────────────────────────────────────
+  ipcMain.handle('trigger-email-summary', async () => {
+    try { return await spawnEmailCard() } catch (e) { throw new Error(e.message) }
+  })
+  ipcMain.handle('email-test', async () => {
+    const imap = S.settings.imap
+    if (!imap || !imap.host || !imap.user || !imap.passEncrypted) throw new Error('IMAP 未配置')
+    const emails = await email.fetchUnread(imap)
+    return { count: emails.length, sample: emails.slice(0, 2).map(e => ({ from: e.from, subject: e.subject })) }
+  })
+
+  // ── Settings: IMAP 字段读写 ───────────────────────────────────────────────
+  ipcMain.handle('set-settings', (_e, patch) => {
+    if (patch && typeof patch.editorCmd === 'string') S.settings.editorCmd = patch.editorCmd.trim()
+    if (patch && typeof patch.serveBin === 'string') {
+      S.settings.serveBin = patch.serveBin.trim()
+      if (!process.env.BOCOMHERMES_SERVE_BIN && S.settings.serveBin) oc.setServeBin(S.settings.serveBin)
+    }
+    if (patch && patch.imap) {
+      S.settings.imap = S.settings.imap || {}
+      const im = patch.imap
+      if (im.host      !== undefined) S.settings.imap.host          = String(im.host).trim()
+      if (im.port      !== undefined) S.settings.imap.port          = parseInt(im.port) || 993
+      if (im.secure    !== undefined) S.settings.imap.secure        = !!im.secure
+      if (im.allowSelf !== undefined) S.settings.imap.allowSelfSigned = !!im.allowSelf
+      if (im.user      !== undefined) S.settings.imap.user          = String(im.user).trim()
+      if (im.pass && im.pass.trim()) S.settings.imap.passEncrypted  = email.encryptPass(im.pass.trim())
+      if (im.scheduleHour !== undefined) S.settings.imap.scheduleHour = parseInt(im.scheduleHour) || 9
+    }
+    saveSettings(); return true
+  })
+
+  // ── Todos 广播（卡片保存待办后通知 todos 面板刷新）────────────────────────
+  ipcMain.on('todos-updated', () => {
+    if (S.todosWin && !S.todosWin.isDestroyed()) S.todosWin.webContents.send('todos-updated')
+  })
+
+  ipcMain.handle('open-todos', () => openTodos())
+
+  // ── Orb 窗口控制 ─────────────────────────────────────────────────────────
+  ipcMain.on('orb-passthrough', (_e, pass) => {
+    if (S.inputWin && !S.inputWin.isDestroyed()) S.inputWin.setIgnoreMouseEvents(pass, { forward: true })
+  })
+  ipcMain.on('orb-move', (_e, { dx, dy }) => {
+    if (!S.inputWin || S.inputWin.isDestroyed()) return
+    const [x, y] = S.inputWin.getPosition()
+    S.inputWin.setPosition(x + dx, y + dy)
+  })
+  ipcMain.on('orb-snap', () => snapOrbToCorner())
+  ipcMain.handle('toggle-orb-input', (_e, mode) => toggleOrbInput(mode))
+  ipcMain.handle('close-orb-input', () => {
+    if (S.orbInputWin && !S.orbInputWin.isDestroyed()) { S.orbInputWin.close(); S.orbInputWin = null }
+  })
+
   ipcMain.handle('open-dock', () => openDock())
   ipcMain.on('get-history', (e) => { e.returnValue = S.history })
   ipcMain.handle('open-history', (_e, { sid, title }) => spawnCard(title, sid))
   ipcMain.handle('clear-history', () => { S.history = []; saveHistory(); return true })
 
-  return { createInput, spawnCard, spawnFanout, spawnWorkflow, toggleInput, buildTray, openDock, openSettings, applyProject, projName, recordHistory, touchHistory }
+  return { createOrb, spawnCard, spawnFanout, spawnWorkflow, spawnEmailCard, toggleInput, toggleOrbInput, buildTray, openDock, openTodos, openSettings, applyProject, projName, recordHistory, touchHistory }
 }

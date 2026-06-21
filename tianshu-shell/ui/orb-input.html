@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>BocomHermes</title>
+<script>try{document.documentElement.dataset.theme=window.BocomHermes.getTheme()||'light'}catch{document.documentElement.dataset.theme='light'}</script>
+<link rel="stylesheet" href="glass.css">
+<style>
+body{padding:0;height:56px}
+.glass{border-radius:28px;height:56px;display:flex;align-items:center;padding:0 8px 0 20px;gap:8px;animation:pop .18s cubic-bezier(.2,.85,.25,1)}
+#q{
+  flex:1;min-width:0;border:none;outline:none;background:transparent;
+  font-size:15px;color:var(--txt);font-family:var(--font);
+  -webkit-user-select:text;user-select:text;cursor:text;
+}
+#q::placeholder{color:var(--txt3)}
+.send-btn{
+  flex:none;width:36px;height:36px;border-radius:50%;border:none;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--brand);transition:opacity .15s;
+}
+.send-btn:hover{opacity:.85}
+.send-btn svg{width:15px;height:15px;stroke:#fff;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.mode-badge{
+  flex:none;font-size:10px;letter-spacing:.04em;padding:3px 9px;border-radius:12px;
+  background:rgba(130,80,255,.18);border:.5px solid rgba(130,80,255,.35);
+  color:rgba(160,120,255,.9);white-space:nowrap;
+}
+</style>
+</head>
+<body>
+<div class="glass nodrag">
+  <div class="hl"></div>
+  <div id="badge" class="mode-badge" style="display:none">并行评审</div>
+  <input id="q" placeholder="问 BocomHermes…" autofocus autocomplete="off" spellcheck="false">
+  <button class="send-btn nodrag" id="send" title="发送">
+    <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+  </button>
+</div>
+<script>
+const H = window.BocomHermes
+const q = document.getElementById('q')
+const params = new URLSearchParams(location.search)
+const mode = params.get('mode') || ''
+
+if (mode === 'fanout') document.getElementById('badge').style.display = 'block'
+
+function submit() {
+  const v = q.value.trim()
+  if (!v) { H.closeOrbInput(); return }
+  q.value = ''
+  if (mode === 'fanout') H.spawnFanout(v)
+  else H.spawnCard(v)
+  H.closeOrbInput()
+}
+
+q.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() }
+  if (e.key === 'Escape') H.closeOrbInput()
+})
+document.getElementById('send').addEventListener('click', submit)
+
+H.onFillInput && H.onFillInput(text => { q.value = text.slice(0, 500); q.focus() })
+H.onTheme && H.onTheme(t => { document.documentElement.dataset.theme = t })
+
+window.addEventListener('blur', () => H.closeOrbInput())
+setTimeout(() => q.focus(), 40)
+</script>
+</body>
+</html>

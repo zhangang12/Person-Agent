@@ -2,7 +2,7 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8" />
-<title>个人桌面智能体</title>
+<title>BocomHermes</title>
 <script>try { document.documentElement.dataset.theme = window.BocomHermes.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
 <link rel="stylesheet" href="glass.css" />
 <style>
@@ -85,6 +85,9 @@
   .routbody { padding: 2px 10px 8px; font-size: 12px; max-height: 240px; overflow: auto; background: none; border: none; max-width: 100%; }
   .routbody::-webkit-scrollbar { width: 5px; } .routbody::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
 
+  /* TODO 待办块 */
+  .todo-blk { display: flex; align-items: center; gap: 8px; background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 10px; padding: 7px 10px; margin: 4px 0; flex-wrap: wrap; }
+
   /* findings 严重度徽标 */
   .ai .sev { display: inline-block; font-size: 10px; font-weight: 600; padding: 0 6px; border-radius: 999px; margin-right: 6px; border: 1px solid; }
   .ai .sev-must { color: var(--diff-del); border-color: var(--diff-del); background: var(--diff-del-bg); }
@@ -136,7 +139,7 @@
   const title = params.get('title') || '新对话'
   const initMsg = params.get('msg') || title    // msg 在场时发送内容不同于标题（fan-out）
   const ttl = document.getElementById('ttl'); ttl.textContent = title; ttl.title = title
-  document.title = title + ' · 个人桌面智能体'   // 任务栏/Alt+Tab 区分各卡
+  document.title = title + ' · BocomHermes'   // 任务栏/Alt+Tab 区分各卡
   const projEl = document.getElementById('proj')
   const feed = document.getElementById('feed'), st = document.getElementById('st')
   const ci = document.getElementById('ci'), send = document.getElementById('send')
@@ -271,6 +274,14 @@
   // 富结果动作：应用/运行 = 向同一会话发指令（agent 用工具做、经内联权限）；复制/打开在 rich.js/本地
   window.Rich.wireActions(feed, {
     open: (file, line) => window.BocomHermes.openLoc(file, line),
+    todo: async ({ urgency, from, text }, btn) => {
+      const orig = btn.textContent; btn.disabled = true; btn.textContent = '保存中…'
+      try {
+        const r = await window.BocomHermes.todoAdd({ urgency, from, text, source: 'email' })
+        if (r) { btn.textContent = '已加入 ✓'; btn.classList.add('done'); window.BocomHermes.notifyTodosUpdated() }
+        else { btn.textContent = '已存在'; btn.classList.add('done') }
+      } catch { btn.textContent = orig; btn.disabled = false }
+    },
     apply: async ({ file, raw, all }, btn) => {
       if (busy) return
       const orig = btn.innerHTML; btn.textContent = '应用中…'; btn.disabled = true

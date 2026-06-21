@@ -8,6 +8,7 @@ const initWindow  = require('./src/window')
 const initSession = require('./src/session')
 const initOrch    = require('./src/orch')
 const initTrigger = require('./src/trigger')
+const initTodos   = require('./src/todos')
 
 // 日志：打包后没有终端，console 看不到 → 同时写到 userData/BocomHermes.log
 let logFile = null, logBytes = 0
@@ -41,32 +42,33 @@ app.whenReady().then(() => {
   log('=== BocomHermes ' + app.getVersion() + ' start (' + (app.isPackaged ? 'packaged' : 'dev') + ') userData=' + app.getPath('userData') + ' ===')
 
   const deps = { ipcMain, app, BrowserWindow, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }
-  const { createInput, toggleInput, buildTray, recordHistory, touchHistory } = initWindow(S, deps)
+  const { createOrb, toggleOrbInput, buildTray, spawnEmailCard, recordHistory, touchHistory } = initWindow(S, deps)
 
   initSession(S, { ipcMain, path, fs, shell, oc, log, recordHistory, touchHistory })
   initOrch(S, { ipcMain, oc, orch, log })
-  initTrigger(S, { log })
+  initTodos(S, { ipcMain, app, path, fs, log })
+  initTrigger(S, { path, fs, app, log, spawnEmailCard })
 
   // serve 启动命令：开发=opencode，打包 exe=bocomcode；可被环境变量或 settings.serveBin 覆盖
   const serveBin = process.env.BOCOMHERMES_SERVE_BIN || S.settings.serveBin || (app.isPackaged ? 'bocomcode' : 'opencode')
   oc.setServeBin(serveBin)
   log('serve binary: ' + serveBin + (app.isPackaged ? ' (packaged)' : ' (dev)'))
 
-  createInput()
+  createOrb()
   buildTray()
   // 启动即预热引擎（即便没选项目也预热 home serve），等用户敲字时多半已就绪
   oc.ensureServe(S.settings.projectDir || '', S.handlers, log).catch((e) => log('prewarm failed: ' + e.message))
 
-  if (!globalShortcut.register('Control+Shift+Space', toggleInput)) log('global shortcut register failed (maybe in use)')
+  if (!globalShortcut.register('Control+Shift+Space', toggleOrbInput)) log('global shortcut register failed (maybe in use)')
 
   // Ctrl+Shift+V：把剪贴板内容带入输入框（"选中即问"快捷路径）
   globalShortcut.register('Control+Shift+V', () => {
     const text = clipboard.readText().trim()
     if (!text) return
-    if (!S.inputWin || !S.inputWin.isVisible()) { createInput() }
-    if (S.inputWin) { S.inputWin.show(); S.inputWin.focus(); S.inputWin.webContents.send('fill-input', text) }
+    if (!S.orbInputWin || S.orbInputWin.isDestroyed()) toggleOrbInput()
+    setTimeout(() => { if (S.orbInputWin && !S.orbInputWin.isDestroyed()) S.orbInputWin.webContents.send('fill-input', text) }, 80)
   })
-  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createInput() })
+  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createOrb() })
 })
 
 app.on('window-all-closed', () => {})

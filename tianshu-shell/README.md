@@ -1,6 +1,6 @@
-﻿# 个人桌面智能体（桌面壳 · Electron）
+﻿# BocomHermes（桌面壳 · Electron）
 
-> 应用名「个人桌面智能体」；代码目录沿用 `BocomHermes-shell`，内部 API 命名空间 `window.BocomHermes` 不变。
+> 应用名「BocomHermes」；代码目录沿用 `BocomHermes-shell`，内部 API 命名空间 `window.BocomHermes` 不变。
 
 可在真实桌面上**自由拖动的透明玻璃卡片** + **全局输入框**。一句话开一张卡，多卡并行。
 选 Electron 而非 Tauri：**不需要 Rust、不需要 VS Build Tools 的 C++ 工具链**——Electron 是预编译二进制，`npm install` 即可，零原生编译。
@@ -82,8 +82,8 @@ $env:ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-bu
 npm run dist
 ```
 产物在 `dist/`：
-- `个人桌面智能体 Setup <版本>.exe` —— 安装版（可选安装目录、建快捷方式）。
-- `个人桌面智能体-便携版-<版本>.exe` —— 免安装版，双击即用，适合发给同事。
+- `BocomHermes Setup <版本>.exe` —— 安装版（可选安装目录、建快捷方式）。
+- `BocomHermes-便携版-<版本>.exe` —— 免安装版，双击即用，适合发给同事。
 - 应用图标 `build/icon.ico`；打包配置在 `package.json` 的 `build` 字段。
 
 目标机注意：

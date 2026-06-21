@@ -115,7 +115,17 @@
       const hm = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/)
       if (hm) { const lv = Math.min(hm[1].length, 4); html += '<h' + lv + '>' + inline(hm[2]) + '</h' + lv + '>'; i++; continue }
       if (/^\s*([-*_])\1\1+\s*$/.test(line)) { html += '<hr>'; i++; continue }
-      if (/^\s*[-*+]\s+/.test(line)) { const it = []; while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) { it.push('<li>' + sevBadge(inline(lines[i].replace(/^\s*[-*+]\s+/, ''))) + '</li>'); i++ } html += '<ul>' + it.join('') + '</ul>'; continue }
+      if (/^\s*[-*+]\s+/.test(line)) {
+        const it = []
+        while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) {
+          const raw = lines[i].replace(/^\s*[-*+]\s+/, '')
+          const todo = renderTodoLine(raw.trim())
+          it.push(todo ? todo : '<li>' + sevBadge(inline(raw)) + '</li>')
+          i++
+        }
+        html += it.some(s => s.startsWith('<div class="todo')) ? it.join('') : '<ul>' + it.join('') + '</ul>'
+        continue
+      }
       if (/^\s*\d+\.\s+/.test(line)) { const it = []; while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) { it.push('<li>' + sevBadge(inline(lines[i].replace(/^\s*\d+\.\s+/, ''))) + '</li>'); i++ } html += '<ol>' + it.join('') + '</ol>'; continue }
       if (/^\s*>\s?/.test(line)) { const it = []; while (i < lines.length && /^\s*>\s?/.test(lines[i])) { it.push(inline(lines[i].replace(/^\s*>\s?/, ''))); i++ } html += '<blockquote>' + it.join('<br>') + '</blockquote>'; continue }
       if (/^\s*$/.test(line)) { i++; continue }
@@ -124,6 +134,20 @@
       html += '<p>' + para.map(inline).join('<br>') + '</p>'
     }
     return html.replace(/@@CB(\d+)@@/g, function (m, n) { return blocks[+n] })
+  }
+
+  // ---- TODO 块：识别 "TODO: [高/中/低] [来自：xxx] 事项" 并渲染为可操作卡 ----
+  const TODO_RE = /^TODO:\s*\[?(高|中|低)\]?\s*(?:\[?来自[：:]\s*([^\]]*)\]?)?\s*(.*)/i
+  function renderTodoLine(line) {
+    const m = line.match(TODO_RE); if (!m) return null
+    const urgency = m[1] || '中', from = (m[2] || '').trim(), text = (m[3] || '').trim()
+    const urgCls = urgency === '高' ? 'sev-must' : urgency === '中' ? 'sev-sugg' : 'sev-info'
+    return `<div class="todo-blk" data-act="todo" data-urgency="${esc(urgency)}" data-from="${esc(from)}" data-text="${esc(text)}">`
+      + `<span class="sev ${urgCls}">${esc(urgency)}</span>`
+      + (from ? `<span style="font-size:11px;color:var(--txt3);margin-right:6px">来自：${esc(from)}</span>` : '')
+      + `<span style="font-size:12.5px">${esc(text)}</span>`
+      + `<button class="rbtn-ghost" data-act="todo" style="margin-left:auto;flex:none;font-size:11px">＋ 加入待办</button>`
+      + `</div>`
   }
 
   // ---- 动作分发：事件委托在 root；raw 从 DOM 还原；执行交给 card 提供的 handlers ----
@@ -157,6 +181,10 @@
       else if (act === 'open') { h.open && h.open(file, line) }
       else if (act === 'apply') { h.apply && h.apply({ file, raw }, btn) }
       else if (act === 'run') { h.run && h.run({ raw }, btn) }
+      else if (act === 'todo') {
+        const blk = btn.closest('.todo-blk'); if (!blk || !h.todo) return
+        h.todo({ urgency: blk.dataset.urgency, from: blk.dataset.from, text: blk.dataset.text }, btn)
+      }
     })
   }
 

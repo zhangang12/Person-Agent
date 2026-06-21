@@ -2,7 +2,7 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8" />
-<title>设置 · 个人桌面智能体</title>
+<title>设置 · BocomHermes</title>
 <script>try { document.documentElement.dataset.theme = window.BocomHermes.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
 <link rel="stylesheet" href="glass.css" />
 <style>
@@ -73,6 +73,29 @@
       </div>
 
       <div class="fld">
+        <span class="lbl">邮件服务器 (IMAP)</span>
+        <div class="row">
+          <input id="imapHost" class="in" style="flex:3" placeholder="imap.company.com" spellcheck="false" />
+          <input id="imapPort" class="in" style="width:64px;flex:none" placeholder="993" spellcheck="false" />
+        </div>
+        <div class="row" style="gap:12px">
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" id="imapSecure" style="accent-color:var(--brand)" /> TLS</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" id="imapSelf" style="accent-color:var(--brand)" /> 允许自签证书</label>
+        </div>
+        <input id="imapUser" class="in" placeholder="用户名 / 邮箱" spellcheck="false" autocomplete="username" />
+        <input id="imapPass" class="in" type="password" placeholder="密码（加密存储，留空=不修改）" autocomplete="current-password" />
+        <div class="row" style="align-items:center;gap:8px">
+          <span class="hint" style="flex:none">晨间摘要时间</span>
+          <input id="imapHour" class="in" style="width:52px;flex:none" placeholder="9" />
+          <span class="hint">时（工作日自动触发）</span>
+        </div>
+        <div class="row">
+          <button id="testImap" class="chip">测试连接</button>
+          <span id="imapMsg" class="hint" style="color:var(--green)"></span>
+        </div>
+      </div>
+
+      <div class="fld">
         <span class="lbl">当前项目目录</span>
         <div class="row">
           <span id="proj" class="proj">未选目录</span>
@@ -139,13 +162,48 @@
   })
   window.BocomHermes.onProject((p) => { proj.textContent = p })
 
+  // IMAP 字段初始化
+  const im = cur.imap || {}
+  $('imapHost').value = im.host || ''
+  $('imapPort').value = im.port || 993
+  $('imapSecure').checked = im.secure !== false
+  $('imapSelf').checked = !!im.allowSelf
+  $('imapUser').value = im.user || ''
+  $('imapPass').placeholder = im.hasPass ? '密码已保存（留空=不修改）' : '密码（加密存储）'
+  $('imapHour').value = im.scheduleHour ?? 9
+
+  // 测试 IMAP 连接
+  $('testImap').addEventListener('click', async () => {
+    const imapMsg = $('imapMsg')
+    imapMsg.style.color = 'var(--txt3)'; imapMsg.textContent = '连接中…'
+    // 先保存再测试
+    await save(true)
+    try {
+      const r = await window.BocomHermes.emailTest()
+      imapMsg.style.color = 'var(--green)'; imapMsg.textContent = `✓ 连通，${r.count} 封未读`
+    } catch (e) {
+      imapMsg.style.color = 'var(--diff-del)'; imapMsg.textContent = '✗ ' + (e.message || '连接失败')
+    }
+  })
+
   // 保存
   const msg = $('msg')
-  async function save() {
+  async function save(silent) {
     const patch = { editorCmd: editorCmd.value }
     if (!cur.serveBinLocked) patch.serveBin = serveBin.value
-    try { await window.BocomHermes.setSettings(patch); msg.textContent = '已保存 ✓'; setTimeout(() => { msg.textContent = '' }, 1800) }
-    catch (e) { msg.style.color = 'var(--diff-del)'; msg.textContent = '保存失败' }
+    patch.imap = {
+      host: $('imapHost').value.trim(),
+      port: $('imapPort').value.trim(),
+      secure: $('imapSecure').checked,
+      allowSelf: $('imapSelf').checked,
+      user: $('imapUser').value.trim(),
+      pass: $('imapPass').value,   // 空=不更新，window.js 里会判断
+      scheduleHour: $('imapHour').value.trim(),
+    }
+    try {
+      await window.BocomHermes.setSettings(patch)
+      if (!silent) { msg.textContent = '已保存 ✓'; setTimeout(() => { msg.textContent = '' }, 1800) }
+    } catch (e) { msg.style.color = 'var(--diff-del)'; msg.textContent = '保存失败' }
   }
   $('save').addEventListener('click', save)
   $('x').addEventListener('click', () => window.BocomHermes.closeSelf())

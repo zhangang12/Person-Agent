@@ -1,12 +1,14 @@
-﻿{
+{
   "name": "BocomHermes-shell",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
-  "description": "个人桌面智能体：可拖动透明玻璃卡片 + 全局输入框（Electron，基于 opencode serve）",
+  "description": "BocomHermes：可拖动透明玻璃卡片 + 全局输入框（Electron，基于 opencode serve）",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:all": "electron-builder --win --mac",
     "compat": "node scripts/compat-check.mjs",
     "permcheck": "node scripts/permission-probe.mjs",
     "jsonschema": "node scripts/json-schema-probe.mjs",
@@ -24,7 +26,7 @@
   },
   "build": {
     "appId": "com.BocomHermes.shell",
-    "productName": "个人桌面智能体",
+    "productName": "BocomHermes",
     "files": [
       "main.js",
       "preload.js",
@@ -38,17 +40,36 @@
     ],
     "asarUnpack": ["mcp/**/*"],
     "win": {
-      "target": ["nsis", "portable"],
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
       "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "个人桌面智能体"
+      "shortcutName": "BocomHermes"
     },
     "portable": {
-      "artifactName": "个人桌面智能体-便携版-${version}.exe"
+      "artifactName": "BocomHermes-便携版-${version}.exe"
+    },
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
+    },
+    "dmg": {
+      "title": "BocomHermes ${version}",
+      "artifactName": "BocomHermes-${version}-${arch}.dmg"
     }
   }
 }
