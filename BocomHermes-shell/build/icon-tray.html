@@ -1,0 +1,35 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;padding:0;background:transparent;overflow:hidden}svg{display:block}
+</style></head><body>
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <radialGradient id="halo" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#2bb6ff" stop-opacity=".6"/>
+    <stop offset="60%" stop-color="#3a6bff" stop-opacity=".15"/>
+    <stop offset="100%" stop-color="#3a6bff" stop-opacity="0"/>
+  </radialGradient>
+  <linearGradient id="rim" x1="0%" y1="50%" x2="100%" y2="50%">
+    <stop offset="0%" stop-color="#5cf0ff"/>
+    <stop offset="30%" stop-color="#1ea7ff" stop-opacity=".2"/>
+    <stop offset="50%" stop-color="#0a1024" stop-opacity="0"/>
+    <stop offset="72%" stop-color="#6f7bff" stop-opacity=".25"/>
+    <stop offset="100%" stop-color="#8aa0ff"/>
+  </linearGradient>
+  <radialGradient id="orb" cx="42%" cy="38%" r="70%">
+    <stop offset="0%" stop-color="#13243f"/>
+    <stop offset="60%" stop-color="#0a1120"/>
+    <stop offset="100%" stop-color="#05070f"/>
+  </radialGradient>
+  <radialGradient id="spark" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#ffffff"/>
+    <stop offset="100%" stop-color="#bfe9ff" stop-opacity="0"/>
+  </radialGradient>
+  <filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4"/></filter>
+</defs>
+<circle cx="60" cy="66" r="48" fill="url(#halo)" filter="url(#soft)"/>
+<circle cx="60" cy="66" r="43" fill="url(#rim)"/>
+<circle cx="60" cy="66" r="40" fill="url(#orb)"/>
+<ellipse cx="48" cy="52" rx="17" ry="11" fill="#dff6ff" opacity=".42" transform="rotate(-28 48 52)"/>
+<g transform="translate(98 32)"><circle r="13" fill="url(#spark)"/><path d="M0 -14 L2.6 -2.6 L14 0 L2.6 2.6 L0 14 L-2.6 2.6 L-14 0 L-2.6 -2.6 Z" fill="#eafaff"/></g>
+</svg>
+</body></html>
