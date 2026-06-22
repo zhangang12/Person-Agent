@@ -954,10 +954,11 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const tl = rec ? formatTimeline(rec.events) : '(本次未录制操作 — 想让 Agent 自动验证修复,先按"录制"复现一次)'
     const recRef = rec ? evdSave(bundleId, 'recording', JSON.stringify(rec, null, 2)) : ''
 
+    const exp = rec && rec.expectation ? rec.expectation : ''
     const text = `=== 复现包 ${bundleId} ===
 URL: ${tab.url || '(空白页)'}
 标题: ${dom.title || tab.title}
-${dom.desc ? '页面描述: ' + dom.desc + '\n' : ''}DOM 摘要(可见文本前 800 字): ${dom.visText || '(空)'}${domRef ? '\n完整 DOM: ' + domRef : ''}
+${exp ? '\n📝 用户期望(请优先围绕这个目标修): ' + exp + '\n' : '\n⚠ 用户未声明期望 — 你只能凭报错/异常推测,推测前请向用户确认目标\n'}${dom.desc ? '页面描述: ' + dom.desc + '\n' : ''}DOM 摘要(可见文本前 800 字): ${dom.visText || '(空)'}${domRef ? '\n完整 DOM: ' + domRef : ''}
 
 时间线 (${rec ? rec.events.length : 0} 步):
 ${tl}${recRef ? '\n录制完整 JSON: ' + recRef : ''}
@@ -982,21 +983,21 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
       `1. 看时间线还原"用户做了什么导致问题",再结合控制台/网络异常定位最可能的根因(优先看 source-map 还原的"文件:行")\n` +
       `2. 大块证据(完整 DOM / 长 req body)按需用 mcp 'tianshu-repro' 的 get_evidence/get_dom_subtree/get_event_window 工具拉详情;别一次性把它们塞回回复\n` +
       `3. 用编辑工具读相关源码,确认根因所在的具体文件与行\n` +
-      `4. **改动前先查"影响半径"**(防止改坏其他功能):对你将要修改的导出符号(函数/常量/类/组件),\n` +
-      `   用 mcp 'BocomHermes-git' 的 git_grep 工具搜该符号在项目里的所有引用,\n` +
-      `   逐条评估:这些引用方是否都仍按你的修复方向工作?若有任何一处不确定,先读那个引用方旁边\n` +
-      `   5-10 行上下文再下手。引用 >5 处时,在回复里简要列出"已确认安全的引用方"+"特别注意的引用方"。\n` +
-      `5. **直接用编辑工具改源码完成修复**(我会逐次确认每处写入),改完一两句话说明:\n` +
-      `   - 改了哪些文件:行;\n` +
-      `   - 用一句话声明你这次修复"应该让什么消失/出现"\n` +
-      `6. **改完后必须调用 mcp 'BocomHermes-repro' 的 repro_assert 工具,声明 1~4 条具体可验断言**\n` +
-      `   bundleId 就用证据包顶上的 "${bundleId}"。kind 可选:\n` +
-      `     · no_console:报错消息中应不再出现的子串(如 "TypeError: rate")\n` +
-      `     · no_element / has_element:元素 CSS 选择器(如 ".error-banner")\n` +
-      `     · no_net:URL 子串,该接口不应再 4xx/5xx(如 "/api/quota")\n` +
-      `   断言越具体,验证报告越硬;没有断言 = 验证只能做粗略数量对比。\n` +
-      `7. 让我点"验证"按钮 — 系统会:① 回放时间线 ② 检查改过的 JS 函数在回放中是否被执行 ③ 逐条核对你写的断言\n` +
-      `   → 出 PASS / FAIL / SUSPICIOUS 报告。FAIL 你看报告调整,不要乱猜。`
+      `4. **改文件前先查影响半径(必做 — 验证会检查)**:对每个将要修改的导出符号(函数/常量/类/组件),\n` +
+      `   调 mcp 'BocomHermes-repro' 的 **scan_impact{bundleId:"${bundleId}", symbol:"<符号名>", cwd:"<项目根绝对路径>"}** 工具。\n` +
+      `   工具返回引用清单 + 落盘备查;改任何文件之前请先扫过对应符号。**改了未扫过的文件,验证会标 SUSPICIOUS。**\n` +
+      `   引用 >5 处时,简要列出"已确认安全的引用方"和"特别注意的引用方"。\n` +
+      `5. **直接用编辑工具改源码完成修复**(我会逐次确认每处写入),改完一两句话说明改了哪些文件:行\n` +
+      `6. **改完后必做的两件(都是 mcp 'BocomHermes-repro' 的工具,验证会检查):**\n` +
+      `   ① **repro_assert**:声明 1~4 条具体可验断言(用 bundleId="${bundleId}"),kind 可选:\n` +
+      `      · no_console:报错消息中应不再出现的子串(例 "TypeError: rate")\n` +
+      `      · no_element / has_element:元素 CSS 选择器(例 ".error-banner")\n` +
+      `      · no_net:URL 子串,该接口不应再 4xx/5xx(例 "/api/quota")\n` +
+      `   ② **repro_self_review**:给本次修复打个 risk 1~5 自评(对修复正确性的信心),\n` +
+      `      summary 1-3 句话说改了什么 + 为什么,edge_cases 列出没覆盖的边界(没有就空)。\n` +
+      `      risk < 3 验证会标 SUSPICIOUS;不调验证也会标。\n` +
+      `7. 让我点"验证" — 系统自动:① 回放时间线 ② 检查改过的 JS 是否被执行 ③ 核对你的断言 ④ 检查盲改 ⑤ 显示 self-review\n` +
+      `   → 5 维度判定 PASS / FAIL / SUSPICIOUS。FAIL 看报告调整,不要乱猜。`
     S.browser.lastBundleId = bundleId   // verify 用它读 mcp 'repro_assert' 写入的断言
     log('brAnalyze: bundle ' + bundleId + ' size=' + Buffer.byteLength(bundle) + 'B')
     const disp = `🔍 已复现并发送：${tab.url || '(空白页)'}\n（${errs.length} 条控制台报错 + ${bad.length} 条网络异常 + 页面 DOM 上下文）`
@@ -1042,9 +1043,12 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
       dbgNote(cardWc, '🔁 验证修复:回放录制(' + rec.events.length + ' 步)…', 'info')
       const replay = await replayRec(rec)
       if (!replay.ok) { dbgNote(cardWc, '⚠ 回放失败:' + (replay.error || ''), 'info'); return }
-      // 读 agent 通过 repro_assert 写入的断言,在当前状态下逐条验证
-      const assertions = await checkAssertions(tab, loadAssertions(rec.bundleId || S.browser.lastBundleId))
+      // 读 agent 写入的断言 / 影响半径扫描 / self-review
+      const bid = rec.bundleId || S.browser.lastBundleId
+      const assertions = await checkAssertions(tab, loadAssertions(bid))
       replay.assertions = assertions
+      replay.scans = loadScans(bid)   // {scans:[], scannedFiles:Set}
+      replay.review = loadReview(bid)  // 或 null
       const rep = diffReport(rec, replay)
       const hitSummary = replay.hitInfo && replay.hitInfo.length ? `;改动 ${replay.hitInfo.length} 文件,${replay.hitInfo.filter((h) => h.executed > 0).length} 个被执行` : ''
       const disp = `🔁 验证完成 · ${rep.pass ? '✅ PASS' : (/SUSPICIOUS/.test(rep.verdict) ? '⚠ SUSPICIOUS' : '❌ FAIL')}\n(回放 ${replay.stepReport.length}/${rec.events.length} 步;修复前 ${rec.snapshot.errs.length}/${rec.snapshot.bad.length} → 修复后 ${replay.after.errs.length}/${replay.after.bad.length}${hitSummary})`
@@ -1705,6 +1709,22 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
     const fp = path.join(app.getPath('userData'), 'assertions', bundleId + '.json')
     try { const a = JSON.parse(fs.readFileSync(fp, 'utf8')); return Array.isArray(a) ? a : [] } catch { return [] }
   }
+  // 读 agent 通过 scan_impact 工具登记的影响半径扫描 → 算出"已扫文件集合"
+  function loadScans(bundleId) {
+    if (!bundleId) return { scans: [], scannedFiles: new Set() }
+    const fp = path.join(app.getPath('userData'), 'scans', bundleId + '.json')
+    let arr = []
+    try { arr = JSON.parse(fs.readFileSync(fp, 'utf8')); if (!Array.isArray(arr)) arr = [] } catch {}
+    const files = new Set()
+    for (const s of arr) for (const f of (s.files || [])) files.add(f)
+    return { scans: arr, scannedFiles: files }
+  }
+  // 读 agent 通过 repro_self_review 工具登记的自审
+  function loadReview(bundleId) {
+    if (!bundleId) return null
+    const fp = path.join(app.getPath('userData'), 'reviews', bundleId + '.json')
+    try { return JSON.parse(fs.readFileSync(fp, 'utf8')) } catch { return null }
+  }
   async function checkAssertions(tab, assertions) {
     if (!assertions.length) return []
     const wc = tab.view.webContents
@@ -1841,17 +1861,50 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
     const newBads = after.bad.filter((b) => !beforeBadUrls.has(b.url + '|' + b.status))
     const errsImproved = after.errs.length <= before.errs.length
     const badsImproved = after.bad.length <= before.bad.length
+    // 影响半径检查:agent 改了文件却没事先 scan_impact 扫过 = 盲改 → SUSPICIOUS
+    let blindEdits = []
+    if (replay.changedFiles && replay.changedFiles.length && replay.scans) {
+      const scannedSet = replay.scans.scannedFiles
+      // 改的文件 basename 在 scan 历史中出现过任一,就算扫过
+      const scannedBase = new Set()
+      for (const f of scannedSet) { const b = f.split(/[\\/]/).pop(); if (b) scannedBase.add(b) }
+      blindEdits = replay.changedFiles.filter((f) => {
+        const b = f.split(/[\\/]/).pop()
+        return !scannedSet.has(f) && !scannedBase.has(b)
+      })
+      lines.push('\nAgent 改前影响半径扫描:')
+      if (replay.scans.scans.length === 0) {
+        lines.push('  ⚠ 一次都没调 scan_impact — agent 没查改动影响范围,盲改')
+      } else {
+        lines.push(`  · 共扫了 ${replay.scans.scans.length} 个符号,覆盖 ${scannedSet.size} 个文件`)
+        for (const s of replay.scans.scans.slice(0, 5)) lines.push(`    ✓ scan_impact("${s.symbol}") → ${s.files.length} 文件`)
+      }
+      if (blindEdits.length) lines.push(`  ⚠ 改了 ${blindEdits.length} 个未扫过的文件(盲改):\n` + blindEdits.slice(0, 5).map((f) => '    · ' + f).join('\n'))
+    }
+    // Self-review 显示
+    if (replay.review) {
+      lines.push('\nAgent 自评 (repro_self_review):')
+      lines.push(`  · 信心 ${replay.review.risk}/5 — ${replay.review.summary}`)
+      if (replay.review.edge_cases) lines.push(`  · 未覆盖的边界: ${replay.review.edge_cases}`)
+    } else if (replay.changedFiles && replay.changedFiles.length) {
+      lines.push('\n⚠ Agent 没调 repro_self_review — 跳过了自审环节')
+    }
+
     const hitsOk = unhitJsCount === 0   // 若全是后端改动或无 JS 改动,自动 true
     const assertOk = assertFail === 0
-    const pass = errsImproved && badsImproved && newErrs.length === 0 && newBads.length === 0 && fails.length === 0 && hitsOk && assertOk
+    const radiusOk = blindEdits.length === 0
+    const reviewOk = !replay.changedFiles || !replay.changedFiles.length || (replay.review && replay.review.risk >= 3)
+    const pass = errsImproved && badsImproved && newErrs.length === 0 && newBads.length === 0 && fails.length === 0 && hitsOk && assertOk && radiusOk && reviewOk
     let verdict
     if (!assertOk) verdict = `❌ FAIL — Agent 自己声明的 ${assertFail} 条断言未通过(见上面 ✗ 标的几条) → 修复未达成 agent 自己的预期`
     else if (newErrs.length || newBads.length) verdict = `❌ FAIL — 出现了修复前没有的新问题:${newErrs.length} 条新报错 / ${newBads.length} 条新网络异常 → 回归了`
-    else if (!hitsOk) verdict = `⚠ SUSPICIOUS — 报错和网络看着好了,但 ${unhitJsCount} 个 JS 改动在回放期间根本没被执行 → 可能改错地方,问题"看似消失"可能是别的因素(缓存/异步)`
+    else if (!radiusOk) verdict = `⚠ SUSPICIOUS — 改了 ${blindEdits.length} 个未扫过的文件(盲改),没确认这些改动的影响半径 → 可能改坏其他功能`
+    else if (!hitsOk) verdict = `⚠ SUSPICIOUS — 报错和网络看着好了,但 ${unhitJsCount} 个 JS 改动在回放期间根本没被执行 → 可能改错地方,问题"看似消失"可能是别的因素`
+    else if (!reviewOk) verdict = replay.review ? `⚠ SUSPICIOUS — Agent 自评信心 ${replay.review.risk}/5 偏低 → 修复可能不彻底,建议看 review 里的边界后再确认` : '⚠ SUSPICIOUS — Agent 跳过了 self-review,缺少自审证据'
     else if (fails.length) verdict = '⚠ PARTIAL — 步骤执行有失败(可能页面结构变了),无法可靠判断;建议人工再看一眼'
     else if (!errsImproved || !badsImproved) verdict = '❌ FAIL — 数量变多了 → 没修好或引入了新问题'
-    else if (pass && replay.assertions && replay.assertions.length) verdict = `✅ PASS — Agent ${replay.assertions.length} 条断言全部满足 + JS 改动均被执行 + 报错/网络未恶化 → 修复有硬证据`
-    else if (pass) verdict = '✅ PASS — 复现路径全部走通,报错/网络异常未增加,所有 JS 改动均被执行 → 修复定位正确且有效'
+    else if (pass && replay.assertions && replay.assertions.length) verdict = `✅ PASS — Agent ${replay.assertions.length} 条断言全部满足 + 影响半径已扫 + self-review 信心 ${replay.review ? replay.review.risk : '-'}/5 + JS 改动均被执行 → 修复有硬证据`
+    else if (pass) verdict = '✅ PASS — 复现路径全部走通,报错/网络异常未增加,JS 改动均被执行,影响半径与 self-review 完整'
     else verdict = '✅ PASS'
     return { pass, verdict, text: verdict + '\n\n' + lines.join('\n') }
   }
@@ -1891,6 +1944,21 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
   // 复制到剪贴板（供网络面板「复制 URL / 复制 cURL」、拾取「复制选择器」）
   ipcMain.handle('browser-copy', (_e, text) => { clipboard.writeText(String(text || '')); return true })
   ipcMain.on('browser-reveal', (_e, filePath) => { try { shell.showItemInFolder(String(filePath || '')) } catch (e) { log('reveal err: ' + e.message) } })
+  ipcMain.handle('browser-rec-set-expectation', (_e, { recId, text }) => {
+    const t = String(text || '').slice(0, 500)
+    if (!t) return false
+    // 更新内存
+    if (S.browser.lastRec && S.browser.lastRec.id === recId) S.browser.lastRec.expectation = t
+    // 落盘到 recordings/<id>.json
+    const fp = path.join(app.getPath('userData'), 'recordings', recId + '.json')
+    try {
+      const j = JSON.parse(fs.readFileSync(fp, 'utf8'))
+      j.expectation = t
+      fs.writeFileSync(fp, JSON.stringify(j, null, 2))
+      log('rec ' + recId + ' expectation set: ' + t.slice(0, 60))
+      return true
+    } catch (e) { log('set expectation err: ' + e.message); return false }
+  })
   ipcMain.on('browser-open-rec-dir', () => {
     const d = path.join(app.getPath('userData'), 'recordings')
     try { fs.mkdirSync(d, { recursive: true }) } catch {}

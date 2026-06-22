@@ -5,6 +5,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { execFileSync } from 'node:child_process'
 
 const log = (...a) => process.stderr.write('[repro-mcp] ' + a.join(' ') + '\n')
 
@@ -20,6 +21,8 @@ function userData() {
 const EVD = path.join(userData(), 'evidence')
 const REC = path.join(userData(), 'recordings')
 const ASS = path.join(userData(), 'assertions')
+const SCN = path.join(userData(), 'scans')
+const REV = path.join(userData(), 'reviews')
 
 // ref 形如 "ref#b_lz4kj/dom" → bundleId=b_lz4kj, name=dom
 function parseRef(s) {
@@ -41,6 +44,8 @@ const TOOLS = [
   { name: 'get_event_window', description: '从录制时间线里取某一步前后 ±N 步的窗口,看用户在出问题前后做了什么。先 list_bundles 拿 recording ref。', inputSchema: { type: 'object', properties: { bundleId: { type: 'string' }, step: { type: 'number' }, radius: { type: 'number' } }, required: ['bundleId', 'step'] } },
   { name: 'repro_assert', description: '改完代码后**必须调用**:声明这次修复"应该让什么消失/出现"。每条断言会在验证回放时单独检查。kind 选: no_console(无匹配报错) / no_element(元素消失) / has_element(元素出现) / no_net(无该 URL 请求 4xx/5xx)。why 简述断言理由。', inputSchema: { type: 'object', properties: { bundleId: { type: 'string', description: '复现包 id(从证据包顶部 === 复现包 b_xxx === 拷过来)' }, kind: { type: 'string', enum: ['no_console', 'no_element', 'has_element', 'no_net'] }, value: { type: 'string', description: 'no_console: 报错消息中应不再出现的子串;no_element/has_element: CSS 选择器;no_net: URL 子串' }, why: { type: 'string', description: '一句话:这条断言对应的修复意图' } }, required: ['bundleId', 'kind', 'value'] } },
   { name: 'repro_assertions', description: '列出某个复现包的所有断言(给主程序的验证流程读)', inputSchema: { type: 'object', properties: { bundleId: { type: 'string' } }, required: ['bundleId'] } },
+  { name: 'scan_impact', description: '**改代码前必须先调用** — 查导出符号在项目里的所有引用,评估"改了它会影响哪些地方"。这一步同时被验证流程检查:如果改了某文件却没扫过对应符号,验证报告会标 SUSPICIOUS。底层用 git grep,所以必须传项目目录 cwd(repo 根)。返回引用清单 + 落盘到 userData/scans/<bundleId>.json 备查。', inputSchema: { type: 'object', properties: { bundleId: { type: 'string', description: '复现包 id(从证据包顶部拷过来)' }, symbol: { type: 'string', description: '要查引用的符号(函数名/常量名/类名等)' }, cwd: { type: 'string', description: '项目目录绝对路径(git grep 的工作目录)' } }, required: ['bundleId', 'symbol', 'cwd'] } },
+  { name: 'repro_self_review', description: '**改完代码后必须调用** — 对你这次修复做 self-review:summary(改了什么)/risk 1-5(对修复正确性的信心,1=不确定,5=确信)/edge_cases(没覆盖的边界,可空)。验证报告会显示这条 review,信心低或缺少 review 会标 SUSPICIOUS。', inputSchema: { type: 'object', properties: { bundleId: { type: 'string' }, summary: { type: 'string', description: '1-3 句:你这次改了哪些文件、为什么这样改' }, risk: { type: 'number', description: '对修复正确性的自评信心 1-5(5=很有把握)' }, edge_cases: { type: 'string', description: '可空:本次修复没覆盖到的边界场景' } }, required: ['bundleId', 'summary', 'risk'] } },
 ]
 
 async function callTool(name, a) {
@@ -124,6 +129,52 @@ async function callTool(name, a) {
     let arr = []; try { arr = JSON.parse(fs.readFileSync(fp, 'utf8')) } catch {}
     if (!Array.isArray(arr) || !arr.length) return '(' + bundleId + ' 暂无断言)'
     return arr.map((x, i) => `  #${i + 1}  ${x.kind}  "${x.value}"${x.why ? '  · ' + x.why : ''}`).join('\n')
+  }
+  if (name === 'scan_impact') {
+    const bundleId = String(a.bundleId || '').trim()
+    const symbol = String(a.symbol || '').trim()
+    const cwd = String(a.cwd || '').trim()
+    if (!bundleId || !symbol || !cwd) return '需要 bundleId + symbol + cwd(项目根目录绝对路径)'
+    if (!fs.existsSync(cwd)) return 'cwd 不存在: ' + cwd
+    let files = []; let preview = ''
+    try {
+      // -l 只出文件名,大小写敏感(更准);限制 200 行
+      const out = execFileSync('git', ['grep', '-l', '--', symbol], { cwd, encoding: 'utf8', timeout: 5000 })
+      files = out.split('\n').map((s) => s.trim()).filter(Boolean).slice(0, 200)
+    } catch (e) {
+      // git grep 找不到匹配会 exit 1(不是错误,空结果);其它 exit code 才是真错(找不到 git / 非 repo / IO 错)
+      if (e.status !== 1) return 'git grep 失败 (exit ' + (e.status == null ? '?' : e.status) + '): ' + (e.stderr ? e.stderr.toString() : e.message) + '(此目录是 git 仓库吗?)'
+    }
+    // 附带 5 行上下文预览(头几个文件),帮 agent 快速判断
+    if (files.length) {
+      const sampleFiles = files.slice(0, 5)
+      const prev = []
+      for (const f of sampleFiles) {
+        try { const ln = execFileSync('git', ['grep', '-n', '--', symbol, '--', f], { cwd, encoding: 'utf8', timeout: 3000 }).split('\n').slice(0, 3).join('\n'); if (ln) prev.push(ln) } catch {}
+      }
+      if (prev.length) preview = '\n\n预览(前 5 文件的引用行):\n' + prev.join('\n')
+    }
+    // 落盘
+    try { fs.mkdirSync(SCN, { recursive: true }) } catch {}
+    const fp = path.join(SCN, bundleId + '.json')
+    let arr = []; try { arr = JSON.parse(fs.readFileSync(fp, 'utf8')) } catch {}
+    if (!Array.isArray(arr)) arr = []
+    arr.push({ symbol, cwd, files, ts: Date.now() })
+    try { fs.writeFileSync(fp, JSON.stringify(arr, null, 2)) } catch (e) { return '记录失败: ' + e.message }
+    if (!files.length) return `符号 "${symbol}" 在 ${cwd} 里 git grep 无匹配。已记录(可能拼错了,或这是即将新增的符号)。`
+    return `符号 "${symbol}" 在 ${cwd} 里被 ${files.length} 个文件引用:\n` + files.map((f) => '  · ' + f).join('\n') + preview + `\n\n已记录到 scans/${bundleId}.json,改这些文件后验证不会标 SUSPICIOUS;改其它文件会被标。`
+  }
+  if (name === 'repro_self_review') {
+    const bundleId = String(a.bundleId || '').trim()
+    const summary = String(a.summary || '').trim()
+    const risk = Number(a.risk)
+    if (!bundleId || !summary || !risk) return '需要 bundleId + summary + risk(1-5 数值)'
+    if (risk < 1 || risk > 5) return 'risk 必须在 1-5 之间'
+    try { fs.mkdirSync(REV, { recursive: true }) } catch {}
+    const fp = path.join(REV, bundleId + '.json')
+    const rev = { summary, risk, edge_cases: String(a.edge_cases || ''), ts: Date.now() }
+    try { fs.writeFileSync(fp, JSON.stringify(rev, null, 2)) } catch (e) { return '写入失败: ' + e.message }
+    return `✓ self-review 已记录 (risk=${risk}/5)。验证报告会展示这条 review,用户和验证流程据此判断你的修复信心。`
   }
   throw new Error('未知工具:' + name)
 }

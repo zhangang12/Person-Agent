@@ -33,7 +33,7 @@ try {
   notify('notifications/initialized')
 
   const list = await req('tools/list')
-  ok(list.result?.tools?.length === 7, '7 个工具(' + (list.result?.tools?.length || 0) + ')')
+  ok(list.result?.tools?.length === 9, '9 个工具(' + (list.result?.tools?.length || 0) + ')')
 
   const bs = await req('tools/call', { name: 'list_bundles', arguments: {} })
   ok(/b_test01/.test(bs.result?.content?.[0]?.text || ''), 'list_bundles 含 b_test01')
@@ -63,6 +63,34 @@ try {
   // 未知 kind 拒绝
   const bad = await req('tools/call', { name: 'repro_assert', arguments: { bundleId: 'b_test01', kind: 'invalid', value: 'x' } })
   ok(/未知 kind/.test(bad.result?.content?.[0]?.text || ''), 'invalid kind 被拒')
+
+  // scan_impact: 在临时 git repo 里测
+  const fs = await import('node:fs'); const path2 = await import('node:path')
+  const { execFileSync } = await import('node:child_process')
+  const repo = path2.join(tmp, 'repo')
+  fs.mkdirSync(repo, { recursive: true })
+  fs.writeFileSync(path2.join(repo, 'a.js'), 'export function calcRate(x){return x*0.05}\n')
+  fs.writeFileSync(path2.join(repo, 'b.js'), 'import { calcRate } from "./a"; export const v = calcRate(100)\n')
+  try {
+    execFileSync('git', ['init', '-q'], { cwd: repo }); execFileSync('git', ['config', 'user.email', 't@t'], { cwd: repo }); execFileSync('git', ['config', 'user.name', 't'], { cwd: repo }); execFileSync('git', ['add', '.'], { cwd: repo }); execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
+    const si = await req('tools/call', { name: 'scan_impact', arguments: { bundleId: 'b_test01', symbol: 'calcRate', cwd: repo } })
+    const sit = si.result?.content?.[0]?.text || ''
+    ok(/2 个文件/.test(sit) && /a\.js/.test(sit) && /b\.js/.test(sit), 'scan_impact 找到 a.js + b.js')
+    const si2 = await req('tools/call', { name: 'scan_impact', arguments: { bundleId: 'b_test01', symbol: 'doesNotExist', cwd: repo } })
+    ok(/无匹配/.test(si2.result?.content?.[0]?.text || ''), 'scan_impact 无匹配也正常返回(不报错)')
+    const scanFp = path2.join(tmp, 'scans', 'b_test01.json')
+    const sj = JSON.parse(fs.readFileSync(scanFp, 'utf8'))
+    ok(Array.isArray(sj) && sj.length === 2 && sj[0].symbol === 'calcRate' && sj[0].files.length === 2, 'scan_impact 落盘到 scans/<bundleId>.json')
+  } catch (e) { fail++; console.log('  ✗ scan_impact 测试失败:', e.message) }
+
+  // repro_self_review
+  const sr = await req('tools/call', { name: 'repro_self_review', arguments: { bundleId: 'b_test01', summary: '修了 calc.js 的空指针', risk: 4, edge_cases: '负数未测' } })
+  ok(/self-review 已记录/.test(sr.result?.content?.[0]?.text || '') && /risk=4/.test(sr.result?.content?.[0]?.text || ''), 'repro_self_review 接受并落盘')
+  const sr2 = await req('tools/call', { name: 'repro_self_review', arguments: { bundleId: 'b_test01', summary: 'x', risk: 9 } })
+  ok(/risk 必须在 1-5/.test(sr2.result?.content?.[0]?.text || ''), 'repro_self_review 拒绝非法 risk')
+  const revFp = path.join(tmp, 'reviews', 'b_test01.json')
+  const rj = JSON.parse(fs.readFileSync(revFp, 'utf8'))
+  ok(rj.risk === 4 && /空指针/.test(rj.summary) && rj.edge_cases === '负数未测', 'review JSON 字段完整')
 } catch (e) { console.error('err:', e.message); fail++ }
 
 console.log(`\n小结: ${pass} 通过 / ${fail} 失败`)
