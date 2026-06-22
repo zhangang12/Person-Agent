@@ -34,6 +34,10 @@ const S = {
   handlers: null,   // 由 initSession 填入
 }
 
+// 关掉默认 File/Edit/View/Window/Help 菜单——它和"凭空玻璃"风格冲突，所有窗口统一不带菜单
+const { Menu: __Menu } = require('electron')
+__Menu.setApplicationMenu(null)
+
 app.whenReady().then(() => {
   S.settingsFile = path.join(app.getPath('userData'), 'settings.json')
   S.historyFile  = path.join(app.getPath('userData'), 'history.json')

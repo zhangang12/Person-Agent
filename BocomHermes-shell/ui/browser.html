@@ -24,6 +24,8 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
   -webkit-app-region:drag;
 }
 .mac #tabbar{padding-left:78px}
+/* Windows: 系统三键(titleBarOverlay)在右上角，约 138px，留出来 */
+.win #tabbar{padding-right:148px}
 .tab{
   -webkit-app-region:no-drag;
   display:flex;align-items:center;gap:7px;
@@ -366,6 +368,7 @@ body.wsdrag{cursor:col-resize}
 const H = window.BocomHermes
 const $ = id => document.getElementById(id)
 if (navigator.platform.toLowerCase().includes('mac')) document.body.classList.add('mac')
+else if (navigator.platform.toLowerCase().includes('win')) document.body.classList.add('win')
 
 const RELOAD = '<polyline points="23 4 23 10 17 10"/><path d="M20.5 15a9 9 0 1 1-2.4-9.2L23 10"/>'
 const STOP = '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'

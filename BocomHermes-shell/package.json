@@ -1,6 +1,6 @@
 {
   "name": "BocomHermes-shell",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "BocomHermes：可拖动透明玻璃卡片 + 全局输入框（Electron，基于 opencode serve）",
   "main": "main.js",

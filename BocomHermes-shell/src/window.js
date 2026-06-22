@@ -961,7 +961,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       title: 'BocomHermes · 浏览器',
       titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
       trafficLightPosition: { x: 13, y: 12 },
-      backgroundColor: '#0d0e1a',
+      // Windows: 用 overlay 把系统三键(最小化/最大化/关闭)染成深色，融进自绘标签栏(高 38px)
+      titleBarOverlay: process.platform === 'win32' ? { color: '#0b0c16', symbolColor: '#cfd3e3', height: 38 } : undefined,
+      autoHideMenuBar: true,
+      backgroundColor: '#0b0c16',
       webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false },
     })
     b.win = win; b.tabs = []; b.activeId = null; b.consoleH = 0
@@ -982,7 +985,12 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (b.win && !b.win.isDestroyed()) { b.win.focus(); if (initialUrl) newTab(initialUrl); return }
     const win = new BrowserWindow({
       width: 1500, height: 940, minWidth: 1040, minHeight: 620,
-      title: 'BocomHermes · 调试工作台', backgroundColor: '#0b0c16',
+      title: 'BocomHermes · 调试工作台',
+      titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
+      trafficLightPosition: { x: 13, y: 12 },
+      titleBarOverlay: process.platform === 'win32' ? { color: '#0b0c16', symbolColor: '#cfd3e3', height: 38 } : undefined,
+      autoHideMenuBar: true,
+      backgroundColor: '#0b0c16',
       webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false },
     })
     b.win = win; b.tabs = []; b.activeId = null; b.consoleH = 0; b.seq = 0
