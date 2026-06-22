@@ -94,6 +94,10 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   // 元素拾取 + 复制
   browserPickElement:   ()    => ipcRenderer.invoke('browser-pick-element'),
   browserCopy:          (text) => ipcRenderer.invoke('browser-copy', text),
+  browserReveal:        (filePath) => ipcRenderer.send('browser-reveal', filePath),
+  browserHistory:       ()    => ipcRenderer.sendSync('get-browser-history'),
+  browserReorderTabs:   (ids) => ipcRenderer.send('browser-reorder-tabs', ids),
+  onBrowserDownload:    (cb)  => ipcRenderer.on('browser-download', (_e, p) => cb(p)),
   browserEval:          (expr) => ipcRenderer.invoke('browser-eval', expr),
   browserVerify:        ()    => ipcRenderer.invoke('browser-verify'),
   // 工作台分隔条（左 Agent / 右浏览器）

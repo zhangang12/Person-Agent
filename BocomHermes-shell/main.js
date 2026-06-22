@@ -73,6 +73,23 @@ app.whenReady().then(() => {
   })
   // 3) 代理设置(下面的 initWindow 加载完 S.settings 后再应用)
 
+  // 4) 下载:浏览器/工作台里触发的下载都让用户看见(toast→进度→完成可"在文件夹打开")
+  //    走默认目录(用户的 Downloads),不弹"另存为"以免每次中断流程。如需选位置,后续在设置里加 toggle。
+  session.defaultSession.on('will-download', (_e, item) => {
+    const id = 'dl_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+    const total = item.getTotalBytes() || 0
+    const name = item.getFilename()
+    const savePath = path.join(app.getPath('downloads'), name)
+    item.setSavePath(savePath)
+    const target = S.browser && S.browser.win && !S.browser.win.isDestroyed() ? S.browser.win.webContents : null
+    const send = (kind, extra) => { if (target && !target.isDestroyed()) target.send('browser-download', { id, name, total, savePath, kind, ...extra }) }
+    send('start')
+    item.on('updated', (_x, state) => {
+      if (state === 'progressing') send('progress', { received: item.getReceivedBytes(), paused: item.isPaused() })
+    })
+    item.once('done', (_x, state) => send(state === 'completed' ? 'done' : 'fail', { state }))
+  })
+
   const deps = { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }
   const { createOrb, createBrowser, createWorkspace, toggleOrbInput, buildTray, spawnEmailCard, recordHistory, touchHistory } = initWindow(S, deps)
   S.createOrb = createOrb   // 留给 window-all-closed 兜底拉起球

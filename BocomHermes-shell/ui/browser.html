@@ -261,7 +261,8 @@ body.wsdrag{cursor:col-resize}
 
   <div class="urlwrap">
     <span class="lock" id="lock"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
-    <input id="url" placeholder="输入网址，回车访问  ·  http://localhost:5173" spellcheck="false" autocomplete="off">
+    <input id="url" placeholder="输入网址，回车访问  ·  http://localhost:5173" spellcheck="false" autocomplete="off" list="urlhist">
+    <datalist id="urlhist"></datalist>
   </div>
 
   <div class="seg" id="devseg">
@@ -392,8 +393,23 @@ H.onBrowserTabs(({ tabs, activeId }) => {
       : (t.favicon ? `<span class="fav" style="background-image:url('${esc(t.favicon)}')"></span>` : '<span class="fav blank"></span>')
     el.innerHTML = `${fav}<span class="tt">${esc(t.title || '新标签页')}</span><span class="cl" title="关闭"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>`
     el.title = t.title || ''
+    el.draggable = true
+    el.dataset.tid = String(t.id)
     el.addEventListener('click', e => { if (e.target.closest('.cl')) return; H.browserActivateTab(t.id) })
+    el.addEventListener('auxclick', e => { if (e.button === 1) { e.preventDefault(); H.browserCloseTab(t.id) } })   // 中键关闭
     el.querySelector('.cl').addEventListener('click', e => { e.stopPropagation(); H.browserCloseTab(t.id) })
+    el.addEventListener('dragstart', e => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(t.id)); el.style.opacity = '.4' })
+    el.addEventListener('dragend',   () => { el.style.opacity = '' })
+    el.addEventListener('dragover',  e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' })
+    el.addEventListener('drop',      e => {
+      e.preventDefault()
+      const fromId = Number(e.dataTransfer.getData('text/plain')); if (!fromId || fromId === t.id) return
+      const ids = Array.from(bar.querySelectorAll('.tab')).map(x => Number(x.dataset.tid))
+      const fi = ids.indexOf(fromId); if (fi < 0) return
+      ids.splice(fi, 1)
+      const ti = ids.indexOf(t.id); ids.splice(ti < 0 ? ids.length : ti, 0, fromId)
+      H.browserReorderTabs(ids)
+    })
     bar.insertBefore(el, addBtn)
   }
 })
@@ -615,7 +631,43 @@ url.addEventListener('keydown', e => {
   if (e.key === 'Enter') { H.browserNavigate(url.value.trim()); url.blur() }
   if (e.key === 'Escape') url.blur()
 })
-url.addEventListener('focus', () => requestAnimationFrame(() => url.select()))
+url.addEventListener('focus', () => {
+  requestAnimationFrame(() => url.select())
+  // 拉一次访问历史填进 datalist(每次聚焦都更新,反映最近的导航)
+  try {
+    const list = $('urlhist')
+    const hist = H.browserHistory ? H.browserHistory() : []
+    list.innerHTML = hist.map(u => `<option value="${u.replace(/"/g, '&quot;')}"></option>`).join('')
+  } catch {}
+})
+
+/* ── 下载提示:开始/进度/完成,完成可点"在文件夹打开" ── */
+const dlState = new Map()   // id → {el, total}
+H.onBrowserDownload && H.onBrowserDownload(({ id, name, total, savePath, kind, received, state }) => {
+  if (kind === 'start') {
+    const el = document.createElement('div')
+    el.style.cssText = 'display:flex;align-items:center;gap:8px;background:rgba(20,30,50,.92);border:1px solid var(--line);border-radius:9px;padding:7px 11px;color:var(--txt);font-size:12px;margin-top:6px;max-width:320px'
+    el.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><polyline points="6 11 12 17 18 11"/><path d="M4 21h16"/></svg><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span><span class="pct" style="color:var(--txt2);font-family:monospace">…</span>`
+    ;($('toaststack') || document.body).appendChild(el)
+    dlState.set(id, { el, total, savePath, name })
+  } else if (kind === 'progress') {
+    const st = dlState.get(id); if (!st) return
+    const pct = st.total ? Math.round((received / st.total) * 100) + '%' : Math.round(received / 1024) + ' KB'
+    st.el.querySelector('.pct').textContent = pct
+  } else if (kind === 'done' || kind === 'fail') {
+    const st = dlState.get(id); if (!st) return
+    if (kind === 'done') {
+      st.el.querySelector('.pct').textContent = '✓'
+      st.el.style.cursor = 'pointer'
+      st.el.title = '点击在文件夹中显示\n' + st.savePath
+      st.el.addEventListener('click', () => H.browserReveal(st.savePath))
+    } else {
+      st.el.querySelector('.pct').textContent = '✗ ' + (state || '失败')
+      st.el.style.borderColor = 'var(--err)'
+    }
+    setTimeout(() => { try { st.el.remove() } catch {} ; dlState.delete(id) }, 8000)
+  }
+})
 
 /* ── 导航按钮 ── */
 $('bb').addEventListener('click', () => H.browserBack())

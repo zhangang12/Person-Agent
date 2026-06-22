@@ -309,6 +309,12 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const onNav = () => {
       tab.title = wc.getTitle() || tab.title
       tab.url = wc.getURL()
+      // 记 URL 历史(URL 栏 datalist 用):去重,最新在前,内存上限 200
+      if (tab.url && /^https?:/i.test(tab.url)) {
+        const h = S.browser.history = S.browser.history || []
+        const i = h.indexOf(tab.url); if (i >= 0) h.splice(i, 1)
+        h.unshift(tab.url); if (h.length > 200) h.length = 200
+      }
       brSendTabs(); brSendNav(tab)
     }
     wc.on('did-navigate', onNav)
@@ -1329,6 +1335,16 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   ipcMain.handle('browser-verify', async () => { await verifyFix() })
   // 复制到剪贴板（供网络面板「复制 URL / 复制 cURL」、拾取「复制选择器」）
   ipcMain.handle('browser-copy', (_e, text) => { clipboard.writeText(String(text || '')); return true })
+  ipcMain.on('browser-reveal', (_e, filePath) => { try { shell.showItemInFolder(String(filePath || '')) } catch (e) { log('reveal err: ' + e.message) } })
+  // URL 历史(每访问 did-navigate 都补,内存上限 200,sendSync 给 renderer 做 datalist)
+  ipcMain.on('get-browser-history', (e) => { e.returnValue = (S.browser.history || []).slice(0, 200) })
+  // 标签重排:renderer 拖动 .tab 后告诉 main 新顺序(id 数组)
+  ipcMain.on('browser-reorder-tabs', (_e, ids) => {
+    if (!Array.isArray(ids) || !S.browser.tabs) return
+    const map = new Map(S.browser.tabs.map((t) => [t.id, t]))
+    const reordered = ids.map((id) => map.get(id)).filter(Boolean)
+    if (reordered.length === S.browser.tabs.length) { S.browser.tabs = reordered; brSendTabs() }
+  })
 
   ipcMain.handle('open-dock', () => openDock())
   ipcMain.on('get-history', (e) => { e.returnValue = S.history })
