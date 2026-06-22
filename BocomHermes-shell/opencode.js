@@ -87,13 +87,12 @@ function spawnServe(cwd, port) {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
     env,
-    detached: process.platform === 'win32',
+    // ⚠ Windows: 不要 detached:true!detached 会让 cmd 自己 AllocConsole 一个新窗口,
+    //   而 windowsHide 压不住"被 detached 后子进程自建"的那个 console。
+    //   配 windowsHide + stdio:pipe + BOCOMCODE_TERMINAL=0 已经足够静默,加 detached 反而炸窗。
   }
   if (process.platform === 'win32') {
-    // 仍经 cmd.exe(PATH 解析 .cmd/.exe shim),但 detached + windowsHide 让 bocomcode 自己也找不到控制台
-    const c = spawn('cmd.exe', ['/d', '/s', '/c', SERVE_BIN, ...args], opts)
-    try { c.unref() } catch {}   // detached 后 unref,让 Node 主进程退出不被它绊住
-    return c
+    return spawn('cmd.exe', ['/d', '/s', '/c', SERVE_BIN, ...args], opts)
   }
   return spawn(SERVE_BIN, args, opts)
 }
