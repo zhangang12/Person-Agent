@@ -73,23 +73,14 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     S.inputWin.setPosition(nx, ny)
   }
 
-  // 关掉任一辅助窗口后，确保智能体球仍在前台可见——避免用户误以为"agent 退出了"。
-  // 关键：除了拉回球，还把它**临时塞进任务栏**——这样用户看到一个明确的"BocomHermes"入口，
-  // 一眼就知道 agent 没退；6 秒后或用户点击球后恢复 skipTaskbar，回到悬浮玻璃风格。
+  // 关掉浏览器/工作台后让球闪一下,提醒"agent 还在"——避免用户误以为退出
+  // 关键: 球已销毁就重建; 任何窗口 API 都推到下一 tick,避免与 close 回调里的清理路径竞态
   function ensureOrbAlive() {
-    log('ensureOrbAlive: hasOrb=' + !!S.inputWin + ' destroyed=' + (S.inputWin && S.inputWin.isDestroyed()))
-    if (!S.inputWin || S.inputWin.isDestroyed()) { createOrb() }
-    if (!S.inputWin || S.inputWin.isDestroyed()) return
-    try { if (S.inputWin.isMinimized()) S.inputWin.restore() } catch {}
-    try { S.inputWin.showInactive(); S.inputWin.moveTop() } catch {}
-    try {
-      S.inputWin.setSkipTaskbar(false)   // 强制在任务栏冒头，让 agent 仍在"可见"
-      if (S._orbTaskbarTimer) clearTimeout(S._orbTaskbarTimer)
-      S._orbTaskbarTimer = setTimeout(() => {
-        try { if (S.inputWin && !S.inputWin.isDestroyed()) S.inputWin.setSkipTaskbar(true) } catch {}
-      }, 6000)
-    } catch {}
-    try { S.inputWin.webContents.send('orb-wake') } catch {}   // 通知 orb.html 闪一下，更明显
+    if (!S.inputWin || S.inputWin.isDestroyed()) { try { createOrb() } catch (e) { log('createOrb err: ' + e.message) } ; return }
+    setImmediate(() => {
+      if (!S.inputWin || S.inputWin.isDestroyed()) return
+      try { S.inputWin.webContents.send('orb-wake') } catch (e) { log('orb-wake send err: ' + e.message) }
+    })
   }
 
   // 功能窗口「从智能体长出来」：算出球心相对该窗口的 transform-origin + 朝球方向的初始位移，
@@ -990,9 +981,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     win.loadFile(path.join(__dirname, '..', 'ui', 'browser.html'))
     win.on('resize', brLayout)
     win.on('closed', () => {
-      for (const t of b.tabs) { try { t.view.webContents.destroy() } catch {} }
+      // ⚠ 不要手动 destroy 子 WebContentsView 的 webContents —— Electron 自己会清,
+      // 双重 destroy 在 Windows 触发 native 段错误(crashpad: not connected),整个 agent 进程会崩。
       S.browser = { win: null, tabs: [], activeId: null, consoleH: 0, seq: 0, mode: 'standalone', leftW: 0, cardView: null, cardWcId: null, _dragging: false }
-      ensureOrbAlive()   // 关浏览器 ≠ 退出 agent —— 把球带回前台
+      ensureOrbAlive()   // 关浏览器 ≠ 退出 agent —— 球带回前台
     })
     // chrome 加载完后再建首个标签（保证 IPC 能收到）
     win.webContents.once('did-finish-load', () => newTab(initialUrl || ''))
@@ -1030,13 +1022,13 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       if (!win.isDestroyed()) win.webContents.send('browser-split-set', b.leftW)
     })
     win.on('closed', () => {
-      for (const t of b.tabs) { try { t.view.webContents.destroy() } catch {} }
-      const s = S.sessionByWc.get(b.cardWcId)   // 同 spawnCard 的会话清理逻辑
+      // ⚠ 不要手动 destroy 子 WebContentsView 的 webContents —— Electron 自己会清,
+      // 双重 destroy 在 Windows 触发 native 段错误(crashpad: not connected),整个 agent 进程会崩。
+      const s = S.sessionByWc.get(b.cardWcId)
       if (s) { const si = S.sessionInfo.get(s); if (si) oc.abort(si.serve, s); S.sessionInfo.delete(s); S.streamBuf.delete(s); S.sentPrompt.delete(s); S.firstMsgCtx.delete(s) }
       S.sessionByWc.delete(b.cardWcId)
-      try { cardView.webContents.destroy() } catch {}
       S.browser = { win: null, tabs: [], activeId: null, consoleH: 0, seq: 0, mode: 'standalone', leftW: 0, cardView: null, cardWcId: null, _dragging: false }
-      ensureOrbAlive()   // 关工作台 ≠ 退出 agent —— 把球带回前台
+      ensureOrbAlive()
     })
     win.webContents.once('did-finish-load', () => {
       win.webContents.send('browser-split-set', b.leftW)

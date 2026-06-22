@@ -77,13 +77,15 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createOrb() })
 })
 
-// 不要因为所有窗口关掉就自动退出 app —— 这是个常驻 agent。
-// 进一步：如果真的没窗口了（比如球被误关），把球重新拉起来，避免"看起来退出了"。
+// 常驻 agent: 关掉所有窗口不退 app; 真没窗口了就把球重新拉起来
 app.on('before-quit', () => { app.isQuitting = true })
 app.on('window-all-closed', () => {
   if (app.isQuitting) return
   if (BrowserWindow.getAllWindows().length === 0 && typeof S.createOrb === 'function') {
-    try { S.createOrb() } catch {}
+    try { S.createOrb() } catch (e) { log('recreate orb FAIL: ' + e.message) }
   }
 })
 app.on('will-quit', () => { globalShortcut.unregisterAll(); oc.killAll() })
+// 兜底:任何未捕获错误都进日志,便于排查偶发崩溃
+process.on('uncaughtException', (e) => { try { log('uncaughtException: ' + (e && e.stack || e)) } catch {} })
+process.on('unhandledRejection', (r) => { try { log('unhandledRejection: ' + r) } catch {} })
