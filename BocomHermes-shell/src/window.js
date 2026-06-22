@@ -1577,6 +1577,28 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
       else if (Date.now() - lastSeenAt >= idleMs) return
     }
   }
+  // 回放可视化:每个 click/input/submit 前在页面里给目标元素打个红框 + 浮标"步 N",看得见在跑什么
+  async function highlightTarget(wc, ev, idx) {
+    if (!ev.sel || ev.act === 'navigate' || ev.act === 'scroll') return
+    const elExpr = findElExpr(ev.sel, ev.selAlt)
+    const label = JSON.stringify(`步 ${idx} · ${ev.act}`)
+    try {
+      await wc.executeJavaScript(`(()=>{
+        var __el=null; if(!(${elExpr})) return;
+        var rect=__el.getBoundingClientRect();
+        var box=document.createElement('div'); box.id='__bocom_hi__';
+        box.style.cssText='position:fixed;z-index:2147483647;pointer-events:none;border:3px solid #ff3b30;border-radius:4px;box-shadow:0 0 0 1px rgba(255,255,255,.85),0 0 14px rgba(255,59,48,.55);transition:opacity .3s';
+        box.style.left=(rect.left-3)+'px'; box.style.top=(rect.top-3)+'px';
+        box.style.width=(rect.width+6)+'px'; box.style.height=(rect.height+6)+'px';
+        var tag=document.createElement('div'); tag.textContent=${label};
+        tag.style.cssText='position:absolute;left:0;top:-22px;background:#ff3b30;color:#fff;font:600 11px system-ui;padding:2px 8px;border-radius:4px;white-space:nowrap';
+        box.appendChild(tag);
+        var prev=document.getElementById('__bocom_hi__'); if(prev)prev.remove();
+        (document.body||document.documentElement).appendChild(box);
+        setTimeout(function(){var b=document.getElementById('__bocom_hi__');if(b){b.style.opacity='0';setTimeout(function(){b&&b.remove&&b.remove()},300)}}, 700);
+      })()`, true)
+    } catch {}
+  }
   async function execStep(wc, ev, tab) {
     if (ev.act === 'navigate') {
       const cur = wc.getURL()
@@ -1741,6 +1763,8 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
       const gap = Math.min(Math.max(0, (ev.t || 0) - lastT), 2000)   // 步间最长 sleep 2s
       if (gap > 50) await sleep(gap)
       lastT = ev.t || 0
+      await highlightTarget(wc, ev, i + 1)   // 先标红框让用户看到下一步要点哪
+      await sleep(180)
       const r = await execStep(wc, ev, tab)
       stepReport.push({ i: i + 1, act: ev.act, sel: ev.sel || ev.url || '', ok: r.ok, err: r.err || '' })
       if (!r.ok && ev.act === 'navigate') break
@@ -1867,6 +1891,11 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
   // 复制到剪贴板（供网络面板「复制 URL / 复制 cURL」、拾取「复制选择器」）
   ipcMain.handle('browser-copy', (_e, text) => { clipboard.writeText(String(text || '')); return true })
   ipcMain.on('browser-reveal', (_e, filePath) => { try { shell.showItemInFolder(String(filePath || '')) } catch (e) { log('reveal err: ' + e.message) } })
+  ipcMain.on('browser-open-rec-dir', () => {
+    const d = path.join(app.getPath('userData'), 'recordings')
+    try { fs.mkdirSync(d, { recursive: true }) } catch {}
+    try { shell.openPath(d) } catch (e) { log('open rec dir err: ' + e.message) }
+  })
   // URL 历史(每访问 did-navigate 都补,内存上限 200,sendSync 给 renderer 做 datalist)
   ipcMain.on('get-browser-history', (e) => { e.returnValue = (S.browser.history || []).slice(0, 200) })
   // 标签重排:renderer 拖动 .tab 后告诉 main 新顺序(id 数组)
