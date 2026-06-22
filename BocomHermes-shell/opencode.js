@@ -12,6 +12,7 @@ const AUTO_ALLOW = new Set(['read', 'grep', 'glob', 'list', 'ls', 'find', 'tree'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 const pool = new Map()      // dirKey -> info { dir, base, port, proc, permStyle, ready }
+const baseToEntry = new Map()   // base URL -> info;防止同一 serve 启多个事件流
 let sampleLogged = false
 const seenPartTypes = new Set()   // 每种 part 类型打印一次（确认 reasoning/text 等）
 
@@ -41,6 +42,17 @@ function api(base, method, path, body) {
   })
 }
 async function healthAt(base) { try { await api(base, 'GET', '/global/health'); return true } catch { return false } }
+// 扫端口找已经在跑的 serve:用户手动 `bocomcode serve` 起的、或自启没记进 pool 的,都能复用
+// 不再无脑 freePort+spawn → 不再有"用户 4096 + 我们 4097 两个 serve 互相打架"
+async function findExistingServe(startPort = 4096, endPort = 4110, log = null) {
+  // 并发探,谁先回就用谁;失败的都 false 不会 reject
+  const candidates = []
+  for (let p = startPort; p <= endPort; p++) candidates.push(p)
+  const results = await Promise.all(candidates.map((p) => healthAt(`http://127.0.0.1:${p}`).then((ok) => ok ? p : 0)))
+  const found = results.filter(Boolean).sort((a, b) => a - b)   // 偏好低端口(用户最可能用 4096)
+  if (found.length && log) log('scan: found existing serve on :' + found.join(', :'))
+  return found.length ? { port: found[0], base: `http://127.0.0.1:${found[0]}` } : null
+}
 
 // 找一个空闲端口（绕开被占用的，比如残留的旧 serve）
 function freePort(start) {
@@ -88,21 +100,57 @@ async function detectPerm(base) {
   return 'new'
 }
 
-// 取得（或惰性启动）某项目目录对应的 serve；handlers 在该 serve 的事件循环里用
-async function ensureServe(dir, handlers, log = console.log) {
+// 取得（或惰性启动）某项目目录对应的 serve；handlers 在该 serve 的事件循环里用。
+// tryShare = true(默认):先扫端口找已在跑的 serve(用户手动 `bocomcode serve` 起的、上一轮启的等),
+//                       有就复用,proc=null;没有才自起。
+// tryShare = false:跨项目隔离场景(如 backendDir)必须自起独立 serve,因为现有 serve 的 cwd 未必匹配。
+async function ensureServe(dir, handlers, log = console.log, opts = {}) {
+  const { tryShare = true, scanStart = 4096, scanEnd = 4110 } = opts
   const key = dir || '__home__'
   const existing = pool.get(key)
   if (existing) {
     let alive = true
-    try { await existing.ready } catch { alive = false }                         // 上次启动失败 → 不再复用
-    if (alive && existing.proc && existing.proc.exitCode != null) alive = false   // 进程已退出 → 不再复用
+    try { await existing.ready } catch { alive = false }
+    // 外部 serve(proc=null)用 /global/health 检测;自起的看 proc.exitCode
+    if (alive) {
+      if (existing.proc && existing.proc.exitCode != null) alive = false
+      else if (!existing.proc && !(await healthAt(existing.base))) alive = false
+    }
     if (alive) return existing
     if (pool.get(key) === existing) pool.delete(key)
-    log(`serve for [${dir || '(home)'}] not alive; restarting`)                   // 自愈：下一张卡重启它
+    if (existing.base) baseToEntry.delete(existing.base)
+    log(`serve for [${dir || '(home)'}] not alive; will rescan/restart`)
   }
+
+  // 1) 先扫端口找已在跑的(用户手动起 / 自启没注册到 pool)
+  if (tryShare) {
+    const ext = await findExistingServe(scanStart, scanEnd, log)
+    if (ext) {
+      // 同 base 已注册 → 多 pool key 共享同一 entry,不再起第二个事件流
+      const shared = baseToEntry.get(ext.base)
+      if (shared) {
+        pool.set(key, shared)
+        log(`pool[${dir || '(home)'}] → 共享已注册 serve ${ext.base}`)
+        return shared
+      }
+      // 第一次发现这个 base → 注册 + 启事件流(无 proc,我们不管它生死)
+      const info = { dir, key, base: ext.base, port: ext.port, proc: null, permStyle: 'new', external: true }
+      info.ready = (async () => {
+        info.permStyle = await detectPerm(info.base)
+        log(`复用外部 serve :${ext.port} for [${dir || '(home)'}] (permission: ${info.permStyle}) — 用户手动 bocomcode serve 或上轮自启`)
+        runEventLoop(info.base, handlers, log)
+      })()
+      baseToEntry.set(ext.base, info)
+      pool.set(key, info)
+      await info.ready
+      return info
+    }
+  }
+
+  // 2) 没找到 → 自起新 serve
   const info = { dir, key, base: null, port: null, proc: null, permStyle: 'new' }
   info.ready = (async () => {
-    const port = await freePort(4096)
+    const port = await freePort(scanStart)
     info.port = port; info.base = `http://127.0.0.1:${port}`
     log(`starting serve for [${dir || '(home)'}] on :${port}`)
     info.proc = spawnServe(dir, port)
@@ -110,15 +158,15 @@ async function ensureServe(dir, handlers, log = console.log) {
     info.proc.on('exit', (code, sig) => { if (!exitInfo) exitInfo = { code, sig }; log(`serve :${port} exited (code ${code}${sig ? ' ' + sig : ''})`) })
     info.proc.on('error', (e) => { if (!exitInfo) exitInfo = { error: e.message } })
     const pipe = (s, tag) => { if (s) s.on('data', (d) => { const t = String(d).trim(); if (t) log(`[serve:${port}${tag}] ` + t) }) }
-    pipe(info.proc.stdout, ''); pipe(info.proc.stderr, '!')   // serve 自身输出进日志，便于排查
+    pipe(info.proc.stdout, ''); pipe(info.proc.stderr, '!')
     await waitHealthy(info.base, () => exitInfo, log)
     info.permStyle = await detectPerm(info.base)
     log(`serve ready on :${port} (permission endpoint: ${info.permStyle})`)
     runEventLoop(info.base, handlers, log)
   })()
   pool.set(key, info)
-  try { await info.ready }
-  catch (e) { killProc(info.proc); if (pool.get(key) === info) pool.delete(key); throw e }  // 失败：杀掉进程(别泄漏成孤儿占端口) + 不污染池
+  try { await info.ready; baseToEntry.set(info.base, info) }
+  catch (e) { killProc(info.proc); if (pool.get(key) === info) pool.delete(key); throw e }
   return info
 }
 
@@ -238,6 +286,15 @@ function killProc(proc) {
     else proc.kill()
   } catch {}
 }
-function killAll() { for (const info of pool.values()) killProc(info.proc); pool.clear() }
+function killAll() {
+  // 只杀我们自己 spawn 的 serve;复用的外部 serve(proc=null/external:true)留给它的主人
+  const killed = new Set()
+  for (const info of pool.values()) {
+    if (!info.proc || info.external) continue
+    if (killed.has(info.base)) continue   // 多 dir 指向同一 entry(共享场景),只杀一次
+    killProc(info.proc); killed.add(info.base)
+  }
+  pool.clear(); baseToEntry.clear()
+}
 
 module.exports = { ensureServe, createSession, sendMessage, abort, replyPermission, sessionExists, getMessages, killAll, setServeBin, AUTO_ALLOW }

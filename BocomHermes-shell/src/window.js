@@ -815,7 +815,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       // 后端仓库：opencode 一 serve 一目录，跨前后端必须分 serve。配了就让后端调查/修复在它自己的 serve 上跑
       const backendDir = S.settings.backendDir || ''
       let backendServe = null
-      if (backendDir) { try { backendServe = await oc.ensureServe(backendDir, S.handlers, log) } catch (e) { dbgNote(cardWc, `后端仓库 serve 启动失败：${e.message}`, 'muted') } }
+      // 后端仓库必须独立 serve(不能复用前端 / 用户手动起的 serve,cwd 不匹配会改错文件)
+      if (backendDir) { try { backendServe = await oc.ensureServe(backendDir, S.handlers, log, { tryShare: false }) } catch (e) { dbgNote(cardWc, `后端仓库 serve 启动失败：${e.message}`, 'muted') } }
       let lenses = (v.layers || []).filter(k => DBG_LENS[k])
       for (const k of ['frontend', 'contract', 'backend']) { if (lenses.length >= 2) break; if (!lenses.includes(k)) lenses.push(k) }
       lenses = lenses.slice(0, 3)
@@ -1360,7 +1361,7 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
   // 后端仓库（跨前后端调查/修复时，后端 agent 在它自己的 serve 上读/改后端源码）
   ipcMain.handle('pick-backend', async () => {
     const r = await dialog.showOpenDialog({ title: '选择后端代码仓库（Agent 跨前后端调查/修复时读它）', properties: ['openDirectory'] })
-    if (!r.canceled && r.filePaths[0]) { S.settings.backendDir = r.filePaths[0]; saveSettings(); oc.ensureServe(r.filePaths[0], S.handlers, log).catch((e) => log('backend prewarm failed: ' + e.message)) }
+    if (!r.canceled && r.filePaths[0]) { S.settings.backendDir = r.filePaths[0]; saveSettings(); oc.ensureServe(r.filePaths[0], S.handlers, log, { tryShare: false }).catch((e) => log('backend prewarm failed: ' + e.message)) }
     return S.settings.backendDir || ''
   })
   ipcMain.handle('clear-backend', () => { S.settings.backendDir = ''; saveSettings(); return '' })
