@@ -23,6 +23,7 @@ const REC = path.join(userData(), 'recordings')
 const ASS = path.join(userData(), 'assertions')
 const SCN = path.join(userData(), 'scans')
 const REV = path.join(userData(), 'reviews')
+const NOT = path.join(userData(), 'notes')
 
 // ref 形如 "ref#b_lz4kj/dom" → bundleId=b_lz4kj, name=dom
 function parseRef(s) {
@@ -47,6 +48,8 @@ const TOOLS = [
   { name: 'scan_impact', description: '**改代码前必须先调用** — 查导出符号在项目里的所有引用,评估"改了它会影响哪些地方"。这一步同时被验证流程检查:如果改了某文件却没扫过对应符号,验证报告会标 SUSPICIOUS。底层用 git grep,所以必须传项目目录 cwd(repo 根)。返回引用清单 + 落盘到 userData/scans/<bundleId>.json 备查。', inputSchema: { type: 'object', properties: { bundleId: { type: 'string', description: '复现包 id(从证据包顶部拷过来)' }, symbol: { type: 'string', description: '要查引用的符号(函数名/常量名/类名等)' }, cwd: { type: 'string', description: '项目目录绝对路径(git grep 的工作目录)' } }, required: ['bundleId', 'symbol', 'cwd'] } },
   { name: 'repro_self_review', description: '**改完代码后必须调用** — 对你这次修复做 self-review:summary(改了什么)/risk 1-5(对修复正确性的信心,1=不确定,5=确信)/edge_cases(没覆盖的边界,可空)。验证报告会显示这条 review,信心低或缺少 review 会标 SUSPICIOUS。', inputSchema: { type: 'object', properties: { bundleId: { type: 'string' }, summary: { type: 'string', description: '1-3 句:你这次改了哪些文件、为什么这样改' }, risk: { type: 'number', description: '对修复正确性的自评信心 1-5(5=很有把握)' }, edge_cases: { type: 'string', description: '可空:本次修复没覆盖到的边界场景' } }, required: ['bundleId', 'summary', 'risk'] } },
   { name: 'repro_rollback', description: '验证 FAIL 后,把本次 session 的改动回滚到 HEAD。默认回滚所有改动文件(git checkout + git clean 未跟踪);files 列表非空则只回滚那些。**慎用**:会丢失本次未提交的改动;但当你已确定本次修复方向错误时,这是干净重来的最快路径。', inputSchema: { type: 'object', properties: { cwd: { type: 'string', description: '仓库根目录绝对路径' }, files: { type: 'array', items: { type: 'string' }, description: '可选:仅回滚这些文件;省略=回滚所有改动' }, dryRun: { type: 'boolean', description: 'true 只列出会被回滚的文件,不真动手(强烈建议先 dryRun)' } }, required: ['cwd'] } },
+  { name: 'bundle_note', description: '多 agent 协作共享便签:把"假设 X"标 confirmed/excluded/maybe + 证据。后续 lens/agent 看到 excluded 不再重查,看到 confirmed 不再质疑,**省 token**+**避免重复工作**。改写同 key 会覆盖。', inputSchema: { type: 'object', properties: { bundleId: { type: 'string' }, key: { type: 'string', description: '简短假设 key,如 is_cors / is_null_pointer / is_5xx / is_schema_change' }, status: { type: 'string', enum: ['confirmed', 'excluded', 'maybe'] }, evidence: { type: 'string', description: '1-2 句证据,如 "已读 api.js:42,无 cors 配置,排除"' } }, required: ['bundleId', 'key', 'status', 'evidence'] } },
+  { name: 'read_notes', description: '读某个复现包当前所有便签(给 lens 启动前看,避免重复工作)。无便签返回空数组。', inputSchema: { type: 'object', properties: { bundleId: { type: 'string' } }, required: ['bundleId'] } },
 ]
 
 async function callTool(name, a) {
@@ -176,6 +179,29 @@ async function callTool(name, a) {
     const rev = { summary, risk, edge_cases: String(a.edge_cases || ''), ts: Date.now() }
     try { fs.writeFileSync(fp, JSON.stringify(rev, null, 2)) } catch (e) { return '写入失败: ' + e.message }
     return `✓ self-review 已记录 (risk=${risk}/5)。验证报告会展示这条 review,用户和验证流程据此判断你的修复信心。`
+  }
+  if (name === 'bundle_note') {
+    const bundleId = String(a.bundleId || '').trim()
+    const key = String(a.key || '').trim()
+    const status = String(a.status || '').trim()
+    const evidence = String(a.evidence || '').trim()
+    if (!bundleId || !key || !status || !evidence) return '需要 bundleId + key + status + evidence'
+    if (!['confirmed', 'excluded', 'maybe'].includes(status)) return 'status 必须是 confirmed/excluded/maybe'
+    try { fs.mkdirSync(NOT, { recursive: true }) } catch {}
+    const fp = path.join(NOT, bundleId + '.json')
+    let obj = {}; try { obj = JSON.parse(fs.readFileSync(fp, 'utf8')); if (!obj || typeof obj !== 'object' || Array.isArray(obj)) obj = {} } catch {}
+    obj[key] = { status, evidence, ts: Date.now() }
+    try { fs.writeFileSync(fp, JSON.stringify(obj, null, 2)) } catch (e) { return '写入失败:' + e.message }
+    return `✓ note[${key}] = ${status} · ${evidence.slice(0, 80)}\n后续 lens 看到这条便签可跳过重复工作。`
+  }
+  if (name === 'read_notes') {
+    const bundleId = String(a.bundleId || '').trim()
+    const fp = path.join(NOT, bundleId + '.json')
+    let obj = {}; try { obj = JSON.parse(fs.readFileSync(fp, 'utf8')); if (!obj || typeof obj !== 'object') obj = {} } catch {}
+    const keys = Object.keys(obj)
+    if (!keys.length) return '(' + bundleId + ' 暂无便签)'
+    const ICONS = { confirmed: '✓', excluded: '✗', maybe: '?' }
+    return keys.map((k) => `  ${ICONS[obj[k].status] || '·'} [${obj[k].status}] ${k}  ·  ${obj[k].evidence}`).join('\n')
   }
   if (name === 'repro_rollback') {
     const cwd = String(a.cwd || '').trim()

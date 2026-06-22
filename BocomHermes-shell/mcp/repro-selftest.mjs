@@ -33,7 +33,7 @@ try {
   notify('notifications/initialized')
 
   const list = await req('tools/list')
-  ok(list.result?.tools?.length === 10, '10 个工具(' + (list.result?.tools?.length || 0) + ')')
+  ok(list.result?.tools?.length === 12, '12 个工具(' + (list.result?.tools?.length || 0) + ')')
 
   const bs = await req('tools/call', { name: 'list_bundles', arguments: {} })
   ok(/b_test01/.test(bs.result?.content?.[0]?.text || ''), 'list_bundles 含 b_test01')
@@ -91,6 +91,19 @@ try {
   const revFp = path.join(tmp, 'reviews', 'b_test01.json')
   const rj = JSON.parse(fs.readFileSync(revFp, 'utf8'))
   ok(rj.risk === 4 && /空指针/.test(rj.summary) && rj.edge_cases === '负数未测', 'review JSON 字段完整')
+
+  // 共享便签
+  const bn1 = await req('tools/call', { name: 'bundle_note', arguments: { bundleId: 'b_test01', key: 'is_cors', status: 'excluded', evidence: '读过 api.js:42 无 cors 配置' } })
+  ok(/✓ note\[is_cors\] = excluded/.test(bn1.result?.content?.[0]?.text || ''), 'bundle_note 写入 excluded')
+  const bn2 = await req('tools/call', { name: 'bundle_note', arguments: { bundleId: 'b_test01', key: 'is_null', status: 'confirmed', evidence: 'calc.js:42 rate 字段未赋值' } })
+  ok(/✓ note\[is_null\] = confirmed/.test(bn2.result?.content?.[0]?.text || ''), 'bundle_note 写入 confirmed')
+  const rn = await req('tools/call', { name: 'read_notes', arguments: { bundleId: 'b_test01' } })
+  const rnt = rn.result?.content?.[0]?.text || ''
+  ok(/✗ \[excluded\] is_cors/.test(rnt) && /✓ \[confirmed\] is_null/.test(rnt), 'read_notes 列出两条便签 + icon')
+  // 同 key 覆盖
+  const bn3 = await req('tools/call', { name: 'bundle_note', arguments: { bundleId: 'b_test01', key: 'is_null', status: 'maybe', evidence: '再查发现可能 race' } })
+  const rn2 = await req('tools/call', { name: 'read_notes', arguments: { bundleId: 'b_test01' } })
+  ok(/\? \[maybe\] is_null/.test(rn2.result?.content?.[0]?.text || ''), '同 key 写入覆盖原状态')
 
   // 回滚:在前面创建的临时 git repo 上,改一个文件 + 加一个新文件,再 dryRun + 真回滚
   try {

@@ -821,20 +821,42 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       lenses = lenses.slice(0, 3)
       if (backendServe && !lenses.includes('backend')) lenses = [...lenses.slice(0, 2), 'backend']   // 配了后端仓库必查后端
       lenses.forEach(k => dbgNote(cardWc, `🤖 假设·${DBG_TAG[k]} 调查中…${k === 'backend' && backendServe ? '（后端仓库）' : ''}`, 'muted'))
-      const findings = await Promise.all(lenses.map(async (k) => {
+      // #7 假设生成式分诊:并行起一个"开放式假设 lens",不局限于 frontend/backend/contract 三分类,
+      // 让 agent 自己列 3 个最可能根因(可能是状态机/缓存/竞态/CSS 等启发式抓不到的)
+      const dynamicLens = (async () => {
+        let sid; try {
+          sid = await oc.createSession(serve, '假设生成')
+          S.sessionInfo.set(sid, { wc: cardWc, serve })
+          const out = await oc.sendMessage(serve, sid, `根据下面这个复现包,**枚举 3 个最可能的根因假设**(每条 1 句话,按可能性排序),并对每条简述一句怎么验证。\n\n` +
+            `不限于前端/后端/接口契约这 3 类,可以是状态机/并发竞态/缓存/CSS 布局/权限/边界条件/数据格式等任何角度。\n` +
+            `**只输出假设清单,不要读代码、不要修改文件。**\n\n## 复现上下文\n` + bundlePrompt)
+          return { k: 'open_hypotheses', out, repo: '前端仓库(开放式)' }
+        } catch (e) { return { k: 'open_hypotheses', out: '(假设生成失败:' + e.message + ')', repo: '前端仓库' } }
+        finally { if (sid) { S.sessionInfo.delete(sid); S.streamBuf.delete(sid) } }
+      })()
+      dbgNote(cardWc, '🧭 同时启动开放式假设生成 lens(不局限于固定 3 分类)…', 'muted')
+      const heurFindings = await Promise.all(lenses.map(async (k) => {
         const useServe = (k === 'backend' && backendServe) ? backendServe : serve
         const repo = useServe === backendServe ? '后端仓库' : '前端仓库'
         let sid
         try {
           sid = await oc.createSession(useServe, '调查:' + k)
           S.sessionInfo.set(sid, { wc: cardWc, serve: useServe })   // 只读工具自动放行；权限回本卡
-          const out = await oc.sendMessage(useServe, sid, DBG_LENS[k] + `\n（你正在【${repo}】里，只能读到这个仓库的源码）\n\n## 复现上下文\n` + bundlePrompt + '\n\n只聚焦你这个假设，简洁给出证据（文件:行）与判断，不要修改任何文件。')
+          // 注入"共享便签":其它 lens 已经 confirmed/excluded 的假设,本 lens 不要重复查
+          const notesHint = `\n\n# 团队共享便签(其它 agent/lens 已登记的假设状态)\n` +
+            `请用 mcp 'BocomHermes-repro' 的 **read_notes{bundleId:"${bundleId || S.browser.lastBundleId || ''}"}** 工具先读现有便签 — excluded 的假设跳过,confirmed 的当前提条件用,maybe 的可作辅证。\n` +
+            `你**调查结束时**(无论假设成立与否),都要用 **bundle_note{bundleId, key:"${k}_${Date.now().toString(36).slice(-4)}", status, evidence}** 把你的结论登记进去,让后续 lens 节省 token、避免重复劳动。`
+          const out = await oc.sendMessage(useServe, sid, DBG_LENS[k] + `\n（你正在【${repo}】里，只能读到这个仓库的源码）\n\n## 复现上下文\n` + bundlePrompt + notesHint + '\n\n只聚焦你这个假设，简洁给出证据（文件:行）与判断，不要修改任何文件。')
           dbgNote(cardWc, `✓ 假设·${DBG_TAG[k]} 完成`, 'muted')
           return { k, out, repo }
         } catch (e) { dbgNote(cardWc, `✗ 假设·${DBG_TAG[k]} 失败：${e.message}`, 'muted'); return { k, out: '(调查失败：' + e.message + ')', repo } }
         finally { if (sid) { S.sessionInfo.delete(sid); S.streamBuf.delete(sid) } }
       }))
-      const merged = findings.map(f => `### 假设·${DBG_TAG[f.k] || f.k}（${f.repo}）\n${f.out}`).join('\n\n')
+      // 等启发式 + 开放式两路都跑完,合并
+      const dyn = await dynamicLens
+      const findings = [...heurFindings, dyn]
+      dbgNote(cardWc, `✓ 开放式假设 lens 完成`, 'muted')
+      const merged = findings.map(f => `### ${f.k === 'open_hypotheses' ? '开放式假设清单' : '假设·' + (DBG_TAG[f.k] || f.k)}（${f.repo}）\n${f.out}`).join('\n\n')
 
       // 后端修复：卡片会话在前端仓库改不到后端，所以由后端仓库 serve 上的 agent 判断并直接改后端源码（权限回本卡）
       if (backendServe) {
