@@ -18,6 +18,8 @@
     "mcp:browser:test": "node mcp/selftest.mjs",
     "mcp:httpcap": "node mcp/httpcap-mcp.mjs",
     "mcp:httpcap:test": "node mcp/httpcap-selftest.mjs",
+    "mcp:repro": "node mcp/repro-mcp.mjs",
+    "mcp:repro:test": "node mcp/repro-selftest.mjs",
     "mcp:config": "node mcp/print-config.mjs"
   },
   "devDependencies": {
