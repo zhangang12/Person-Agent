@@ -1090,7 +1090,8 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
       `      summary 1-3 句话说改了什么 + 为什么,edge_cases 列出没覆盖的边界(没有就空)。\n` +
       `      risk < 3 验证会标 SUSPICIOUS;不调验证也会标。\n` +
       `7. 让我点"验证" — 系统自动:① 回放时间线 ② 检查改过的 JS 是否被执行 ③ 核对你的断言 ④ 检查盲改 ⑤ 显示 self-review\n` +
-      `   → 5 维度判定 PASS / FAIL / SUSPICIOUS。FAIL 看报告调整,不要乱猜。`
+      `   → 5 维度判定 PASS / FAIL / SUSPICIOUS。FAIL 看报告调整,不要乱猜。\n` +
+      `8. 若 FAIL 且你判断方向错了,**先用 repro_rollback{cwd, dryRun:true}** 列出会被回滚的文件,确认后再用 dryRun:false 清掉本轮改动,从头分析;别在错的基础上叠改。`
     S.browser.lastBundleId = bundleId   // verify 用它读 mcp 'repro_assert' 写入的断言
     log('brAnalyze: bundle ' + bundleId + ' size=' + Buffer.byteLength(bundle) + 'B')
     const disp = `🔍 已复现并发送：${tab.url || '(空白页)'}\n（${errs.length} 条控制台报错 + ${bad.length} 条网络异常 + 页面 DOM 上下文）`
@@ -1926,6 +1927,7 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
     const stepReport = []
     let lastT = 0
     let storageRestored = false
+    let consecutiveFails = 0; let cascadeFrom = -1
     for (let i = 0; i < rec.events.length; i++) {
       const ev = rec.events[i]
       if (!storageRestored && ev.act === 'navigate' && rec.preState && (rec.preState.local !== '{}' || rec.preState.session !== '{}')) {
@@ -1939,6 +1941,15 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
       const r = await execStep(wc, ev, tab)
       stepReport.push({ i: i + 1, act: ev.act, sel: ev.sel || ev.url || '', ok: r.ok, err: r.err || '' })
       if (!r.ok && ev.act === 'navigate') break
+      // 级联失败检测:连续 3 个非 navigate 步失败 → 后续大概率都依赖前面失败步,提前 break 不无谓继续
+      if (!r.ok && ev.act !== 'navigate') {
+        consecutiveFails++
+        if (consecutiveFails >= 3) {
+          if (cascadeFrom < 0) cascadeFrom = i + 1 - (consecutiveFails - 1)   // 第一个连续 fail 步号
+          log('replay early-abort: ' + consecutiveFails + ' consecutive fails from step ' + cascadeFrom)
+          break
+        }
+      } else if (r.ok) consecutiveFails = 0
       // 等网络静默(取代固定 150ms);click/submit 后常触发 XHR,需要等它打完
       if (ev.act === 'click' || ev.act === 'submit' || ev.act === 'key') await waitNetIdle(tab, 300, 3000)
       else await sleep(120)
@@ -1951,7 +1962,7 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
     }
     const cov = covOn ? await stopCoverage(tab) : null
     const hitInfo = cov ? coverageHits(cov, changedFiles) : []
-    return { ok: true, stepReport, after, changedFiles, hitInfo, covOn }
+    return { ok: true, stepReport, after, changedFiles, hitInfo, covOn, cascadeFrom, totalSteps: rec.events.length }
   }
 
   // 报告:把 before/after diff 翻译成 PASS/FAIL 文字结论(无视觉依赖)
@@ -1964,6 +1975,10 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
     if (fails.length) {
       lines.push(`\n步骤失败 ${fails.length} 处(可能是修复后页面结构变了,部分元素找不到):`)
       for (const f of fails.slice(0, 10)) lines.push(`  · 步 ${f.i} ${f.act} "${String(f.sel).slice(0, 60)}" — ${f.err}`)
+      if (replay.cascadeFrom >= 0) {
+        const skipped = replay.totalSteps - replay.stepReport.length
+        lines.push(`  ⚠ 步 ${replay.cascadeFrom} 起连续 3 次失败 → 早停(后续 ${skipped} 步未执行),通常是早期失败破坏了页面流程,排查那个首失败点即可,后面级联多半假阳性`)
+      }
     } else lines.push('所有步骤执行成功 ✓')
     lines.push(`\n报错前后对比: 修复前 ${before.errs.length} → 修复后 ${after.errs.length}`)
     if (after.errs.length) {

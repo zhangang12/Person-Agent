@@ -33,7 +33,7 @@ try {
   notify('notifications/initialized')
 
   const list = await req('tools/list')
-  ok(list.result?.tools?.length === 9, '9 个工具(' + (list.result?.tools?.length || 0) + ')')
+  ok(list.result?.tools?.length === 10, '10 个工具(' + (list.result?.tools?.length || 0) + ')')
 
   const bs = await req('tools/call', { name: 'list_bundles', arguments: {} })
   ok(/b_test01/.test(bs.result?.content?.[0]?.text || ''), 'list_bundles 含 b_test01')
@@ -91,6 +91,20 @@ try {
   const revFp = path.join(tmp, 'reviews', 'b_test01.json')
   const rj = JSON.parse(fs.readFileSync(revFp, 'utf8'))
   ok(rj.risk === 4 && /空指针/.test(rj.summary) && rj.edge_cases === '负数未测', 'review JSON 字段完整')
+
+  // 回滚:在前面创建的临时 git repo 上,改一个文件 + 加一个新文件,再 dryRun + 真回滚
+  try {
+    fs.writeFileSync(path2.join(repo, 'a.js'), 'export function calcRate(x){return x*999}\n')
+    fs.writeFileSync(path2.join(repo, 'c.js'), 'untracked new file\n')
+    const dry = await req('tools/call', { name: 'repro_rollback', arguments: { cwd: repo, dryRun: true } })
+    const dt = dry.result?.content?.[0]?.text || ''
+    ok(/\[DRY RUN\]/.test(dt) && /a\.js/.test(dt) && /c\.js/.test(dt), '[DRY RUN] 列出 a.js (改) + c.js (未跟踪)')
+    const realCall = await req('tools/call', { name: 'repro_rollback', arguments: { cwd: repo } })
+    ok(/回滚完成/.test(realCall.result?.content?.[0]?.text || ''), 'rollback 真执行成功')
+    const aBack = fs.readFileSync(path2.join(repo, 'a.js'), 'utf8')
+    ok(/x\*0\.05/.test(aBack), 'a.js 已回到 HEAD 版本(0.05 而非 999)')
+    ok(!fs.existsSync(path2.join(repo, 'c.js')), 'c.js 未跟踪新文件已被删')
+  } catch (e) { fail++; console.log('  ✗ rollback 测试失败:', e.message) }
 } catch (e) { console.error('err:', e.message); fail++ }
 
 console.log(`\n小结: ${pass} 通过 / ${fail} 失败`)

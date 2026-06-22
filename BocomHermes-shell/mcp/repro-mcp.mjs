@@ -46,6 +46,7 @@ const TOOLS = [
   { name: 'repro_assertions', description: '列出某个复现包的所有断言(给主程序的验证流程读)', inputSchema: { type: 'object', properties: { bundleId: { type: 'string' } }, required: ['bundleId'] } },
   { name: 'scan_impact', description: '**改代码前必须先调用** — 查导出符号在项目里的所有引用,评估"改了它会影响哪些地方"。这一步同时被验证流程检查:如果改了某文件却没扫过对应符号,验证报告会标 SUSPICIOUS。底层用 git grep,所以必须传项目目录 cwd(repo 根)。返回引用清单 + 落盘到 userData/scans/<bundleId>.json 备查。', inputSchema: { type: 'object', properties: { bundleId: { type: 'string', description: '复现包 id(从证据包顶部拷过来)' }, symbol: { type: 'string', description: '要查引用的符号(函数名/常量名/类名等)' }, cwd: { type: 'string', description: '项目目录绝对路径(git grep 的工作目录)' } }, required: ['bundleId', 'symbol', 'cwd'] } },
   { name: 'repro_self_review', description: '**改完代码后必须调用** — 对你这次修复做 self-review:summary(改了什么)/risk 1-5(对修复正确性的信心,1=不确定,5=确信)/edge_cases(没覆盖的边界,可空)。验证报告会显示这条 review,信心低或缺少 review 会标 SUSPICIOUS。', inputSchema: { type: 'object', properties: { bundleId: { type: 'string' }, summary: { type: 'string', description: '1-3 句:你这次改了哪些文件、为什么这样改' }, risk: { type: 'number', description: '对修复正确性的自评信心 1-5(5=很有把握)' }, edge_cases: { type: 'string', description: '可空:本次修复没覆盖到的边界场景' } }, required: ['bundleId', 'summary', 'risk'] } },
+  { name: 'repro_rollback', description: '验证 FAIL 后,把本次 session 的改动回滚到 HEAD。默认回滚所有改动文件(git checkout + git clean 未跟踪);files 列表非空则只回滚那些。**慎用**:会丢失本次未提交的改动;但当你已确定本次修复方向错误时,这是干净重来的最快路径。', inputSchema: { type: 'object', properties: { cwd: { type: 'string', description: '仓库根目录绝对路径' }, files: { type: 'array', items: { type: 'string' }, description: '可选:仅回滚这些文件;省略=回滚所有改动' }, dryRun: { type: 'boolean', description: 'true 只列出会被回滚的文件,不真动手(强烈建议先 dryRun)' } }, required: ['cwd'] } },
 ]
 
 async function callTool(name, a) {
@@ -175,6 +176,37 @@ async function callTool(name, a) {
     const rev = { summary, risk, edge_cases: String(a.edge_cases || ''), ts: Date.now() }
     try { fs.writeFileSync(fp, JSON.stringify(rev, null, 2)) } catch (e) { return '写入失败: ' + e.message }
     return `✓ self-review 已记录 (risk=${risk}/5)。验证报告会展示这条 review,用户和验证流程据此判断你的修复信心。`
+  }
+  if (name === 'repro_rollback') {
+    const cwd = String(a.cwd || '').trim()
+    if (!cwd || !fs.existsSync(cwd)) return '需要 cwd(仓库根绝对路径)'
+    let tracked = [], untracked = []
+    try {
+      const tOut = execFileSync('git', ['diff', '--name-only', 'HEAD'], { cwd, encoding: 'utf8', timeout: 5000 })
+      const cOut = execFileSync('git', ['diff', '--cached', '--name-only', 'HEAD'], { cwd, encoding: 'utf8', timeout: 5000 })
+      tracked = [...new Set([...tOut.split('\n'), ...cOut.split('\n')].map((s) => s.trim()).filter(Boolean))]
+    } catch (e) { return 'git diff 失败:' + e.message }
+    try {
+      const u = execFileSync('git', ['ls-files', '--others', '--exclude-standard'], { cwd, encoding: 'utf8', timeout: 5000 })
+      untracked = u.split('\n').map((s) => s.trim()).filter(Boolean)
+    } catch {}
+    // files 白名单过滤
+    if (Array.isArray(a.files) && a.files.length) {
+      const set = new Set(a.files.map(String))
+      tracked = tracked.filter((f) => set.has(f))
+      untracked = untracked.filter((f) => set.has(f))
+    }
+    if (!tracked.length && !untracked.length) return '(没有可回滚的改动 — 工作区干净)'
+    const summary = `将回滚:\n  追踪文件(${tracked.length}):\n${tracked.map((f) => '    ' + f).join('\n') || '    (无)'}\n  未追踪新文件(${untracked.length}):\n${untracked.map((f) => '    ' + f).join('\n') || '    (无)'}`
+    if (a.dryRun) return '[DRY RUN] ' + summary + '\n\n再次调用,把 dryRun:false 或省略即可真正回滚。'
+    const errs = []
+    for (const f of tracked) {
+      try { execFileSync('git', ['checkout', 'HEAD', '--', f], { cwd, timeout: 3000 }) } catch (e) { errs.push(f + ': ' + (e.stderr ? e.stderr.toString() : e.message)) }
+    }
+    for (const f of untracked) {
+      try { fs.unlinkSync(path.join(cwd, f)) } catch (e) { errs.push(f + ': ' + e.message) }
+    }
+    return summary + '\n\n' + (errs.length ? '⚠ 部分失败:\n  ' + errs.join('\n  ') : '✓ 回滚完成')
   }
   throw new Error('未知工具:' + name)
 }
