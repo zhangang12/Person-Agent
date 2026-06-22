@@ -33,7 +33,7 @@ try {
   notify('notifications/initialized')
 
   const list = await req('tools/list')
-  ok(list.result?.tools?.length === 5, '5 个工具(' + (list.result?.tools?.length || 0) + ')')
+  ok(list.result?.tools?.length === 7, '7 个工具(' + (list.result?.tools?.length || 0) + ')')
 
   const bs = await req('tools/call', { name: 'list_bundles', arguments: {} })
   ok(/b_test01/.test(bs.result?.content?.[0]?.text || ''), 'list_bundles 含 b_test01')
@@ -51,6 +51,18 @@ try {
   const gw = await req('tools/call', { name: 'get_event_window', arguments: { bundleId: 'b_test01', step: 3, radius: 1 } })
   const wt = gw.result?.content?.[0]?.text || ''
   ok(/步 2.*click/.test(wt) && /步 3.*◀──.*input/.test(wt) && /步 4.*submit/.test(wt), 'get_event_window 取到 ±1 窗口含当前步标记')
+
+  // 断言读写
+  const ra = await req('tools/call', { name: 'repro_assert', arguments: { bundleId: 'b_test01', kind: 'no_element', value: '.error-banner', why: '修复后该元素应消失' } })
+  ok(/已为 b_test01 记入断言/.test(ra.result?.content?.[0]?.text || ''), 'repro_assert 写入成功')
+  const ra2 = await req('tools/call', { name: 'repro_assert', arguments: { bundleId: 'b_test01', kind: 'no_console', value: 'TypeError: rate' } })
+  ok(/记入断言 #2/.test(ra2.result?.content?.[0]?.text || ''), '第二条断言追加')
+  const rl = await req('tools/call', { name: 'repro_assertions', arguments: { bundleId: 'b_test01' } })
+  const rlt = rl.result?.content?.[0]?.text || ''
+  ok(/no_element.*error-banner/.test(rlt) && /no_console.*TypeError: rate/.test(rlt), 'repro_assertions 列出两条断言')
+  // 未知 kind 拒绝
+  const bad = await req('tools/call', { name: 'repro_assert', arguments: { bundleId: 'b_test01', kind: 'invalid', value: 'x' } })
+  ok(/未知 kind/.test(bad.result?.content?.[0]?.text || ''), 'invalid kind 被拒')
 } catch (e) { console.error('err:', e.message); fail++ }
 
 console.log(`\n小结: ${pass} 通过 / ${fail} 失败`)

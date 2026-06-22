@@ -19,6 +19,7 @@ function userData() {
 }
 const EVD = path.join(userData(), 'evidence')
 const REC = path.join(userData(), 'recordings')
+const ASS = path.join(userData(), 'assertions')
 
 // ref 形如 "ref#b_lz4kj/dom" → bundleId=b_lz4kj, name=dom
 function parseRef(s) {
@@ -38,6 +39,8 @@ const TOOLS = [
   { name: 'get_evidence', description: '按 ref 拉取证据全文(ref 形如 "ref#bundleId/name" 或简写 "bundleId/name")。常用于 dom / req-body / resp-body / err-stack', inputSchema: { type: 'object', properties: { ref: { type: 'string' }, head: { type: 'number', description: '只取前 N 字符,省略=全文' } }, required: ['ref'] } },
   { name: 'get_dom_subtree', description: '从一个复现包的完整 DOM 中,按 CSS 选择器抽某个子树的 outerHTML(优先用这个而非整页 dom)', inputSchema: { type: 'object', properties: { bundleId: { type: 'string' }, selector: { type: 'string' } }, required: ['bundleId', 'selector'] } },
   { name: 'get_event_window', description: '从录制时间线里取某一步前后 ±N 步的窗口,看用户在出问题前后做了什么。先 list_bundles 拿 recording ref。', inputSchema: { type: 'object', properties: { bundleId: { type: 'string' }, step: { type: 'number' }, radius: { type: 'number' } }, required: ['bundleId', 'step'] } },
+  { name: 'repro_assert', description: '改完代码后**必须调用**:声明这次修复"应该让什么消失/出现"。每条断言会在验证回放时单独检查。kind 选: no_console(无匹配报错) / no_element(元素消失) / has_element(元素出现) / no_net(无该 URL 请求 4xx/5xx)。why 简述断言理由。', inputSchema: { type: 'object', properties: { bundleId: { type: 'string', description: '复现包 id(从证据包顶部 === 复现包 b_xxx === 拷过来)' }, kind: { type: 'string', enum: ['no_console', 'no_element', 'has_element', 'no_net'] }, value: { type: 'string', description: 'no_console: 报错消息中应不再出现的子串;no_element/has_element: CSS 选择器;no_net: URL 子串' }, why: { type: 'string', description: '一句话:这条断言对应的修复意图' } }, required: ['bundleId', 'kind', 'value'] } },
+  { name: 'repro_assertions', description: '列出某个复现包的所有断言(给主程序的验证流程读)', inputSchema: { type: 'object', properties: { bundleId: { type: 'string' } }, required: ['bundleId'] } },
 ]
 
 async function callTool(name, a) {
@@ -100,6 +103,27 @@ async function callTool(name, a) {
       return `  步 ${idx}${mark}  t=${((e.t || 0) / 1000).toFixed(1)}s  ${e.act.padEnd(8)} ${e.sel || e.url || ''}${e.text ? ' "' + e.text + '"' : ''}${e.value ? ' = "' + e.value + '"' : ''}${e.key ? ' key:' + e.key : ''}`
     })
     return `录制 ${a.bundleId} 步 ${step + 1} 的 ±${rad} 步窗口(共 ${events.length} 步):\n` + lines.join('\n')
+  }
+  if (name === 'repro_assert') {
+    const bundleId = String(a.bundleId || '').trim()
+    const kind = String(a.kind || '').trim()
+    const value = String(a.value || '').trim()
+    if (!bundleId || !kind || !value) return '需要 bundleId + kind + value'
+    if (!['no_console', 'no_element', 'has_element', 'no_net'].includes(kind)) return '未知 kind:' + kind
+    try { fs.mkdirSync(ASS, { recursive: true }) } catch {}
+    const fp = path.join(ASS, bundleId + '.json')
+    let arr = []; try { arr = JSON.parse(fs.readFileSync(fp, 'utf8')) } catch {}
+    if (!Array.isArray(arr)) arr = []
+    arr.push({ kind, value, why: String(a.why || ''), ts: Date.now() })
+    try { fs.writeFileSync(fp, JSON.stringify(arr, null, 2)) } catch (e) { return '写入失败:' + e.message }
+    return `✓ 已为 ${bundleId} 记入断言 #${arr.length}: ${kind}="${value}"${a.why ? ' (' + a.why + ')' : ''}\n下次用户点"验证",回放结束后会自动检查这条。`
+  }
+  if (name === 'repro_assertions') {
+    const bundleId = String(a.bundleId || '').trim()
+    const fp = path.join(ASS, bundleId + '.json')
+    let arr = []; try { arr = JSON.parse(fs.readFileSync(fp, 'utf8')) } catch {}
+    if (!Array.isArray(arr) || !arr.length) return '(' + bundleId + ' 暂无断言)'
+    return arr.map((x, i) => `  #${i + 1}  ${x.kind}  "${x.value}"${x.why ? '  · ' + x.why : ''}`).join('\n')
   }
   throw new Error('未知工具:' + name)
 }

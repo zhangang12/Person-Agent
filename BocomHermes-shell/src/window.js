@@ -909,16 +909,18 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     } catch {}
     const domRef = fullHtml ? evdSave(bundleId, 'dom', fullHtml) : ''
 
-    // 控制台:只列 warn/error,完整堆栈落盘各一份;主文按 source-map 给"文件:行"
-    const errs = tab.console.filter((c) => c.level >= 2).slice(-15)
+    // 控制台:只列 warn/error,聚类后(同 stack 签名只列一次 + 计数)主文按 source-map 给"文件:行"
+    const errs = tab.console.filter((c) => c.level >= 2)
+    const groups = clusterErrs(errs).sort((a, b) => b.count - a.count).slice(0, 15)
     const errLines = []
-    for (let i = 0; i < errs.length; i++) {
-      const c = errs[i]; const tag = c.level === 3 ? '[E' : '[W'
+    for (let i = 0; i < groups.length; i++) {
+      const g = groups[i]; const c = g.sample; const tag = c.level === 3 ? '[E' : '[W'
       let loc = c.source ? String(c.source).split('/').pop() + (c.line ? ':' + c.line : '') : ''
       if (c.frames && c.frames.length) {
         for (const fr of c.frames.slice(0, 4)) { const r2 = await resolveFrame(fr.url, fr.line, fr.col); if (r2) { loc = r2 + (fr.fn ? ' (' + fr.fn + ')' : ''); break } }
       }
-      let line = `  ${tag}${i + 1}] ${c.message.split('\n')[0].slice(0, 220)}  @ ${loc || '?'}`
+      const repeat = g.count > 1 ? `  ×${g.count}` : ''
+      let line = `  ${tag}${i + 1}] ${c.message.split('\n')[0].slice(0, 220)}${repeat}  @ ${loc || '?'}`
       if (c.frames && c.frames.length > 1) {
         const stackRef = evdSave(bundleId, 'err' + (i + 1) + '-stack', JSON.stringify(c.frames, null, 2))
         line += `  · 完整堆栈 ${stackRef}`
@@ -986,9 +988,16 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
       `   5-10 行上下文再下手。引用 >5 处时,在回复里简要列出"已确认安全的引用方"+"特别注意的引用方"。\n` +
       `5. **直接用编辑工具改源码完成修复**(我会逐次确认每处写入),改完一两句话说明:\n` +
       `   - 改了哪些文件:行;\n` +
-      `   - 用一句话声明你这次修复"应该让什么消失/出现"(便于验证比对,例:"应让 \`TypeError: rate\` 不再出现")\n` +
-      `6. 改完后让我点"验证"按钮 — 系统会自动回放时间线 + 检查"agent 改过的函数在回放中是否真的执行了"\n` +
-      `   (若改的函数未被执行 = 多半改错了地方),出 PASS/FAIL 报告;若 FAIL 你看报告再调整`
+      `   - 用一句话声明你这次修复"应该让什么消失/出现"\n` +
+      `6. **改完后必须调用 mcp 'BocomHermes-repro' 的 repro_assert 工具,声明 1~4 条具体可验断言**\n` +
+      `   bundleId 就用证据包顶上的 "${bundleId}"。kind 可选:\n` +
+      `     · no_console:报错消息中应不再出现的子串(如 "TypeError: rate")\n` +
+      `     · no_element / has_element:元素 CSS 选择器(如 ".error-banner")\n` +
+      `     · no_net:URL 子串,该接口不应再 4xx/5xx(如 "/api/quota")\n` +
+      `   断言越具体,验证报告越硬;没有断言 = 验证只能做粗略数量对比。\n` +
+      `7. 让我点"验证"按钮 — 系统会:① 回放时间线 ② 检查改过的 JS 函数在回放中是否被执行 ③ 逐条核对你写的断言\n` +
+      `   → 出 PASS / FAIL / SUSPICIOUS 报告。FAIL 你看报告调整,不要乱猜。`
+    S.browser.lastBundleId = bundleId   // verify 用它读 mcp 'repro_assert' 写入的断言
     log('brAnalyze: bundle ' + bundleId + ' size=' + Buffer.byteLength(bundle) + 'B')
     const disp = `🔍 已复现并发送：${tab.url || '(空白页)'}\n（${errs.length} 条控制台报错 + ${bad.length} 条网络异常 + 页面 DOM 上下文）`
     const b = S.browser
@@ -1033,6 +1042,9 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
       dbgNote(cardWc, '🔁 验证修复:回放录制(' + rec.events.length + ' 步)…', 'info')
       const replay = await replayRec(rec)
       if (!replay.ok) { dbgNote(cardWc, '⚠ 回放失败:' + (replay.error || ''), 'info'); return }
+      // 读 agent 通过 repro_assert 写入的断言,在当前状态下逐条验证
+      const assertions = await checkAssertions(tab, loadAssertions(rec.bundleId || S.browser.lastBundleId))
+      replay.assertions = assertions
       const rep = diffReport(rec, replay)
       const hitSummary = replay.hitInfo && replay.hitInfo.length ? `;改动 ${replay.hitInfo.length} 文件,${replay.hitInfo.filter((h) => h.executed > 0).length} 个被执行` : ''
       const disp = `🔁 验证完成 · ${rep.pass ? '✅ PASS' : (/SUSPICIOUS/.test(rep.verdict) ? '⚠ SUSPICIOUS' : '❌ FAIL')}\n(回放 ${replay.stepReport.length}/${rec.events.length} 步;修复前 ${rec.snapshot.errs.length}/${rec.snapshot.bad.length} → 修复后 ${replay.after.errs.length}/${replay.after.bad.length}${hitSummary})`
@@ -1620,6 +1632,55 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
   // 只对前端常见可执行扩展报警(后端 java/py/sql 不会在浏览器里跑,缺命中是正常的)
   const JS_LIKE = /\.(?:js|jsx|ts|tsx|mjs|cjs|vue|svelte)$/i
 
+  // ── 断言驱动验证 ─────────────────────────────────────────────────────────
+  // Agent 改完代码用 mcp 'repro_assert' 写断言到 userData/assertions/<bundleId>.json
+  // 验证回放后,这里读出来逐条对照"修复后"状态打 ✓/✗
+  function loadAssertions(bundleId) {
+    if (!bundleId) return []
+    const fp = path.join(app.getPath('userData'), 'assertions', bundleId + '.json')
+    try { const a = JSON.parse(fs.readFileSync(fp, 'utf8')); return Array.isArray(a) ? a : [] } catch { return [] }
+  }
+  async function checkAssertions(tab, assertions) {
+    if (!assertions.length) return []
+    const wc = tab.view.webContents
+    const out = []
+    for (const a of assertions) {
+      let pass = false, detail = ''
+      try {
+        if (a.kind === 'no_console') {
+          const v = String(a.value)
+          const hit = tab.console.find((c) => c.level >= 2 && (c.message || '').includes(v))
+          pass = !hit; detail = hit ? '仍出现: ' + hit.message.split('\n')[0].slice(0, 120) : '✓ 未再出现'
+        } else if (a.kind === 'no_element') {
+          const r = await wc.executeJavaScript(`!document.querySelector(${JSON.stringify(a.value)})`, true)
+          pass = !!r; detail = pass ? '✓ 已消失' : '元素仍存在'
+        } else if (a.kind === 'has_element') {
+          const r = await wc.executeJavaScript(`!!document.querySelector(${JSON.stringify(a.value)})`, true)
+          pass = !!r; detail = pass ? '✓ 已出现' : '元素仍不存在'
+        } else if (a.kind === 'no_net') {
+          const v = String(a.value)
+          const hit = tab.net.find((n) => (n.url || '').includes(v) && (n.state === 'failed' || (n.status >= 400)))
+          pass = !hit; detail = hit ? '仍异常: ' + (hit.status || hit.state) + ' ' + hit.url : '✓ 该接口未再异常'
+        }
+      } catch (e) { detail = '检查时出错: ' + e.message }
+      out.push({ ...a, pass, detail })
+    }
+    return out
+  }
+
+  // ── 错误聚类: 按 stack 签名分组,降噪 ─────────────────────────────────────
+  function clusterErrs(errs) {
+    const groups = new Map()   // signature -> { count, sample, firstAt }
+    errs.forEach((c, idx) => {
+      const head = (c.message || '').split('\n')[0].slice(0, 140)
+      const f0 = c.frames && c.frames[0]
+      const sig = head + '|' + (f0 ? (f0.url || '') + ':' + f0.line : '')
+      const g = groups.get(sig)
+      if (g) { g.count++ } else groups.set(sig, { count: 1, sample: c, firstAt: idx + 1 })
+    })
+    return [...groups.values()]
+  }
+
   async function replayRec(rec) {
     const tab = brActive()
     if (!tab) return { ok: false, error: '没有活跃标签' }
@@ -1666,13 +1727,26 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
     } else lines.push('所有步骤执行成功 ✓')
     lines.push(`\n报错前后对比: 修复前 ${before.errs.length} → 修复后 ${after.errs.length}`)
     if (after.errs.length) {
-      lines.push('  修复后仍有:')
-      for (const e of after.errs.slice(0, 8)) lines.push(`    ${e.level === 3 ? '✗' : '⚠'} ${e.msg}`)
+      const grp = new Map()   // msg head → count
+      for (const e of after.errs) { const k = (e.msg || '').slice(0, 140); grp.set(k, (grp.get(k) || 0) + 1) }
+      lines.push('  修复后仍有(同消息已聚合):')
+      const sorted = [...grp.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)
+      for (const [msg, n] of sorted) lines.push(`    ✗ ${msg}${n > 1 ? '  ×' + n : ''}`)
     }
     lines.push(`网络异常前后对比: 修复前 ${before.bad.length} → 修复后 ${after.bad.length}`)
     if (after.bad.length) {
       lines.push('  修复后仍有:')
       for (const b of after.bad.slice(0, 8)) lines.push(`    ${b.status || b.state} ${b.url}`)
+    }
+    // 断言:agent 明确声明"应让什么消失/出现",这是 PASS 的硬证据(优先于数量对比)
+    let assertFail = 0
+    if (replay.assertions && replay.assertions.length) {
+      lines.push('\nAgent 声明的修复断言(逐条核对当前状态):')
+      for (const a of replay.assertions) {
+        const mark = a.pass ? '✓' : '✗'
+        if (!a.pass) assertFail++
+        lines.push(`  ${mark} [${a.kind}] "${a.value}"  — ${a.detail}${a.why ? '   · ' + a.why : ''}`)
+      }
     }
     // 命中证据:agent 改过的前端文件,回放期间有多少函数真被执行了
     let unhitJsCount = 0
@@ -1699,13 +1773,16 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
     const errsImproved = after.errs.length <= before.errs.length
     const badsImproved = after.bad.length <= before.bad.length
     const hitsOk = unhitJsCount === 0   // 若全是后端改动或无 JS 改动,自动 true
-    const pass = errsImproved && badsImproved && newErrs.length === 0 && newBads.length === 0 && fails.length === 0 && hitsOk
+    const assertOk = assertFail === 0
+    const pass = errsImproved && badsImproved && newErrs.length === 0 && newBads.length === 0 && fails.length === 0 && hitsOk && assertOk
     let verdict
-    if (pass) verdict = '✅ PASS — 复现路径全部走通,报错/网络异常未增加,所有 JS 改动均被执行 → 修复定位正确且有效'
+    if (!assertOk) verdict = `❌ FAIL — Agent 自己声明的 ${assertFail} 条断言未通过(见上面 ✗ 标的几条) → 修复未达成 agent 自己的预期`
     else if (newErrs.length || newBads.length) verdict = `❌ FAIL — 出现了修复前没有的新问题:${newErrs.length} 条新报错 / ${newBads.length} 条新网络异常 → 回归了`
     else if (!hitsOk) verdict = `⚠ SUSPICIOUS — 报错和网络看着好了,但 ${unhitJsCount} 个 JS 改动在回放期间根本没被执行 → 可能改错地方,问题"看似消失"可能是别的因素(缓存/异步)`
     else if (fails.length) verdict = '⚠ PARTIAL — 步骤执行有失败(可能页面结构变了),无法可靠判断;建议人工再看一眼'
     else if (!errsImproved || !badsImproved) verdict = '❌ FAIL — 数量变多了 → 没修好或引入了新问题'
+    else if (pass && replay.assertions && replay.assertions.length) verdict = `✅ PASS — Agent ${replay.assertions.length} 条断言全部满足 + JS 改动均被执行 + 报错/网络未恶化 → 修复有硬证据`
+    else if (pass) verdict = '✅ PASS — 复现路径全部走通,报错/网络异常未增加,所有 JS 改动均被执行 → 修复定位正确且有效'
     else verdict = '✅ PASS'
     return { pass, verdict, text: verdict + '\n\n' + lines.join('\n') }
   }
