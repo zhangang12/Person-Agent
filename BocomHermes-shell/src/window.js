@@ -891,6 +891,86 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     return lines.join('\n')
   }
 
+  // 统一"异常网络快照":4xx/5xx/failed + 200 业务异常,async 因为要 fetch body
+  async function snapshotBad(tab) {
+    const failed = tab.net.filter((r) => r.state === 'failed' || (r.status && r.status >= 400))
+    const xhr200 = tab.net.filter((r) => r.status === 200 && /xhr|fetch|XHR|Fetch/.test(r.type || ''))
+    const biz = []
+    for (const r of xhr200.slice(-30)) {
+      if (r._biz) { biz.push(r); continue }   // 已检测过(compactRepro 跑过)
+      if (r._bizChecked) continue
+      r._bizChecked = true
+      try { const d = await brNetBody(r.id); if (d && d.body && !d.base64) { const det = detectBizError(d.body, d.mime); if (det && det.hit) { r._biz = det; biz.push(r) } } } catch {}
+    }
+    return [...failed, ...biz].map((r) => ({ url: r.url, status: r.status || 0, state: r.state || '', biz: r._biz ? r._biz.hint : '' }))
+  }
+
+  // 200 业务异常检测:信贷/银行类后端常用"HTTP 200 + body 里 code != 0 / success: false"模式。
+  // 不做这层探测,bundle 看不见这些"看似成功实则失败"的请求。返回 {hit, hint} 或 null。
+  function detectBizError(body, mime) {
+    if (!body) return null
+    const s = String(body).slice(0, 4000).trim()
+    // 优先 JSON 路径
+    let j = null
+    if (/^[{\[]/.test(s) && (!mime || /json/i.test(mime))) {
+      try { j = JSON.parse(s) } catch {}
+    }
+    if (j && typeof j === 'object') {
+      // 各家常见字段:code/respCode/retCode/errCode/status/ret
+      const codeFields = ['code', 'respCode', 'retCode', 'errCode', 'errcode', 'ret', 'retcode', 'rspCode']
+      for (const k of codeFields) {
+        if (k in j) {
+          const v = j[k]
+          // 0 / '0' / '00' / '00000' / 'success' / 'SUCCESS' = 成功;其它视为异常
+          const ok = v === 0 || v === '0' || /^0+$/.test(String(v)) || /^(success|ok|true)$/i.test(String(v))
+          if (!ok) { return { hit: true, hint: `${k}=${JSON.stringify(v)}` + (j.message || j.msg || j.errMsg || j.errorMsg ? ' · ' + String(j.message || j.msg || j.errMsg || j.errorMsg).slice(0, 100) : '') } }
+        }
+      }
+      // success/status: false / 'fail' / 'error'
+      if (j.success === false) return { hit: true, hint: 'success=false' + (j.error || j.message || j.msg ? ' · ' + String(j.error || j.message || j.msg).slice(0, 100) : '') }
+      if (typeof j.status === 'string' && /^(error|fail(ed)?|exception)$/i.test(j.status)) return { hit: true, hint: 'status=' + j.status + (j.message || j.msg ? ' · ' + String(j.message || j.msg).slice(0, 100) : '') }
+      // 只有 error/exception 字段且非空
+      if ((j.error && typeof j.error === 'string' && j.error) || (j.exception && j.exception)) return { hit: true, hint: 'error=' + String(j.error || j.exception).slice(0, 120) }
+    }
+    // 退化:body 里出现 "异常"/"错误"/"Exception"/"errMsg" 等关键字(只针对 xhr/fetch 类)
+    if (/("|^)(errMsg|errorMessage|exception)("|$)/i.test(s) || /(系统异常|业务异常|失败|错误信息)/.test(s)) {
+      return { hit: true, hint: '响应体含错误关键字' }
+    }
+    return null
+  }
+
+  // 因果链:把录制时间线的 click/submit/key 与"事后 2s 内"的网络/业务异常 + 控制台报错配对,
+  // 让 agent 直接看出"哪个操作 → 触发了哪个接口出错 → 引发了哪个报错"。Agent 自己拼时间线很容易猜歪。
+  function causalChains(events, recStartTs, tab) {
+    if (!events || !recStartTs) return []
+    const userActs = events.filter((e) => e.act === 'click' || e.act === 'submit' || e.act === 'key')
+    if (!userActs.length) return []
+    const chains = []
+    for (const e of userActs.slice(-6)) {
+      const absT = recStartTs + (e.t || 0)   // 该 user action 的墙钟时间
+      // 找此后 2s 内的第一个 4xx/5xx/failed 或 200 业务异常
+      const net = tab.net.find((r) => {
+        if (!r.t0) return false
+        const tMs = r.t0 * 1000   // CDP timestamp 是秒
+        if (tMs < absT || tMs > absT + 2000) return false
+        return r.state === 'failed' || (r.status && r.status >= 400) || (r.status === 200 && r._biz && r._biz.hit)
+      })
+      // 找此后 4s 内的第一个 console.error(level=3)
+      const err = tab.console.find((c) => {
+        if (!c.ts) return false
+        if (c.ts < absT || c.ts > absT + 4000) return false
+        return c.level === 3
+      })
+      if (net || err) {
+        const a = `t=${((e.t || 0) / 1000).toFixed(1)}s ${e.act} ${(e.sel || '').slice(0, 40)}${e.text ? ' "' + e.text.slice(0, 20) + '"' : ''}`
+        const n = net ? ` → ${net._biz ? '200·业务异常 ' + net._biz.hint : (net.status || net.state) + ' ' + (net.method || '') + ' ' + (net.url || '')}` : ''
+        const r = err ? ` → ✗ ${(err.message || '').split('\n')[0].slice(0, 100)}` : ''
+        chains.push('  · ' + a + n + r)
+      }
+    }
+    return chains
+  }
+
   // 把"现在的现场"压成一份 <5KB 摘要 + 引用大块的 refs
   async function compactRepro(tab) {
     const bundleId = 'b_' + Date.now().toString(36)
@@ -928,13 +1008,22 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       errLines.push(line)
     }
 
-    // 网络异常:列 method+status+URL,长 body 落盘
-    const bad = tab.net.filter((r) => r.state === 'failed' || (r.status && r.status >= 400)).slice(-8)
+    // 网络异常:4xx/5xx/failed + **200 但 body 里业务异常**(信贷/银行后端常用)
+    const isXhrLike = (r) => /xhr|fetch|XHR|Fetch/.test(r.type || '')
+    const networkBad = tab.net.filter((r) => r.state === 'failed' || (r.status && r.status >= 400))
+    // 200 业务异常候选:只看 xhr/fetch,避免拉静态资源 body
+    const biz200Cand = tab.net.filter((r) => r.status === 200 && isXhrLike(r))
+    const biz200 = []
+    for (const r of biz200Cand.slice(-20)) {
+      try { const d = await brNetBody(r.id); if (d && d.body && !d.base64) { const det = detectBizError(d.body, d.mime); if (det && det.hit) { r._biz = det; r._body = d.body; biz200.push(r) } } } catch {}
+    }
+    // 合并 + 截 -8(最新优先)
+    const bad = [...networkBad.slice(-8), ...biz200.slice(-8)].slice(-12)
     const netLines = []
     for (let i = 0; i < bad.length; i++) {
-      const r = bad[i]; let body = '', isBin = false
-      try { const d = await brNetBody(r.id); if (d) { body = String(d.body || ''); isBin = !!d.base64 } } catch {}
-      const st = r.state === 'failed' ? ('失败 ' + (r.failText || '')) : (r.status + ' ' + (r.statusText || ''))
+      const r = bad[i]; let body = r._body || '', isBin = false
+      if (!body) { try { const d = await brNetBody(r.id); if (d) { body = String(d.body || ''); isBin = !!d.base64 } } catch {} }
+      const st = r._biz ? ('200·业务异常 ' + r._biz.hint) : (r.state === 'failed' ? ('失败 ' + (r.failText || '')) : (r.status + ' ' + (r.statusText || '')))
       let line = `  [N${i + 1}] ${r.method} ${st}  ${r.url}`
       if (r.postData) {
         const pd = String(r.postData)
@@ -961,12 +1050,15 @@ URL: ${tab.url || '(空白页)'}
 ${exp ? '\n📝 用户期望(请优先围绕这个目标修): ' + exp + '\n' : '\n⚠ 用户未声明期望 — 你只能凭报错/异常推测,推测前请向用户确认目标\n'}${dom.desc ? '页面描述: ' + dom.desc + '\n' : ''}DOM 摘要(可见文本前 800 字): ${dom.visText || '(空)'}${domRef ? '\n完整 DOM: ' + domRef : ''}
 
 时间线 (${rec ? rec.events.length : 0} 步):
-${tl}${recRef ? '\n录制完整 JSON: ' + recRef : ''}
+${tl}${recRef ? '\n录制完整 JSON: ' + recRef : ''}${rec && rec.startedAt ? (() => {
+  const chains = causalChains(rec.events, rec.startedAt, tab)
+  return chains.length ? '\n\n因果链(操作→网络/业务异常→报错,2-4s 时窗自动配对,**优先看这段**):\n' + chains.join('\n') : ''
+})() : ''}
 
 控制台 warn/error (${errs.length} 条):
 ${errLines.length ? errLines.join('\n') : '  (无)'}
 
-网络异常 4xx/5xx/failed (${bad.length} 条):
+网络/业务异常 (${bad.length} 条;含 4xx/5xx/failed + **HTTP 200 但 body 业务异常**,后者内网信贷常见):
 ${netLines.length ? netLines.join('\n') : '  (无)'}
 
 (大 payload 已落盘 userData/evidence/${bundleId}/;agent 可用 mcp 'tianshu-repro' 的 get_evidence 工具按需拉:传入 'ref#${bundleId}/<name>')`
@@ -980,7 +1072,8 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
       `我正在用内嵌浏览器复现一个问题，请你作为资深全栈工程师帮我定位根因并给出修复方案。\n\n` +
       bundle + '\n\n' +
       `请按以下步骤帮我修复：\n` +
-      `1. 看时间线还原"用户做了什么导致问题",再结合控制台/网络异常定位最可能的根因(优先看 source-map 还原的"文件:行")\n` +
+      `1. 看时间线还原"用户做了什么导致问题",再结合控制台/网络/业务异常定位根因(优先看 source-map 还原的"文件:行")\n` +
+      `   ⚠ 内网信贷接口常**返回 200 但 body 里 code != 0** — bundle 里"200·业务异常"标的就是这类,务必当成失败处理\n` +
       `2. 大块证据(完整 DOM / 长 req body)按需用 mcp 'tianshu-repro' 的 get_evidence/get_dom_subtree/get_event_window 工具拉详情;别一次性把它们塞回回复\n` +
       `3. 用编辑工具读相关源码,确认根因所在的具体文件与行\n` +
       `4. **改文件前先查影响半径(必做 — 验证会检查)**:对每个将要修改的导出符号(函数/常量/类/组件),\n` +
@@ -1492,6 +1585,18 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
     if (!window.__bocom_rec_on) return;
     var c = selBuild(e.target); emit({ act:'submit', sel:c[0], selAlt:c.slice(1) });
   }, true);
+  // SPA 路由变化:hook history.pushState/replaceState + popstate(Vue/React 用 history mode 必走这条)
+  function urlNow(){ return location.pathname + location.search + location.hash; }
+  var lastUrl = urlNow();
+  var emitNavIfChanged = function(){
+    var u = urlNow();
+    if (u !== lastUrl) { lastUrl = u; emit({ act:'navigate', url: location.href, spa: true }); }
+  };
+  var _ps = history.pushState, _rs = history.replaceState;
+  history.pushState = function(){ var r = _ps.apply(this, arguments); try { window.__bocom_rec_on && emitNavIfChanged(); } catch(_){} return r; };
+  history.replaceState = function(){ var r = _rs.apply(this, arguments); try { window.__bocom_rec_on && emitNavIfChanged(); } catch(_){} return r; };
+  window.addEventListener('popstate', function(){ if (window.__bocom_rec_on) emitNavIfChanged(); });
+  window.addEventListener('hashchange', function(){ if (window.__bocom_rec_on) emitNavIfChanged(); });
   var scrollTmr = null;
   document.addEventListener('scroll', function(){
     if (!window.__bocom_rec_on) return;
@@ -1511,7 +1616,20 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
     const tab = brActive()
     if (!tab) return { ok: false, error: '没有活跃标签' }
     const wc = tab.view.webContents
-    S.browser.rec = { active: true, tabId: tab.id, startedAt: Date.now(), startUrl: wc.getURL(), events: [] }
+    // 前置状态快照:cookies + localStorage + sessionStorage,回放前恢复才能在内网保持登录态
+    let preState = { cookies: [], local: '{}', session: '{}', origin: '' }
+    try {
+      const url = wc.getURL()
+      const u = new URL(url)
+      preState.origin = u.origin
+      preState.cookies = await session.defaultSession.cookies.get({ url })
+      const s = await wc.executeJavaScript(`(()=>{try{var l={};for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);l[k]=localStorage.getItem(k)}var s={};for(var j=0;j<sessionStorage.length;j++){var k2=sessionStorage.key(j);s[k2]=sessionStorage.getItem(k2)}return JSON.stringify({l:l,s:s})}catch(e){return JSON.stringify({l:{},s:{}})}})()`, true)
+      const ps = JSON.parse(s || '{"l":{},"s":{}}')
+      preState.local = JSON.stringify(ps.l || {})
+      preState.session = JSON.stringify(ps.s || {})
+      log('rec preState: ' + preState.cookies.length + ' cookies, localStorage ' + Object.keys(ps.l || {}).length + ' keys')
+    } catch (e) { log('preState dump err: ' + e.message) }
+    S.browser.rec = { active: true, tabId: tab.id, startedAt: Date.now(), startUrl: wc.getURL(), preState, events: [] }
     S.browser.rec.events.push({ t: 0, act: 'navigate', url: wc.getURL() })
     await injectRecorder(wc)
     // 录制中导航 → 新页面要再注入(__bocom_rec_init 防重,__bocom_rec_on 重置)
@@ -1534,16 +1652,16 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
     // 把页面里的 flag 关掉(监听仍在,只是不再 emit)
     const tab = (S.browser.tabs || []).find((t) => t.id === r.tabId)
     if (tab) { try { await tab.view.webContents.executeJavaScript(';window.__bocom_rec_on=false;', true) } catch {} }
-    // 录制结束 = 复现成功瞬间 → 抓快照(报错/网络异常摘要 + 关键 DOM 选择器),供 Phase C 验证时 diff
+    // 录制结束 = 复现成功瞬间 → 抓快照(报错 + 网络异常【含 200 业务异常】),供 Phase C 验证时 diff
     const snapshot = tab ? {
       errs: tab.console.filter((c) => c.level >= 2).map((c) => ({ level: c.level, msg: (c.message || '').split('\n')[0].slice(0, 200) })),
-      bad: tab.net.filter((n) => n.state === 'failed' || (n.status && n.status >= 400)).map((n) => ({ url: n.url, status: n.status || 0, state: n.state || '' })),
+      bad: await snapshotBad(tab),
       url: tab.url || '',
     } : { errs: [], bad: [], url: '' }
     const id = 'rec_' + Date.now().toString(36)
     const dir = path.join(app.getPath('userData'), 'recordings')
     try { fs.mkdirSync(dir, { recursive: true }) } catch {}
-    const rec = { id, tabId: r.tabId, startedAt: r.startedAt, startUrl: r.startUrl, durationMs: Date.now() - r.startedAt, events: r.events, snapshot }
+    const rec = { id, tabId: r.tabId, startedAt: r.startedAt, startUrl: r.startUrl, durationMs: Date.now() - r.startedAt, events: r.events, snapshot, preState: r.preState || null }
     try { fs.writeFileSync(path.join(dir, id + '.json'), JSON.stringify(rec, null, 2)) } catch (e) { log('rec save err: ' + e.message) }
     S.browser.lastRec = rec
     log('rec stop: ' + id + ' · ' + r.events.length + ' events · pre-fix snapshot: ' + snapshot.errs.length + ' errs / ' + snapshot.bad.length + ' bad')
@@ -1606,9 +1724,27 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
   async function execStep(wc, ev, tab) {
     if (ev.act === 'navigate') {
       const cur = wc.getURL()
-      if (cur === ev.url) return { ok: true }
+      if (cur === ev.url && !ev._needRestore && !ev._restorePreState) return { ok: true }
+      // SPA 路由变化:用 history.pushState + popstate,避免整页 reload 清空 SPA 状态
+      if (ev.spa && !ev._restorePreState) {
+        try {
+          await wc.executeJavaScript(`(()=>{try{history.pushState({},'',${JSON.stringify(ev.url)});window.dispatchEvent(new PopStateEvent('popstate'))}catch(e){}})()`, true)
+          return { ok: true }
+        } catch (e) { return { ok: false, err: e.message } }
+      }
       try { wc.loadURL(ev.url) } catch (e) { return { ok: false, err: e.message } }
       await new Promise((res) => { const t = setTimeout(res, 12000); wc.once('did-stop-loading', () => { clearTimeout(t); res() }) })
+      // 首次 navigate 后,把 localStorage/sessionStorage 恢复 + reload(让页面在正确状态下重新初始化)
+      if (ev._restorePreState) {
+        try {
+          const ls = ev._restorePreState.local || '{}'
+          const ss = ev._restorePreState.session || '{}'
+          await wc.executeJavaScript(`(()=>{try{var l=JSON.parse(${JSON.stringify(ls)});Object.keys(l).forEach(k=>localStorage.setItem(k,l[k]));var s=JSON.parse(${JSON.stringify(ss)});Object.keys(s).forEach(k=>sessionStorage.setItem(k,s[k]));}catch(e){}})()`, true)
+          // reload 让 SPA 在恢复后的 storage 状态下重新跑入口逻辑
+          try { wc.reload() } catch {}
+          await new Promise((res) => { const t = setTimeout(res, 12000); wc.once('did-stop-loading', () => { clearTimeout(t); res() }) })
+        } catch (e) { log('storage restore err: ' + e.message) }
+      }
       return { ok: true }
     }
     const elExpr = findElExpr(ev.sel, ev.selAlt)
@@ -1744,8 +1880,9 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
           pass = !!r; detail = pass ? '✓ 已出现' : '元素仍不存在'
         } else if (a.kind === 'no_net') {
           const v = String(a.value)
-          const hit = tab.net.find((n) => (n.url || '').includes(v) && (n.state === 'failed' || (n.status >= 400)))
-          pass = !hit; detail = hit ? '仍异常: ' + (hit.status || hit.state) + ' ' + hit.url : '✓ 该接口未再异常'
+          // 既看真 4xx/5xx/failed,也看 200 业务异常
+          const hit = tab.net.find((n) => (n.url || '').includes(v) && (n.state === 'failed' || (n.status >= 400) || (n.status === 200 && n._biz && n._biz.hit)))
+          pass = !hit; detail = hit ? '仍异常: ' + (hit._biz ? '200·业务异常 ' + hit._biz.hint : (hit.status || hit.state)) + ' ' + hit.url : '✓ 该接口未再异常'
         }
       } catch (e) { detail = '检查时出错: ' + e.message }
       out.push({ ...a, pass, detail })
@@ -1770,6 +1907,16 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
     const tab = brActive()
     if (!tab) return { ok: false, error: '没有活跃标签' }
     const wc = tab.view.webContents
+    // 前置状态 restore:cookies 在 navigate 前装(请求时随发),localStorage/sessionStorage 在 load 后装 + 必要时 reload
+    if (rec.preState) {
+      try {
+        for (const c of (rec.preState.cookies || [])) {
+          const url = rec.startUrl
+          try { await session.defaultSession.cookies.set({ url, name: c.name, value: c.value, domain: c.domain, path: c.path, secure: c.secure, httpOnly: c.httpOnly, expirationDate: c.expirationDate, sameSite: c.sameSite }) } catch {}
+        }
+        log('replay restored ' + (rec.preState.cookies || []).length + ' cookies')
+      } catch (e) { log('cookies restore err: ' + e.message) }
+    }
     // 抓"修复后"状态:清空之前的报错/网络,重头开始
     tab.console = []; tab.errN = 0; tab.warnN = 0
     tab.net = []; tab.netById = new Map()
@@ -1778,8 +1925,12 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
     const covOn = await startCoverage(tab)
     const stepReport = []
     let lastT = 0
+    let storageRestored = false
     for (let i = 0; i < rec.events.length; i++) {
       const ev = rec.events[i]
+      if (!storageRestored && ev.act === 'navigate' && rec.preState && (rec.preState.local !== '{}' || rec.preState.session !== '{}')) {
+        ev._restorePreState = rec.preState; storageRestored = true
+      }
       const gap = Math.min(Math.max(0, (ev.t || 0) - lastT), 2000)   // 步间最长 sleep 2s
       if (gap > 50) await sleep(gap)
       lastT = ev.t || 0
@@ -1795,7 +1946,7 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
     await sleep(1800)    // 播完再等异步报错/请求浮现
     const after = {
       errs: tab.console.filter((c) => c.level >= 2).map((c) => ({ level: c.level, msg: (c.message || '').split('\n')[0].slice(0, 200) })),
-      bad: tab.net.filter((n) => n.state === 'failed' || (n.status && n.status >= 400)).map((n) => ({ url: n.url, status: n.status || 0, state: n.state || '' })),
+      bad: await snapshotBad(tab),   // 含 200 业务异常
       url: tab.url || '',
     }
     const cov = covOn ? await stopCoverage(tab) : null
@@ -1822,10 +1973,10 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
       const sorted = [...grp.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)
       for (const [msg, n] of sorted) lines.push(`    ✗ ${msg}${n > 1 ? '  ×' + n : ''}`)
     }
-    lines.push(`网络异常前后对比: 修复前 ${before.bad.length} → 修复后 ${after.bad.length}`)
+    lines.push(`网络/业务异常前后对比: 修复前 ${before.bad.length} → 修复后 ${after.bad.length}`)
     if (after.bad.length) {
       lines.push('  修复后仍有:')
-      for (const b of after.bad.slice(0, 8)) lines.push(`    ${b.status || b.state} ${b.url}`)
+      for (const b of after.bad.slice(0, 8)) lines.push(`    ${b.biz ? '200·业务异常 ' + b.biz : (b.status || b.state)}  ${b.url}`)
     }
     // 断言:agent 明确声明"应让什么消失/出现",这是 PASS 的硬证据(优先于数量对比)
     let assertFail = 0
@@ -1856,9 +2007,9 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
     }
     // 判定:报错与网络异常都不多于(且无新增) + 步骤全过 + 改动都被命中(若有 JS 改动) → PASS
     const beforeErrMsgs = new Set(before.errs.map((e) => e.msg))
-    const beforeBadUrls = new Set(before.bad.map((b) => b.url + '|' + b.status))
+    const beforeBadUrls = new Set(before.bad.map((b) => b.url + '|' + (b.status || '') + '|' + (b.biz || '')))
     const newErrs = after.errs.filter((e) => !beforeErrMsgs.has(e.msg))
-    const newBads = after.bad.filter((b) => !beforeBadUrls.has(b.url + '|' + b.status))
+    const newBads = after.bad.filter((b) => !beforeBadUrls.has(b.url + '|' + (b.status || '') + '|' + (b.biz || '')))
     const errsImproved = after.errs.length <= before.errs.length
     const badsImproved = after.bad.length <= before.bad.length
     // 影响半径检查:agent 改了文件却没事先 scan_impact 扫过 = 盲改 → SUSPICIOUS
