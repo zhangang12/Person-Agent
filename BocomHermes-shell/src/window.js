@@ -980,8 +980,15 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
       `1. 看时间线还原"用户做了什么导致问题",再结合控制台/网络异常定位最可能的根因(优先看 source-map 还原的"文件:行")\n` +
       `2. 大块证据(完整 DOM / 长 req body)按需用 mcp 'tianshu-repro' 的 get_evidence/get_dom_subtree/get_event_window 工具拉详情;别一次性把它们塞回回复\n` +
       `3. 用编辑工具读相关源码,确认根因所在的具体文件与行\n` +
-      `4. **直接用编辑工具改源码完成修复**(我会逐次确认每处写入),改完一两句话说明改了哪些文件、为什么\n` +
-      `5. 改完后让我点"验证"按钮 — 系统会自动回放上面的时间线,出 PASS/FAIL 报告;若 FAIL 你看报告再调整`
+      `4. **改动前先查"影响半径"**(防止改坏其他功能):对你将要修改的导出符号(函数/常量/类/组件),\n` +
+      `   用 mcp 'BocomHermes-git' 的 git_grep 工具搜该符号在项目里的所有引用,\n` +
+      `   逐条评估:这些引用方是否都仍按你的修复方向工作?若有任何一处不确定,先读那个引用方旁边\n` +
+      `   5-10 行上下文再下手。引用 >5 处时,在回复里简要列出"已确认安全的引用方"+"特别注意的引用方"。\n` +
+      `5. **直接用编辑工具改源码完成修复**(我会逐次确认每处写入),改完一两句话说明:\n` +
+      `   - 改了哪些文件:行;\n` +
+      `   - 用一句话声明你这次修复"应该让什么消失/出现"(便于验证比对,例:"应让 \`TypeError: rate\` 不再出现")\n` +
+      `6. 改完后让我点"验证"按钮 — 系统会自动回放时间线 + 检查"agent 改过的函数在回放中是否真的执行了"\n` +
+      `   (若改的函数未被执行 = 多半改错了地方),出 PASS/FAIL 报告;若 FAIL 你看报告再调整`
     log('brAnalyze: bundle ' + bundleId + ' size=' + Buffer.byteLength(bundle) + 'B')
     const disp = `🔍 已复现并发送：${tab.url || '(空白页)'}\n（${errs.length} 条控制台报错 + ${bad.length} 条网络异常 + 页面 DOM 上下文）`
     const b = S.browser
@@ -1027,7 +1034,8 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
       const replay = await replayRec(rec)
       if (!replay.ok) { dbgNote(cardWc, '⚠ 回放失败:' + (replay.error || ''), 'info'); return }
       const rep = diffReport(rec, replay)
-      const disp = `🔁 验证完成 · ${rep.pass ? '✅ PASS' : '❌ FAIL'}\n(回放 ${replay.stepReport.length}/${rec.events.length} 步;修复前 ${rec.snapshot.errs.length}/${rec.snapshot.bad.length} → 修复后 ${replay.after.errs.length}/${replay.after.bad.length})`
+      const hitSummary = replay.hitInfo && replay.hitInfo.length ? `;改动 ${replay.hitInfo.length} 文件,${replay.hitInfo.filter((h) => h.executed > 0).length} 个被执行` : ''
+      const disp = `🔁 验证完成 · ${rep.pass ? '✅ PASS' : (/SUSPICIOUS/.test(rep.verdict) ? '⚠ SUSPICIOUS' : '❌ FAIL')}\n(回放 ${replay.stepReport.length}/${rec.events.length} 步;修复前 ${rec.snapshot.errs.length}/${rec.snapshot.bad.length} → 修复后 ${replay.after.errs.length}/${replay.after.bad.length}${hitSummary})`
       const prompt =
         `我刚才录制了复现路径,你改完代码后我点了验证 → 系统自动回放并对比"修复前/后"的报错和网络异常。\n\n` +
         '## 回放验证报告\n' + rep.text + '\n\n' +
@@ -1562,6 +1570,56 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
     return { ok: true }
   }
 
+  // ── 命中证据 ─────────────────────────────────────────────────────────────
+  // 用 V8 PreciseCoverage 看 "agent 改过的文件里有多少函数在回放期间真被执行了"。
+  // 若改的函数没被命中,大概率是改错地方(或该复现路径不覆盖此改动)→ 验证报告里报警。
+  const { execSync } = require('child_process')
+  function gitChangedFiles(dir) {
+    if (!dir) return []
+    const out = new Set()
+    for (const cmd of ['git diff --name-only HEAD', 'git diff --cached --name-only HEAD', 'git ls-files --others --exclude-standard']) {
+      try { execSync(cmd, { cwd: dir, encoding: 'utf8', timeout: 3000 }).split('\n').forEach((l) => { l = l.trim(); if (l) out.add(l) }) } catch {}
+    }
+    return [...out]
+  }
+  async function startCoverage(tab) {
+    if (!tab.dbg) return false
+    try {
+      await tab.view.webContents.debugger.sendCommand('Profiler.enable')
+      await tab.view.webContents.debugger.sendCommand('Profiler.startPreciseCoverage', { callCount: true, detailed: false })
+      return true
+    } catch (e) { log('coverage start fail: ' + e.message); return false }
+  }
+  async function stopCoverage(tab) {
+    try {
+      const r = await tab.view.webContents.debugger.sendCommand('Profiler.takePreciseCoverage')
+      try { await tab.view.webContents.debugger.sendCommand('Profiler.stopPreciseCoverage') } catch {}
+      return r.result || []
+    } catch (e) { log('coverage take fail: ' + e.message); return null }
+  }
+  // 按文件 basename 匹配 coverage URL,统计每个 changed file 的执行函数数
+  function coverageHits(cov, changedFiles) {
+    const baseToFile = new Map()
+    for (const f of changedFiles) {
+      const b = f.split(/[\\/]/).pop()
+      if (b) baseToFile.set(b, f)
+    }
+    const hits = new Map()
+    for (const entry of cov || []) {
+      const url = entry.url || ''
+      const ub = url.split('?')[0].split('#')[0].split('/').pop()
+      const cf = baseToFile.get(ub); if (!cf) continue
+      let executed = 0
+      for (const fn of entry.functions || []) {
+        if (fn.ranges && fn.ranges[0] && fn.ranges[0].count > 0) executed++
+      }
+      hits.set(cf, (hits.get(cf) || 0) + executed)
+    }
+    return changedFiles.map((f) => ({ file: f, executed: hits.get(f) || 0 }))
+  }
+  // 只对前端常见可执行扩展报警(后端 java/py/sql 不会在浏览器里跑,缺命中是正常的)
+  const JS_LIKE = /\.(?:js|jsx|ts|tsx|mjs|cjs|vue|svelte)$/i
+
   async function replayRec(rec) {
     const tab = brActive()
     if (!tab) return { ok: false, error: '没有活跃标签' }
@@ -1569,6 +1627,9 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
     // 抓"修复后"状态:清空之前的报错/网络,重头开始
     tab.console = []; tab.errN = 0; tab.warnN = 0
     tab.net = []; tab.netById = new Map()
+    // 启动覆盖率收集(若 CDP 调试器已挂),并收集 agent 改过的文件清单
+    const changedFiles = [...new Set([...gitChangedFiles(S.settings.projectDir), ...gitChangedFiles(S.settings.backendDir)])]
+    const covOn = await startCoverage(tab)
     const stepReport = []
     let lastT = 0
     for (let i = 0; i < rec.events.length; i++) {
@@ -1587,7 +1648,9 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
       bad: tab.net.filter((n) => n.state === 'failed' || (n.status && n.status >= 400)).map((n) => ({ url: n.url, status: n.status || 0, state: n.state || '' })),
       url: tab.url || '',
     }
-    return { ok: true, stepReport, after }
+    const cov = covOn ? await stopCoverage(tab) : null
+    const hitInfo = cov ? coverageHits(cov, changedFiles) : []
+    return { ok: true, stepReport, after, changedFiles, hitInfo, covOn }
   }
 
   // 报告:把 before/after diff 翻译成 PASS/FAIL 文字结论(无视觉依赖)
@@ -1611,17 +1674,36 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
       lines.push('  修复后仍有:')
       for (const b of after.bad.slice(0, 8)) lines.push(`    ${b.status || b.state} ${b.url}`)
     }
-    // 判定:报错与网络异常都不多于(且无新增) → PASS
+    // 命中证据:agent 改过的前端文件,回放期间有多少函数真被执行了
+    let unhitJsCount = 0
+    if (replay.changedFiles && replay.changedFiles.length) {
+      const jsLike = replay.hitInfo.filter((h) => JS_LIKE.test(h.file))
+      const others = replay.hitInfo.filter((h) => !JS_LIKE.test(h.file))
+      lines.push(`\nAgent 改动文件(本次 session 共 ${replay.changedFiles.length} 个),回放期间执行命中:`)
+      if (!replay.covOn) lines.push('  ⚠ 当前标签未挂 CDP 调试器,无法收集 V8 coverage(打开 DevTools 触发一次即可启用)')
+      else {
+        for (const h of jsLike) {
+          const mark = h.executed > 0 ? '✓' : '✗'
+          if (h.executed === 0) unhitJsCount++
+          lines.push(`  ${mark} ${h.file}  (${h.executed} 个函数被执行)`)
+        }
+        if (others.length) lines.push(`  · 其它非 JS 改动 ${others.length} 个(java/py/sql 等不在浏览器跑,不参与命中评估):${others.map((o) => o.file).join(', ')}`)
+        if (unhitJsCount > 0) lines.push(`  ⚠ ${unhitJsCount} 个 JS/TS 改动在回放中未被执行 — 大概率改错地方,或这条复现路径不覆盖此改动`)
+      }
+    }
+    // 判定:报错与网络异常都不多于(且无新增) + 步骤全过 + 改动都被命中(若有 JS 改动) → PASS
     const beforeErrMsgs = new Set(before.errs.map((e) => e.msg))
     const beforeBadUrls = new Set(before.bad.map((b) => b.url + '|' + b.status))
     const newErrs = after.errs.filter((e) => !beforeErrMsgs.has(e.msg))
     const newBads = after.bad.filter((b) => !beforeBadUrls.has(b.url + '|' + b.status))
     const errsImproved = after.errs.length <= before.errs.length
     const badsImproved = after.bad.length <= before.bad.length
-    const pass = errsImproved && badsImproved && newErrs.length === 0 && newBads.length === 0 && fails.length === 0
+    const hitsOk = unhitJsCount === 0   // 若全是后端改动或无 JS 改动,自动 true
+    const pass = errsImproved && badsImproved && newErrs.length === 0 && newBads.length === 0 && fails.length === 0 && hitsOk
     let verdict
-    if (pass) verdict = '✅ PASS — 复现路径全部走通,且报错/网络异常未增加;原问题特征基本消失'
+    if (pass) verdict = '✅ PASS — 复现路径全部走通,报错/网络异常未增加,所有 JS 改动均被执行 → 修复定位正确且有效'
     else if (newErrs.length || newBads.length) verdict = `❌ FAIL — 出现了修复前没有的新问题:${newErrs.length} 条新报错 / ${newBads.length} 条新网络异常 → 回归了`
+    else if (!hitsOk) verdict = `⚠ SUSPICIOUS — 报错和网络看着好了,但 ${unhitJsCount} 个 JS 改动在回放期间根本没被执行 → 可能改错地方,问题"看似消失"可能是别的因素(缓存/异步)`
     else if (fails.length) verdict = '⚠ PARTIAL — 步骤执行有失败(可能页面结构变了),无法可靠判断;建议人工再看一眼'
     else if (!errsImproved || !badsImproved) verdict = '❌ FAIL — 数量变多了 → 没修好或引入了新问题'
     else verdict = '✅ PASS'
