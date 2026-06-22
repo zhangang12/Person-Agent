@@ -71,13 +71,13 @@ let SERVE_BIN = 'opencode'
 function setServeBin(name) { if (name) SERVE_BIN = name }
 function spawnServe(cwd, port) {
   const args = ['serve', '--port', String(port), '--hostname', '127.0.0.1']
-  // 阻止 bocomcode/opencode 自启 TUI 的三件套:
-  //   ① env 把"非交互"信号往死里给:CI/NONINTERACTIVE/TERM=dumb/NO_COLOR/FORCE_COLOR=0 + 各家 NO_TUI 变量
-  //   ② stdio[0]='ignore' 让子进程认为没有 stdin TTY,多数 TUI 库会自动 fallback 到无窗模式
-  //   ③ Windows: detached:true 让子进程脱离父控制台组(否则继承我们/cmd.exe 的控制台句柄,
-  //      bocomcode 把它当成"我有控制台"就弹 TUI);配合 windowsHide:true 完全压住
+  // 抑制 bocomcode/opencode 自启 TUI:
+  //   关键 — 实测 bocomcode.bat 启动脚本,默认会用 wt.exe(Windows Terminal)把 bocomcodex.exe 包一层 → 弹 TUI 窗口。
+  //   开关在它自己的 env 变量 BOCOMCODE_TERMINAL=0,设了就走"直接跑 bocomcodex.exe"分支,不再开 wt 窗口。
+  //   其它通用 CI/NO_COLOR/TERM=dumb 仅作兜底(若上游升版多加判定);stdio+detached+windowsHide 防控制台继承。
   const env = {
     ...process.env,
+    BOCOMCODE_TERMINAL: '0',   // ← 关键:走 bocomcode.bat 里的 "无 wt.exe" 分支
     CI: '1', NONINTERACTIVE: '1', TERM: 'dumb',
     NO_COLOR: '1', FORCE_COLOR: '0',
     BOCOMCODE_NO_TUI: '1', OPENCODE_NO_TUI: '1', BOCOMCODE_HEADLESS: '1', OPENCODE_HEADLESS: '1',
