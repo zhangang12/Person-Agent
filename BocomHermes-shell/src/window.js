@@ -2176,6 +2176,51 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
     }
     return { ok: true, dryRun, result }
   })
+  // 录制管理面板:list / star / rename / delete / replay-stored
+  ipcMain.handle('browser-rec-list', () => {
+    const dir = path.join(app.getPath('userData'), 'recordings')
+    try { fs.mkdirSync(dir, { recursive: true }) } catch {}
+    let files = []; try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')) } catch { return [] }
+    const items = []
+    for (const f of files) {
+      try {
+        const j = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'))
+        items.push({
+          id: j.id || f.replace(/\.json$/, ''),
+          title: j.title || '',
+          starred: !!j.starred,
+          startUrl: j.startUrl || '',
+          expectation: j.expectation || '',
+          eventCount: (j.events || []).length,
+          durationMs: j.durationMs || 0,
+          mtime: fs.statSync(path.join(dir, f)).mtimeMs,
+        })
+      } catch {}
+    }
+    return items.sort((a, b) => (b.starred ? 1 : 0) - (a.starred ? 1 : 0) || b.mtime - a.mtime)
+  })
+  ipcMain.handle('browser-rec-update', (_e, { id, patch }) => {
+    if (!id || !patch || typeof patch !== 'object') return false
+    const fp = path.join(app.getPath('userData'), 'recordings', id + '.json')
+    try {
+      const j = JSON.parse(fs.readFileSync(fp, 'utf8'))
+      const allowed = ['title', 'starred', 'expectation']
+      for (const k of allowed) if (k in patch) j[k] = patch[k]
+      fs.writeFileSync(fp, JSON.stringify(j, null, 2))
+      return true
+    } catch (e) { log('rec update err: ' + e.message); return false }
+  })
+  ipcMain.handle('browser-rec-delete', (_e, id) => {
+    const fp = path.join(app.getPath('userData'), 'recordings', id + '.json')
+    try { fs.unlinkSync(fp); log('rec deleted: ' + id); return true } catch (e) { log('rec del err: ' + e.message); return false }
+  })
+  ipcMain.handle('browser-rec-replay-stored', async (_e, id) => {
+    const fp = path.join(app.getPath('userData'), 'recordings', id + '.json')
+    let rec; try { rec = JSON.parse(fs.readFileSync(fp, 'utf8')) } catch (e) { return { ok: false, error: '读取失败: ' + e.message } }
+    S.browser.lastRec = rec   // 让 verify 用这条
+    const replay = await replayRec(rec)
+    return replay
+  })
   ipcMain.on('browser-open-rec-dir', () => {
     const d = path.join(app.getPath('userData'), 'recordings')
     try { fs.mkdirSync(d, { recursive: true }) } catch {}

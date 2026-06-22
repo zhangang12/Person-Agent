@@ -291,7 +291,7 @@ body.wsdrag{cursor:col-resize}
   <button class="tb ico" id="bcl" title="控制台"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/></svg><span class="bdg e" id="eb"></span><span class="bdg w" id="wb"></span></button>
   <button class="tb ico" id="bnet" title="网络请求面板"><svg viewBox="0 0 24 24"><path d="M3 12h4l2.5 7 5-14 2.5 7H21"/></svg><span class="bdg i" id="nbb"></span></button>
   <button class="tb" id="brec" title="开始录制复现路径(click/input/key 全记下来,供 Agent 修完后自动回放验证)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/></svg><span id="brecdot" style="display:none">●</span><span id="brectxt">录制</span></button>
-  <button class="tb ico" id="brecdir" title="打开录制文件夹(看历史录制 / 删除 / 重命名)"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button>
+  <button class="tb ico" id="brecmgr" title="录制管理(列表/⭐/重命名/回放/删除)"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="3" rx="1"/><rect x="3" y="10.5" width="18" height="3" rx="1"/><rect x="3" y="17" width="18" height="3" rx="1"/></svg></button>
   <button class="tb" id="bverify" style="display:none" title="重载复现页，把修复后的状态交给 Agent 确认是否真的修好"><svg viewBox="0 0 24 24"><path d="M20.5 15a9 9 0 1 1-2.4-9.2L23 10"/><polyline points="23 4 23 10 17 10"/><polyline points="8.5 12.5 11 15 15.5 10"/></svg>验证</button>
   <button class="tb ai" id="bai" title="把当前页面报错 + DOM 交给 AI 分析"><svg viewBox="0 0 24 24"><path d="M12 2l2.4 5.6L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.6-1.4z"/></svg>AI 分析</button>
 </div>
@@ -688,8 +688,70 @@ $('bnc').addEventListener('click', async () => {
   if (on) showToast('<span class="ok">✓</span> 已开启「禁用缓存」'); else showToast('已关闭「禁用缓存」')
 })
 
-// 打开录制文件夹(系统文件管理器);用户可以看历史/删除/重命名
-$('brecdir').addEventListener('click', () => { try { H.browserOpenRecDir() } catch {} })
+// 录制管理面板:抽屉式,从右滑入,列出所有录制 + 操作
+async function openRecMgr() {
+  const prev = document.getElementById('recmgr'); if (prev) { prev.remove(); return }
+  const items = await H.browserRecList()
+  const panel = document.createElement('div'); panel.id = 'recmgr'
+  panel.style.cssText = 'position:fixed;top:0;right:0;bottom:0;width:480px;z-index:10000;background:rgba(13,15,28,.97);border-left:1px solid var(--accent);display:flex;flex-direction:column;box-shadow:-10px 0 40px rgba(0,0,0,.55);font-family:inherit'
+  panel.innerHTML = `
+    <div style="padding:12px 14px 9px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line)">
+      <span style="font-weight:700;color:var(--txt);font-size:13.5px">📼 录制管理</span>
+      <span style="flex:1;color:var(--txt3);font-size:11px">${items.length} 条;⭐ 收藏置顶</span>
+      <button id="rm-folder" title="打开录制文件夹" style="background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:6px;padding:3px 9px;cursor:pointer;font-size:11px">系统</button>
+      <button id="rm-x" style="background:transparent;border:none;color:var(--txt3);cursor:pointer;font-size:18px;line-height:1">×</button>
+    </div>
+    <div id="rm-list" style="flex:1;overflow:auto;padding:8px 10px"></div>`
+  document.body.appendChild(panel)
+  panel.querySelector('#rm-x').addEventListener('click', () => panel.remove())
+  panel.querySelector('#rm-folder').addEventListener('click', () => H.browserOpenRecDir())
+  const list = panel.querySelector('#rm-list')
+  if (!items.length) { list.innerHTML = '<div style="color:var(--txt3);font-size:12px;padding:20px;text-align:center">还没有录制 — 在浏览器里点 ● 开始录制吧</div>'; return }
+  const fmtMs = (ms) => ms < 60000 ? Math.round(ms / 1000) + 's' : Math.round(ms / 60000) + 'min'
+  const fmtTime = (ts) => { const d = new Date(ts); return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }
+  const esc2 = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  for (const it of items) {
+    const row = document.createElement('div')
+    row.style.cssText = 'background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:9px;padding:9px 11px;margin-bottom:8px;display:flex;flex-direction:column;gap:5px'
+    row.innerHTML = `
+      <div style="display:flex;align-items:center;gap:6px">
+        <button data-act="star" style="background:transparent;border:none;color:${it.starred ? '#ffd55a' : 'var(--txt3)'};cursor:pointer;font-size:14px;padding:0">${it.starred ? '⭐' : '☆'}</button>
+        <input data-act="title" value="${esc2(it.title || it.id)}" style="flex:1;background:transparent;border:none;outline:none;color:var(--txt);font-size:12.5px;font-weight:600;font-family:inherit;padding:1px 0" />
+        <span style="color:var(--txt3);font-size:10.5px;font-family:ui-monospace,Consolas,monospace">${fmtTime(it.mtime)}</span>
+      </div>
+      <div style="color:var(--txt3);font-size:10.5px;font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc2(it.startUrl) || '(无 URL)'}</div>
+      ${it.expectation ? `<div style="color:var(--txt2);font-size:11px;background:rgba(74,168,255,.07);border-left:2px solid var(--accent);padding:4px 8px;border-radius:0 6px 6px 0">📝 ${esc2(it.expectation)}</div>` : ''}
+      <div style="display:flex;align-items:center;gap:7px">
+        <span style="color:var(--txt3);font-size:10.5px">${it.eventCount} 步 · ${fmtMs(it.durationMs)}</span>
+        <span style="flex:1"></span>
+        <button data-act="replay" style="background:rgba(26,168,110,.15);border:1px solid #1aa86e;color:#5dcf95;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px">▶ 回放</button>
+        <button data-act="del" style="background:transparent;border:1px solid var(--line);color:var(--txt3);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">删除</button>
+      </div>`
+    list.appendChild(row)
+    // 收藏 toggle
+    row.querySelector('[data-act="star"]').addEventListener('click', async () => {
+      const nv = !it.starred; await H.browserRecUpdate(it.id, { starred: nv }); it.starred = nv
+      row.querySelector('[data-act="star"]').textContent = nv ? '⭐' : '☆'
+      row.querySelector('[data-act="star"]').style.color = nv ? '#ffd55a' : 'var(--txt3)'
+    })
+    // 标题改名 (blur 保存)
+    row.querySelector('[data-act="title"]').addEventListener('blur', async (e) => {
+      const nv = e.target.value.trim(); if (nv && nv !== (it.title || it.id)) { await H.browserRecUpdate(it.id, { title: nv }); it.title = nv; showToast('<span class="ok">✓</span> 已重命名') }
+    })
+    // 回放
+    row.querySelector('[data-act="replay"]').addEventListener('click', async () => {
+      panel.remove()
+      showToast('<span class="ok">▶</span> 回放中…')
+      try { const r = await H.browserRecReplayStored(it.id); showToast(r && r.ok ? '<span class="ok">✓</span> 回放完成,共 ' + r.stepReport.length + ' 步' : '<span class="err">⚠</span> 回放失败') } catch (e) { showToast('<span class="err">⚠</span> ' + e.message) }
+    })
+    // 删除
+    row.querySelector('[data-act="del"]').addEventListener('click', async () => {
+      if (!confirm('删除录制 "' + (it.title || it.id) + '"?')) return
+      if (await H.browserRecDelete(it.id)) { row.remove(); showToast('已删除') }
+    })
+  }
+}
+$('brecmgr').addEventListener('click', openRecMgr)
 
 // 录制 toggle: 红点闪烁,记录 click/input/key/scroll/nav 时间线
 $('brec').addEventListener('click', async () => {
