@@ -34,12 +34,25 @@ body{padding:0;height:56px}
   background:rgba(130,80,255,.18);border:.5px solid rgba(130,80,255,.35);
   color:rgba(160,120,255,.9);white-space:nowrap;
 }
+.proj-chip{
+  flex:none;display:flex;align-items:center;gap:5px;font-size:11px;font-family:var(--mono);
+  color:var(--txt2);background:var(--composer-bg);border:.5px solid var(--composer-border);
+  border-radius:12px;padding:3px 9px;max-width:140px;cursor:pointer;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:color .12s,border-color .12s,background .12s;
+}
+.proj-chip:hover{color:var(--txt);border-color:var(--accent)}
+.proj-chip.empty{color:var(--accent);border-color:var(--accent);background:rgba(74,168,255,.08)}
+.proj-chip svg{width:11px;height:11px;flex:none;opacity:.8}
 </style>
 </head>
 <body>
 <div class="glass nodrag">
   <div class="hl"></div>
   <div id="badge" class="mode-badge" style="display:none">并行评审</div>
+  <button id="proj" class="proj-chip" title="点击选择项目目录（新卡将对它说话）">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+    <span id="projn">未选目录</span>
+  </button>
   <input id="q" placeholder="问 BocomHermes…" autofocus autocomplete="off" spellcheck="false">
   <button class="send-btn nodrag" id="send" title="发送">
     <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
@@ -80,7 +93,25 @@ document.getElementById('send').addEventListener('click', submit)
 H.onFillInput && H.onFillInput(text => { q.value = text.slice(0, 500); q.focus() })
 H.onTheme && H.onTheme(t => { document.documentElement.dataset.theme = t })
 
-window.addEventListener('blur', () => H.closeOrbInput())
+// 项目选择
+const projBtn = document.getElementById('proj'), projN = document.getElementById('projn')
+function paintProj(name) {
+  const has = name && name !== '未选目录'
+  projN.textContent = has ? name : '未选目录'
+  projBtn.title = has ? '项目目录：' + name + '（点击切换；只影响新开的卡）' : '未选目录，点击选择'
+  projBtn.classList.toggle('empty', !has)
+}
+try { paintProj(H.getProject && H.getProject()) } catch {}
+let picking = false
+projBtn.addEventListener('mousedown', e => e.preventDefault())  // 不让按钮抢焦点，避免触发 blur 链路
+projBtn.addEventListener('click', async () => {
+  picking = true
+  try { paintProj(await H.pickProject()) } catch {}
+  picking = false; setTimeout(() => q.focus(), 30)
+})
+H.onProject && H.onProject(p => paintProj(p))
+
+window.addEventListener('blur', () => { if (!picking) H.closeOrbInput() })
 setTimeout(() => q.focus(), 40)
 </script>
 </body>

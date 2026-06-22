@@ -11,7 +11,9 @@
   .hd { display: flex; align-items: center; gap: 7px; flex: none; }
   .icn { width: 16px; height: 16px; flex: none; display: inline-flex; }
   .ttl { flex: 1; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .proj { font-size: 10.5px; font-family: var(--mono); color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 999px; padding: 2px 8px; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .proj { font-size: 10.5px; font-family: var(--mono); color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 999px; padding: 2px 8px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; transition: color .12s, border-color .12s, background .12s; }
+  .proj:hover { color: var(--txt); border-color: var(--accent); }
+  .proj.empty { color: var(--accent); border-color: var(--accent); background: rgba(74,168,255,.08); }
   .hbtn { border: none; background: transparent; color: var(--txt3); cursor: pointer; padding: 3px; border-radius: 6px; display: flex; align-items: center; }
   .hbtn:hover { color: var(--txt); background: var(--composer-bg); }
   .hbtn.on { color: var(--accent); }
@@ -147,6 +149,15 @@
   const ttl = document.getElementById('ttl'); ttl.textContent = title; ttl.title = title
   document.title = title + ' · BocomHermes'   // 任务栏/Alt+Tab 区分各卡
   const projEl = document.getElementById('proj')
+  // 项目标签：可点击切换项目目录（新卡才生效；当前卡的 serve 不动）
+  function paintProj(name) {
+    const txt = name || '未选目录'
+    projEl.textContent = txt
+    projEl.title = (name ? '项目目录：' + txt + '\n' : '') + '点击切换（仅影响新开的卡）'
+    projEl.classList.toggle('empty', !name)
+  }
+  projEl.addEventListener('click', async () => { try { paintProj(await window.BocomHermes.pickProject()) } catch (e) {} })
+  window.BocomHermes.onProject && window.BocomHermes.onProject((p) => paintProj(p))
   const feed = document.getElementById('feed'), st = document.getElementById('st')
   const ci = document.getElementById('ci'), send = document.getElementById('send')
   const quick = document.getElementById('quick')
@@ -356,7 +367,7 @@
     const boot = addMsg('', 'ai'); boot.textContent = sid ? '正在续接对话…' : embedded ? '正在连接调试助手…' : '正在启动引擎…（首次较慢，请稍候）'
     try {
       const r = await window.BocomHermes.cardInit(sid ? { sid, title } : { title })
-      projEl.textContent = r.project || ''; projEl.title = r.project || ''
+      paintProj(r.project && r.project !== '未选目录' ? r.project : '')
       boot.remove()
       cardReady = true
       if (sid) {
