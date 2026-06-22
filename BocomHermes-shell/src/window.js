@@ -860,57 +860,129 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     }
   }
 
+  // ── 证据库 ─────────────────────────────────────────────────────────────
+  // 大 payload(完整 DOM / 长 req body / 完整事件帧)落盘 evidence/<bundleId>/<ref>.txt,
+  // 主上下文里只放短摘要 + ref 引用,Agent 用 mcp/repro-mcp 的 get_evidence 工具按需拉。
+  // 128K 上下文友好;5KB 摘要不再被 9KB DOM 撑爆。
+  function evidenceDir(bundleId) {
+    const d = path.join(app.getPath('userData'), 'evidence', bundleId)
+    try { fs.mkdirSync(d, { recursive: true }) } catch {}
+    return d
+  }
+  function evdSave(bundleId, name, content) {
+    try { fs.writeFileSync(path.join(evidenceDir(bundleId), name + '.txt'), String(content == null ? '' : content)) } catch (e) { log('evdSave err: ' + e.message) }
+    return `ref#${bundleId}/${name}`
+  }
+
+  // 按动作生成紧凑时间线文本(<200 字/条),录制的 JSON 转人读
+  function formatTimeline(events) {
+    if (!events || !events.length) return '(本次未录制操作)'
+    const lines = []
+    for (let i = 0; i < events.length; i++) {
+      const e = events[i]
+      const t = ((e.t || 0) / 1000).toFixed(1).padStart(5)
+      if (e.act === 'navigate') lines.push(`  t=${t}s  navigate    ${e.url}`)
+      else if (e.act === 'click') lines.push(`  t=${t}s  click       ${e.sel}${e.text ? '  ("' + e.text.slice(0, 30) + '")' : ''}`)
+      else if (e.act === 'input') lines.push(`  t=${t}s  input       ${e.sel} = "${(e.value || '').slice(0, 60)}"`)
+      else if (e.act === 'key')   lines.push(`  t=${t}s  key         ${e.key} @ ${e.sel}`)
+      else if (e.act === 'submit')lines.push(`  t=${t}s  submit      ${e.sel}`)
+      else if (e.act === 'scroll')lines.push(`  t=${t}s  scroll      (${e.x}, ${e.y})`)
+    }
+    return lines.join('\n')
+  }
+
+  // 把"现在的现场"压成一份 <5KB 摘要 + 引用大块的 refs
+  async function compactRepro(tab) {
+    const bundleId = 'b_' + Date.now().toString(36)
+    const wc = tab.view.webContents
+    // DOM:只取摘要(title/url/前 800 字符可见文本 + body 的 outerHTML 截 1.5KB);完整 outerHTML 落盘
+    let dom = { title: '', desc: '', visText: '', shortHtml: '' }, fullHtml = ''
+    try {
+      const r = await wc.executeJavaScript(`(()=>{
+        const h=document.documentElement.outerHTML;
+        const vt=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();
+        const dd=document.querySelector('meta[name="description"]');
+        return { title:document.title, desc: dd?dd.content:'', vis: vt.slice(0,800), shortHtml: (document.body?document.body.outerHTML:'').slice(0,1500), full: h };
+      })()`, true)
+      dom = { title: r.title || '', desc: r.desc || '', visText: r.vis || '', shortHtml: r.shortHtml || '' }
+      fullHtml = r.full || ''
+    } catch {}
+    const domRef = fullHtml ? evdSave(bundleId, 'dom', fullHtml) : ''
+
+    // 控制台:只列 warn/error,完整堆栈落盘各一份;主文按 source-map 给"文件:行"
+    const errs = tab.console.filter((c) => c.level >= 2).slice(-15)
+    const errLines = []
+    for (let i = 0; i < errs.length; i++) {
+      const c = errs[i]; const tag = c.level === 3 ? '[E' : '[W'
+      let loc = c.source ? String(c.source).split('/').pop() + (c.line ? ':' + c.line : '') : ''
+      if (c.frames && c.frames.length) {
+        for (const fr of c.frames.slice(0, 4)) { const r2 = await resolveFrame(fr.url, fr.line, fr.col); if (r2) { loc = r2 + (fr.fn ? ' (' + fr.fn + ')' : ''); break } }
+      }
+      let line = `  ${tag}${i + 1}] ${c.message.split('\n')[0].slice(0, 220)}  @ ${loc || '?'}`
+      if (c.frames && c.frames.length > 1) {
+        const stackRef = evdSave(bundleId, 'err' + (i + 1) + '-stack', JSON.stringify(c.frames, null, 2))
+        line += `  · 完整堆栈 ${stackRef}`
+      }
+      errLines.push(line)
+    }
+
+    // 网络异常:列 method+status+URL,长 body 落盘
+    const bad = tab.net.filter((r) => r.state === 'failed' || (r.status && r.status >= 400)).slice(-8)
+    const netLines = []
+    for (let i = 0; i < bad.length; i++) {
+      const r = bad[i]; let body = '', isBin = false
+      try { const d = await brNetBody(r.id); if (d) { body = String(d.body || ''); isBin = !!d.base64 } } catch {}
+      const st = r.state === 'failed' ? ('失败 ' + (r.failText || '')) : (r.status + ' ' + (r.statusText || ''))
+      let line = `  [N${i + 1}] ${r.method} ${st}  ${r.url}`
+      if (r.postData) {
+        const pd = String(r.postData)
+        if (pd.length > 200) { const ref = evdSave(bundleId, 'req' + (i + 1) + '-body', pd); line += `\n      请求体: (${pd.length}B) ref#${ref.split('/').pop()} · 摘要: ${pd.slice(0, 120)}…` }
+        else { line += `\n      请求体: ${pd.slice(0, 200)}` }
+      }
+      if (body && !isBin) {
+        if (body.length > 200) { const ref = evdSave(bundleId, 'resp' + (i + 1) + '-body', body); line += `\n      响应体: (${body.length}B) ref#${ref.split('/').pop()} · 摘要: ${body.slice(0, 120)}…` }
+        else { line += `\n      响应体: ${body.slice(0, 200)}` }
+      } else if (isBin) { line += `\n      响应体: (binary, 略)` }
+      netLines.push(line)
+    }
+
+    // 录制时间线(当前标签最近一次)
+    const rec = (S.browser.lastRec && S.browser.lastRec.tabId === tab.id) ? S.browser.lastRec
+      : (S.browser.lastRec || null)   // tabId 未必存(早期 rec 没记) → 拿就用
+    const tl = rec ? formatTimeline(rec.events) : '(本次未录制操作 — 想让 Agent 自动验证修复,先按"录制"复现一次)'
+    const recRef = rec ? evdSave(bundleId, 'recording', JSON.stringify(rec, null, 2)) : ''
+
+    const text = `=== 复现包 ${bundleId} ===
+URL: ${tab.url || '(空白页)'}
+标题: ${dom.title || tab.title}
+${dom.desc ? '页面描述: ' + dom.desc + '\n' : ''}DOM 摘要(可见文本前 800 字): ${dom.visText || '(空)'}${domRef ? '\n完整 DOM: ' + domRef : ''}
+
+时间线 (${rec ? rec.events.length : 0} 步):
+${tl}${recRef ? '\n录制完整 JSON: ' + recRef : ''}
+
+控制台 warn/error (${errs.length} 条):
+${errLines.length ? errLines.join('\n') : '  (无)'}
+
+网络异常 4xx/5xx/failed (${bad.length} 条):
+${netLines.length ? netLines.join('\n') : '  (无)'}
+
+(大 payload 已落盘 userData/evidence/${bundleId}/;agent 可用 mcp 'tianshu-repro' 的 get_evidence 工具按需拉:传入 'ref#${bundleId}/<name>')`
+    return { bundleId, text, errs, bad }
+  }
+
   async function brAnalyze() {
     const tab = brActive(); if (!tab) return
-    const wc = tab.view.webContents
-    let dom = { title: '', desc: '', html: '' }
-    try {
-      dom = await wc.executeJavaScript(`(()=>{
-        const h=document.documentElement.outerHTML;
-        const d=document.querySelector('meta[name="description"]');
-        return { title:document.title, desc:d?d.content:'', html: h.length>9000 ? h.slice(0,9000)+'\\n<!-- …(已截断) -->' : h };
-      })()`, true)
-    } catch {}
-    const errs = tab.console.filter(c => c.level >= 2)
-    const errText = errs.length
-      ? errs.slice(-30).map(c => (c.level === 3 ? '✗ ' : '⚠ ') + c.message + (c.source ? `  (${String(c.source).split('/').pop()}:${c.line || ''})` : '')).join('\n')
-      : '（无 warning / error）'
-    // 网络异常（失败 / 4xx / 5xx）——附请求体与响应体，便于关联到后端代码
-    const bad = tab.net.filter(r => r.state === 'failed' || (r.status && r.status >= 400))
-    let netText = '（无失败 / 4xx / 5xx 请求）'
-    if (bad.length) {
-      const lines = []
-      for (const r of bad.slice(-8)) {
-        let body = ''
-        try { const d = await brNetBody(r.id); if (d && d.body && !d.base64) body = String(d.body).slice(0, 1200) } catch {}
-        const st = r.state === 'failed' ? ('失败 ' + (r.failText || '')) : (r.status + ' ' + (r.statusText || ''))
-        lines.push(`- [${r.method}] ${st}  ${r.url}`
-          + (r.postData ? `\n    请求体：${String(r.postData).slice(0, 600)}` : '')
-          + (body ? `\n    响应体：${body}` : ''))
-      }
-      netText = lines.join('\n')
-    }
-    // source-map 还原报错堆栈 → 源码 文件:行（每条报错取首个能还原的帧），让 Agent 直接定位真实源码
-    const smLocs = []
-    for (const c of errs.slice(-8)) {
-      if (!c.frames || !c.frames.length) continue
-      for (const fr of c.frames.slice(0, 4)) { const loc = await resolveFrame(fr.url, fr.line, fr.col); if (loc) { smLocs.push(loc + (fr.fn ? '  (' + fr.fn + ')' : '')); break } }
-    }
-    const smText = [...new Set(smLocs)].join('\n')
+    const { bundleId, text: bundle, errs, bad } = await compactRepro(tab)
     const prompt =
       `我正在用内嵌浏览器复现一个问题，请你作为资深全栈工程师帮我定位根因并给出修复方案。\n\n` +
-      `页面地址：${tab.url || '(空白页)'}\n页面标题：${dom.title || tab.title}\n` +
-      (dom.desc ? `页面描述：${dom.desc}\n` : '') +
-      `\n## 控制台报错（${errs.length} 条）\n${errText}\n\n` +
-      (smText ? `## 报错对应的源码位置（已由 source-map 还原，优先据此定位源码）\n${smText}\n\n` : '') +
-      `## 网络异常请求（${bad.length} 条失败/4xx/5xx）\n${netText}\n\n` +
-      `## 页面 DOM 结构（截断）\n\`\`\`html\n${dom.html || '(无法获取)'}\n\`\`\`\n\n` +
+      bundle + '\n\n' +
       `请按以下步骤帮我修复：\n` +
-      `1. 先判断问题主要在前端、后端，还是接口契约层面\n` +
-      `2. 结合控制台报错（含堆栈）+ 失败请求的状态码/响应体，定位最可能的根因\n` +
-      `3. 用工具读相关源码，确认根因所在的具体文件与行\n` +
-      `4. 若是常见坑（CORS、空指针、异步时序、CSS 布局、4xx 参数错误、5xx 后端异常）请点明\n` +
-      `5. **直接用编辑工具修改源码完成修复**（我会逐次确认每处写入），改完用一两句话说明改了哪些文件、为什么；改动较大或不确定时先说方案再动手`
+      `1. 看时间线还原"用户做了什么导致问题",再结合控制台/网络异常定位最可能的根因(优先看 source-map 还原的"文件:行")\n` +
+      `2. 大块证据(完整 DOM / 长 req body)按需用 mcp 'tianshu-repro' 的 get_evidence/get_dom_subtree/get_event_window 工具拉详情;别一次性把它们塞回回复\n` +
+      `3. 用编辑工具读相关源码,确认根因所在的具体文件与行\n` +
+      `4. **直接用编辑工具改源码完成修复**(我会逐次确认每处写入),改完一两句话说明改了哪些文件、为什么\n` +
+      `5. 改完后让我点"验证"按钮 — 系统会自动回放上面的时间线,出 PASS/FAIL 报告;若 FAIL 你看报告再调整`
+    log('brAnalyze: bundle ' + bundleId + ' size=' + Buffer.byteLength(bundle) + 'B')
     const disp = `🔍 已复现并发送：${tab.url || '(空白页)'}\n（${errs.length} 条控制台报错 + ${bad.length} 条网络异常 + 页面 DOM 上下文）`
     const b = S.browser
     if (b.mode === 'workspace' && b.cardView && !b.cardView.webContents.isDestroyed()) {
