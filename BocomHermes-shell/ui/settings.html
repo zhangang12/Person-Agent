@@ -74,6 +74,12 @@
       </div>
 
       <div class="fld">
+        <span class="lbl">代理（内嵌浏览器用）</span>
+        <input id="proxy" class="in" placeholder="http://127.0.0.1:8080  或留空走直连" spellcheck="false" />
+        <span class="hint">格式：<code>http=host:port;https=host:port</code> 或 <code>http://host:port</code>；PAC 用 <code>pac+http://...</code>。保存即生效，无需重启。</span>
+      </div>
+
+      <div class="fld">
         <span class="lbl">邮件服务器 (IMAP)</span>
         <div class="row">
           <input id="imapHost" class="in" style="flex:3" placeholder="imap.company.com" spellcheck="false" />
@@ -147,6 +153,9 @@
   if (cur.serveBinLocked) { serveBin.disabled = true; serveBin.value = cur.serveBinEffective || ''; $('lock').style.display = 'inline-block' }
   else { serveBin.placeholder = cur.serveBinEffective ? '默认：' + cur.serveBinEffective : 'opencode / bocomcode' }
 
+  // 代理
+  const proxy = $('proxy'); proxy.value = cur.proxy || ''
+
   // 当前项目 + 最近仓库
   const proj = $('proj'); proj.textContent = cur.project || '未选目录'; proj.title = cur.projectDir || ''
   const base = (d) => d.split(/[\\/]/).filter(Boolean).pop() || d
@@ -214,7 +223,7 @@
   // 保存
   const msg = $('msg')
   async function save(silent) {
-    const patch = { editorCmd: editorCmd.value }
+    const patch = { editorCmd: editorCmd.value, proxy: proxy.value }
     if (!cur.serveBinLocked) patch.serveBin = serveBin.value
     patch.imap = {
       host: $('imapHost').value.trim(),

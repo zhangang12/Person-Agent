@@ -283,6 +283,7 @@ body.wsdrag{cursor:col-resize}
   <button class="tb ico" id="bpick" title="拾取元素（点选页面元素看选择器/尺寸/盒模型）"><svg viewBox="0 0 24 24"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><circle cx="12" cy="12" r="3.4"/></svg></button>
   <button class="tb ico" id="bshot" title="整页截图（含视口外内容，存到下载目录）"><svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></button>
   <button class="tb ico" id="bdt" title="开发者工具"><svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>
+  <button class="tb ico" id="bnc" title="禁用缓存（每次导航前清一次缓存，调样式/JS 必开）"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><line x1="4.5" y1="4.5" x2="19.5" y2="19.5"/></svg></button>
   <button class="tb ico" id="bcl" title="控制台"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/></svg><span class="bdg e" id="eb"></span><span class="bdg w" id="wb"></span></button>
   <button class="tb ico" id="bnet" title="网络请求面板"><svg viewBox="0 0 24 24"><path d="M3 12h4l2.5 7 5-14 2.5 7H21"/></svg><span class="bdg i" id="nbb"></span></button>
   <button class="tb" id="bverify" style="display:none" title="重载复现页，把修复后的状态交给 Agent 确认是否真的修好"><svg viewBox="0 0 24 24"><path d="M20.5 15a9 9 0 1 1-2.4-9.2L23 10"/><polyline points="23 4 23 10 17 10"/><polyline points="8.5 12.5 11 15 15.5 10"/></svg>验证</button>
@@ -622,6 +623,13 @@ $('bf').addEventListener('click', () => H.browserForward())
 $('br').addEventListener('click', () => H.browserReload())
 $('newtab').addEventListener('click', () => H.browserNewTab(''))
 $('bdt').addEventListener('click', () => { $('bdt').classList.toggle('on'); H.browserDevTools() })
+// 禁用缓存：on 时每次导航前 session.clearCache();再点关闭
+$('bnc').addEventListener('click', async () => {
+  const on = !$('bnc').classList.contains('on')
+  $('bnc').classList.toggle('on', on)
+  await H.browserNoCache(on)
+  if (on) showToast('<span class="ok">✓</span> 已开启「禁用缓存」'); else showToast('已关闭「禁用缓存」')
+})
 
 /* ── 设备模拟 ── */
 $('devseg').addEventListener('click', e => {

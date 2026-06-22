@@ -1,6 +1,6 @@
 ﻿'use strict'
 const USE_ACRYLIC = false
-const { clipboard } = require('electron')
+const { clipboard, session } = require('electron')
 const email = require('./email')
 
 module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }) {
@@ -325,6 +325,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
 
     // 主框架导航开始 → 清空网络记录（除非用户开了「保留日志」），对齐 DevTools 默认行为
     wc.on('did-start-navigation', (_e, navUrl, isInPlace, isMainFrame) => {
+      if (isMainFrame && !isInPlace && S.browser.noCache) {   // 禁用缓存 toggle 开 → 每次导航前清一次
+        try { session.defaultSession.clearCache() } catch {}
+      }
       if (isMainFrame && !isInPlace && !tab.preserveNet) {   // 对齐 DevTools：导航即清空网络 + 控制台（除非「保留日志」）
         tab.net = []; tab.netById = new Map()
         tab.console = []; tab.errN = 0; tab.warnN = 0
@@ -1121,6 +1124,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       theme: S.settings.theme, editorCmd: S.settings.editorCmd || '', serveBin: S.settings.serveBin || '',
       serveBinEffective: process.env.BOCOMHERMES_SERVE_BIN || S.settings.serveBin || (app.isPackaged ? 'bocomcode' : 'opencode'),
       serveBinLocked: !!process.env.BOCOMHERMES_SERVE_BIN,
+      proxy: S.settings.proxy || '',
       project: projName(), projectDir: S.settings.projectDir || '', recentDirs: S.settings.recentDirs || [],
       backendDir: S.settings.backendDir || '',
       imap: { host: im.host || '', port: im.port || 993, secure: im.secure !== false, allowSelf: !!im.allowSelfSigned, user: im.user || '', hasPass: !!im.passEncrypted, scheduleHour: im.scheduleHour ?? 9 },
@@ -1208,6 +1212,14 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       S.settings.serveBin = patch.serveBin.trim()
       if (!process.env.BOCOMHERMES_SERVE_BIN && S.settings.serveBin) oc.setServeBin(S.settings.serveBin)
     }
+    if (patch && typeof patch.proxy === 'string') {
+      S.settings.proxy = patch.proxy.trim()
+      // 即刻应用,无需重启;空字符串 = 走直连(不走代理)
+      const rules = S.settings.proxy || ''
+      session.defaultSession.setProxy(rules ? { proxyRules: rules } : { mode: 'direct' })
+        .then(() => log('proxy updated: ' + (rules || '(direct)')))
+        .catch((e) => log('setProxy err: ' + e.message))
+    }
     if (patch && patch.imap) {
       S.settings.imap = S.settings.imap || {}
       const im = patch.imap
@@ -1276,6 +1288,12 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   ipcMain.on('browser-back',    () => { const wc = brWC(); if (wc && wc.canGoBack()) wc.goBack() })
   ipcMain.on('browser-forward', () => { const wc = brWC(); if (wc && wc.canGoForward()) wc.goForward() })
   ipcMain.on('browser-reload',  () => { const wc = brWC(); if (wc) wc.isLoading() ? wc.stop() : wc.reload() })
+  // 禁用缓存:置一个全局 flag,每个 tab 的 did-start-navigation 钩子里读它,真要清就 session.clearCache()
+  ipcMain.handle('browser-no-cache', async (_e, on) => {
+    S.browser.noCache = !!on
+    if (on) { try { await session.defaultSession.clearCache() } catch {} }   // 当下立刻清一次
+    return S.browser.noCache
+  })
   ipcMain.on('browser-devtools', () => {
     const tab = brActive(); if (!tab || tab.view.webContents.isDestroyed()) return
     const wc = tab.view.webContents

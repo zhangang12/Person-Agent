@@ -75,6 +75,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   browserForward:       ()    => ipcRenderer.send('browser-forward'),
   browserReload:        ()    => ipcRenderer.send('browser-reload'),
   browserDevTools:      ()    => ipcRenderer.send('browser-devtools'),
+  browserNoCache:       (on)  => ipcRenderer.invoke('browser-no-cache', !!on),
   browserNewTab:        (url) => ipcRenderer.send('browser-new-tab', url),
   browserCloseTab:      (id)  => ipcRenderer.send('browser-close-tab', id),
   browserActivateTab:   (id)  => ipcRenderer.send('browser-activate-tab', id),
