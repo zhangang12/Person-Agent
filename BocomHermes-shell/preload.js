@@ -116,4 +116,5 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   toggleOrbInput: (mode) => ipcRenderer.invoke('toggle-orb-input', mode),
   closeOrbInput: () => ipcRenderer.invoke('close-orb-input'),
   onOrbState: (cb) => ipcRenderer.on('orb-state', (_e, state) => cb(state)),
+  onOrbWake: (cb) => ipcRenderer.on('orb-wake', () => cb()),
 })
