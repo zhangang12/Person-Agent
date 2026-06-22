@@ -1423,11 +1423,26 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
 ;(function(){
   if (window.__bocom_rec_init) return; window.__bocom_rec_init = true;
   var emit = function(e){ try { console.log('__BR__' + JSON.stringify(e)); } catch(_){} };
-  var sel = function(el){
-    if (!el || el === document || el === document.body) return 'body';
-    if (el.id) return '#' + CSS.escape(el.id);
-    var attrs = ['data-test','data-testid','data-cy','name','aria-label'];
-    for (var i=0;i<attrs.length;i++) { var v = el.getAttribute && el.getAttribute(attrs[i]); if (v) return el.tagName.toLowerCase() + '[' + attrs[i] + '="' + v.replace(/"/g,'\\\\"') + '"]'; }
+  // 记多个选择器候选:回放时按优先级 fallback,DOM 结构小幅变动也能命中
+  var selBuild = function(el){
+    if (!el || el === document || el === document.body) return ['body'];
+    var cands = [];
+    if (el.id) cands.push('#' + CSS.escape(el.id));
+    var attrs = ['data-test','data-testid','data-cy','data-qa','name','aria-label'];
+    for (var i=0;i<attrs.length;i++) {
+      var v = el.getAttribute && el.getAttribute(attrs[i]);
+      if (v) cands.push(el.tagName.toLowerCase() + '[' + attrs[i] + '="' + v.replace(/"/g,'\\\\"') + '"]');
+    }
+    // role + accessible name
+    var role = el.getAttribute && el.getAttribute('role');
+    var aria = el.getAttribute && el.getAttribute('aria-label');
+    if (role && aria) cands.push('[role="'+role+'"][aria-label="'+aria.replace(/"/g,'\\\\"')+'"]');
+    // 文本选择器(短可见文本):标签 + 内含文本
+    var txt = (el.innerText || el.value || '').trim();
+    if (txt && txt.length <= 30 && !txt.includes('\\n')) {
+      cands.push('__text__:' + el.tagName.toLowerCase() + '|' + txt.replace(/"/g,'').slice(0,30));
+    }
+    // nth-of-type 路径作最后兜底
     var parts = []; var n = el;
     for (var d=0; d<5 && n && n.tagName && n !== document.body; d++) {
       var s = n.tagName.toLowerCase();
@@ -1442,13 +1457,14 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
       }
       parts.unshift(s); n = n.parentNode;
     }
-    return parts.join(' > ');
+    cands.push(parts.join(' > '));
+    return cands;
   };
-  window.bocomSel = sel;
+  window.bocomSel = function(el){ return selBuild(el)[0]; };
   document.addEventListener('click', function(e){
     if (!window.__bocom_rec_on) return;
-    var el = e.target;
-    emit({ act:'click', sel:sel(el), text:(el.innerText||el.value||'').toString().slice(0,40) });
+    var el = e.target; var c = selBuild(el);
+    emit({ act:'click', sel:c[0], selAlt:c.slice(1), text:(el.innerText||el.value||'').toString().slice(0,40) });
   }, true);
   var inputTmr = null;
   document.addEventListener('input', function(e){
@@ -1458,18 +1474,19 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
     clearTimeout(inputTmr);
     inputTmr = setTimeout(function(){
       var v = el.isContentEditable ? (el.innerText||'') : (el.value||'');
-      emit({ act:'input', sel:sel(el), value:String(v).slice(0,200) });
+      var c = selBuild(el);
+      emit({ act:'input', sel:c[0], selAlt:c.slice(1), value:String(v).slice(0,200) });
     }, 250);   // 防抖,合并连续敲字
   }, true);
   document.addEventListener('keydown', function(e){
     if (!window.__bocom_rec_on) return;
     if (e.key === 'Enter' || e.key === 'Escape' || e.key === 'Tab') {
-      emit({ act:'key', sel:sel(e.target), key:e.key });
+      var c = selBuild(e.target); emit({ act:'key', sel:c[0], selAlt:c.slice(1), key:e.key });
     }
   }, true);
   document.addEventListener('submit', function(e){
     if (!window.__bocom_rec_on) return;
-    emit({ act:'submit', sel:sel(e.target) });
+    var c = selBuild(e.target); emit({ act:'submit', sel:c[0], selAlt:c.slice(1) });
   }, true);
   var scrollTmr = null;
   document.addEventListener('scroll', function(){
@@ -1533,8 +1550,34 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
   // 按录制时间线在当前 tab 自动播放;每步执行后等"网络静默"(<=900ms 无新请求),
   // 步间最长 sleep 2s。播完抓"修复后状态"快照,跟录制时的"修复前状态"diff。
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-  function safeSelStr(sel) { return JSON.stringify(String(sel || '')) }
-  async function execStep(wc, ev) {
+  // 把"普通 CSS 选择器"或"__text__:tag|text"伪选择器转成页面里能跑的"找元素"表达式
+  function selExpr(sel) {
+    const s = String(sel || '')
+    if (s.startsWith('__text__:')) {
+      const idx = s.indexOf('|'); const tag = s.slice(9, idx).toLowerCase()
+      const txt = s.slice(idx + 1)
+      return `(function(){var els=document.querySelectorAll(${JSON.stringify(tag)});for(var i=0;i<els.length;i++){var t=(els[i].innerText||els[i].value||'').trim();if(t===${JSON.stringify(txt)}||t.indexOf(${JSON.stringify(txt)})===0)return els[i]}return null})()`
+    }
+    return `document.querySelector(${JSON.stringify(s)})`
+  }
+  // 把 sel + selAlt 串成"按优先级 fallback,谁先找到用谁"的表达式;变量名 __el 给后续操作用
+  function findElExpr(sel, alt) {
+    const cands = [sel, ...(alt || [])].filter(Boolean)
+    const tryList = cands.map((c) => `(__el=${selExpr(c)})`).join(' || ')
+    return tryList || 'null'
+  }
+  // 等"网络静默":300ms 内无新请求 = 静默,最长等 maxMs
+  async function waitNetIdle(tab, idleMs = 300, maxMs = 3000) {
+    const t0 = Date.now()
+    let lastChange = tab.net.length
+    let lastSeenAt = Date.now()
+    while (Date.now() - t0 < maxMs) {
+      await sleep(80)
+      if (tab.net.length !== lastChange) { lastChange = tab.net.length; lastSeenAt = Date.now() }
+      else if (Date.now() - lastSeenAt >= idleMs) return
+    }
+  }
+  async function execStep(wc, ev, tab) {
     if (ev.act === 'navigate') {
       const cur = wc.getURL()
       if (cur === ev.url) return { ok: true }
@@ -1542,38 +1585,38 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
       await new Promise((res) => { const t = setTimeout(res, 12000); wc.once('did-stop-loading', () => { clearTimeout(t); res() }) })
       return { ok: true }
     }
+    const elExpr = findElExpr(ev.sel, ev.selAlt)
     if (ev.act === 'click') {
       try {
-        const r = await wc.executeJavaScript(`(()=>{var el=document.querySelector(${safeSelStr(ev.sel)});if(!el)return 'NF';el.scrollIntoView({block:'center'});el.click();return 'OK';})()`, true)
-        return r === 'OK' ? { ok: true } : { ok: false, err: 'selector not found' }
+        const r = await wc.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';__el.scrollIntoView({block:'center'});__el.click();return 'OK';})()`, true)
+        return r === 'OK' ? { ok: true } : { ok: false, err: 'selector(+alt) not found' }
       } catch (e) { return { ok: false, err: e.message } }
     }
     if (ev.act === 'input') {
       try {
-        const r = await wc.executeJavaScript(`(()=>{var el=document.querySelector(${safeSelStr(ev.sel)});if(!el)return 'NF';
+        const r = await wc.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';
           var v=${JSON.stringify(String(ev.value == null ? '' : ev.value))};
-          if (el.isContentEditable){el.focus();el.innerText=v}
-          else{var p=Object.getOwnPropertyDescriptor(el.__proto__,'value');p&&p.set?p.set.call(el,v):(el.value=v);}
-          el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return 'OK';})()`, true)
-        return r === 'OK' ? { ok: true } : { ok: false, err: 'selector not found' }
+          if (__el.isContentEditable){__el.focus();__el.innerText=v}
+          else{var p=Object.getOwnPropertyDescriptor(__el.__proto__,'value');p&&p.set?p.set.call(__el,v):(__el.value=v);}
+          __el.dispatchEvent(new Event('input',{bubbles:true}));__el.dispatchEvent(new Event('change',{bubbles:true}));return 'OK';})()`, true)
+        return r === 'OK' ? { ok: true } : { ok: false, err: 'selector(+alt) not found' }
       } catch (e) { return { ok: false, err: e.message } }
     }
     if (ev.act === 'key') {
       try {
-        await wc.executeJavaScript(`(()=>{var el=document.querySelector(${safeSelStr(ev.sel)});if(el)el.focus();})()`, true)
+        await wc.executeJavaScript(`(()=>{var __el=null;if(${elExpr})__el.focus();})()`, true)
         wc.sendInputEvent({ type: 'keyDown', keyCode: ev.key })
         wc.sendInputEvent({ type: 'keyUp', keyCode: ev.key })
         if (ev.key === 'Enter') {
-          // 表单回车提交备份:若选择器在 form 内,显式 submit
-          try { await wc.executeJavaScript(`(()=>{var el=document.querySelector(${safeSelStr(ev.sel)});if(el&&el.form){el.form.requestSubmit?el.form.requestSubmit():el.form.submit()}})()`, true) } catch {}
+          try { await wc.executeJavaScript(`(()=>{var __el=null;if((${elExpr})&&__el.form){__el.form.requestSubmit?__el.form.requestSubmit():__el.form.submit()}})()`, true) } catch {}
         }
         return { ok: true }
       } catch (e) { return { ok: false, err: e.message } }
     }
     if (ev.act === 'submit') {
       try {
-        const r = await wc.executeJavaScript(`(()=>{var el=document.querySelector(${safeSelStr(ev.sel)});if(!el)return 'NF';if(el.tagName==='FORM'){el.requestSubmit?el.requestSubmit():el.submit()}else{el.click()}return 'OK';})()`, true)
-        return r === 'OK' ? { ok: true } : { ok: false, err: 'selector not found' }
+        const r = await wc.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';if(__el.tagName==='FORM'){__el.requestSubmit?__el.requestSubmit():__el.submit()}else{__el.click()}return 'OK';})()`, true)
+        return r === 'OK' ? { ok: true } : { ok: false, err: 'selector(+alt) not found' }
       } catch (e) { return { ok: false, err: e.message } }
     }
     if (ev.act === 'scroll') {
@@ -1698,10 +1741,12 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
       const gap = Math.min(Math.max(0, (ev.t || 0) - lastT), 2000)   // 步间最长 sleep 2s
       if (gap > 50) await sleep(gap)
       lastT = ev.t || 0
-      const r = await execStep(wc, ev)
+      const r = await execStep(wc, ev, tab)
       stepReport.push({ i: i + 1, act: ev.act, sel: ev.sel || ev.url || '', ok: r.ok, err: r.err || '' })
-      if (!r.ok && ev.act === 'navigate') break   // 起始页都打不开,后面不用跑
-      await sleep(150)   // 让事件循环/微任务跑完
+      if (!r.ok && ev.act === 'navigate') break
+      // 等网络静默(取代固定 150ms);click/submit 后常触发 XHR,需要等它打完
+      if (ev.act === 'click' || ev.act === 'submit' || ev.act === 'key') await waitNetIdle(tab, 300, 3000)
+      else await sleep(120)
     }
     await sleep(1800)    // 播完再等异步报错/请求浮现
     const after = {
