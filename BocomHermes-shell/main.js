@@ -1,5 +1,5 @@
 ﻿'use strict'
-const { app, BrowserWindow, WebContentsView, globalShortcut, ipcMain, screen, dialog, Tray, Menu, nativeImage, shell, clipboard } = require('electron')
+const { app, BrowserWindow, WebContentsView, globalShortcut, ipcMain, screen, dialog, Tray, Menu, nativeImage, shell, clipboard, session, net } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const oc = require('./opencode')
@@ -45,6 +45,34 @@ app.whenReady().then(() => {
   try { logBytes = fs.existsSync(logFile) ? fs.statSync(logFile).size : 0; if (logBytes > 3 * 1024 * 1024) { fs.writeFileSync(logFile, ''); logBytes = 0 } } catch {}
   log('=== BocomHermes ' + app.getVersion() + ' start (' + (app.isPackaged ? 'packaged' : 'dev') + ') userData=' + app.getPath('userData') + ' ===')
 
+  // ── 内网三件套 ─────────────────────────────────────────────────────────────
+  // 1) HTTPS 自签名证书:内网信贷系统常见,直接放行(开发工具 + 内网定位)。
+  //    要严格,可改为只放行私网域名 / 弹窗 once 询问。
+  app.on('certificate-error', (e, _webContents, url, error, _cert, callback) => {
+    log('cert override: ' + url + ' (' + error + ')')
+    e.preventDefault(); callback(true)
+  })
+  // 2) HTTP 认证(Basic/Digest/NTLM):
+  //    NTLM/Negotiate → 让 Chromium 直接拿 Windows 当前登录凭据传(企业 SSO 常态);
+  //    Basic/Digest → 弹一个简洁输入框,记不住,只在本次连接用。
+  try {
+    session.defaultSession.allowNTLMCredentialsForDomains('*')
+    log('NTLM/Negotiate: pass current Windows creds to all domains')
+  } catch (e) { log('allowNTLM fail: ' + e.message) }
+  app.on('login', async (event, webContents, request, authInfo, callback) => {
+    if (authInfo.scheme === 'negotiate' || authInfo.scheme === 'ntlm') return   // Chromium 自动用 Windows 凭据
+    event.preventDefault()
+    const host = (authInfo.host || request.url || '?') + (authInfo.realm ? ' · ' + authInfo.realm : '')
+    const r = await dialog.showMessageBox({ type: 'question', title: 'HTTP 认证', message: '该网站需要登录:\n' + host, detail: '请在弹出的输入框中输入用户名 / 密码(用 ":" 隔开)。\n例: zhangsan:p@ss', buttons: ['取消', '输入'], defaultId: 1, cancelId: 0 })
+    if (r.response !== 1) return callback()
+    const pr = await dialog.showSaveDialog({ title: '用户名:密码(冒号分隔)', defaultPath: 'user:pass', buttonLabel: '确定', filters: [] })
+    if (pr.canceled || !pr.filePath) return callback()
+    const raw = path.basename(pr.filePath).replace(/\.[^.]+$/, '')
+    const i = raw.indexOf(':'); if (i < 0) return callback()
+    callback(raw.slice(0, i), raw.slice(i + 1))
+  })
+  // 3) 代理设置(下面的 initWindow 加载完 S.settings 后再应用)
+
   const deps = { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }
   const { createOrb, createBrowser, createWorkspace, toggleOrbInput, buildTray, spawnEmailCard, recordHistory, touchHistory } = initWindow(S, deps)
   S.createOrb = createOrb   // 留给 window-all-closed 兜底拉起球
@@ -53,6 +81,12 @@ app.whenReady().then(() => {
   initOrch(S, { ipcMain, oc, orch, log })
   initTodos(S, { ipcMain, app, path, fs, log })
   initTrigger(S, { path, fs, app, log, spawnEmailCard })
+
+  // 代理:settings.proxy 在场即应用(支持 'http://host:port' 或 PAC 'pac+http://...')
+  if (S.settings && S.settings.proxy) {
+    try { session.defaultSession.setProxy({ proxyRules: S.settings.proxy }).then(() => log('proxy set: ' + S.settings.proxy)).catch((e) => log('setProxy err: ' + e.message)) }
+    catch (e) { log('setProxy fail: ' + e.message) }
+  }
 
   // serve 启动命令：开发=opencode，打包 exe=bocomcode；可被环境变量或 settings.serveBin 覆盖
   const serveBin = process.env.BOCOMHERMES_SERVE_BIN || S.settings.serveBin || (app.isPackaged ? 'bocomcode' : 'opencode')

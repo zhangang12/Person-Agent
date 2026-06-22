@@ -379,6 +379,7 @@ let loading = false, conOpen = false, conFilter = 'all', findOpen = false, activ
 /* ── 标签栏渲染 ── */
 H.onBrowserTabs(({ tabs, activeId }) => {
   activeTabId = activeId
+  window._lastTabs = tabs   // Ctrl+Tab / Ctrl+1..9 / Ctrl+Shift+T 用
   const bar = $('tabbar')
   bar.querySelectorAll('.tab').forEach(e => e.remove())
   const addBtn = $('newtab')
@@ -697,12 +698,29 @@ H.onBrowserFocusUrl(() => { url.focus(); url.select() })
 H.onBrowserOpenFind(() => openFind())
 
 /* ── chrome 有焦点时的快捷键 ── */
+// 最近关掉的标签 URL,Ctrl+Shift+T 恢复
+const recentlyClosed = []
 document.addEventListener('keydown', e => {
   const mod = e.ctrlKey || e.metaKey
   if (!mod) { if (e.key === 'Escape') { if (findOpen) closeFind(); else if ($('pickcard').classList.contains('show')) $('pickcard').classList.remove('show') } return }
   const k = e.key.toLowerCase()
+  // 标签循环 / 跳转 / 恢复
+  if (e.key === 'Tab') {
+    const tabs = (window._lastTabs || []); if (!tabs.length) return
+    e.preventDefault()
+    const idx = tabs.findIndex(t => t.id === activeTabId)
+    const nx = e.shiftKey ? (idx - 1 + tabs.length) % tabs.length : (idx + 1) % tabs.length
+    H.browserActivateTab(tabs[nx].id); return
+  }
+  if (e.shiftKey && k === 't') { e.preventDefault(); const u = recentlyClosed.pop(); if (u) H.browserNewTab(u); return }
+  if (/^[1-9]$/.test(e.key)) {
+    const tabs = (window._lastTabs || []); if (!tabs.length) return
+    e.preventDefault()
+    const n = Number(e.key); const t = n === 9 ? tabs[tabs.length - 1] : tabs[n - 1]
+    if (t) H.browserActivateTab(t.id); return
+  }
   if (k === 't') { e.preventDefault(); H.browserNewTab('') }
-  else if (k === 'w') { e.preventDefault(); if (activeTabId != null) H.browserCloseTab(activeTabId) }
+  else if (k === 'w') { e.preventDefault(); if (activeTabId != null) { const t = (window._lastTabs || []).find(x => x.id === activeTabId); if (t && t.url) recentlyClosed.push(t.url); H.browserCloseTab(activeTabId) } }
   else if (k === 'r') { e.preventDefault(); H.browserReload() }
   else if (k === 'l') { e.preventDefault(); url.focus(); url.select() }
   else if (k === 'f') { e.preventDefault(); openFind() }

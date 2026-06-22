@@ -1058,10 +1058,32 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
 
   function attachContextMenu(wc) {
     wc.on('context-menu', (_e, p) => {
-      let tmpl = null
-      if (p.isEditable) tmpl = [{ role: 'cut', label: '剪切' }, { role: 'copy', label: '复制' }, { role: 'paste', label: '粘贴' }, { type: 'separator' }, { role: 'selectAll', label: '全选' }]
-      else if (p.selectionText && p.selectionText.trim()) tmpl = [{ role: 'copy', label: '复制' }, { type: 'separator' }, { role: 'selectAll', label: '全选' }]
-      if (tmpl) Menu.buildFromTemplate(tmpl).popup({ window: BrowserWindow.fromWebContents(wc) })
+      const items = []
+      // 浏览器标签页内:链接 / 图片 / 通用页面动作
+      const isBrowserTab = (S.browser.tabs || []).some((t) => t.view && t.view.webContents === wc)
+      if (p.linkURL) {
+        if (isBrowserTab) items.push({ label: '在新标签打开链接', click: () => newTab(p.linkURL) })
+        items.push({ label: '复制链接地址', click: () => clipboard.writeText(p.linkURL) })
+      }
+      if (p.srcURL && p.mediaType === 'image') {
+        items.push({ label: '复制图片地址', click: () => clipboard.writeText(p.srcURL) })
+        if (isBrowserTab) items.push({ label: '在新标签打开图片', click: () => newTab(p.srcURL) })
+      }
+      if (p.isEditable) {
+        if (items.length) items.push({ type: 'separator' })
+        items.push({ role: 'cut', label: '剪切' }, { role: 'copy', label: '复制' }, { role: 'paste', label: '粘贴' }, { type: 'separator' }, { role: 'selectAll', label: '全选' })
+      } else if (p.selectionText && p.selectionText.trim()) {
+        if (items.length) items.push({ type: 'separator' })
+        items.push({ role: 'copy', label: '复制' }, { type: 'separator' }, { role: 'selectAll', label: '全选' })
+      }
+      if (isBrowserTab) {
+        if (items.length) items.push({ type: 'separator' })
+        items.push(
+          { label: '查看源代码', click: () => { try { wc.loadURL('view-source:' + wc.getURL()) } catch (e) { log('view-source err: ' + e.message) } } },
+          { label: '检查元素', click: () => { try { wc.inspectElement(p.x, p.y) } catch (e) { log('inspect err: ' + e.message) } } },
+        )
+      }
+      if (items.length) Menu.buildFromTemplate(items).popup({ window: BrowserWindow.fromWebContents(wc) })
     })
   }
   app.on('web-contents-created', (_e, wc) => attachContextMenu(wc))
