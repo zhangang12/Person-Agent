@@ -95,6 +95,8 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   browserPickElement:   ()    => ipcRenderer.invoke('browser-pick-element'),
   browserCopy:          (text) => ipcRenderer.invoke('browser-copy', text),
   browserReveal:        (filePath) => ipcRenderer.send('browser-reveal', filePath),
+  browserRecStart:      ()    => ipcRenderer.invoke('browser-rec-start'),
+  browserRecStop:       ()    => ipcRenderer.invoke('browser-rec-stop'),
   browserHistory:       ()    => ipcRenderer.sendSync('get-browser-history'),
   browserReorderTabs:   (ids) => ipcRenderer.send('browser-reorder-tabs', ids),
   onBrowserDownload:    (cb)  => ipcRenderer.on('browser-download', (_e, p) => cb(p)),

@@ -427,6 +427,19 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   }
   // 统一的控制台落库 + 推送（console-message 降级路径与 CDP 富路径共用）
   function pushConsole(tab, entry) {
+    // __BR__ 标记 = 录制注入脚本发来的事件,截留入 recording 队列,不进用户控制台
+    const m = String(entry.message || '')
+    if (m.startsWith('__BR__')) {
+      try {
+        const ev = JSON.parse(m.slice(6))
+        if (S.browser.rec && S.browser.rec.active && S.browser.rec.tabId === tab.id) {
+          // 用主进程时间戳代替页面时钟,避免页面 Date.now 被 mock 时漂移
+          ev.t = Date.now() - S.browser.rec.startedAt
+          S.browser.rec.events.push(ev)
+        }
+      } catch {}
+      return
+    }
     entry.ts = Date.now()
     entry.message = String(entry.message == null ? '' : entry.message).slice(0, 8000)
     entry.line = entry.line || 0; entry.source = entry.source || ''
@@ -1299,6 +1312,115 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     S.browser.noCache = !!on
     if (on) { try { await session.defaultSession.clearCache() } catch {} }   // 当下立刻清一次
     return S.browser.noCache
+  })
+
+  // ── 录制 ─────────────────────────────────────────────────────────────────
+  // 注入到页面里的录制监听:click/input/key/scroll/submit/navigate 全打到 console("__BR__"+JSON),
+  // 主进程的 pushConsole 截留这条 message 入 rec.events,不进用户控制台。
+  // 选择器优先 id > data-test/testid > name/aria-label > 短 nth-of-type 路径,尽量稳定。
+  const RECORDER_JS = `
+;(function(){
+  if (window.__bocom_rec_init) return; window.__bocom_rec_init = true;
+  var emit = function(e){ try { console.log('__BR__' + JSON.stringify(e)); } catch(_){} };
+  var sel = function(el){
+    if (!el || el === document || el === document.body) return 'body';
+    if (el.id) return '#' + CSS.escape(el.id);
+    var attrs = ['data-test','data-testid','data-cy','name','aria-label'];
+    for (var i=0;i<attrs.length;i++) { var v = el.getAttribute && el.getAttribute(attrs[i]); if (v) return el.tagName.toLowerCase() + '[' + attrs[i] + '="' + v.replace(/"/g,'\\\\"') + '"]'; }
+    var parts = []; var n = el;
+    for (var d=0; d<5 && n && n.tagName && n !== document.body; d++) {
+      var s = n.tagName.toLowerCase();
+      if (typeof n.className === 'string' && n.className.trim()) {
+        var cls = n.className.trim().split(/\\s+/).slice(0,2).filter(Boolean).map(function(c){return '.'+CSS.escape(c)}).join('');
+        if (cls) s += cls;
+      }
+      var par = n.parentNode;
+      if (par && par.children) {
+        var same = Array.prototype.filter.call(par.children, function(x){ return x.tagName === n.tagName; });
+        if (same.length > 1) s += ':nth-of-type(' + (same.indexOf(n)+1) + ')';
+      }
+      parts.unshift(s); n = n.parentNode;
+    }
+    return parts.join(' > ');
+  };
+  window.bocomSel = sel;
+  document.addEventListener('click', function(e){
+    if (!window.__bocom_rec_on) return;
+    var el = e.target;
+    emit({ act:'click', sel:sel(el), text:(el.innerText||el.value||'').toString().slice(0,40) });
+  }, true);
+  var inputTmr = null;
+  document.addEventListener('input', function(e){
+    if (!window.__bocom_rec_on) return;
+    var el = e.target;
+    if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA' && !el.isContentEditable)) return;
+    clearTimeout(inputTmr);
+    inputTmr = setTimeout(function(){
+      var v = el.isContentEditable ? (el.innerText||'') : (el.value||'');
+      emit({ act:'input', sel:sel(el), value:String(v).slice(0,200) });
+    }, 250);   // 防抖,合并连续敲字
+  }, true);
+  document.addEventListener('keydown', function(e){
+    if (!window.__bocom_rec_on) return;
+    if (e.key === 'Enter' || e.key === 'Escape' || e.key === 'Tab') {
+      emit({ act:'key', sel:sel(e.target), key:e.key });
+    }
+  }, true);
+  document.addEventListener('submit', function(e){
+    if (!window.__bocom_rec_on) return;
+    emit({ act:'submit', sel:sel(e.target) });
+  }, true);
+  var scrollTmr = null;
+  document.addEventListener('scroll', function(){
+    if (!window.__bocom_rec_on) return;
+    clearTimeout(scrollTmr);
+    scrollTmr = setTimeout(function(){
+      emit({ act:'scroll', x:Math.round(window.scrollX), y:Math.round(window.scrollY) });
+    }, 250);
+  }, { capture:true, passive:true });
+})();`
+
+  async function injectRecorder(wc) {
+    try { await wc.executeJavaScript(RECORDER_JS + '\n;window.__bocom_rec_on=true;', true) }
+    catch (e) { log('injectRecorder err: ' + e.message) }
+  }
+
+  ipcMain.handle('browser-rec-start', async () => {
+    const tab = brActive()
+    if (!tab) return { ok: false, error: '没有活跃标签' }
+    const wc = tab.view.webContents
+    S.browser.rec = { active: true, tabId: tab.id, startedAt: Date.now(), startUrl: wc.getURL(), events: [] }
+    S.browser.rec.events.push({ t: 0, act: 'navigate', url: wc.getURL() })
+    await injectRecorder(wc)
+    // 录制中导航 → 新页面要再注入(__bocom_rec_init 防重,__bocom_rec_on 重置)
+    const handler = () => { if (S.browser.rec && S.browser.rec.active) injectRecorder(wc).then(() => {
+      const u = wc.getURL()
+      const last = S.browser.rec.events[S.browser.rec.events.length - 1]
+      if (!last || last.url !== u) S.browser.rec.events.push({ t: Date.now() - S.browser.rec.startedAt, act: 'navigate', url: u })
+    }) }
+    wc.on('did-finish-load', handler)
+    S.browser.rec.cleanup = () => { try { wc.off('did-finish-load', handler) } catch {} }
+    log('rec start: tab ' + tab.id + ' @ ' + S.browser.rec.startUrl)
+    return { ok: true }
+  })
+
+  ipcMain.handle('browser-rec-stop', async () => {
+    const r = S.browser.rec
+    if (!r || !r.active) return { ok: false, error: '没有进行中的录制' }
+    r.active = false
+    if (r.cleanup) r.cleanup()
+    // 把页面里的 flag 关掉(监听仍在,只是不再 emit)
+    const tab = (S.browser.tabs || []).find((t) => t.id === r.tabId)
+    if (tab) { try { await tab.view.webContents.executeJavaScript(';window.__bocom_rec_on=false;', true) } catch {} }
+    // 落盘 userData/recordings/<id>.json
+    const id = 'rec_' + Date.now().toString(36)
+    const dir = path.join(app.getPath('userData'), 'recordings')
+    try { fs.mkdirSync(dir, { recursive: true }) } catch {}
+    const rec = { id, startedAt: r.startedAt, startUrl: r.startUrl, durationMs: Date.now() - r.startedAt, events: r.events }
+    try { fs.writeFileSync(path.join(dir, id + '.json'), JSON.stringify(rec, null, 2)) } catch (e) { log('rec save err: ' + e.message) }
+    S.browser.lastRec = rec
+    log('rec stop: ' + id + ' · ' + r.events.length + ' events · ' + rec.durationMs + 'ms')
+    return { ok: true, ...rec }
   })
   ipcMain.on('browser-devtools', () => {
     const tab = brActive(); if (!tab || tab.view.webContents.isDestroyed()) return
