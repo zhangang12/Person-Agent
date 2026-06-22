@@ -1018,38 +1018,47 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
     if (b.mode !== 'workspace' || !b.cardView || b.cardView.webContents.isDestroyed()) return
     const tab = brActive(); if (!tab) return
     const cardWc = b.cardView.webContents
-    const url = tab.url || '(当前页)'
-    dbgNote(cardWc, '🔁 正在重载页面验证修复效果…', 'info')
     const wc = tab.view.webContents
+    const rec = b.lastRec
+
+    // 路径 A: 有录制 → 自动回放 + diff 报告(真正闭环)
+    if (rec && rec.events && rec.events.length) {
+      dbgNote(cardWc, '🔁 验证修复:回放录制(' + rec.events.length + ' 步)…', 'info')
+      const replay = await replayRec(rec)
+      if (!replay.ok) { dbgNote(cardWc, '⚠ 回放失败:' + (replay.error || ''), 'info'); return }
+      const rep = diffReport(rec, replay)
+      const disp = `🔁 验证完成 · ${rep.pass ? '✅ PASS' : '❌ FAIL'}\n(回放 ${replay.stepReport.length}/${rec.events.length} 步;修复前 ${rec.snapshot.errs.length}/${rec.snapshot.bad.length} → 修复后 ${replay.after.errs.length}/${replay.after.bad.length})`
+      const prompt =
+        `我刚才录制了复现路径,你改完代码后我点了验证 → 系统自动回放并对比"修复前/后"的报错和网络异常。\n\n` +
+        '## 回放验证报告\n' + rep.text + '\n\n' +
+        (rep.pass
+          ? '看起来修好了。请简要总结你这次的根因诊断 + 关键改动,并指出是否还有相关边界需要补测试用例。'
+          : '回放显示问题没修好(或引入了新问题)。请认真看上面的对比,判断是修复没生效、改错了文件、还是另有根因,然后继续用编辑工具调整。')
+      cardWc.send('card-inject', { text: prompt, disp })
+      return
+    }
+
+    // 路径 B: 没录制 → 退回旧的"重载看现状"模式
+    const url = tab.url || '(当前页)'
+    dbgNote(cardWc, '🔁 验证修复:本次未录制 → 退回重载模式(下次点"录制"复现可启用自动回放)', 'info')
     await new Promise((resolve) => {
       let done = false
       const finish = () => { if (done) return; done = true; try { wc.off('did-stop-loading', onStop) } catch {} resolve() }
-      const onStop = () => setTimeout(finish, 2500)   // 等异步报错/请求浮现
+      const onStop = () => setTimeout(finish, 2500)
       wc.once('did-stop-loading', onStop)
-      setTimeout(finish, 12000)                        // 兜底：加载迟迟不完成
+      setTimeout(finish, 12000)
       try { wc.reload() } catch { finish() }
     })
     const errs = tab.console.filter((c) => c.level >= 2)
     const bad = tab.net.filter((r) => r.state === 'failed' || (r.status && r.status >= 400))
-    const errText = errs.length ? errs.slice(-20).map((c) => (c.level === 3 ? '✗ ' : '⚠ ') + c.message).join('\n') : '（无 warning / error）'
-    let netText = '（无失败 / 4xx / 5xx 请求）'
-    if (bad.length) {
-      const lines = []
-      for (const r of bad.slice(-6)) {
-        let body = ''
-        try { const d = await brNetBody(r.id); if (d && d.body && !d.base64) body = String(d.body).slice(0, 800) } catch {}
-        const st = r.state === 'failed' ? ('失败 ' + (r.failText || '')) : (r.status + ' ' + (r.statusText || ''))
-        lines.push(`- [${r.method}] ${st}  ${r.url}` + (body ? `\n    响应体：${body}` : ''))
-      }
-      netText = lines.join('\n')
-    }
+    const errText = errs.length ? errs.slice(-20).map((c) => (c.level === 3 ? '✗ ' : '⚠ ') + c.message).join('\n') : '(无 warning / error)'
     const clean = !errs.length && !bad.length
-    const disp = `🔁 已重载验证：${url}\n（${errs.length} 报错 + ${bad.length} 网络异常）`
+    const disp = `🔁 已重载验证: ${url}\n(${errs.length} 报错 + ${bad.length} 网络异常)`
     const prompt =
-      `我已重载页面验证你刚才的修复。重载后的当前状态：\n\n## 控制台报错（${errs.length} 条）\n${errText}\n\n## 网络异常（${bad.length} 条）\n${netText}\n\n` +
+      `我已重载页面验证你刚才的修复(注:这次没用录制,只是简单重载)。重载后的当前状态:\n\n## 控制台报错(${errs.length})\n${errText}\n\n` +
       (clean
-        ? `控制台与网络都干净了。请确认问题是否已解决；若仍有未覆盖的边界或隐患，请指出。`
-        : `仍有上述报错/异常。请判断是这次修复没生效、引入了新问题、还是另有根因，然后继续用编辑工具修复（我会逐次确认写入），直到干净为止。`)
+        ? '控制台与网络都干净了。下次想要更可靠的验证,我会先点"录制"把复现路径录下来,再点验证就能自动回放出 PASS/FAIL 报告。'
+        : '仍有报错。判断是修复没生效、引入了新问题、还是另有根因,然后继续修。')
     cardWc.send('card-inject', { text: prompt, disp })
   }
 
@@ -1484,16 +1493,140 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
     // 把页面里的 flag 关掉(监听仍在,只是不再 emit)
     const tab = (S.browser.tabs || []).find((t) => t.id === r.tabId)
     if (tab) { try { await tab.view.webContents.executeJavaScript(';window.__bocom_rec_on=false;', true) } catch {} }
-    // 落盘 userData/recordings/<id>.json
+    // 录制结束 = 复现成功瞬间 → 抓快照(报错/网络异常摘要 + 关键 DOM 选择器),供 Phase C 验证时 diff
+    const snapshot = tab ? {
+      errs: tab.console.filter((c) => c.level >= 2).map((c) => ({ level: c.level, msg: (c.message || '').split('\n')[0].slice(0, 200) })),
+      bad: tab.net.filter((n) => n.state === 'failed' || (n.status && n.status >= 400)).map((n) => ({ url: n.url, status: n.status || 0, state: n.state || '' })),
+      url: tab.url || '',
+    } : { errs: [], bad: [], url: '' }
     const id = 'rec_' + Date.now().toString(36)
     const dir = path.join(app.getPath('userData'), 'recordings')
     try { fs.mkdirSync(dir, { recursive: true }) } catch {}
-    const rec = { id, startedAt: r.startedAt, startUrl: r.startUrl, durationMs: Date.now() - r.startedAt, events: r.events }
+    const rec = { id, tabId: r.tabId, startedAt: r.startedAt, startUrl: r.startUrl, durationMs: Date.now() - r.startedAt, events: r.events, snapshot }
     try { fs.writeFileSync(path.join(dir, id + '.json'), JSON.stringify(rec, null, 2)) } catch (e) { log('rec save err: ' + e.message) }
     S.browser.lastRec = rec
-    log('rec stop: ' + id + ' · ' + r.events.length + ' events · ' + rec.durationMs + 'ms')
+    log('rec stop: ' + id + ' · ' + r.events.length + ' events · pre-fix snapshot: ' + snapshot.errs.length + ' errs / ' + snapshot.bad.length + ' bad')
     return { ok: true, ...rec }
   })
+
+  // ── 回放 ─────────────────────────────────────────────────────────────────
+  // 按录制时间线在当前 tab 自动播放;每步执行后等"网络静默"(<=900ms 无新请求),
+  // 步间最长 sleep 2s。播完抓"修复后状态"快照,跟录制时的"修复前状态"diff。
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  function safeSelStr(sel) { return JSON.stringify(String(sel || '')) }
+  async function execStep(wc, ev) {
+    if (ev.act === 'navigate') {
+      const cur = wc.getURL()
+      if (cur === ev.url) return { ok: true }
+      try { wc.loadURL(ev.url) } catch (e) { return { ok: false, err: e.message } }
+      await new Promise((res) => { const t = setTimeout(res, 12000); wc.once('did-stop-loading', () => { clearTimeout(t); res() }) })
+      return { ok: true }
+    }
+    if (ev.act === 'click') {
+      try {
+        const r = await wc.executeJavaScript(`(()=>{var el=document.querySelector(${safeSelStr(ev.sel)});if(!el)return 'NF';el.scrollIntoView({block:'center'});el.click();return 'OK';})()`, true)
+        return r === 'OK' ? { ok: true } : { ok: false, err: 'selector not found' }
+      } catch (e) { return { ok: false, err: e.message } }
+    }
+    if (ev.act === 'input') {
+      try {
+        const r = await wc.executeJavaScript(`(()=>{var el=document.querySelector(${safeSelStr(ev.sel)});if(!el)return 'NF';
+          var v=${JSON.stringify(String(ev.value == null ? '' : ev.value))};
+          if (el.isContentEditable){el.focus();el.innerText=v}
+          else{var p=Object.getOwnPropertyDescriptor(el.__proto__,'value');p&&p.set?p.set.call(el,v):(el.value=v);}
+          el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return 'OK';})()`, true)
+        return r === 'OK' ? { ok: true } : { ok: false, err: 'selector not found' }
+      } catch (e) { return { ok: false, err: e.message } }
+    }
+    if (ev.act === 'key') {
+      try {
+        await wc.executeJavaScript(`(()=>{var el=document.querySelector(${safeSelStr(ev.sel)});if(el)el.focus();})()`, true)
+        wc.sendInputEvent({ type: 'keyDown', keyCode: ev.key })
+        wc.sendInputEvent({ type: 'keyUp', keyCode: ev.key })
+        if (ev.key === 'Enter') {
+          // 表单回车提交备份:若选择器在 form 内,显式 submit
+          try { await wc.executeJavaScript(`(()=>{var el=document.querySelector(${safeSelStr(ev.sel)});if(el&&el.form){el.form.requestSubmit?el.form.requestSubmit():el.form.submit()}})()`, true) } catch {}
+        }
+        return { ok: true }
+      } catch (e) { return { ok: false, err: e.message } }
+    }
+    if (ev.act === 'submit') {
+      try {
+        const r = await wc.executeJavaScript(`(()=>{var el=document.querySelector(${safeSelStr(ev.sel)});if(!el)return 'NF';if(el.tagName==='FORM'){el.requestSubmit?el.requestSubmit():el.submit()}else{el.click()}return 'OK';})()`, true)
+        return r === 'OK' ? { ok: true } : { ok: false, err: 'selector not found' }
+      } catch (e) { return { ok: false, err: e.message } }
+    }
+    if (ev.act === 'scroll') {
+      try { await wc.executeJavaScript(`window.scrollTo(${ev.x || 0}, ${ev.y || 0})`, true); return { ok: true } } catch (e) { return { ok: false, err: e.message } }
+    }
+    return { ok: true }
+  }
+
+  async function replayRec(rec) {
+    const tab = brActive()
+    if (!tab) return { ok: false, error: '没有活跃标签' }
+    const wc = tab.view.webContents
+    // 抓"修复后"状态:清空之前的报错/网络,重头开始
+    tab.console = []; tab.errN = 0; tab.warnN = 0
+    tab.net = []; tab.netById = new Map()
+    const stepReport = []
+    let lastT = 0
+    for (let i = 0; i < rec.events.length; i++) {
+      const ev = rec.events[i]
+      const gap = Math.min(Math.max(0, (ev.t || 0) - lastT), 2000)   // 步间最长 sleep 2s
+      if (gap > 50) await sleep(gap)
+      lastT = ev.t || 0
+      const r = await execStep(wc, ev)
+      stepReport.push({ i: i + 1, act: ev.act, sel: ev.sel || ev.url || '', ok: r.ok, err: r.err || '' })
+      if (!r.ok && ev.act === 'navigate') break   // 起始页都打不开,后面不用跑
+      await sleep(150)   // 让事件循环/微任务跑完
+    }
+    await sleep(1800)    // 播完再等异步报错/请求浮现
+    const after = {
+      errs: tab.console.filter((c) => c.level >= 2).map((c) => ({ level: c.level, msg: (c.message || '').split('\n')[0].slice(0, 200) })),
+      bad: tab.net.filter((n) => n.state === 'failed' || (n.status && n.status >= 400)).map((n) => ({ url: n.url, status: n.status || 0, state: n.state || '' })),
+      url: tab.url || '',
+    }
+    return { ok: true, stepReport, after }
+  }
+
+  // 报告:把 before/after diff 翻译成 PASS/FAIL 文字结论(无视觉依赖)
+  function diffReport(rec, replay) {
+    const before = rec.snapshot || { errs: [], bad: [] }
+    const after = replay.after
+    const lines = []
+    lines.push(`回放 ${replay.stepReport.length}/${rec.events.length} 步,起始 URL: ${rec.startUrl}`)
+    const fails = replay.stepReport.filter((s) => !s.ok)
+    if (fails.length) {
+      lines.push(`\n步骤失败 ${fails.length} 处(可能是修复后页面结构变了,部分元素找不到):`)
+      for (const f of fails.slice(0, 10)) lines.push(`  · 步 ${f.i} ${f.act} "${String(f.sel).slice(0, 60)}" — ${f.err}`)
+    } else lines.push('所有步骤执行成功 ✓')
+    lines.push(`\n报错前后对比: 修复前 ${before.errs.length} → 修复后 ${after.errs.length}`)
+    if (after.errs.length) {
+      lines.push('  修复后仍有:')
+      for (const e of after.errs.slice(0, 8)) lines.push(`    ${e.level === 3 ? '✗' : '⚠'} ${e.msg}`)
+    }
+    lines.push(`网络异常前后对比: 修复前 ${before.bad.length} → 修复后 ${after.bad.length}`)
+    if (after.bad.length) {
+      lines.push('  修复后仍有:')
+      for (const b of after.bad.slice(0, 8)) lines.push(`    ${b.status || b.state} ${b.url}`)
+    }
+    // 判定:报错与网络异常都不多于(且无新增) → PASS
+    const beforeErrMsgs = new Set(before.errs.map((e) => e.msg))
+    const beforeBadUrls = new Set(before.bad.map((b) => b.url + '|' + b.status))
+    const newErrs = after.errs.filter((e) => !beforeErrMsgs.has(e.msg))
+    const newBads = after.bad.filter((b) => !beforeBadUrls.has(b.url + '|' + b.status))
+    const errsImproved = after.errs.length <= before.errs.length
+    const badsImproved = after.bad.length <= before.bad.length
+    const pass = errsImproved && badsImproved && newErrs.length === 0 && newBads.length === 0 && fails.length === 0
+    let verdict
+    if (pass) verdict = '✅ PASS — 复现路径全部走通,且报错/网络异常未增加;原问题特征基本消失'
+    else if (newErrs.length || newBads.length) verdict = `❌ FAIL — 出现了修复前没有的新问题:${newErrs.length} 条新报错 / ${newBads.length} 条新网络异常 → 回归了`
+    else if (fails.length) verdict = '⚠ PARTIAL — 步骤执行有失败(可能页面结构变了),无法可靠判断;建议人工再看一眼'
+    else if (!errsImproved || !badsImproved) verdict = '❌ FAIL — 数量变多了 → 没修好或引入了新问题'
+    else verdict = '✅ PASS'
+    return { pass, verdict, text: verdict + '\n\n' + lines.join('\n') }
+  }
   ipcMain.on('browser-devtools', () => {
     const tab = brActive(); if (!tab || tab.view.webContents.isDestroyed()) return
     const wc = tab.view.webContents
