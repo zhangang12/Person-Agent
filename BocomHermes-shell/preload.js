@@ -99,6 +99,8 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   browserRecStop:       ()    => ipcRenderer.invoke('browser-rec-stop'),
   browserRecSetExpectation: (recId, text) => ipcRenderer.invoke('browser-rec-set-expectation', { recId, text }),
   browserOpenRecDir:    ()    => ipcRenderer.send('browser-open-rec-dir'),
+  browserRollback:      (opts) => ipcRenderer.invoke('browser-rollback-changes', opts || {}),
+  onBrowserVerifyResult:(cb)  => ipcRenderer.on('wf-verify-result', (_e, p) => cb(p)),
   browserHistory:       ()    => ipcRenderer.sendSync('get-browser-history'),
   browserReorderTabs:   (ids) => ipcRenderer.send('browser-reorder-tabs', ids),
   onBrowserDownload:    (cb)  => ipcRenderer.on('browser-download', (_e, p) => cb(p)),

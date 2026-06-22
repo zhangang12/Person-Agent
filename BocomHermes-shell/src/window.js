@@ -1145,7 +1145,15 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
       replay.review = loadReview(bid)  // 或 null
       const rep = diffReport(rec, replay)
       const hitSummary = replay.hitInfo && replay.hitInfo.length ? `;改动 ${replay.hitInfo.length} 文件,${replay.hitInfo.filter((h) => h.executed > 0).length} 个被执行` : ''
-      const disp = `🔁 验证完成 · ${rep.pass ? '✅ PASS' : (/SUSPICIOUS/.test(rep.verdict) ? '⚠ SUSPICIOUS' : '❌ FAIL')}\n(回放 ${replay.stepReport.length}/${rec.events.length} 步;修复前 ${rec.snapshot.errs.length}/${rec.snapshot.bad.length} → 修复后 ${replay.after.errs.length}/${replay.after.bad.length}${hitSummary})`
+      const statusKind = rep.pass ? 'pass' : (/SUSPICIOUS/.test(rep.verdict) ? 'suspicious' : 'fail')
+      const disp = `🔁 验证完成 · ${rep.pass ? '✅ PASS' : (statusKind === 'suspicious' ? '⚠ SUSPICIOUS' : '❌ FAIL')}\n(回放 ${replay.stepReport.length}/${rec.events.length} 步;修复前 ${rec.snapshot.errs.length}/${rec.snapshot.bad.length} → 修复后 ${replay.after.errs.length}/${replay.after.bad.length}${hitSummary})`
+      // 同步推一份卡片到浏览器壳 UI,用户在右下角一眼看到结论而不用翻 agent 对话流
+      if (b.win && !b.win.isDestroyed()) {
+        b.win.webContents.send('wf-verify-result', {
+          kind: statusKind, verdict: rep.verdict, fullText: rep.text,
+          summary: `回放 ${replay.stepReport.length}/${rec.events.length} 步 · 修复前 ${rec.snapshot.errs.length}报错/${rec.snapshot.bad.length}异常 → 修复后 ${replay.after.errs.length}/${replay.after.bad.length}${hitSummary}`,
+        })
+      }
       const prompt =
         `我刚才录制了复现路径,你改完代码后我点了验证 → 系统自动回放并对比"修复前/后"的报错和网络异常。\n\n` +
         '## 回放验证报告\n' + rep.text + '\n\n' +
@@ -2124,6 +2132,27 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
       log('rec ' + recId + ' expectation set: ' + t.slice(0, 60))
       return true
     } catch (e) { log('set expectation err: ' + e.message); return false }
+  })
+  // 一键回滚:直接在主进程跑(不用走 MCP), 给浏览器卡片的"回滚"按钮用
+  ipcMain.handle('browser-rollback-changes', async (_e, opts) => {
+    const dirs = [S.settings.projectDir, S.settings.backendDir].filter(Boolean)
+    if (!dirs.length) return { ok: false, error: '未配置项目目录' }
+    const dryRun = !!(opts && opts.dryRun)
+    const result = []
+    for (const cwd of dirs) {
+      let tracked = [], untracked = []
+      try {
+        const t = require('child_process').execSync('git diff --name-only HEAD', { cwd, encoding: 'utf8', timeout: 5000 })
+        const c = require('child_process').execSync('git diff --cached --name-only HEAD', { cwd, encoding: 'utf8', timeout: 5000 })
+        tracked = [...new Set([...t.split('\n'), ...c.split('\n')].map((s) => s.trim()).filter(Boolean))]
+      } catch {}
+      try { untracked = require('child_process').execSync('git ls-files --others --exclude-standard', { cwd, encoding: 'utf8', timeout: 5000 }).split('\n').map((s) => s.trim()).filter(Boolean) } catch {}
+      result.push({ dir: cwd, tracked, untracked })
+      if (dryRun) continue
+      for (const f of tracked) { try { require('child_process').execSync(`git checkout HEAD -- "${f.replace(/"/g, '\\"')}"`, { cwd, timeout: 3000 }) } catch {} }
+      for (const f of untracked) { try { fs.unlinkSync(path.join(cwd, f)) } catch {} }
+    }
+    return { ok: true, dryRun, result }
   })
   ipcMain.on('browser-open-rec-dir', () => {
     const d = path.join(app.getPath('userData'), 'recordings')

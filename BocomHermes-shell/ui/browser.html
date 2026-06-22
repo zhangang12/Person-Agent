@@ -708,6 +708,49 @@ $('brec').addEventListener('click', async () => {
   }
 })
 
+// 验证结果浮卡:点 "验证" 后,除了发给 agent,也在右下角浮一张 PASS/SUSPICIOUS/FAIL 卡,
+// 用户一眼看到结论,不用翻 agent 对话。
+H.onBrowserVerifyResult && H.onBrowserVerifyResult(({ kind, verdict, summary, fullText }) => {
+  const prev = document.getElementById('vfy-card'); if (prev) prev.remove()
+  const c = document.createElement('div'); c.id = 'vfy-card'
+  const color = kind === 'pass' ? '#1aa86e' : (kind === 'suspicious' ? '#d6a32d' : '#e2424a')
+  const bg = kind === 'pass' ? 'rgba(26,168,110,.12)' : (kind === 'suspicious' ? 'rgba(214,163,45,.13)' : 'rgba(226,66,74,.13)')
+  const tag = kind === 'pass' ? '✅ PASS' : (kind === 'suspicious' ? '⚠ SUSPICIOUS' : '❌ FAIL')
+  c.style.cssText = `position:fixed;bottom:18px;right:18px;z-index:9999;background:${bg};border:1.5px solid ${color};border-radius:12px;padding:11px 13px;color:var(--txt);font-size:12.5px;max-width:480px;box-shadow:0 14px 40px rgba(0,0,0,.45);font-family:inherit`
+  c.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span style="color:${color};font-weight:700;font-size:13px">${tag}</span>
+      <span style="flex:1;color:var(--txt2)">验证报告</span>
+      <button id="vfy-close" style="background:transparent;border:none;color:var(--txt3);cursor:pointer;font-size:16px;line-height:1">×</button>
+    </div>
+    <div style="font-size:11.5px;color:var(--txt2);margin-bottom:7px;line-height:1.5">${(verdict || '').replace(/</g, '&lt;')}</div>
+    <div style="font-size:11px;color:var(--txt3);margin-bottom:9px;line-height:1.45">${(summary || '').replace(/</g, '&lt;')}</div>
+    <div style="display:flex;gap:6px">
+      <button id="vfy-full" style="background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:6px;padding:4px 9px;cursor:pointer;font-size:11px">展开完整报告</button>
+      <button id="vfy-copy" style="background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:6px;padding:4px 9px;cursor:pointer;font-size:11px">复制</button>
+      ${kind !== 'pass' ? `<button id="vfy-rollback" style="background:transparent;border:1px solid ${color};color:${color};border-radius:6px;padding:4px 9px;cursor:pointer;font-size:11px">回滚改动</button>` : ''}
+    </div>
+    <pre id="vfy-fullarea" style="display:none;max-height:360px;overflow:auto;background:rgba(0,0,0,.2);border-radius:6px;padding:8px 10px;margin-top:8px;font-size:11px;line-height:1.45;white-space:pre-wrap;color:var(--txt2);font-family:ui-monospace,Consolas,monospace"></pre>`
+  document.body.appendChild(c)
+  c.querySelector('#vfy-close').addEventListener('click', () => c.remove())
+  c.querySelector('#vfy-full').addEventListener('click', () => { const a = c.querySelector('#vfy-fullarea'); a.textContent = fullText || ''; a.style.display = a.style.display === 'none' ? 'block' : 'none' })
+  c.querySelector('#vfy-copy').addEventListener('click', () => { H.browserCopy(fullText || verdict || ''); showToast('<span class="ok">✓</span> 已复制报告') })
+  const rb = c.querySelector('#vfy-rollback')
+  if (rb) rb.addEventListener('click', async () => {
+    const dry = await H.browserRollback({ dryRun: true })
+    if (!dry || !dry.ok) { showToast('<span class="err">⚠</span> 检查失败:' + (dry && dry.error || '')); return }
+    const all = (dry.result || []).flatMap((d) => [...d.tracked, ...d.untracked])
+    if (!all.length) { showToast('(没有可回滚的改动)'); return }
+    if (!confirm('将回滚 ' + all.length + ' 个文件:\n\n' + all.slice(0, 20).join('\n') + (all.length > 20 ? '\n…' : '') + '\n\n确认?')) return
+    const r = await H.browserRollback({})
+    showToast(r && r.ok ? '<span class="ok">✓</span> 已回滚 ' + all.length + ' 个文件' : '<span class="err">⚠</span> 回滚部分失败')
+    rb.disabled = true; rb.style.opacity = '.5'
+  })
+  // 8 秒后自动半透明(不挡浏览器),hover 恢复
+  setTimeout(() => { if (c.isConnected) c.style.opacity = '.55' }, 8000)
+  c.addEventListener('mouseenter', () => c.style.opacity = '1')
+})
+
 // 录制结束 → 让用户一句话说清"应该发生什么"。这是 agent 修对方向的关键信号。
 function askExpectation(recId) {
   if (document.getElementById('exp-overlay')) return
