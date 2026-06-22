@@ -73,6 +73,14 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     S.inputWin.setPosition(nx, ny)
   }
 
+  // 关掉任一辅助窗口后，确保智能体球仍在前台可见——避免用户误以为"agent 退出了"。
+  // 球本身 skipTaskbar=true 没有任务栏入口，被刚关的全屏窗口"挡住"或视觉遗忘是真实问题。
+  function ensureOrbAlive() {
+    if (!S.inputWin || S.inputWin.isDestroyed()) { createOrb(); return }
+    try { if (S.inputWin.isMinimized()) S.inputWin.restore() } catch {}
+    try { S.inputWin.showInactive(); S.inputWin.moveTop() } catch {}
+  }
+
   // 功能窗口「从智能体长出来」：算出球心相对该窗口的 transform-origin + 朝球方向的初始位移，
   // 作为 query 传给窗口（glass.css 的 orbGrow 据此从球的方向放大长出）
   function orbAnchorFor(winX, winY, winW, winH) {
@@ -973,6 +981,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     win.on('closed', () => {
       for (const t of b.tabs) { try { t.view.webContents.destroy() } catch {} }
       S.browser = { win: null, tabs: [], activeId: null, consoleH: 0, seq: 0, mode: 'standalone', leftW: 0, cardView: null, cardWcId: null, _dragging: false }
+      ensureOrbAlive()   // 关浏览器 ≠ 退出 agent —— 把球带回前台
     })
     // chrome 加载完后再建首个标签（保证 IPC 能收到）
     win.webContents.once('did-finish-load', () => newTab(initialUrl || ''))
@@ -1016,6 +1025,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       S.sessionByWc.delete(b.cardWcId)
       try { cardView.webContents.destroy() } catch {}
       S.browser = { win: null, tabs: [], activeId: null, consoleH: 0, seq: 0, mode: 'standalone', leftW: 0, cardView: null, cardWcId: null, _dragging: false }
+      ensureOrbAlive()   // 关工作台 ≠ 退出 agent —— 把球带回前台
     })
     win.webContents.once('did-finish-load', () => {
       win.webContents.send('browser-split-set', b.leftW)

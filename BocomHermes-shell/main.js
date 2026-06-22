@@ -47,6 +47,7 @@ app.whenReady().then(() => {
 
   const deps = { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }
   const { createOrb, createBrowser, createWorkspace, toggleOrbInput, buildTray, spawnEmailCard, recordHistory, touchHistory } = initWindow(S, deps)
+  S.createOrb = createOrb   // 留给 window-all-closed 兜底拉起球
 
   initSession(S, { ipcMain, path, fs, shell, oc, log, recordHistory, touchHistory })
   initOrch(S, { ipcMain, oc, orch, log })
@@ -76,5 +77,13 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createOrb() })
 })
 
-app.on('window-all-closed', () => {})
+// 不要因为所有窗口关掉就自动退出 app —— 这是个常驻 agent。
+// 进一步：如果真的没窗口了（比如球被误关），把球重新拉起来，避免"看起来退出了"。
+app.on('before-quit', () => { app.isQuitting = true })
+app.on('window-all-closed', () => {
+  if (app.isQuitting) return
+  if (BrowserWindow.getAllWindows().length === 0 && typeof S.createOrb === 'function') {
+    try { S.createOrb() } catch {}
+  }
+})
 app.on('will-quit', () => { globalShortcut.unregisterAll(); oc.killAll() })
