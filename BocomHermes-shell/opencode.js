@@ -71,10 +71,30 @@ let SERVE_BIN = 'opencode'
 function setServeBin(name) { if (name) SERVE_BIN = name }
 function spawnServe(cwd, port) {
   const args = ['serve', '--port', String(port), '--hostname', '127.0.0.1']
-  const opts = { cwd: cwd || undefined, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }
-  // Windows：显式走 cmd.exe（不读 %ComSpec%，避免它指向 PowerShell 时弹窗），窗口隐藏；
-  // stdio 用 pipe 把 serve 自己的输出收进日志文件，便于排查内网启动失败。
-  if (process.platform === 'win32') return spawn('cmd.exe', ['/d', '/s', '/c', SERVE_BIN, ...args], opts)
+  // 阻止 bocomcode/opencode 自启 TUI 的三件套:
+  //   ① env 把"非交互"信号往死里给:CI/NONINTERACTIVE/TERM=dumb/NO_COLOR/FORCE_COLOR=0 + 各家 NO_TUI 变量
+  //   ② stdio[0]='ignore' 让子进程认为没有 stdin TTY,多数 TUI 库会自动 fallback 到无窗模式
+  //   ③ Windows: detached:true 让子进程脱离父控制台组(否则继承我们/cmd.exe 的控制台句柄,
+  //      bocomcode 把它当成"我有控制台"就弹 TUI);配合 windowsHide:true 完全压住
+  const env = {
+    ...process.env,
+    CI: '1', NONINTERACTIVE: '1', TERM: 'dumb',
+    NO_COLOR: '1', FORCE_COLOR: '0',
+    BOCOMCODE_NO_TUI: '1', OPENCODE_NO_TUI: '1', BOCOMCODE_HEADLESS: '1', OPENCODE_HEADLESS: '1',
+  }
+  const opts = {
+    cwd: cwd || undefined,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+    env,
+    detached: process.platform === 'win32',
+  }
+  if (process.platform === 'win32') {
+    // 仍经 cmd.exe(PATH 解析 .cmd/.exe shim),但 detached + windowsHide 让 bocomcode 自己也找不到控制台
+    const c = spawn('cmd.exe', ['/d', '/s', '/c', SERVE_BIN, ...args], opts)
+    try { c.unref() } catch {}   // detached 后 unref,让 Node 主进程退出不被它绊住
+    return c
+  }
   return spawn(SERVE_BIN, args, opts)
 }
 async function waitHealthy(base, getExit, log) {
