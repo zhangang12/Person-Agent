@@ -583,12 +583,16 @@ function formatEmailPrompt(emails) {
 }
 
 // ── 密码加解密(Electron safeStorage)───────────────────────────────────
+// 当前环境(OS keychain)能否加密。false → 密码只能明文落盘,UI 必须告警
+function encryptionAvailable() {
+  try { const { safeStorage } = require('electron'); return !!safeStorage.isEncryptionAvailable() } catch { return false }
+}
 function encryptPass(plain) {
   try {
     const { safeStorage } = require('electron')
     if (safeStorage.isEncryptionAvailable()) return safeStorage.encryptString(plain).toString('base64')
   } catch {}
-  return plain
+  return plain   // 无法加密 → 明文回退(encryptionAvailable() 会让 UI 红字提示用户)
 }
 function decryptPass(stored) {
   if (!stored) return ''
@@ -847,7 +851,7 @@ async function sendMail(cfg, msg) {
 
 module.exports = {
   fetchUnread, fetchByMessageId, markRead, archiveMessages, appendToSent,
-  formatEmailPrompt, encryptPass, decryptPass, sendMail,
+  formatEmailPrompt, encryptPass, decryptPass, encryptionAvailable, sendMail,
   // 暴露解析工具给后续阶段(A2-b mail_get_full、A3 附件保存、A5 reply 拼 quote)用
   parseRfc822, decodeBytes, decodeWords, stripHtml,
   // SMTP/MIME 辅助:A5-c 回复时拼 HTML quote、A5-d APPEND 到 Sent 文件夹用

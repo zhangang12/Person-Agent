@@ -1792,6 +1792,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       project: projName(), projectDir: S.settings.projectDir || '', recentDirs: S.settings.recentDirs || [],
       backendDir: S.settings.backendDir || '',
       planMode: S.settings.planMode !== false,
+      encryptionAvailable: email.encryptionAvailable(),   // false → 密码只能明文落盘,设置面板要红字告警
       imap: { host: im.host || '', port: im.port || 993, secure: im.secure !== false, allowSelf: !!im.allowSelfSigned, user: im.user || '', hasPass: !!im.passEncrypted, scheduleHour: im.scheduleHour ?? 9, sentFolder: im.sentFolder || 'Sent', archiveFolder: im.archiveFolder || 'Archive' },
       smtp: { host: sm.host || '', port: sm.port || 587, secure: !!sm.secure, allowSelf: !!sm.allowSelfSigned, sameAsImap: sm.sameAsImap !== false, user: sm.user || '', hasPass: !!sm.passEncrypted, from: sm.from || '' },
     }
@@ -1960,6 +1961,10 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
 
   // ── Settings: IMAP 字段读写 ───────────────────────────────────────────────
   ipcMain.handle('set-settings', (_e, patch) => {
+    // 存密码前先看能不能加密:不能 → 日志告警一次(设置面板另有红字提示),让用户知道密码明文落盘
+    if (patch && ((patch.imap && patch.imap.pass && patch.imap.pass.trim()) || (patch.smtp && patch.smtp.pass && patch.smtp.pass.trim())) && !email.encryptionAvailable()) {
+      log('⚠️ 安全告警:当前环境 safeStorage 不可用,邮箱密码将以明文保存到 settings.json')
+    }
     if (patch && typeof patch.backendDir === 'string') S.settings.backendDir = patch.backendDir.trim()
     if (patch && typeof patch.editorCmd === 'string') S.settings.editorCmd = patch.editorCmd.trim()
     if (patch && typeof patch.serveBin === 'string') {

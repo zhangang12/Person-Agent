@@ -88,6 +88,10 @@
         <span class="hint">关:Agent 直接 edit(权限弹窗逐次确认)。开:多一步"方案 → 批准 → 改",改完自动展示 git diff。</span>
       </div>
 
+      <div id="encWarn" style="display:none;margin-bottom:10px;padding:8px 11px;border-radius:8px;font-size:12px;line-height:1.5;color:var(--diff-del);background:var(--diff-del-bg);border:.5px solid var(--diff-del)">
+        ⚠️ 当前环境无法调用系统密钥库加密,邮箱密码将以<b>明文</b>保存到本机 settings.json。请仅在可信的个人设备上填写,或先确认系统钥匙串/凭据管理可用。
+      </div>
+
       <div class="fld">
         <span class="lbl">收件 IMAP <span class="hint" style="font-weight:400">(用于晨间摘要 / agent 读邮件)</span></span>
         <div class="row">
@@ -245,6 +249,9 @@
   })
 
   // IMAP 字段初始化
+  // 系统密钥库不可用 → 密码明文落盘,顶部红字告警
+  try { $('encWarn').style.display = (cur.encryptionAvailable === false) ? 'block' : 'none' } catch (e) {}
+
   const im = cur.imap || {}
   $('imapHost').value = im.host || ''
   $('imapPort').value = im.port || 993
