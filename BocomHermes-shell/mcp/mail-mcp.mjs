@@ -86,7 +86,14 @@ const TOOLS = [
     offset:    { type: 'number', description: '从第几个字符开始,默认 0' },
     limit:     { type: 'number', description: '本次取多少字符,默认 8000,最大 50000' },
   }, required: ['messageId', 'filename'] } },
-  { name: 'mail_reply', description: '回复某封刚读的邮件(基于 mail_list 拿到的 subject + from)。会自动加 "Re: " 前缀(若没有)、自动 To 原发件人,你只填 text(回复正文)。', inputSchema: { type: 'object', properties: { originalSubject: { type: 'string', description: '原邮件主题' }, originalFrom: { type: 'string', description: '原邮件发件人(直接传 from 字段,会自动提邮箱地址)' }, text: { type: 'string', description: '回复正文' } }, required: ['originalSubject', 'originalFrom', 'text'] } },
+  { name: 'mail_reply', description: '回复某封邮件 — 主进程自动:① To 原发件人 ② 主题加 Re: 前缀 ③ In-Reply-To/References 头(Outlook 归并对话串)④ **HTML quote 原邮件(必带原文格式,Outlook 风格 blockquote)** ⑤ multipart/alternative 双段。你只填 messageId + text(或 html);要带附件传 attachments 路径。', inputSchema: { type: 'object', properties: {
+    messageId:   { type: 'string', description: 'mail_list 输出里 [msgId:xxx] 的 xxx — 原邮件 Message-ID' },
+    text:        { type: 'string', description: '你的回复正文(纯文本)。系统自动生成 HTML 版并 quote 原邮件' },
+    html:        { type: 'string', description: '可选,显式 HTML 回复(传了就直接用,不再从 text 转;系统仍会在下面 quote 原邮件 HTML)' },
+    cc:          { type: 'string', description: '可选抄送,多个用逗号' },
+    bcc:         { type: 'string', description: '可选密抄,多个用逗号' },
+    attachments: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, filename: { type: 'string' }, mime: { type: 'string' } }, required: ['path'] } },
+  }, required: ['messageId'] } },
   { name: 'mail_mark_read', description: '把一批邮件标已读(IMAP +Flags \\Seen)。处理完一封别忘了标,下次 mail_list 才不会重复返回。', inputSchema: { type: 'object', properties: {
     messageIds: { type: 'array', items: { type: 'string' }, description: 'mail_list 里 [msgId:xxx] 的 xxx 列表;一次最多 30 个' },
   }, required: ['messageIds'] } },
@@ -159,11 +166,17 @@ async function callTool(name, a) {
     } catch (e) { return 'mail_send 失败: ' + e.message }
   }
   if (name === 'mail_reply') {
-    const to = extractEmail(a.originalFrom)
-    if (!to) return '(无法从 originalFrom 提取邮箱地址: ' + a.originalFrom + ')'
-    const sub = /^re:/i.test(a.originalSubject || '') ? a.originalSubject : ('Re: ' + (a.originalSubject || ''))
-    try { await relayPost('/mail/send', { to, subject: sub, text: a.text }); return `✓ 已回复 → ${to}  · 主题: ${sub}` }
-    catch (e) { return 'mail_reply 失败: ' + e.message }
+    if (!a.messageId) return '(messageId 必填)'
+    if (!a.text && !a.html) return '(text 或 html 至少传一个)'
+    const ccs = a.cc  ? String(a.cc ).split(/[,;]\s*/).filter(Boolean) : []
+    const bccs= a.bcc ? String(a.bcc).split(/[,;]\s*/).filter(Boolean) : []
+    try {
+      const r = await relayPost('/mail/reply', {
+        messageId: a.messageId, text: a.text, html: a.html,
+        cc: ccs, bcc: bccs, attachments: Array.isArray(a.attachments) ? a.attachments : [],
+      })
+      return `✓ 已回复 → ${r.to}  · 主题: ${r.subject}  · 自动 HTML quote 原邮件 (来自 ${r.quotedFrom})`
+    } catch (e) { return 'mail_reply 失败: ' + e.message }
   }
   if (name === 'mail_mark_read') {
     try {

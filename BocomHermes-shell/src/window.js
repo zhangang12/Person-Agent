@@ -98,6 +98,63 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
               attachments: mail.attachments || [],
             })
           }
+          if (req.url === '/mail/reply') {
+            // 回复邮件:必带原文 HTML 格式引用(Outlook 风格 blockquote),硬约束
+            const imap = S.settings.imap
+            const cfg = S.effectiveSmtp(); if (!cfg) return reply({ error: 'SMTP 未配置' })
+            const msgId = String(a.messageId || '').replace(/^<|>$/g, '')
+            if (!msgId) return reply({ error: 'messageId 必填' })
+            if (!a.text && !a.html) return reply({ error: '回复正文 text 或 html 至少传一个' })
+            // 取原邮件:先内存 batch,否则 IMAP fetch by Message-ID
+            let orig = null
+            const batch = S.mailLastBatch && Array.isArray(S.mailLastBatch.emails) ? S.mailLastBatch.emails : []
+            orig = batch.find((e) => e.messageId === msgId) || null
+            if (!orig) {
+              try { orig = await email.fetchByMessageId(imap, msgId) } catch (e) { return reply({ error: '取原邮件失败: ' + e.message }) }
+            }
+            if (!orig) return reply({ error: '找不到原邮件 msgId=' + msgId })
+            // 抽 To(从原 from)
+            const fromAddr = (orig.from.match(/<([^>]+)>/) || [])[1] || (orig.from.match(/[\w.\-+]+@[\w.\-]+\.\w+/) || [])[0] || orig.from
+            // Subject:Re: 前缀去重
+            const subject = /^re:/i.test(orig.subject || '') ? orig.subject : ('Re: ' + (orig.subject || ''))
+            // References:沿用原 references,末尾追加原 messageId
+            const refs = Array.isArray(orig.references) ? orig.references.slice() : []
+            if (msgId && !refs.includes(msgId)) refs.push(msgId)
+            // 拼回复 text:agent 文 + 引用块
+            const replyText = String(a.text || email.stripHtml(a.html || ''))
+            const quoteHead = `\r\n\r\n--- 原邮件 ---\r\n发件人: ${orig.from}\r\n时间: ${orig.date}\r\n主题: ${orig.subject}\r\n`
+            const origText = orig.text || email.stripHtml(orig.html || '')
+            const quotedText = origText.split('\n').map((l) => '> ' + l).join('\n')
+            const finalText = replyText + quoteHead + '\r\n' + quotedText
+            // 拼回复 html:agent html(优先)或 textToHtml(text) + Outlook 风格头 + blockquote 包原 html
+            const replyHtml = a.html ? String(a.html) : email.textToHtml(String(a.text || ''))
+            // 原邮件 HTML 段:有就用,没就把原 text 包 <pre> 当 html(保留换行)
+            const origHtmlBlock = orig.html
+              ? orig.html
+              : '<pre style="white-space:pre-wrap;font-family:Calibri,sans-serif">' + String(origText || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>'
+            const finalHtml = replyHtml +
+              '<br><br><div style="border-top:1px solid #ccc;padding-top:6px;margin-top:6px;color:#666;font-size:12px;font-family:Calibri,sans-serif">' +
+                '<b>发件人:</b> ' + String(orig.from || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '<br>' +
+                '<b>发送时间:</b> ' + String(orig.date || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '<br>' +
+                '<b>主题:</b> ' + String(orig.subject || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '<br>' +
+              '</div>' +
+              '<blockquote style="margin:0 0 0 .8ex;border-left:2px #1a73e8 solid;padding-left:1ex">' +
+                origHtmlBlock +
+              '</blockquote>'
+            try {
+              await email.sendMail(cfg, {
+                to: fromAddr,
+                cc: a.cc, bcc: a.bcc,
+                subject,
+                text: finalText,
+                html: finalHtml,
+                attachments: a.attachments,
+                inReplyTo: msgId,
+                references: refs,
+              })
+              return reply({ ok: true, to: fromAddr, subject, quotedFrom: orig.from })
+            } catch (e) { return reply({ error: 'mail_reply 发送失败: ' + e.message }) }
+          }
           if (req.url === '/mail/markRead') {
             const imap = S.settings.imap
             if (!imap || !imap.host || !imap.user || !imap.passEncrypted) return reply({ error: 'IMAP 未配置' })
