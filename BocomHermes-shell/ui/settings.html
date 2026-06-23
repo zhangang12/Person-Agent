@@ -80,6 +80,15 @@
       </div>
 
       <div class="fld">
+        <span class="lbl">修复流程</span>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px;color:var(--txt)">
+          <input type="checkbox" id="planMode" style="width:14px;height:14px" />
+          <span>方案模式(推荐 · 默认开)— Agent 先出修复方案,等你"批准方案"才动手 edit</span>
+        </label>
+        <span class="hint">关:Agent 直接 edit(权限弹窗逐次确认)。开:多一步"方案 → 批准 → 改",改完自动展示 git diff。</span>
+      </div>
+
+      <div class="fld">
         <span class="lbl">邮件服务器 (IMAP)</span>
         <div class="row">
           <input id="imapHost" class="in" style="flex:3" placeholder="imap.company.com" spellcheck="false" />
@@ -155,6 +164,7 @@
 
   // 代理
   const proxy = $('proxy'); proxy.value = cur.proxy || ''
+  const planMode = $('planMode'); planMode.checked = cur.planMode !== false   // 默认 ON
 
   // 当前项目 + 最近仓库
   const proj = $('proj'); proj.textContent = cur.project || '未选目录'; proj.title = cur.projectDir || ''
@@ -223,7 +233,7 @@
   // 保存
   const msg = $('msg')
   async function save(silent) {
-    const patch = { editorCmd: editorCmd.value, proxy: proxy.value }
+    const patch = { editorCmd: editorCmd.value, proxy: proxy.value, planMode: !!planMode.checked }
     if (!cur.serveBinLocked) patch.serveBin = serveBin.value
     patch.imap = {
       host: $('imapHost').value.trim(),

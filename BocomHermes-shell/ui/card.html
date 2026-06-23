@@ -103,6 +103,8 @@
   .quick.hidden { display: none; }
   .qchip { flex: none; font-size: 11px; color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 999px; padding: 4px 11px; cursor: pointer; white-space: nowrap; }
   .qchip:hover { color: var(--txt); border-color: var(--accent); }
+  .qchip.go { color: #fff; background: linear-gradient(135deg,#1aa86e,#0b8e5c); border-color: transparent; font-weight: 600; }
+  .qchip.go:hover { opacity: .92; }
 
   .perm { display: flex; align-items: center; gap: 8px; background: var(--warn-bg); border: .5px solid var(--warn-border); border-radius: 11px; padding: 7px 9px; }
   .perm .t { flex: 1; font-size: 12px; color: var(--warn-txt); }
@@ -156,7 +158,15 @@
     projEl.title = (name ? '项目目录：' + txt + '\n' : '') + '点击切换（仅影响新开的卡）'
     projEl.classList.toggle('empty', !name)
   }
-  projEl.addEventListener('click', async () => { try { paintProj(await window.BocomHermes.pickProject()) } catch (e) {} })
+  projEl.addEventListener('click', async () => {
+    // 工作台内嵌:本卡已绑定项目 serve,切换目录不能改本卡的会话(serve cwd 不可变)
+    // 给用户明确说法,而不是无声切了但本卡没变化让人困惑
+    if (params.get('embedded') === '1') {
+      const yes = confirm('当前调试对话已绑定项目。切换项目目录后,需要关掉当前工作台再开新工作台才能用新项目。\n\n仍要切换吗?')
+      if (!yes) return
+    }
+    try { paintProj(await window.BocomHermes.pickProject()) } catch (e) {}
+  })
   window.BocomHermes.onProject && window.BocomHermes.onProject((p) => paintProj(p))
   const feed = document.getElementById('feed'), st = document.getElementById('st')
   const ci = document.getElementById('ci'), send = document.getElementById('send')
@@ -279,6 +289,7 @@
 
   // 快捷指令：常用追问的模板（在这个数组里增删即可迭代）
   const QUICK = [
+    { label: '✅ 批准方案 → 改', text: '批准方案。请按你刚才的计划用编辑工具完成修改;改完调 repro_assert/repro_self_review 登记,再简要总结改了什么。我改完后会自动用 git diff 把改动展示给我看。', highlight: true },
     { label: '改成可应用 diff', text: '把你上面给出的修改整理成统一 diff：用 ```diff 围栏，包含 +++/--- 文件头和 @@ 行号，便于我一键应用到对应文件。' },
     { label: '补单元测试', text: '为刚才的改动补充单元测试，覆盖正常路径与边界场景。' },
     { label: '加中文注释', text: '给刚才的代码补上必要的中文注释，解释关键逻辑，但不要改变行为。' },
@@ -288,10 +299,21 @@
     { label: '排查报错', text: '帮我分析这个报错的根因，给出最可能的修法，优先考虑内网环境下的常见原因。' },
   ]
   QUICK.forEach((q) => {
-    const b = document.createElement('button'); b.className = 'qchip'; b.textContent = q.label; b.title = q.text
+    const b = document.createElement('button'); b.className = 'qchip' + (q.highlight ? ' go' : ''); b.textContent = q.label; b.title = q.text
     b.addEventListener('click', () => { if (busy) return; addMsg(q.text, 'me'); turn(q.text) })
     quick.appendChild(b)
   })
+  // 查看本次改动:把 git diff 当 ```diff 注入 ai 气泡(富结果会自动渲红绿+可应用)
+  const diffBtn = document.createElement('button'); diffBtn.className = 'qchip'; diffBtn.textContent = '📜 查看本次改动'; diffBtn.title = '取当前 session 的 git diff(前端+后端目录),用富结果格式显示;改完想看 agent 到底改了什么用这个'
+  diffBtn.addEventListener('click', async () => {
+    if (busy) return
+    try {
+      const d = await window.BocomHermes.currentDiff()
+      const ai = addMsg('', 'ai')
+      ai.innerHTML = window.Rich.renderMarkdown('## 本次 session 的改动 (git diff)\n\n```diff\n' + (d || '(无)').slice(0, 50000) + '\n```')
+    } catch (e) { addMsg('⚠ 拉 diff 失败:' + (e.message || e), 'ai') }
+  })
+  quick.appendChild(diffBtn)
 
   // 记忆管理命令：/memory 打开编辑弹窗
   const memBtn = document.createElement('button'); memBtn.className = 'qchip'; memBtn.textContent = '📌 我的记忆'; memBtn.title = '查看 / 编辑个人记忆（每张新卡会自动注入）'

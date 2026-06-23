@@ -303,9 +303,93 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     return m[String(lvl).toLowerCase()] ?? 1
   }
 
+  // 页面级捕获:解决 CDP getResponseBody 拿不到响应体(已 GC / 流式 / 跨进程)+ 弹窗/错误模态没采集
+  // 思路:在每次页面 dom-ready 时注入一段 wrapper,接管 fetch/XHR + alert/confirm/prompt,
+  // 数据存 window.__BR_CAP_* 数组;compactRepro 用 executeJavaScript 拉。
+  // 不依赖 CDP,内网常见 banking 框架(antd/iView/自家 modal)弹窗/接口异常都覆盖。
+  const CAPTURE_JS = `;(function(){
+    if (window.__bocom_cap_init) return; window.__bocom_cap_init = true;
+    window.__BR_CAP_NET = []; window.__BR_CAP_DIALOG = []; window.__BR_CAP_ERRMODAL = [];
+    var clip = function(s, n){ s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n) : s; };
+    var nowT = function(){ return Date.now(); };
+    // ── fetch 包装 ──
+    if (window.fetch) {
+      var _fetch = window.fetch;
+      window.fetch = function(input, init){
+        var url = typeof input === 'string' ? input : (input && input.url) || '';
+        var method = (init && init.method) || (input && input.method) || 'GET';
+        var reqBody = '';
+        try { if (init && init.body) reqBody = typeof init.body === 'string' ? init.body : (init.body && init.body.toString ? init.body.toString() : ''); } catch(_){}
+        var t0 = nowT();
+        return _fetch.apply(this, arguments).then(function(resp){
+          try {
+            var clone = resp.clone();
+            clone.text().then(function(body){
+              window.__BR_CAP_NET.push({ src:'fetch', method:method.toUpperCase(), url:String(url), status:resp.status, reqBody:clip(reqBody,4000), respBody:clip(body,4000), t:t0, ms:nowT()-t0 });
+              if (window.__BR_CAP_NET.length > 200) window.__BR_CAP_NET.shift();
+            }).catch(function(){});
+          } catch(_){}
+          return resp;
+        }).catch(function(e){
+          window.__BR_CAP_NET.push({ src:'fetch', method:method.toUpperCase(), url:String(url), status:0, reqBody:clip(reqBody,4000), respBody:'(fetch error: '+(e && e.message || e)+')', t:t0, ms:nowT()-t0, error:true });
+          throw e;
+        });
+      };
+    }
+    // ── XMLHttpRequest 包装 ──
+    if (window.XMLHttpRequest) {
+      var XO = window.XMLHttpRequest.prototype.open;
+      var XS = window.XMLHttpRequest.prototype.send;
+      window.XMLHttpRequest.prototype.open = function(m, u){ this.__br_m = String(m||'GET').toUpperCase(); this.__br_u = String(u||''); return XO.apply(this, arguments); };
+      window.XMLHttpRequest.prototype.send = function(body){
+        var xhr = this; var t0 = nowT();
+        var reqBody = ''; try { reqBody = typeof body === 'string' ? body : (body && body.toString ? body.toString() : ''); } catch(_){}
+        var onDone = function(){
+          var respBody = ''; try { respBody = (xhr.responseType === '' || xhr.responseType === 'text') ? String(xhr.responseText || '') : '(' + (xhr.responseType||'binary') + ')'; } catch(_){}
+          window.__BR_CAP_NET.push({ src:'xhr', method:xhr.__br_m||'GET', url:xhr.__br_u||'', status:xhr.status||0, reqBody:clip(reqBody,4000), respBody:clip(respBody,4000), t:t0, ms:nowT()-t0 });
+          if (window.__BR_CAP_NET.length > 200) window.__BR_CAP_NET.shift();
+        };
+        xhr.addEventListener('loadend', onDone);
+        return XS.apply(this, arguments);
+      };
+    }
+    // ── alert/confirm/prompt 包装 ──
+    ['alert','confirm','prompt'].forEach(function(k){
+      var _orig = window[k]; if (typeof _orig !== 'function') return;
+      window[k] = function(msg){
+        try { window.__BR_CAP_DIALOG.push({ kind:k, text:clip(msg, 500), t:nowT() }); if (window.__BR_CAP_DIALOG.length > 60) window.__BR_CAP_DIALOG.shift(); } catch(_){}
+        return _orig.apply(this, arguments);
+      };
+    });
+    // ── 错误模态/Toast 自动探测 ── MutationObserver 找新增的"错误样态"节点
+    var ERR_RE = /(error|fail|err|danger|warning|toast)/i;
+    var TXT_RE = /(错误|失败|异常|警告|流水号|交易号|tradeNo|transactionId|requestId|serial)/i;
+    try {
+      var seen = 0;
+      var mo = new MutationObserver(function(muts){
+        for (var i=0;i<muts.length;i++) {
+          for (var j=0;j<muts[i].addedNodes.length;j++) {
+            var n = muts[i].addedNodes[j]; if (!n || n.nodeType !== 1) continue;
+            var cls = (n.className && typeof n.className === 'string') ? n.className : '';
+            var txt = (n.innerText || n.textContent || '').trim();
+            if ((cls && ERR_RE.test(cls)) || (txt && TXT_RE.test(txt) && txt.length < 500)) {
+              if (seen > 100) return;
+              seen++;
+              window.__BR_CAP_ERRMODAL.push({ cls:clip(cls, 120), text:clip(txt, 400), t:nowT() });
+            }
+          }
+        }
+      });
+      var startMO = function(){ if (document.body) mo.observe(document.body, { childList:true, subtree:true }); };
+      if (document.body) startMO(); else document.addEventListener('DOMContentLoaded', startMO);
+    } catch(_){}
+  })();`
+
   function brWireTab(tab) {
     const wc = tab.view.webContents
     const b = S.browser
+    // 每次 dom-ready 都重注入(防 SPA 内导航后丢失);__bocom_cap_init 防重
+    wc.on('dom-ready', () => { wc.executeJavaScript(CAPTURE_JS, true).catch(() => {}) })
     const onNav = () => {
       tab.title = wc.getTitle() || tab.title
       tab.url = wc.getURL()
@@ -1066,6 +1150,44 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const tl = rec ? formatTimeline(rec.events) : '(本次未录制操作 — 想让 Agent 自动验证修复,先按"录制"复现一次)'
     const recRef = rec ? evdSave(bundleId, 'recording', JSON.stringify(rec, null, 2)) : ''
 
+    // 页面级捕获:fetch/XHR 全量(解决 CDP 拿不到响应体)+ alert/confirm/prompt + 错误模态/Toast
+    let pageCap = { net: [], dialogs: [], errModals: [] }
+    try { const raw = await wc.executeJavaScript(`JSON.stringify({n:window.__BR_CAP_NET||[],d:window.__BR_CAP_DIALOG||[],e:window.__BR_CAP_ERRMODAL||[]})`, true); const o = JSON.parse(raw || '{}'); pageCap = { net: o.n || [], dialogs: o.d || [], errModals: o.e || [] } } catch {}
+
+    // 给 netLines 补"页面级 body fallback":CDP 拿不到 body 的请求(body 空 / "无法获取"),
+    // 找页面 CAP 里同 URL 的最近一条用它的 respBody 作补
+    if (pageCap.net.length) {
+      const findCap = (url) => {
+        for (let i = pageCap.net.length - 1; i >= 0; i--) { if (pageCap.net[i].url === url || (pageCap.net[i].url && pageCap.net[i].url.endsWith(url.split('?')[0].split('/').pop() || ''))) return pageCap.net[i] }
+        return null
+      }
+      for (let i = 0; i < bad.length; i++) {
+        const r = bad[i]
+        // 如果这条 netLine 没有响应体或显示"无法获取",用 pageCap 的 respBody 顶
+        const hasBody = / 响应体: /.test(netLines[i] || '')
+        if (!hasBody) {
+          const cap = findCap(r.url)
+          if (cap && cap.respBody) {
+            const bodyTxt = String(cap.respBody)
+            if (bodyTxt.length > 200) { const ref = evdSave(bundleId, 'resp' + (i + 1) + '-page', bodyTxt); netLines[i] += `\n      响应体(页面捕获,CDP 拿不到时兜底): (${bodyTxt.length}B) ref#${ref.split('/').pop()} · 摘要: ${bodyTxt.slice(0, 120)}…` }
+            else netLines[i] += `\n      响应体(页面捕获): ${bodyTxt.slice(0, 200)}`
+          }
+        }
+      }
+    }
+    // 弹窗 + 错误模态 单独一节(信贷常用)
+    const dialogLines = pageCap.dialogs.slice(-10).map((d, i) => `  [D${i + 1}] ${d.kind}: ${d.text}`).join('\n')
+    const modalLines = (() => {
+      // 同文本去重 + 取最近 8
+      const seen = new Set(); const out = []
+      for (let i = pageCap.errModals.length - 1; i >= 0 && out.length < 8; i--) {
+        const e = pageCap.errModals[i]; const k = (e.text || '').slice(0, 80)
+        if (seen.has(k)) continue; seen.add(k)
+        out.unshift(`  [M${out.length + 1}] ${e.cls ? '.' + e.cls.split(/\s+/).slice(0, 2).join('.') + ' ' : ''}${e.text}`)
+      }
+      return out.join('\n')
+    })()
+
     const exp = rec && rec.expectation ? rec.expectation : ''
     const text = `=== 复现包 ${bundleId} ===
 URL: ${tab.url || '(空白页)'}
@@ -1084,6 +1206,10 @@ ${errLines.length ? errLines.join('\n') : '  (无)'}
 网络/业务异常 (${bad.length} 条;含 4xx/5xx/failed + **HTTP 200 但 body 业务异常**,后者内网信贷常见):
 ${netLines.length ? netLines.join('\n') : '  (无)'}
 
+弹窗 / 错误模态 / Toast (页面级捕获 ${pageCap.dialogs.length + pageCap.errModals.length} 条 — 内网信贷常用模态报错+流水号):
+${dialogLines || '  (无 alert/confirm/prompt)'}
+${modalLines || '  (无错误样态 DOM 节点)'}
+
 (大 payload 已落盘 userData/evidence/${bundleId}/;agent 可用 mcp 'tianshu-repro' 的 get_evidence 工具按需拉:传入 'ref#${bundleId}/<name>')`
     return { bundleId, text, errs, bad }
   }
@@ -1091,30 +1217,32 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
   async function brAnalyze() {
     const tab = brActive(); if (!tab) return
     const { bundleId, text: bundle, errs, bad } = await compactRepro(tab)
+    const planMode = S.settings.planMode !== false   // 默认 ON
+    const planStep = planMode
+      ? `【方案模式 — 你这次必须先出方案,等用户点"批准方案"才动手】\n` +
+        `4. **不要立刻 edit**!先用编辑工具读相关源码,搞清根因;然后输出一份完整方案:\n` +
+        `   - 一句话根因\n` +
+        `   - 影响半径(用 scan_impact{bundleId:"${bundleId}", symbol, cwd} 扫每个要改的符号)\n` +
+        `   - 计划改动清单:每条 "文件:行 — 改什么 — 为什么"\n` +
+        `   - 风险提示 + 自评 risk 1~5\n` +
+        `5. 等待用户回复"批准方案"(我会真发一条这样的消息)。批准前**严禁**调用任何 edit 类工具。\n` +
+        `6. 批准后再 edit + 调 repro_assert / repro_self_review;改完用 mcp 'BocomHermes-repro' 的工具登记并简要总结(系统会自动展示 git diff)。\n`
+      : `4. **改文件前先查影响半径(必做)**:对每个将要修改的导出符号,调 scan_impact{bundleId:"${bundleId}", symbol, cwd}\n` +
+        `5. **直接用编辑工具改源码**(我会逐次确认每处写入),改完一两句话说明改了什么\n` +
+        `6. **改完后必做两件**(repro-mcp 工具):① repro_assert 声明 1~4 条断言 ② repro_self_review 自评 risk + summary + edge_cases\n`
     const prompt =
       `我正在用内嵌浏览器复现一个问题，请你作为资深全栈工程师帮我定位根因并给出修复方案。\n\n` +
       bundle + '\n\n' +
       `请按以下步骤帮我修复：\n` +
-      `1. 看时间线还原"用户做了什么导致问题",再结合控制台/网络/业务异常定位根因(优先看 source-map 还原的"文件:行")\n` +
+      `1. 看时间线还原"用户做了什么导致问题",再结合控制台/网络/业务异常/弹窗模态定位根因(优先看 source-map 还原的"文件:行")\n` +
       `   ⚠ 内网信贷接口常**返回 200 但 body 里 code != 0** — bundle 里"200·业务异常"标的就是这类,务必当成失败处理\n` +
-      `2. 大块证据(完整 DOM / 长 req body)按需用 mcp 'tianshu-repro' 的 get_evidence/get_dom_subtree/get_event_window 工具拉详情;别一次性把它们塞回回复\n` +
+      `   ⚠ 流水号 / transactionId 通常在弹窗或错误模态里 — bundle 已抓"弹窗/错误模态"段,优先扫这里\n` +
+      `2. 大块证据(完整 DOM / 长 req body)按需用 mcp 'BocomHermes-repro' 的 get_evidence/get_dom_subtree/get_event_window 工具拉详情;别一次性塞回回复\n` +
       `3. 用编辑工具读相关源码,确认根因所在的具体文件与行\n` +
-      `4. **改文件前先查影响半径(必做 — 验证会检查)**:对每个将要修改的导出符号(函数/常量/类/组件),\n` +
-      `   调 mcp 'BocomHermes-repro' 的 **scan_impact{bundleId:"${bundleId}", symbol:"<符号名>", cwd:"<项目根绝对路径>"}** 工具。\n` +
-      `   工具返回引用清单 + 落盘备查;改任何文件之前请先扫过对应符号。**改了未扫过的文件,验证会标 SUSPICIOUS。**\n` +
-      `   引用 >5 处时,简要列出"已确认安全的引用方"和"特别注意的引用方"。\n` +
-      `5. **直接用编辑工具改源码完成修复**(我会逐次确认每处写入),改完一两句话说明改了哪些文件:行\n` +
-      `6. **改完后必做的两件(都是 mcp 'BocomHermes-repro' 的工具,验证会检查):**\n` +
-      `   ① **repro_assert**:声明 1~4 条具体可验断言(用 bundleId="${bundleId}"),kind 可选:\n` +
-      `      · no_console:报错消息中应不再出现的子串(例 "TypeError: rate")\n` +
-      `      · no_element / has_element:元素 CSS 选择器(例 ".error-banner")\n` +
-      `      · no_net:URL 子串,该接口不应再 4xx/5xx(例 "/api/quota")\n` +
-      `   ② **repro_self_review**:给本次修复打个 risk 1~5 自评(对修复正确性的信心),\n` +
-      `      summary 1-3 句话说改了什么 + 为什么,edge_cases 列出没覆盖的边界(没有就空)。\n` +
-      `      risk < 3 验证会标 SUSPICIOUS;不调验证也会标。\n` +
-      `7. 让我点"验证" — 系统自动:① 回放时间线 ② 检查改过的 JS 是否被执行 ③ 核对你的断言 ④ 检查盲改 ⑤ 显示 self-review\n` +
-      `   → 5 维度判定 PASS / FAIL / SUSPICIOUS。FAIL 看报告调整,不要乱猜。\n` +
-      `8. 若 FAIL 且你判断方向错了,**先用 repro_rollback{cwd, dryRun:true}** 列出会被回滚的文件,确认后再用 dryRun:false 清掉本轮改动,从头分析;别在错的基础上叠改。`
+      planStep +
+      `7. 改完点"验证" — 系统:① 回放时间线 ② 检查改过 JS 是否被执行 ③ 核对断言 ④ 检查盲改 ⑤ 显示 self-review\n` +
+      `   → 多维度判定 PASS / FAIL / SUSPICIOUS。FAIL 看报告调整,不要乱猜。\n` +
+      `8. FAIL 且方向错了,**先用 repro_rollback{cwd, dryRun:true}** 列出会回滚的文件,确认后 dryRun:false 清掉本轮改动,从头分析。`
     S.browser.lastBundleId = bundleId   // verify 用它读 mcp 'repro_assert' 写入的断言
     log('brAnalyze: bundle ' + bundleId + ' size=' + Buffer.byteLength(bundle) + 'B')
     const disp = `🔍 已复现并发送：${tab.url || '(空白页)'}\n（${errs.length} 条控制台报错 + ${bad.length} 条网络异常 + 页面 DOM 上下文）`
@@ -1376,6 +1504,7 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
       proxy: S.settings.proxy || '',
       project: projName(), projectDir: S.settings.projectDir || '', recentDirs: S.settings.recentDirs || [],
       backendDir: S.settings.backendDir || '',
+      planMode: S.settings.planMode !== false,   // 默认 ON:先方案后人审再改
       imap: { host: im.host || '', port: im.port || 993, secure: im.secure !== false, allowSelf: !!im.allowSelfSigned, user: im.user || '', hasPass: !!im.passEncrypted, scheduleHour: im.scheduleHour ?? 9 },
     }
   })
@@ -1469,6 +1598,7 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
         .then(() => log('proxy updated: ' + (rules || '(direct)')))
         .catch((e) => log('setProxy err: ' + e.message))
     }
+    if (patch && typeof patch.planMode === 'boolean') S.settings.planMode = patch.planMode
     if (patch && patch.imap) {
       S.settings.imap = S.settings.imap || {}
       const im = patch.imap
@@ -1481,6 +1611,25 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
       if (im.scheduleHour !== undefined) S.settings.imap.scheduleHour = parseInt(im.scheduleHour) || 9
     }
     saveSettings(); return true
+  })
+
+  // 取本次 session 的 git diff(前端+后端目录),给"查看本次改动"用,改完直接展示给用户看
+  ipcMain.handle('current-diff', () => {
+    const dirs = [S.settings.projectDir, S.settings.backendDir].filter(Boolean)
+    if (!dirs.length) return '(未配置项目目录)'
+    const out = []
+    for (const cwd of dirs) {
+      let d = ''
+      try { d = require('child_process').execSync('git --no-pager diff HEAD', { cwd, encoding: 'utf8', timeout: 5000, maxBuffer: 8 * 1024 * 1024 }) }
+      catch (e) { d = '(git diff 失败: ' + e.message + ')' }
+      let u = ''
+      try {
+        const ls = require('child_process').execSync('git ls-files --others --exclude-standard', { cwd, encoding: 'utf8', timeout: 3000 }).split('\n').map((s) => s.trim()).filter(Boolean)
+        if (ls.length) u = '\n\n(未跟踪新文件 ' + ls.length + '):\n  ' + ls.join('\n  ')
+      } catch {}
+      if ((d && d.trim()) || u) out.push('## ' + cwd + '\n' + (d || '(无 staged/unstaged 改动)') + u)
+    }
+    return out.length ? out.join('\n\n---\n\n') : '(本轮 session 无 git 改动)'
   })
 
   // ── Todos 广播（卡片保存待办后通知 todos 面板刷新）────────────────────────

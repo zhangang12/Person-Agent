@@ -100,6 +100,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   browserRecSetExpectation: (recId, text) => ipcRenderer.invoke('browser-rec-set-expectation', { recId, text }),
   browserOpenRecDir:    ()    => ipcRenderer.send('browser-open-rec-dir'),
   browserRollback:      (opts) => ipcRenderer.invoke('browser-rollback-changes', opts || {}),
+  currentDiff:          ()    => ipcRenderer.invoke('current-diff'),
   browserRecList:       ()    => ipcRenderer.invoke('browser-rec-list'),
   browserRecUpdate:     (id, patch) => ipcRenderer.invoke('browser-rec-update', { id, patch }),
   browserRecDelete:     (id)  => ipcRenderer.invoke('browser-rec-delete', id),

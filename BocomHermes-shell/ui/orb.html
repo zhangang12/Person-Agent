@@ -62,7 +62,7 @@ html,body{width:280px;height:280px;background:transparent;overflow:hidden;user-s
 .state-done .eye{width:16px;height:3.5px;border-radius:2px;background:#00ff8c;box-shadow:0 0 8px rgba(0,255,140,.85);animation:done-pulse 1.6s ease-in-out infinite}
 .state-done .eye:nth-child(2){animation-delay:.8s}
 
-.stage:hover .sphere{
+.stage.open .sphere{
   animation:none!important;transform:scale(1.06);
   transition:transform .3s cubic-bezier(.34,1.56,.64,1),box-shadow .2s;
   box-shadow:-24px 2px 48px rgba(0,230,255,.92),-9px 0 20px rgba(0,230,255,.6),26px -2px 48px rgba(60,80,255,.85),9px 0 20px rgba(80,60,255,.55),0 -20px 32px rgba(140,60,255,.5),0 0 110px rgba(0,160,255,.18),inset -13px 0 30px rgba(0,200,255,.2),inset 13px 0 30px rgba(60,60,255,.15);
@@ -91,14 +91,14 @@ html,body{width:280px;height:280px;background:transparent;overflow:hidden;user-s
 }
 
 /* 展开（7 个功能均匀环绕球体）*/
-.stage:hover .ri{opacity:1;pointer-events:all}
-.stage:hover .ri:nth-child(1){transform:translate(0,-100px) scale(1);transition-delay:.03s}
-.stage:hover .ri:nth-child(2){transform:translate(78px,-62px) scale(1);transition-delay:.06s}
-.stage:hover .ri:nth-child(3){transform:translate(97px,22px) scale(1);transition-delay:.09s}
-.stage:hover .ri:nth-child(4){transform:translate(43px,90px) scale(1);transition-delay:.12s}
-.stage:hover .ri:nth-child(5){transform:translate(-43px,90px) scale(1);transition-delay:.15s}
-.stage:hover .ri:nth-child(6){transform:translate(-97px,22px) scale(1);transition-delay:.18s}
-.stage:hover .ri:nth-child(7){transform:translate(-78px,-62px) scale(1);transition-delay:.21s}
+.stage.open .ri{opacity:1;pointer-events:all}
+.stage.open .ri:nth-child(1){transform:translate(0,-100px) scale(1);transition-delay:.03s}
+.stage.open .ri:nth-child(2){transform:translate(78px,-62px) scale(1);transition-delay:.06s}
+.stage.open .ri:nth-child(3){transform:translate(97px,22px) scale(1);transition-delay:.09s}
+.stage.open .ri:nth-child(4){transform:translate(43px,90px) scale(1);transition-delay:.12s}
+.stage.open .ri:nth-child(5){transform:translate(-43px,90px) scale(1);transition-delay:.15s}
+.stage.open .ri:nth-child(6){transform:translate(-97px,22px) scale(1);transition-delay:.18s}
+.stage.open .ri:nth-child(7){transform:translate(-78px,-62px) scale(1);transition-delay:.21s}
 
 /* hover 状态：轻微提亮 */
 .ri:hover{
@@ -181,13 +181,14 @@ const H = window.BocomHermes
 const stage = document.getElementById('stage')
 const sphere = document.getElementById('sphere')
 
-// ── 透明区域点击穿透 ──
+// ── 透明区域点击穿透 + 菜单开/合(同信号控制,避免 CSS :hover 被 passthrough 卡住)──
 document.addEventListener('mousemove', e => {
   const el = document.elementFromPoint(e.clientX, e.clientY)
   const over = el && el.tagName !== 'HTML' && el.tagName !== 'BODY' && el !== stage
   H.setOrbMousePassthrough(!over)
+  stage.classList.toggle('open', !!over)   // 用 .open 代替 :hover,JS 控制 — 鼠标移出 menu 才真收回
 })
-document.addEventListener('mouseleave', () => H.setOrbMousePassthrough(true))
+document.addEventListener('mouseleave', () => { H.setOrbMousePassthrough(true); stage.classList.remove('open') })
 
 // ── 拖拽（在桌面内自由移动）──
 let dragging = false, moved = false, downX = 0, downY = 0, lastX = 0, lastY = 0
