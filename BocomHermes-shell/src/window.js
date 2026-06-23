@@ -2,6 +2,7 @@
 const USE_ACRYLIC = false
 const { clipboard, session } = require('electron')
 const email = require('./email')
+const attachments = require('./attachments')
 
 module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }) {
   // 额外窗口引用
@@ -44,6 +45,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
             if (!imap || !imap.host || !imap.user || !imap.passEncrypted) return reply({ error: 'IMAP 未配置' })
             // 透传 agent 的筛选/分页参数:from / subject / days / onlyUnseen / limit / cursor
             const r = await email.fetchUnread(imap, a || {})
+            // 附件落盘 + 文本化(strip _rawAttachments bytes,attachments[] 改为带 hasText 的 meta)
+            try { await attachments.saveAttachments(r.emails, app.getPath('userData'), log) } catch (e) { log('saveAttachments err: ' + e.message) }
             // 缓存最近一次结果,给 todo 回填邮件元信息用(mail-cache 持久化在 A4-b)
             S.mailLastBatch = { ts: Date.now(), emails: r.emails }
             return reply({ ok: true, emails: r.emails, nextCursor: r.nextCursor, totalMatched: r.totalMatched })
@@ -63,7 +66,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
             const batch = S.mailLastBatch && Array.isArray(S.mailLastBatch.emails) ? S.mailLastBatch.emails : []
             mail = batch.find((e) => e.messageId === msgId) || null
             if (!mail) {
-              try { mail = await email.fetchByMessageId(imap, msgId) } catch (e) { return reply({ error: 'IMAP 兜底搜失败: ' + e.message }) }
+              try {
+                mail = await email.fetchByMessageId(imap, msgId)
+                if (mail) { try { await attachments.saveAttachments([mail], app.getPath('userData'), log) } catch (e) { log('saveAtts err: ' + e.message) } }
+              } catch (e) { return reply({ error: 'IMAP 兜底搜失败: ' + e.message }) }
             }
             if (!mail) return reply({ error: '找不到 msgId=' + msgId + '(可能已归档或不在 INBOX)' })
             const part = a.part === 'html' ? (mail.html || '') : (mail.text || '')
@@ -79,6 +85,12 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
               attachments: mail.attachments || [],
             })
           }
+          if (req.url === '/mail/attachment') {
+            try {
+              const r = attachments.readAttachmentText(app.getPath('userData'), a.messageId, a.filename, a.offset, a.limit)
+              return reply({ ok: true, ...r })
+            } catch (e) { return reply({ error: e.message, code: e.code || null }) }
+          }
           return reply({ error: 'unknown ' + req.url })
         } catch (e) { reply({ error: e.message }) }
       })
@@ -91,6 +103,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     })
   }
   startMailRelay()
+  // 启动时清理 30 天前的附件目录(异步执行不阻塞主流程)
+  try { attachments.cleanupOld(app.getPath('userData'), log) } catch (e) { log('att cleanup err: ' + e.message) }
   const projName = () => S.settings.projectDir ? path.basename(S.settings.projectDir) : '未选目录'
 
   function applyProject(dir) {
@@ -268,6 +282,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const r = await email.fetchUnread(imap, { limit: 10 })
     const emails = r.emails || []
     if (!emails.length) { log('email: no unread emails'); return 0 }
+    try { await attachments.saveAttachments(emails, app.getPath('userData'), log) } catch (e) { log('saveAttachments err: ' + e.message) }
     log('email: fetched ' + emails.length + ' / ' + r.totalMatched + ' emails (nextCursor=' + r.nextCursor + ')')
     // 把这次抓的邮件存到内存,供"加待办时回填邮件元信息" / agent 通过 mail-cache 读
     S.mailLastBatch = { ts: Date.now(), emails }

@@ -24,6 +24,11 @@
     "repro:e2e": "electron scripts/e2e-repro-test.mjs",
     "mcp:config": "node mcp/print-config.mjs"
   },
+  "dependencies": {
+    "pdf-parse": "^1.1.1",
+    "mammoth": "^1.8.0",
+    "xlsx": "^0.18.5"
+  },
   "devDependencies": {
     "electron": "^34.0.0",
     "electron-builder": "^25.1.8"

@@ -52,6 +52,12 @@ const TOOLS = [
     offset:    { type: 'number', description: '从第几个字符开始,默认 0' },
     limit:     { type: 'number', description: '本次取多少字符,默认 8000,最大 50000。返回有 hasMore + nextOffset 让你翻下一段' },
   }, required: ['messageId'] } },
+  { name: 'mail_get_attachment_text', description: '读某封邮件某个附件的文本内容(已自动提取:PDF/Word/Excel/CSV/TXT/HTML/JSON/XML;Excel 转 CSV)。支持分段。> 3MB 或非文本格式的附件无文本可读,会返回 extractError 提示。', inputSchema: { type: 'object', properties: {
+    messageId: { type: 'string', description: 'mail_list 输出里 [msgId:xxx] 的 xxx' },
+    filename:  { type: 'string', description: 'mail_list 或 mail_get_full 输出的附件文件名(原名,会自动 sanitize)' },
+    offset:    { type: 'number', description: '从第几个字符开始,默认 0' },
+    limit:     { type: 'number', description: '本次取多少字符,默认 8000,最大 50000' },
+  }, required: ['messageId', 'filename'] } },
   { name: 'mail_reply', description: '回复某封刚读的邮件(基于 mail_list 拿到的 subject + from)。会自动加 "Re: " 前缀(若没有)、自动 To 原发件人,你只填 text(回复正文)。', inputSchema: { type: 'object', properties: { originalSubject: { type: 'string', description: '原邮件主题' }, originalFrom: { type: 'string', description: '原邮件发件人(直接传 from 字段,会自动提邮箱地址)' }, text: { type: 'string', description: '回复正文' } }, required: ['originalSubject', 'originalFrom', 'text'] } },
   { name: 'todo_add', description: '加一条待办。urgency 可选 高/中/低(默认中)。可关联邮件:传 mailSubject/mailDate/mailBody 元信息,待办面板能展开看原邮件。', inputSchema: { type: 'object', properties: { text: { type: 'string' }, from: { type: 'string', description: '来源(发件人 / 项目 / 自填)' }, urgency: { type: 'string', enum: ['高', '中', '低'] }, mailSubject: { type: 'string' }, mailDate: { type: 'string' }, mailBody: { type: 'string' } }, required: ['text'] } },
   { name: 'todo_list', description: '列出所有待办(未完成在前)。可按 onlyPending 过滤。', inputSchema: { type: 'object', properties: { onlyPending: { type: 'boolean' }, limit: { type: 'number' } } } },
@@ -77,11 +83,18 @@ async function callTool(name, a) {
       const header = `命中 ${r.totalMatched} 封,本次返回 ${emails.length} 封${r.nextCursor != null ? ` · 下一页 cursor=${r.nextCursor}` : ' · 已到末尾'}:`
       const body = emails.map((e, i) => {
         const att = (e.attachments && e.attachments.length)
-          ? `\n  附件: ${e.attachments.map((x) => `${x.filename}(${Math.round(x.size / 1024)}KB)`).join(', ')}` : ''
+          ? `\n  附件: ${e.attachments.map((x) => `${x.filename}(${Math.round(x.size / 1024)}KB${x.hasText ? `,可读 ${x.textLen}字` : x.extractError ? ',✗' + x.extractError : ''})`).join(', ')}` : ''
         return `\n#${i + 1}  ${e.date || ''}  [msgId:${e.messageId || '?'}]\n  发件人: ${e.from}\n  主题: ${e.subject}${att}\n  正文摘要: ${(e.body || '').slice(0, 300).replace(/\s+/g, ' ')}`
       }).join('\n')
-      return header + body + '\n\n(提示:要回复某封 → mail_reply 用上面的 msgId;要看全文 → mail_get_full)'
+      return header + body + '\n\n(提示:回复某封 → mail_reply 用 msgId;看全文 → mail_get_full;读附件 → mail_get_attachment_text)'
     } catch (e) { return 'mail_list 失败: ' + e.message }
+  }
+  if (name === 'mail_get_attachment_text') {
+    try {
+      const r = await relayPost('/mail/attachment', { messageId: a.messageId, filename: a.filename, offset: a.offset, limit: a.limit })
+      const head = `[附件「${a.filename}」 ${r.content.length} / ${r.totalLen} 字 · 来源=${r.source === 'extracted' ? '抽取的文本' : '原始文本文件'}${r.hasMore ? ` · 继续传 offset=${r.nextOffset}` : ' · 已完整'}]\n──────────\n`
+      return head + r.content
+    } catch (e) { return 'mail_get_attachment_text 失败: ' + e.message }
   }
   if (name === 'mail_get_full') {
     try {
@@ -89,7 +102,7 @@ async function callTool(name, a) {
       const partLabel = a.part === 'html' ? 'HTML' : '文本'
       const head = `${r.from || '?'}  ·  ${r.subject || ''}  ·  ${r.date || ''}\n[${partLabel}  ${r.content.length} / ${r.totalLen} 字${r.hasMore ? `,继续传 offset=${r.nextOffset}` : ',已完整'}]\n──────────\n`
       const attLine = (r.attachments && r.attachments.length)
-        ? `\n──────────\n附件: ${r.attachments.map((x) => `${x.filename}(${Math.round(x.size / 1024)}KB,${x.mime})`).join(', ')}\n(用 mail_get_attachment_text 看附件正文 — 待 A3 上线)`
+        ? `\n──────────\n附件:\n${r.attachments.map((x) => `  · ${x.filename}(${Math.round(x.size / 1024)}KB,${x.mime})${x.hasText ? ` [可读 ${x.textLen}字]` : x.extractError ? ` [✗ ${x.extractError}]` : ''}`).join('\n')}\n(用 mail_get_attachment_text 读)`
         : ''
       return head + r.content + attLine
     } catch (e) { return 'mail_get_full 失败: ' + e.message }
