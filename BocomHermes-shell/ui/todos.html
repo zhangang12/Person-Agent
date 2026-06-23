@@ -120,7 +120,9 @@
       if (t.mailMsgId) {
         const acts = document.createElement('div'); acts.className = 'mail-acts'
         const bView = document.createElement('button'); bView.className = 'mail-act'; bView.textContent = '📄 原邮件'
+        const bWeb = document.createElement('button'); bWeb.className = 'mail-act'; bWeb.textContent = '🌐 网页视图'
         const bReply = document.createElement('button'); bReply.className = 'mail-act'; bReply.textContent = '✉️ 起草回复'
+        bWeb.addEventListener('click', () => { try { window.BocomHermes.openMailView(t.mailMsgId) } catch (e) {} })
         let full = null
         bView.addEventListener('click', async () => {
           if (full) { full.style.display = full.style.display === 'none' ? 'block' : 'none'; return }
@@ -137,7 +139,7 @@
           if (r && r.ok) window.BocomHermes.closeSelf()
           else { bReply.disabled = false; bReply.textContent = '✉️ 起草回复'; const e = document.createElement('div'); e.className = 'mail-full'; e.textContent = '✗ ' + ((r && r.error) || '打开失败'); body.appendChild(e) }
         })
-        acts.append(bView, bReply); body.appendChild(acts)
+        acts.append(bView, bWeb, bReply); body.appendChild(acts)
       }
       const del = document.createElement('button'); del.className = 'del-btn'; del.title = '删除'; del.textContent = '×'
       del.addEventListener('click', async () => { await window.BocomHermes.todoDelete(t.id); render() })

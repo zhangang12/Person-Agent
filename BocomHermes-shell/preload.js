@@ -71,6 +71,8 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   triggerEmailSummary: () => ipcRenderer.invoke('trigger-email-summary'),
   mailGetFull: (msgId) => ipcRenderer.invoke('mail-get-full', msgId),
   mailReplyCard: (msgId) => ipcRenderer.invoke('mail-reply-card', { msgId }),
+  mailViewData: (msgId) => ipcRenderer.invoke('mail-view-data', msgId),
+  openMailView: (msgId) => ipcRenderer.invoke('open-mail-view', msgId),
   emailTest: () => ipcRenderer.invoke('email-test'),
   smtpTest:  () => ipcRenderer.invoke('smtp-test'),
   openTodos: () => ipcRenderer.invoke('open-todos'),

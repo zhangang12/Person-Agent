@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>邮件 · BocomHermes</title>
+<script>try { document.documentElement.dataset.theme = window.BocomHermes.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
+<script>(function(){try{var p=new URLSearchParams(location.search),d=document.documentElement.style;['gox','goy','gfx','gfy'].forEach(function(k){var v=p.get(k);if(v)d.setProperty('--'+k,v)})}catch(e){}})()</script>
+<link rel="stylesheet" href="glass.css" />
+<style>
+  .panel { display: flex; flex-direction: column; height: 100%; }
+  .hd { flex: none; padding: 10px 13px 9px; border-bottom: .5px solid var(--composer-border); }
+  .hd-top { display: flex; align-items: center; gap: 7px; }
+  .subj { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; color: var(--txt); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hbtn { border: none; background: transparent; color: var(--txt3); cursor: pointer; padding: 3px 7px; border-radius: 6px; font-size: 11px; }
+  .hbtn:hover { color: var(--txt); background: var(--composer-bg); }
+  .meta { font-size: 11.5px; color: var(--txt3); margin-top: 4px; line-height: 1.5; }
+  .bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 7px 13px; border-bottom: .5px solid var(--composer-border); }
+  .seg { display: inline-flex; border: .5px solid var(--composer-border); border-radius: 7px; overflow: hidden; }
+  .seg button { border: none; background: transparent; color: var(--txt2); font-size: 11.5px; padding: 3px 11px; cursor: pointer; }
+  .seg button.on { background: var(--brand); color: #fff; }
+  .pill { border: .5px solid var(--composer-border); background: transparent; color: var(--txt2); font-size: 11px; padding: 3px 10px; border-radius: 7px; cursor: pointer; }
+  .pill:hover { color: var(--txt); border-color: var(--accent); }
+  .pill.warn { color: var(--warn-txt); border-color: var(--warn-border); background: var(--warn-bg); }
+  .spacer { flex: 1; }
+  .stage { flex: 1; min-height: 0; position: relative; }
+  iframe { width: 100%; height: 100%; border: none; background: #fff; }
+  .txt { width: 100%; height: 100%; box-sizing: border-box; margin: 0; padding: 14px 16px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.6; color: var(--txt); background: var(--bg); font-family: -apple-system, 'Microsoft YaHei', sans-serif; }
+  .loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--txt3); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="glass">
+  <div class="panel">
+    <div class="hd">
+      <div class="hd-top">
+        <span id="subj" class="subj">加载中…</span>
+        <button id="reply" class="hbtn nodrag" title="起草回复">✉️ 回复</button>
+        <button id="x" class="hbtn nodrag" title="关闭"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+      <div id="meta" class="meta"></div>
+    </div>
+    <div class="bar nodrag">
+      <span class="seg"><button id="segHtml" class="on">网页</button><button id="segText">纯文本</button></span>
+      <button id="imgBtn" class="pill warn" style="display:none">🖼 显示远程图片</button>
+      <span class="spacer"></span>
+      <span id="hint" style="font-size:11px;color:var(--txt3)"></span>
+    </div>
+    <div class="stage nodrag">
+      <iframe id="frame" sandbox referrerpolicy="no-referrer" style="display:none"></iframe>
+      <pre id="text" class="txt" style="display:none"></pre>
+      <div id="loading" class="loading">加载邮件…</div>
+    </div>
+  </div>
+</div>
+<script>
+  window.BocomHermes.onTheme((t) => { document.documentElement.dataset.theme = t })
+  const $ = (id) => document.getElementById(id)
+  const msgId = new URLSearchParams(location.search).get('msgId') || ''
+  $('x').addEventListener('click', () => window.BocomHermes.closeSelf())
+  $('reply').addEventListener('click', () => { if (msgId) window.BocomHermes.mailReplyCard(msgId) })
+
+  let data = null, mode = 'html', showRemote = false
+
+  function escHtml(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') }
+
+  // 远程图片(http/https)= 潜在追踪像素 → 默认拦截;用户点按钮才放开
+  function buildSrcdoc(html, remote) {
+    const img = remote ? 'img-src data: https: http: cid:;' : 'img-src data:;'
+    const csp = "default-src 'none'; " + img + " style-src 'unsafe-inline'; font-src data:; media-src data:;"
+    return '<!doctype html><html><head><meta charset="utf-8">' +
+      '<meta http-equiv="Content-Security-Policy" content="' + csp + '">' +
+      '<style>html,body{margin:0}body{padding:14px 16px;font-family:Calibri,Arial,"Microsoft YaHei",sans-serif;font-size:14px;color:#1a1a1a;background:#fff;word-wrap:break-word;overflow-wrap:break-word}img{max-width:100%;height:auto}table{max-width:100%}blockquote{margin:.4em 0 .4em .8ex;border-left:2px #1a73e8 solid;padding-left:1ex}a{color:#1a73e8}</style>' +
+      '</head><body>' + (html || '') + '</body></html>'
+  }
+  function hasRemoteImg(html) { return /<img[^>]+src\s*=\s*["']?https?:/i.test(html || '') }
+
+  function renderHtml() {
+    const f = $('frame')
+    f.srcdoc = buildSrcdoc(data.html, showRemote)
+    f.style.display = 'block'; $('text').style.display = 'none'
+    $('imgBtn').style.display = hasRemoteImg(data.html) ? 'inline-block' : 'none'
+    $('hint').textContent = (hasRemoteImg(data.html) && !showRemote) ? '已拦截远程图片(防追踪)' : ''
+  }
+  function renderText() {
+    $('text').textContent = data.text || '(无正文)'
+    $('text').style.display = 'block'; $('frame').style.display = 'none'
+    $('imgBtn').style.display = 'none'; $('hint').textContent = ''
+  }
+  function setMode(m) {
+    mode = m
+    $('segHtml').classList.toggle('on', m === 'html')
+    $('segText').classList.toggle('on', m === 'text')
+    if (m === 'html') renderHtml(); else renderText()
+  }
+  $('segHtml').addEventListener('click', () => { if (data && data.hasHtml) setMode('html') })
+  $('segText').addEventListener('click', () => setMode('text'))
+  $('imgBtn').addEventListener('click', () => { showRemote = true; renderHtml() })
+
+  async function load() {
+    let r
+    try { r = await window.BocomHermes.mailViewData(msgId) } catch (e) { r = { error: String((e && e.message) || e) } }
+    $('loading').style.display = 'none'
+    if (!r || r.error) { $('subj').textContent = '加载失败'; $('text').style.display = 'block'; $('text').textContent = '✗ ' + ((r && r.error) || '未知错误'); return }
+    data = r
+    $('subj').textContent = r.subject || '(无主题)'
+    $('subj').title = r.subject || ''
+    $('meta').innerHTML = '<b>发件人:</b> ' + escHtml(r.from) + '<br><b>时间:</b> ' + escHtml(r.date || '')
+    if (!r.hasHtml) { $('segHtml').style.display = 'none'; $('segText').classList.add('on'); setMode('text') }
+    else setMode('html')
+  }
+  load()
+</script>
+</body>
+</html>

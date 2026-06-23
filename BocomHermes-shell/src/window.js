@@ -293,7 +293,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     let mail = (S.mailLastBatch && Array.isArray(S.mailLastBatch.emails) ? S.mailLastBatch.emails : []).find((e) => e.messageId === id) || null
     if (!mail) { const cached = S.mailCache && S.mailCache.get(id); try { mail = await email.fetchByMessageId(imap, id, cached && cached.folder) } catch (e) { return { error: e.message } } }
     if (!mail) return { error: '找不到原邮件（可能已归档或不在收件箱）' }
-    return { ok: true, id, from: mail.from, subject: mail.subject, date: mail.date, text: mail.text || email.stripHtml(mail.html || '') }
+    return { ok: true, id, from: mail.from, subject: mail.subject, date: mail.date,
+      text: mail.text || email.stripHtml(mail.html || ''),
+      html: mail.html || '', hasHtml: !!(mail.html && mail.html.length) }
   }
   ipcMain.handle('mail-get-full', async (_e, msgId) => {
     const r = await loadMailByMsgId(msgId)
@@ -306,6 +308,13 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     spawnCard('回复 · ' + String(r.subject || '邮件').slice(0, 18), null, prompt, '✉️ 起草回复:' + String(r.subject || '').slice(0, 40))
     return { ok: true }
   })
+  // HTML 邮件查看器:返回完整正文(text + html),viewer 用沙箱 iframe 渲染
+  ipcMain.handle('mail-view-data', async (_e, msgId) => {
+    const r = await loadMailByMsgId(msgId)
+    return r.error ? r : { ok: true, from: r.from, subject: r.subject, date: r.date,
+      text: String(r.text || '').slice(0, 50000), html: String(r.html || '').slice(0, 400000), hasHtml: r.hasHtml }
+  })
+  ipcMain.handle('open-mail-view', (_e, msgId) => openMailView(msgId))
 
   const projName = () => S.settings.projectDir ? path.basename(S.settings.projectDir) : '未选目录'
 
@@ -549,6 +558,17 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     S.outboxWin = new BrowserWindow(baseOpts({ width: 430, height: 500, x: ox, y: oy, skipTaskbar: false, alwaysOnTop: true, resizable: true, minWidth: 340, minHeight: 280 }))
     S.outboxWin.loadFile(path.join(__dirname, '..', 'ui', 'outbox.html'), { query: orbAnchorFor(ox, oy, 430, 500) })
     S.outboxWin.on('closed', () => { S.outboxWin = null })
+  }
+
+  function openMailView(msgId) {
+    const id = String(msgId || '').replace(/^<|>$/g, ''); if (!id) return
+    const { width } = screen.getPrimaryDisplay().workAreaSize
+    const mx = Math.round(width / 2 - 320), my = 90
+    if (!(S.mailViewWin && !S.mailViewWin.isDestroyed())) {
+      S.mailViewWin = new BrowserWindow(baseOpts({ width: 640, height: 640, x: mx, y: my, skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 420, minHeight: 340 }))
+      S.mailViewWin.on('closed', () => { S.mailViewWin = null })
+    } else { S.mailViewWin.show(); S.mailViewWin.focus() }
+    S.mailViewWin.loadFile(path.join(__dirname, '..', 'ui', 'mailview.html'), { query: { msgId: id, ...orbAnchorFor(mx, my, 640, 640) } })
   }
 
   function toggleInput() { toggleOrbInput() }
