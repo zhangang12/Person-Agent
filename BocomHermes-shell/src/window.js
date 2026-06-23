@@ -4,6 +4,7 @@ const { clipboard, session } = require('electron')
 const email = require('./email')
 const attachments = require('./attachments')
 const mailCache = require('./mail-cache')
+const emailSummarySeen = require('./email-summary-seen')
 
 module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }) {
   // 额外窗口引用
@@ -206,6 +207,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // 加载 mail-cache(metadata 持久化,跨会话引用 msgId)+ 启动时 prune 30 天前
   S.mailCache = mailCache.load(app.getPath('userData'))
   try { mailCache.prune(app.getPath('userData'), null, log) } catch (e) { log('mail-cache prune err: ' + e.message) }
+  // 启动时 prune "已整理"集合 30 天前的条目
+  try { emailSummarySeen.prune(app.getPath('userData'), null, log) } catch (e) { log('email-seen prune err: ' + e.message) }
   const projName = () => S.settings.projectDir ? path.basename(S.settings.projectDir) : '未选目录'
 
   function applyProject(dir) {
@@ -315,7 +318,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
 
   function toggleOrbInput(mode) { createOrbInput(mode) }
 
-  function spawnCard(title, sid, msg, disp) {
+  function spawnCard(title, sid, msg, disp, opts) {
     const id = ++S.cardSeq
     const col = (id - 1) % 4, row = Math.floor((id - 1) / 4) % 4
     const wx = 160 + col * 56, wy = 90 + row * 50 + col * 18
@@ -329,6 +332,17 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (msg) query.msg = msg
     if (disp) query.disp = disp
     win.loadFile(path.join(__dirname, '..', 'ui', 'card.html'), { query })
+    // opts.flash:加载完后闪一下任务栏 + 短暂置顶 + 抢焦点 → 用户一眼能找到新弹的卡
+    if (opts && opts.flash) {
+      win.webContents.once('did-finish-load', () => {
+        try {
+          win.show(); win.focus(); win.moveTop()
+          win.setAlwaysOnTop(true)
+          win.flashFrame(true)
+          setTimeout(() => { try { if (!win.isDestroyed()) { win.setAlwaysOnTop(false); win.flashFrame(false) } } catch {} }, 1500)
+        } catch {}
+      })
+    }
     win.on('closed', () => {
       const s = S.sessionByWc.get(wcId)
       if (s) { const si = S.sessionInfo.get(s); if (si) oc.abort(si.serve, s); S.sessionInfo.delete(s); S.streamBuf.delete(s); S.sentPrompt.delete(s); S.firstMsgCtx.delete(s) }
@@ -375,23 +389,50 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     return id
   }
 
-  // ── 邮件摘要卡 ─────────────────────────────────────────────────────────────
+  // ── 邮件整理卡 ─────────────────────────────────────────────────────────────
+  // 行为:拉今天+昨天的邮件(不限未读)→ 过滤掉之前 📧 按钮已整理过的 → 喂 agent 摘要
+  //       已整理过的 messageId 持久化在 userData/email-summary-seen.json
   async function spawnEmailCard() {
     const imap = S.settings.imap
     if (!imap || !imap.host || !imap.user || !imap.passEncrypted) throw new Error('IMAP 未配置')
-    log('email: fetching unread emails…')
-    const r = await email.fetchUnread(imap, { limit: 10 })
-    const emails = r.emails || []
-    if (!emails.length) { log('email: no unread emails'); return 0 }
-    try { await attachments.saveAttachments(emails, app.getPath('userData'), log) } catch (e) { log('saveAttachments err: ' + e.message) }
-    log('email: fetched ' + emails.length + ' / ' + r.totalMatched + ' emails (nextCursor=' + r.nextCursor + ')')
-    // 把这次抓的邮件存到内存,供"加待办时回填邮件元信息" / agent 通过 mail-cache 读
-    S.mailLastBatch = { ts: Date.now(), emails }
-    const prompt = email.formatEmailPrompt(emails)
-    // 把"加待办"操作引导写进 prompt:让 agent 直接调 IPC todo-add 时把 mailSubject/mailBody/mailDate 一并带
-    const prompt2 = prompt + '\n\n注意:你提取的 TODO 行,如果对应某封具体邮件,请同时在那条 TODO 行后面追加 `[mailIdx:N]`(N 是上面邮件的序号),系统会自动回填邮件主题/日期/正文摘要进待办,方便日后回看。'
-    spawnCard('📧 邮件摘要 · ' + new Date().toLocaleDateString('zh-CN'), null, prompt2)
-    return emails.length
+    // 整个流程期间球进 thinking 态(球在转 + 眼眯成线)→ 用户立刻知道"在拉"
+    sendOrbState('thinking')
+    try {
+      log('email: fetching today+yesterday emails (limit 30, onlyUnseen=false)…')
+      const r = await email.fetchUnread(imap, { onlyUnseen: false, days: 2, limit: 30 })
+      const all = r.emails || []
+      if (!all.length) { log('email: no emails in last 2 days'); throw new Error('近 2 天没有邮件') }
+      // 过滤已整理过的
+      const seen = emailSummarySeen.isSeenSet(app.getPath('userData'))
+      const fresh = all.filter((e) => !e.messageId || !seen.has(e.messageId))
+      if (!fresh.length) {
+        log('email: all ' + all.length + ' emails already summarized — skipping')
+        throw new Error('近 2 天的 ' + all.length + ' 封邮件都已整理过,无新邮件需要总结')
+      }
+      // 仅对要展示的新邮件落附件 + 缓存
+      try { await attachments.saveAttachments(fresh, app.getPath('userData'), log) } catch (e) { log('saveAttachments err: ' + e.message) }
+      for (const em of fresh) {
+        if (!em.messageId) continue
+        mailCache.put(app.getPath('userData'), em)
+        S.mailCache.set(em.messageId, { messageId: em.messageId, uid: em.uid, from: em.from, subject: em.subject, date: em.date, attCount: (em.attachments || []).length, savedAt: Date.now() })
+      }
+      // 标记 seen(只标真正交给 agent 的;下次按钮再点这些就跳过)
+      emailSummarySeen.markSeen(app.getPath('userData'), fresh.map((e) => e.messageId).filter(Boolean))
+      // 内存缓存这次结果,UI 加待办时能回填邮件正文
+      S.mailLastBatch = { ts: Date.now(), emails: fresh }
+      const prompt = email.formatEmailPrompt(fresh)
+      const prompt2 = prompt + '\n\n注意:你提取的 TODO 行,如果对应某封具体邮件,请在 TODO 行后面追加 `[msgId:xxx]`(xxx 是上面邮件的 Message-ID,见输出),系统会自动回填邮件主题/日期/正文摘要进待办,跨会话也能反查到。'
+      const skipped = all.length - fresh.length
+      const title = '📧 邮件整理 · ' + new Date().toLocaleDateString('zh-CN') + ' · 新 ' + fresh.length + (skipped ? '/已跳 ' + skipped : '')
+      // flash:卡片加载完后任务栏闪 + 抢焦点 + 短暂置顶 1.5s → 用户一眼能找到新弹的卡
+      spawnCard(title, null, prompt2, null, { flash: true })
+      log('email: summarized ' + fresh.length + ' new of ' + all.length + ' total (skipped ' + skipped + ' already-seen)')
+      sendOrbState('done')   // 球绿色脉冲,2.2s 后自动回 idle
+      return fresh.length
+    } catch (e) {
+      sendOrbState('idle')   // 失败立即回 idle,renderer 自己再红/绿闪
+      throw e
+    }
   }
 
   function openTodos() {

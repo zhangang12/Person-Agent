@@ -56,6 +56,10 @@ html,body{width:280px;height:280px;background:transparent;overflow:hidden;user-s
 .state-thinking .eye{animation:think-eye .75s ease-in-out infinite;background:rgba(0,220,255,.9);box-shadow:0 0 8px rgba(0,220,255,.8)}
 .state-thinking .eye:nth-child(2){animation-delay:.1s}
 
+@keyframes err-flash{0%,100%{box-shadow:0 0 0 rgba(255,80,80,0)}50%{box-shadow:0 0 40px 14px rgba(255,80,80,.7),0 0 18px 6px rgba(255,100,100,.5)}}
+.sphere.err-flash{animation:err-flash .55s ease-out 2!important}
+@keyframes info-flash{0%,100%{box-shadow:0 0 0 rgba(0,255,140,0)}50%{box-shadow:0 0 40px 14px rgba(0,255,140,.65),0 0 18px 6px rgba(120,255,170,.45)}}
+.sphere.info-flash{animation:info-flash .55s ease-out 2!important}
 @keyframes done-rim{0%,100%{box-shadow:0 0 28px rgba(0,255,140,.45),0 0 10px rgba(0,200,100,.2)}50%{box-shadow:0 0 42px rgba(0,255,140,.75),0 0 16px rgba(0,200,100,.4)}}
 @keyframes done-pulse{0%,100%{opacity:.85}50%{opacity:1}}
 .state-done .sphere{animation:done-rim 1.6s ease-in-out infinite}
@@ -182,13 +186,34 @@ const stage = document.getElementById('stage')
 const sphere = document.getElementById('sphere')
 
 // ── 透明区域点击穿透 + 菜单开/合(同信号控制,避免 CSS :hover 被 passthrough 卡住)──
+// 关闭加 350ms 缓冲:菜单已开时,鼠标从球→外圈图标之间必经一段透明区,
+// 那段路上 elementFromPoint=BODY → over=false。立即关菜单会让用户够不到图标。
+// forward:true 在 main 侧已配,passthrough 时仍能收 mousemove → 缓冲期内鼠标回到球/图标可取消关闭。
+let closeTimer = null
 document.addEventListener('mousemove', e => {
   const el = document.elementFromPoint(e.clientX, e.clientY)
-  const over = el && el.tagName !== 'HTML' && el.tagName !== 'BODY' && el !== stage
-  H.setOrbMousePassthrough(!over)
-  stage.classList.toggle('open', !!over)   // 用 .open 代替 :hover,JS 控制 — 鼠标移出 menu 才真收回
+  const over = el && el.tagName !== 'HTML' && el.tagName !== 'BODY' && el !== stage   // 球 / 图标 — 真交互
+  if (over) {
+    if (closeTimer) { clearTimeout(closeTimer); closeTimer = null }
+    H.setOrbMousePassthrough(false)
+    stage.classList.add('open')
+  } else if (stage.classList.contains('open')) {
+    // 已开但当前不在交互元素上 — 给 350ms 让鼠标走到外圈图标
+    // 期间保持非 passthrough,鼠标回到球/图标立即取消计时
+    if (!closeTimer) closeTimer = setTimeout(() => {
+      stage.classList.remove('open')
+      H.setOrbMousePassthrough(true)
+      closeTimer = null
+    }, 350)
+  } else {
+    // 完全空闲(菜单已关 + 不在球上)→ 开 passthrough 让桌面正常接收点击
+    H.setOrbMousePassthrough(true)
+  }
 })
-document.addEventListener('mouseleave', () => { H.setOrbMousePassthrough(true); stage.classList.remove('open') })
+document.addEventListener('mouseleave', () => {
+  if (closeTimer) { clearTimeout(closeTimer); closeTimer = null }
+  H.setOrbMousePassthrough(true); stage.classList.remove('open')
+})
 
 // ── 拖拽（在桌面内自由移动）──
 let dragging = false, moved = false, downX = 0, downY = 0, lastX = 0, lastY = 0
@@ -215,7 +240,22 @@ document.addEventListener('mouseup', () => {
 document.getElementById('ri-chat').addEventListener('click', () => H.toggleOrbInput())
 document.getElementById('ri-workspace').addEventListener('click', () => H.openBrowser())
 document.getElementById('ri-dock').addEventListener('click', () => H.openDock())
-document.getElementById('ri-email').addEventListener('click', () => H.triggerEmailSummary().catch(() => {}))
+function flashSphere(cls) {
+  sphere.classList.remove('err-flash', 'info-flash')
+  void sphere.offsetWidth
+  sphere.classList.add(cls)
+  setTimeout(() => sphere.classList.remove(cls), 1200)
+}
+document.getElementById('ri-email').addEventListener('click', async () => {
+  try { await H.triggerEmailSummary() }
+  catch (e) {
+    const msg = (e && e.message) || String(e)
+    if (/IMAP 未配置/.test(msg)) { H.openSettings(); flashSphere('err-flash'); return }
+    // "无新邮件 / 都已整理过 / 近 2 天没有邮件" — 不是错,绿闪一下告诉用户"我处理了,只是没新东西"
+    if (/已整理过|无新邮件|没有邮件/.test(msg)) { flashSphere('info-flash'); return }
+    flashSphere('err-flash')
+  }
+})
 document.getElementById('ri-todos').addEventListener('click', () => H.openTodos())
 document.getElementById('ri-fanout').addEventListener('click', () => H.toggleOrbInput('fanout'))
 document.getElementById('ri-settings').addEventListener('click', () => H.openSettings())
