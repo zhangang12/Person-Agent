@@ -103,13 +103,17 @@ async function callTool(name, a) {
       })
       const emails = r.emails || []
       if (!emails.length) return '(无邮件命中)'
+      // 查 todos.json 命中过的 mailMsgId → 标 ✓已建todo,让 agent 跳过不重复处理
+      const todoMsgIds = new Set()
+      for (const t of loadTodos()) if (t.mailMsgId) todoMsgIds.add(t.mailMsgId)
       const header = `命中 ${r.totalMatched} 封,本次返回 ${emails.length} 封${r.nextCursor != null ? ` · 下一页 cursor=${r.nextCursor}` : ' · 已到末尾'}:`
       const body = emails.map((e, i) => {
         const att = (e.attachments && e.attachments.length)
           ? `\n  附件: ${e.attachments.map((x) => `${x.filename}(${Math.round(x.size / 1024)}KB${x.hasText ? `,可读 ${x.textLen}字` : x.extractError ? ',✗' + x.extractError : ''})`).join(', ')}` : ''
-        return `\n#${i + 1}  ${e.date || ''}  [msgId:${e.messageId || '?'}]\n  发件人: ${e.from}\n  主题: ${e.subject}${att}\n  正文摘要: ${(e.body || '').slice(0, 300).replace(/\s+/g, ' ')}`
+        const processed = e.messageId && todoMsgIds.has(e.messageId) ? '  ✓已建todo' : ''
+        return `\n#${i + 1}  ${e.date || ''}  [msgId:${e.messageId || '?'}]${processed}\n  发件人: ${e.from}\n  主题: ${e.subject}${att}\n  正文摘要: ${(e.body || '').slice(0, 300).replace(/\s+/g, ' ')}`
       }).join('\n')
-      return header + body + '\n\n(提示:回复某封 → mail_reply 用 msgId;看全文 → mail_get_full;读附件 → mail_get_attachment_text)'
+      return header + body + '\n\n(提示:回复 → mail_reply 用 msgId;看全文 → mail_get_full;读附件 → mail_get_attachment_text;✓已建todo 的别重复处理)'
     } catch (e) { return 'mail_list 失败: ' + e.message }
   }
   if (name === 'mail_get_attachment_text') {
