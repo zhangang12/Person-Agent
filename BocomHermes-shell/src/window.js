@@ -53,6 +53,32 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
             await email.sendMail(cfg, { to: a.to, cc: a.cc, subject: a.subject, text: a.text })
             return reply({ ok: true })
           }
+          if (req.url === '/mail/get') {
+            // 取某封邮件全文(分段)。先查 mailLastBatch 缓存,没命中再走 IMAP HEADER 搜
+            const imap = S.settings.imap
+            if (!imap || !imap.host || !imap.user || !imap.passEncrypted) return reply({ error: 'IMAP 未配置' })
+            const msgId = String(a.messageId || '').replace(/^<|>$/g, '')
+            if (!msgId) return reply({ error: 'messageId 必填' })
+            let mail = null
+            const batch = S.mailLastBatch && Array.isArray(S.mailLastBatch.emails) ? S.mailLastBatch.emails : []
+            mail = batch.find((e) => e.messageId === msgId) || null
+            if (!mail) {
+              try { mail = await email.fetchByMessageId(imap, msgId) } catch (e) { return reply({ error: 'IMAP 兜底搜失败: ' + e.message }) }
+            }
+            if (!mail) return reply({ error: '找不到 msgId=' + msgId + '(可能已归档或不在 INBOX)' })
+            const part = a.part === 'html' ? (mail.html || '') : (mail.text || '')
+            const offset = Math.max(0, +a.offset || 0)
+            const limit  = Math.max(1, Math.min(+a.limit || 8000, 50000))
+            const content = part.slice(offset, offset + limit)
+            return reply({
+              ok: true, content,
+              totalLen: part.length, hasMore: offset + limit < part.length,
+              nextOffset: offset + limit < part.length ? offset + limit : null,
+              from: mail.from, subject: mail.subject, date: mail.date,
+              hasHtml: !!(mail.html && mail.html.length), hasText: !!(mail.text && mail.text.length),
+              attachments: mail.attachments || [],
+            })
+          }
           return reply({ error: 'unknown ' + req.url })
         } catch (e) { reply({ error: e.message }) }
       })

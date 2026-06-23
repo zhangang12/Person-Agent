@@ -426,6 +426,40 @@ async function fetchUnread(cfg, opts) {
   } catch (e) { client.quit(); throw e }
 }
 
+// ── 按 Message-ID 抓单封邮件(给 mail_get_full / mail_reply 兜底用)──────
+// 缓存没命中时走这个;在 INBOX 里搜 HEADER "Message-ID" "<msgid>"
+async function fetchByMessageId(cfg, messageId) {
+  if (!messageId) throw new Error('messageId 为空')
+  if (!cfg || !cfg.host || !cfg.user) throw new Error('邮件服务器未配置')
+  const pass = decryptPass(cfg.passEncrypted)
+  if (!pass) throw new Error('邮件密码未配置')
+  const client = new ImapClient()
+  await client.connect(cfg.host, cfg.port || 993, cfg.secure !== false, cfg.allowSelfSigned)
+  try {
+    await client.send(`LOGIN ${imapQuote(cfg.user)} ${imapQuote(pass)}`)
+    await client.send('SELECT INBOX')
+    const mid = '<' + String(messageId).replace(/^<|>$/g, '') + '>'
+    const searchResp = await client.send(`UID SEARCH HEADER "Message-ID" ${imapQuote(mid)}`)
+    const uidMatch = searchResp.match(/\* SEARCH([\d\s]*)/i)
+    const uids = (uidMatch ? uidMatch[1] : '').trim().split(/\s+/).filter(Boolean)
+    if (!uids.length) { client.quit(); return null }
+    const uid = uids[uids.length - 1]
+    const fetchResp = await client.send(`UID FETCH ${uid} (UID BODY.PEEK[])`)
+    client.quit()
+    const msgs = extractMessages(fetchResp)
+    if (!msgs.length) return null
+    const parsed = parseRfc822(msgs[0].raw)
+    return {
+      uid: +uid,
+      from: parsed.from, subject: parsed.subject, date: parsed.date,
+      messageId: parsed.messageId, inReplyTo: parsed.inReplyTo, references: parsed.references,
+      text: parsed.text, html: parsed.html,
+      attachments: parsed.attachments.map((a) => ({ filename: a.filename, mime: a.mime, size: a.size })),
+      _rawAttachments: parsed.attachments,
+    }
+  } catch (e) { client.quit(); throw e }
+}
+
 // ── 格式化为 LLM Prompt(向后兼容)─────────────────────────────────────
 function formatEmailPrompt(emails) {
   if (!emails.length) return ''
@@ -547,7 +581,7 @@ async function sendMail(cfg, msg) {
 }
 
 module.exports = {
-  fetchUnread, formatEmailPrompt, encryptPass, decryptPass, sendMail,
+  fetchUnread, fetchByMessageId, formatEmailPrompt, encryptPass, decryptPass, sendMail,
   // 暴露解析工具给后续阶段(A2-b mail_get_full、A3 附件保存、A5 reply 拼 quote)用
   parseRfc822, decodeBytes, decodeWords, stripHtml,
 }

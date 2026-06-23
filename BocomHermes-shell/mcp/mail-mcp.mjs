@@ -46,6 +46,12 @@ const TOOLS = [
     cursor:     { type: 'number', description: '分页游标。第一次不传;之后传上次返回的 nextCursor 继续翻页' },
   } } },
   { name: 'mail_send', description: '发送一封邮件(text/plain UTF-8)。to 可以是字符串或数组;cc 可选;失败抛错。', inputSchema: { type: 'object', properties: { to: { type: 'string', description: '收件人,多个用逗号分隔' }, subject: { type: 'string' }, text: { type: 'string', description: '邮件正文(text/plain)' }, cc: { type: 'string', description: '可选抄送,多个用逗号' } }, required: ['to', 'subject', 'text'] } },
+  { name: 'mail_get_full', description: '取某封邮件的完整正文(可分段读)。先 mail_list 拿 [msgId:xxx],再用本工具按需取全文。短邮件(<8KB)一次性给完,长邮件返回 hasMore=true,你按 nextOffset 继续取。', inputSchema: { type: 'object', properties: {
+    messageId: { type: 'string', description: 'mail_list 输出里 [msgId:xxx] 的 xxx' },
+    part:      { type: 'string', enum: ['text', 'html'], description: 'text=纯文本(默认,适合读内容);html=原始 HTML 源码(只在你要回复时取,mail_reply 会自动 quote 这段)' },
+    offset:    { type: 'number', description: '从第几个字符开始,默认 0' },
+    limit:     { type: 'number', description: '本次取多少字符,默认 8000,最大 50000。返回有 hasMore + nextOffset 让你翻下一段' },
+  }, required: ['messageId'] } },
   { name: 'mail_reply', description: '回复某封刚读的邮件(基于 mail_list 拿到的 subject + from)。会自动加 "Re: " 前缀(若没有)、自动 To 原发件人,你只填 text(回复正文)。', inputSchema: { type: 'object', properties: { originalSubject: { type: 'string', description: '原邮件主题' }, originalFrom: { type: 'string', description: '原邮件发件人(直接传 from 字段,会自动提邮箱地址)' }, text: { type: 'string', description: '回复正文' } }, required: ['originalSubject', 'originalFrom', 'text'] } },
   { name: 'todo_add', description: '加一条待办。urgency 可选 高/中/低(默认中)。可关联邮件:传 mailSubject/mailDate/mailBody 元信息,待办面板能展开看原邮件。', inputSchema: { type: 'object', properties: { text: { type: 'string' }, from: { type: 'string', description: '来源(发件人 / 项目 / 自填)' }, urgency: { type: 'string', enum: ['高', '中', '低'] }, mailSubject: { type: 'string' }, mailDate: { type: 'string' }, mailBody: { type: 'string' } }, required: ['text'] } },
   { name: 'todo_list', description: '列出所有待办(未完成在前)。可按 onlyPending 过滤。', inputSchema: { type: 'object', properties: { onlyPending: { type: 'boolean' }, limit: { type: 'number' } } } },
@@ -76,6 +82,17 @@ async function callTool(name, a) {
       }).join('\n')
       return header + body + '\n\n(提示:要回复某封 → mail_reply 用上面的 msgId;要看全文 → mail_get_full)'
     } catch (e) { return 'mail_list 失败: ' + e.message }
+  }
+  if (name === 'mail_get_full') {
+    try {
+      const r = await relayPost('/mail/get', { messageId: a.messageId, part: a.part || 'text', offset: a.offset, limit: a.limit })
+      const partLabel = a.part === 'html' ? 'HTML' : '文本'
+      const head = `${r.from || '?'}  ·  ${r.subject || ''}  ·  ${r.date || ''}\n[${partLabel}  ${r.content.length} / ${r.totalLen} 字${r.hasMore ? `,继续传 offset=${r.nextOffset}` : ',已完整'}]\n──────────\n`
+      const attLine = (r.attachments && r.attachments.length)
+        ? `\n──────────\n附件: ${r.attachments.map((x) => `${x.filename}(${Math.round(x.size / 1024)}KB,${x.mime})`).join(', ')}\n(用 mail_get_attachment_text 看附件正文 — 待 A3 上线)`
+        : ''
+      return head + r.content + attLine
+    } catch (e) { return 'mail_get_full 失败: ' + e.message }
   }
   if (name === 'mail_send') {
     try {
