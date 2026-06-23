@@ -24,6 +24,44 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     return out
   }
   S.effectiveSmtp = () => effectiveSmtp(S)   // 供其它模块/MCP 用
+
+  // 本地 HTTP 中继:MCP 子进程没法用 electron safeStorage 解密 IMAP/SMTP 密码 → 主进程开个
+  // 127.0.0.1 localhost http server,MCP 通过 HTTP 调,主进程用已解密的 cfg 跑 IMAP/SMTP。
+  // token 防本机其它进程蹭用(写在 userData/mail-relay.json,只有 Agent + 自家 MCP 看得到)
+  const http = require('http')
+  function startMailRelay() {
+    const token = require('crypto').randomBytes(16).toString('hex')
+    const srv = http.createServer(async (req, res) => {
+      if (req.method !== 'POST' || req.headers['x-bocom-tok'] !== token) { res.writeHead(401).end(); return }
+      let body = ''
+      req.on('data', (c) => body += c)
+      req.on('end', async () => {
+        let a = {}; try { a = body ? JSON.parse(body) : {} } catch {}
+        const reply = (obj) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)) }
+        try {
+          if (req.url === '/mail/list') {
+            const imap = S.settings.imap
+            if (!imap || !imap.host || !imap.user || !imap.passEncrypted) return reply({ error: 'IMAP 未配置' })
+            const emails = await email.fetchUnread(imap)
+            return reply({ ok: true, emails })
+          }
+          if (req.url === '/mail/send') {
+            const cfg = S.effectiveSmtp(); if (!cfg) return reply({ error: 'SMTP 未配置' })
+            await email.sendMail(cfg, { to: a.to, cc: a.cc, subject: a.subject, text: a.text })
+            return reply({ ok: true })
+          }
+          return reply({ error: 'unknown ' + req.url })
+        } catch (e) { reply({ error: e.message }) }
+      })
+    })
+    srv.on('error', (e) => log('mail relay error: ' + e.message))
+    srv.listen(0, '127.0.0.1', () => {
+      const port = srv.address().port
+      const fp = path.join(app.getPath('userData'), 'mail-relay.json')
+      try { fs.writeFileSync(fp, JSON.stringify({ port, token })) ; log('mail relay on :' + port) } catch (e) { log('mail-relay.json save err: ' + e.message) }
+    })
+  }
+  startMailRelay()
   const projName = () => S.settings.projectDir ? path.basename(S.settings.projectDir) : '未选目录'
 
   function applyProject(dir) {

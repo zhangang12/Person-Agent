@@ -19,6 +19,7 @@
     "mcp:httpcap": "node mcp/httpcap-mcp.mjs",
     "mcp:httpcap:test": "node mcp/httpcap-selftest.mjs",
     "mcp:repro": "node mcp/repro-mcp.mjs",
+    "mcp:mail": "node mcp/mail-mcp.mjs",
     "mcp:repro:test": "node mcp/repro-selftest.mjs",
     "repro:e2e": "electron scripts/e2e-repro-test.mjs",
     "mcp:config": "node mcp/print-config.mjs"

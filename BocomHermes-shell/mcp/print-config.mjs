@@ -10,6 +10,7 @@ const cfg = {
     'BocomHermes-httpcap': { type: 'local', command: ['node', abs('httpcap-mcp.mjs')], enabled: true },
     'BocomHermes-git':     { type: 'local', command: ['node', abs('git-mcp.mjs')],     enabled: true },
     'BocomHermes-repro':   { type: 'local', command: ['node', abs('repro-mcp.mjs')],   enabled: true },
+    'BocomHermes-mail':    { type: 'local', command: ['node', abs('mail-mcp.mjs')],    enabled: true },
   },
 }
 console.log('把下面这段合并进 opencode / bocomcode 的 opencode.json（已填好本机路径）：\n')
@@ -19,4 +20,5 @@ console.log('  浏览器：browser_navigate / browser_get_text / browser_click /
 console.log('  抓包  ：httpcap_start / httpcap_list / httpcap_get …')
 console.log('  Git   ：git_status / git_log / git_diff / git_blame / git_show / git_branch')
 console.log('  复现取证(Phase D)：list_bundles / list_evidence / get_evidence / get_dom_subtree / get_event_window')
+console.log('  邮件+待办：mail_list / mail_send / mail_reply / todo_add / todo_list / todo_complete')
 console.log('要看见浏览器窗口：把 BocomHermes-browser 的 BOCOMHERMES_BROWSER_HEADFUL 设为 "1"。')
