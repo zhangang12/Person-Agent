@@ -26,6 +26,9 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   openSettings: () => ipcRenderer.invoke('open-settings'),
   getSettings: () => ipcRenderer.sendSync('get-settings'),
   setSettings: (patch) => ipcRenderer.invoke('set-settings', patch),
+  // MCP 注册到 opencode/bocomcode 的 opencode.json
+  mcpRegisterStatus: () => ipcRenderer.invoke('mcp-register-status'),
+  mcpRegister: (targetPath) => ipcRenderer.invoke('mcp-register', targetPath || null),
   // 卡坞 / 会话历史
   openDock: () => ipcRenderer.invoke('open-dock'),
   getHistory: () => ipcRenderer.sendSync('get-history'),

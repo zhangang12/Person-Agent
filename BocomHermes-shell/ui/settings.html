@@ -139,6 +139,17 @@
       </div>
 
       <div class="fld">
+        <span class="lbl">🔌 注册 MCP 到 bocomcode / opencode <span class="hint" style="font-weight:400">(让 agent 看到邮件/浏览器/抓包/git/复现 5 类工具)</span></span>
+        <div id="mcpCandList" style="display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:var(--txt2);font-family:monospace"></div>
+        <div class="row" style="margin-top:6px">
+          <button id="mcpRegisterAuto" class="chip">🔌 自动注册(选已有/或建默认)</button>
+          <button id="mcpRefreshStatus" class="chip">🔄 重新扫描</button>
+        </div>
+        <span class="hint">扫描标准路径:%APPDATA%/opencode 与 %APPDATA%/bocomcode、~/.config/opencode、~/.opencode.json 等。<b>原文件会自动备份成 .bak.&lt;时间戳&gt;</b>。注册完<b>重启 bocomcode serve</b> 才生效。</span>
+        <span id="mcpMsg" class="hint" style="color:var(--green)"></span>
+      </div>
+
+      <div class="fld">
         <span class="lbl">当前项目目录</span>
         <div class="row">
           <span id="proj" class="proj">未选目录</span>
@@ -271,6 +282,46 @@
   // 同 IMAP 时灰化 user/pass
   function syncSameAsImap() { const on = $('smtpSameAsImap').checked; ['smtpUser', 'smtpPass'].forEach((k) => { $(k).disabled = on; $(k).style.opacity = on ? .55 : 1 }) }
   syncSameAsImap(); $('smtpSameAsImap').addEventListener('change', syncSameAsImap)
+  // ── MCP 一键注册 ──────────────────────────────────────────────────────
+  const mcpMsg = $('mcpMsg'); const mcpCandList = $('mcpCandList')
+  async function refreshMcpStatus() {
+    mcpCandList.innerHTML = '<span class="hint">扫描中…</span>'
+    try {
+      const r = await window.BocomHermes.mcpRegisterStatus()
+      mcpCandList.innerHTML = ''
+      const items = r.candidates.map((c) => {
+        const tag = c.parseErr ? '<span style="color:var(--diff-del)">✗ JSON 错</span>'
+                   : c.hasOur  ? '<span style="color:var(--green)">✓ 已注册</span>'
+                   : c.exists  ? '<span style="color:var(--accent)">○ 存在</span>'
+                                : '<span style="color:var(--txt3)">— 不存在</span>'
+        return '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center">'
+          + '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1" title="' + c.path + '">' + c.path + '</span>'
+          + '<span style="flex:none">' + tag + '</span>'
+          + '<button class="chip" data-path="' + c.path.replace(/"/g, '&quot;') + '" style="flex:none;font-size:10.5px">注册到此</button>'
+          + '</div>'
+      }).join('')
+      mcpCandList.innerHTML = items
+      mcpCandList.querySelectorAll('button[data-path]').forEach((b) =>
+        b.addEventListener('click', () => doRegister(b.dataset.path))
+      )
+    } catch (e) { mcpCandList.innerHTML = '<span style="color:var(--diff-del)">扫描失败: ' + (e.message || e) + '</span>' }
+  }
+  async function doRegister(targetPath) {
+    mcpMsg.style.color = 'var(--txt3)'; mcpMsg.textContent = '注册中…'
+    try {
+      const r = await window.BocomHermes.mcpRegister(targetPath)
+      mcpMsg.style.color = 'var(--green)'
+      mcpMsg.textContent = '✓ 已写 ' + r.added.length + ' 个 MCP 到 ' + r.path
+        + (r.overwritten && r.overwritten.length ? '(覆盖了 ' + r.overwritten.length + ' 条同名旧条目)' : '')
+        + (r.backup ? ' · 备份: ' + r.backup : '')
+        + ' → 重启 bocomcode serve 生效'
+      refreshMcpStatus()
+    } catch (e) { mcpMsg.style.color = 'var(--diff-del)'; mcpMsg.textContent = '✗ ' + (e.message || e) }
+  }
+  $('mcpRegisterAuto').addEventListener('click', () => doRegister(null))
+  $('mcpRefreshStatus').addEventListener('click', refreshMcpStatus)
+  refreshMcpStatus()
+
   // 测试 SMTP(给自己发一封)
   $('testSmtp').addEventListener('click', async () => {
     const smtpMsg = $('smtpMsg')
