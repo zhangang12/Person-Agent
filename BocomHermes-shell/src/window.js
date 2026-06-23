@@ -30,8 +30,14 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   S.effectiveSmtp = () => effectiveSmtp(S)   // 供其它模块/MCP 用
 
   // ── 发件箱(发信安全闸门)──────────────────────────────────────────────────
-  function notifyMail(title, body) {
-    try { if (Notification && Notification.isSupported()) new Notification({ title: 'BocomHermes · ' + title, body: String(body || '').slice(0, 160) }).show() } catch {}
+  function notifyMail(title, body, onClick) {
+    try {
+      if (Notification && Notification.isSupported()) {
+        const n = new Notification({ title: 'BocomHermes · ' + title, body: String(body || '').slice(0, 160) })
+        if (onClick) n.on('click', () => { try { onClick() } catch {} })
+        n.show()
+      }
+    } catch {}
   }
   function broadcastOutbox() {
     try { if (S.outboxWin && !S.outboxWin.isDestroyed()) S.outboxWin.webContents.send('outbox-updated') } catch {}
@@ -53,6 +59,25 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   function outboxHold() { const h = S.settings.outboxHoldSeconds; return h == null ? 15 : Math.max(0, Math.min(+h || 0, 3600)) }
   // 入队后:若有延迟窗,弹出发件箱面板让用户能看到倒计时并可撤销
   function afterEnqueue(hold) { if (hold > 0 && typeof openOutbox === 'function') { try { openOutbox() } catch {} } else broadcastOutbox() }
+
+  // ── IMAP IDLE 实时新邮件提醒 ──────────────────────────────────────────────
+  // 新邮件到达 → 桌面通知(点击=整理摘要)。默认开,可在设置关。重连/退避由 watcher 自管理。
+  function startIdleWatcher() {
+    try { if (S.idleWatcher) { S.idleWatcher.stop(); S.idleWatcher = null } } catch {}
+    const imap = S.settings.imap
+    if (!imap || !imap.host || !imap.user || !imap.passEncrypted) return
+    if (S.settings.imapIdleEnabled === false) { log('idle: 已在设置中关闭,不启动'); return }
+    S.idleWatcher = email.createIdleWatcher(imap, {
+      log,
+      onNew: (n) => {
+        // 球绿色脉冲 + 通知;点击通知=拉摘要
+        try { sendOrbState && sendOrbState('done') } catch {}
+        notifyMail('📬 新邮件', (n > 1 ? n + ' 封新邮件到达' : '有新邮件到达') + ' — 点击整理摘要',
+          () => { spawnEmailCard().catch((e) => log('idle summary err: ' + e.message)) })
+      },
+    })
+    log('idle: IMAP IDLE 实时监听已启动')
+  }
 
   // 本地 HTTP 中继:MCP 子进程没法用 electron safeStorage 解密 IMAP/SMTP 密码 → 主进程开个
   // 127.0.0.1 localhost http server,MCP 通过 HTTP 调,主进程用已解密的 cfg 跑 IMAP/SMTP。
@@ -251,6 +276,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     })
   }
   startMailRelay()
+  setTimeout(() => { try { startIdleWatcher() } catch (e) { log('idle start err: ' + e.message) } }, 3000)   // 稍延后启动 IDLE,避开启动繁忙期
   // 启动时清理 30 天前的附件目录(异步执行不阻塞主流程)
   try { attachments.cleanupOld(app.getPath('userData'), log) } catch (e) { log('att cleanup err: ' + e.message) }
   // 加载 mail-cache(metadata 持久化,跨会话引用 msgId)+ 启动时 prune 30 天前
@@ -1832,6 +1858,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       planMode: S.settings.planMode !== false,
       encryptionAvailable: email.encryptionAvailable(),   // false → 密码只能明文落盘,设置面板要红字告警
       outboxHoldSeconds: S.settings.outboxHoldSeconds == null ? 15 : S.settings.outboxHoldSeconds,   // 发信延迟窗(软撤回),0=立即发
+      imapIdleEnabled: S.settings.imapIdleEnabled !== false,   // IMAP IDLE 实时新邮件提醒,默认开
       imap: { host: im.host || '', port: im.port || 993, secure: im.secure !== false, allowSelf: !!im.allowSelfSigned, user: im.user || '', hasPass: !!im.passEncrypted, scheduleHour: im.scheduleHour ?? 9, sentFolder: im.sentFolder || 'Sent', archiveFolder: im.archiveFolder || 'Archive' },
       smtp: { host: sm.host || '', port: sm.port || 587, secure: !!sm.secure, allowSelf: !!sm.allowSelfSigned, sameAsImap: sm.sameAsImap !== false, user: sm.user || '', hasPass: !!sm.passEncrypted, from: sm.from || '' },
     }
@@ -2050,7 +2077,11 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       if (sm.pass && sm.pass.trim())   S.settings.smtp.passEncrypted  = email.encryptPass(sm.pass.trim())
       if (sm.from       !== undefined) S.settings.smtp.from           = String(sm.from).trim()
     }
-    saveSettings(); return true
+    if (patch && patch.imapIdleEnabled !== undefined) S.settings.imapIdleEnabled = !!patch.imapIdleEnabled
+    saveSettings()
+    // IMAP 配置/IDLE 开关变化 → 重启监听
+    if (patch && (patch.imap || patch.imapIdleEnabled !== undefined)) { try { startIdleWatcher() } catch (e) { log('idle restart err: ' + e.message) } }
+    return true
   })
 
   // SMTP 测试:给自己发一封空邮件,失败把错误返回前端展示

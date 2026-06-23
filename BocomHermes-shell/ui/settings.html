@@ -115,6 +115,7 @@
           <span class="hint" style="flex:none">归档</span>
           <input id="imapArchiveFolder" class="in" style="flex:1" placeholder="Archive" spellcheck="false" />
         </div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;margin-top:2px"><input type="checkbox" id="imapIdle" style="accent-color:var(--brand)" /> 实时新邮件提醒(IMAP IDLE)<span class="hint" style="font-weight:400">— 新邮件到达即弹通知,点击整理摘要</span></label>
         <div class="row">
           <button id="testImap" class="chip">测试 IMAP</button>
           <span id="imapMsg" class="hint" style="color:var(--green)"></span>
@@ -266,6 +267,7 @@
   $('imapUser').value = im.user || ''
   $('imapPass').placeholder = im.hasPass ? '密码已保存（留空=不修改）' : '密码（加密存储）'
   $('imapHour').value = im.scheduleHour ?? 9
+  $('imapIdle').checked = cur.imapIdleEnabled !== false
   $('imapSentFolder').value = im.sentFolder || 'Sent'
   $('imapArchiveFolder').value = im.archiveFolder || 'Archive'
 
@@ -375,6 +377,7 @@
       from: $('smtpFrom').value.trim(),
     }
     { const v = $('outboxHold').value.trim(); if (v !== '') patch.outboxHoldSeconds = parseInt(v) || 0 }
+    patch.imapIdleEnabled = $('imapIdle').checked
     try {
       await window.BocomHermes.setSettings(patch)
       if (!silent) { msg.textContent = '已保存 ✓'; setTimeout(() => { msg.textContent = '' }, 1800) }

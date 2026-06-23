@@ -596,6 +596,80 @@ async function fetchByMessageId(cfg, messageId, folder) {
   } catch (e) { client.quit(); throw e }
 }
 
+// ── IMAP IDLE 实时监听(新邮件准实时提醒)─────────────────────────────────
+// 长连接挂在 SELECT INBOX 上,服务器有新邮件即推 `* N EXISTS`。检测到 EXISTS 增长 → onNew(增量)。
+// 自管理:每 25 分钟主动重连(绕开服务器 29 分钟 IDLE 上限)+ 断线退避重连。best-effort —
+// 重连间隙漏掉的由 30 分钟轮询 / 每日摘要兜底,不追求一封不漏。
+function createIdleWatcher(cfg, { onNew, log } = {}) {
+  const logp = (m) => { try { log && log('[idle] ' + m) } catch {} }
+  if (!cfg || !cfg.host || !cfg.user) { logp('IMAP 未配置,IDLE 不启动'); return { stop() {} } }
+  const pass = decryptPass(cfg.passEncrypted)
+  let stopped = false, sock = null, buf = '', state = 'greet', lastExists = null
+  let renewTimer = null, reconnectTimer = null
+
+  function cleanup() {
+    if (renewTimer) { clearTimeout(renewTimer); renewTimer = null }
+    try { if (sock) { sock.removeAllListeners(); sock.destroy() } } catch {}
+    sock = null; buf = ''; state = 'greet'
+  }
+  function reconnect(ms) {
+    if (stopped || reconnectTimer) return
+    cleanup()
+    reconnectTimer = setTimeout(() => { reconnectTimer = null; connect() }, ms || 8000)
+    if (reconnectTimer.unref) reconnectTimer.unref()
+  }
+  function startIdle() {
+    state = 'idle'; try { sock.write('A3 IDLE\r\n') } catch (e) { return reconnect() }
+    if (renewTimer) clearTimeout(renewTimer)
+    renewTimer = setTimeout(() => { logp('renew'); reconnect(100) }, 25 * 60 * 1000)   // 重连刷新 IDLE
+    if (renewTimer.unref) renewTimer.unref()
+  }
+  function onLine(line) {
+    const ex = line.match(/^\* (\d+) EXISTS/i)
+    if (state === 'greet') {
+      if (/^\* (OK|PREAUTH)/.test(line)) { state = 'auth'; sock.write('A1 LOGIN ' + imapQuote(cfg.user) + ' ' + imapQuote(pass) + '\r\n') }
+      else { logp('greeting 拒绝: ' + line.slice(0, 60)); reconnect(30000) }
+    } else if (state === 'auth') {
+      if (/^A1 OK/i.test(line)) { state = 'select'; sock.write('A2 SELECT INBOX\r\n') }
+      else if (/^A1 (NO|BAD)/i.test(line)) { logp('登录失败,停止 IDLE(检查账号密码): ' + line.slice(0, 80)); stop() }   // 凭据错就别死循环重连
+    } else if (state === 'select') {
+      if (ex) lastExists = +ex[1]
+      if (/^A2 OK/i.test(line)) { logp('IDLE 就绪,INBOX=' + lastExists); startIdle() }
+      else if (/^A2 (NO|BAD)/i.test(line)) { logp('SELECT 失败'); reconnect(30000) }
+    } else if (state === 'idle') {
+      if (line[0] === '+') return                               // "+ idling" 续行
+      if (ex) {
+        const n = +ex[1]
+        if (lastExists != null && n > lastExists) { logp('新邮件 ' + lastExists + '→' + n); try { onNew && onNew(n - lastExists) } catch (e) { logp('onNew err ' + e.message) } }
+        lastExists = n
+      }
+      // 其它未请求响应(EXPUNGE/FETCH/“* OK Still here”)忽略
+    }
+  }
+  function connect() {
+    if (stopped) return
+    if (!pass) { logp('密码未配置,IDLE 不启动'); return }
+    cleanup()
+    try {
+      sock = cfg.secure !== false
+        ? tls.connect(+cfg.port || 993, cfg.host, { rejectUnauthorized: !cfg.allowSelfSigned })
+        : net.connect(+cfg.port || 143, cfg.host)
+    } catch (e) { logp('connect 异常: ' + e.message); return reconnect(15000) }
+    sock.setEncoding('latin1')
+    sock.on('error', (e) => { logp('socket err: ' + e.message); reconnect(15000) })
+    sock.on('close', () => { if (!stopped) reconnect(8000) })
+    sock.on('data', (c) => {
+      buf += c; let nl
+      while ((nl = buf.indexOf('\r\n')) >= 0) { const line = buf.slice(0, nl); buf = buf.slice(nl + 2); try { onLine(line) } catch (e) { logp('onLine err: ' + e.message) } }
+    })
+    state = 'greet'
+  }
+  function stop() { stopped = true; if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null } cleanup() }
+
+  connect()
+  return { stop }
+}
+
 // ── 格式化为 LLM Prompt(向后兼容)─────────────────────────────────────
 function formatEmailPrompt(emails) {
   if (!emails.length) return ''
@@ -882,6 +956,7 @@ async function sendMail(cfg, msg) {
 
 module.exports = {
   fetchUnread, fetchByMessageId, listFolders, markRead, archiveMessages, appendToSent,
+  createIdleWatcher,
   formatEmailPrompt, encryptPass, decryptPass, encryptionAvailable, sendMail,
   // 暴露解析工具给后续阶段(A2-b mail_get_full、A3 附件保存、A5 reply 拼 quote)用
   parseRfc822, decodeBytes, decodeWords, stripHtml,
