@@ -17,12 +17,26 @@ const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov
 // ── 字节解码(charset 真转码)─────────────────────────────────────────────
 // Electron 主进程自带完整 ICU,TextDecoder 支持 gb18030/gbk/gb2312/big5/shift_jis/euc-kr…
 // 非 Electron 进程(如纯 Node MCP)调用时,不支持的字符集会降级到 utf-8
+function hasHighByte(bytes) { for (let i = 0; i < bytes.length; i++) if (bytes[i] >= 0x80) return true; return false }
+function isValidUtf8(bytes) { try { new TextDecoder('utf-8', { fatal: true }).decode(bytes); return true } catch { return false } }
 function decodeBytes(bytes, charset) {
-  charset = String(charset || 'utf-8').toLowerCase().replace(/[_\s]/g, '-').trim()
+  charset = String(charset || '').toLowerCase().replace(/[_\s]/g, '-').trim()
+  // 没声明 charset / 声明成 ascii:做嗅探。国内老邮局常发 GB 字节却不声明 charset(或写 us-ascii),
+  // 一律当 utf-8 解会整段乱码。纯 ASCII 怎么解都一样;含高位字节就先验证是否合法 UTF-8,不是才退回 GB18030。
+  if (!charset || charset === 'us-ascii' || charset === 'ascii') {
+    if (!hasHighByte(bytes) || isValidUtf8(bytes)) return bytes.toString('utf8')
+    try { return new TextDecoder('gb18030', { fatal: false, ignoreBOM: true }).decode(bytes) }
+    catch { return bytes.toString('utf8') }
+  }
   if (charset === 'gb2312' || charset === 'gbk') charset = 'gb18030'   // GB18030 是超集
-  if (charset === 'us-ascii' || charset === 'ascii') charset = 'utf-8'
   if (charset === 'iso-8859-1' || charset === 'latin1') return bytes.toString('latin1')
-  if (charset === 'utf-8' || charset === 'utf8') return bytes.toString('utf8')
+  if (charset === 'utf-8' || charset === 'utf8') {
+    // 声明 utf-8 但字节根本不是合法 UTF-8(发信方误标)→ 也退回 GB18030 兜底
+    if (hasHighByte(bytes) && !isValidUtf8(bytes)) {
+      try { return new TextDecoder('gb18030', { fatal: false, ignoreBOM: true }).decode(bytes) } catch {}
+    }
+    return bytes.toString('utf8')
+  }
   try { return new TextDecoder(charset, { fatal: false, ignoreBOM: true }).decode(bytes) }
   catch {
     try { return new TextDecoder('utf-8', { fatal: false }).decode(bytes) }

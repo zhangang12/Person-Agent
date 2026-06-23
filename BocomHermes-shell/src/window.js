@@ -1861,7 +1861,20 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
 
   // ── 邮件 IPC ─────────────────────────────────────────────────────────────
   ipcMain.handle('trigger-email-summary', async () => {
-    try { return await spawnEmailCard() } catch (e) { throw new Error(e.message) }
+    // 不再 throw —— 否则主进程日志刷 "Error occurred in handler",前端也拿不到原因。
+    // 一律返回结构化结果,让待办面板就地给反馈(未配置 → 引导去设置;无新邮件 → 提示)
+    const imap = S.settings.imap
+    if (!imap || !imap.host || !imap.user || !imap.passEncrypted) {
+      return { ok: false, reason: 'unconfigured', message: 'IMAP 未配置,请先在设置里填写收件邮箱' }
+    }
+    try {
+      const count = await spawnEmailCard()
+      return { ok: true, count }
+    } catch (e) {
+      const msg = (e && e.message) || '未知错误'
+      const benign = /没有邮件|已整理过|未配置/.test(msg)
+      return { ok: false, reason: benign ? 'empty' : 'error', message: msg }
+    }
   })
   ipcMain.handle('email-test', async () => {
     const imap = S.settings.imap

@@ -247,14 +247,15 @@ function flashSphere(cls) {
   setTimeout(() => sphere.classList.remove(cls), 1200)
 }
 document.getElementById('ri-email').addEventListener('click', async () => {
-  try { await H.triggerEmailSummary() }
-  catch (e) {
-    const msg = (e && e.message) || String(e)
-    if (/IMAP 未配置/.test(msg)) { H.openSettings(); flashSphere('err-flash'); return }
-    // "无新邮件 / 都已整理过 / 近 2 天没有邮件" — 不是错,绿闪一下告诉用户"我处理了,只是没新东西"
-    if (/已整理过|无新邮件|没有邮件/.test(msg)) { flashSphere('info-flash'); return }
-    flashSphere('err-flash')
-  }
+  // 新契约:handler 不再 throw,返回 { ok, reason, message }
+  let r
+  try { r = await H.triggerEmailSummary() }
+  catch (e) { r = { ok: false, reason: 'error', message: (e && e.message) || String(e) } }
+  if (r && r.ok) return                                        // 成功:摘要卡会自己弹出
+  if (r && r.reason === 'unconfigured') { H.openSettings(); flashSphere('err-flash'); return }
+  // 无新邮件 / 都已整理过 — 不是错,绿闪一下告诉用户"我处理了,只是没新东西"
+  if (r && r.reason === 'empty') { flashSphere('info-flash'); return }
+  flashSphere('err-flash')
 })
 document.getElementById('ri-todos').addEventListener('click', () => H.openTodos())
 document.getElementById('ri-fanout').addEventListener('click', () => H.toggleOrbInput('fanout'))
