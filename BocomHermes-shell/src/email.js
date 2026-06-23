@@ -341,59 +341,88 @@ function extractMessages(resp) {
   return out
 }
 
-// ── 主接口:抓取未读邮件 ────────────────────────────────────────────────
-// 返回 [{from, subject, date, messageId, inReplyTo, references, text, html, attachments, uid, body, bodySummary}]
-//  · body  = text(原全文)
-//  · bodySummary = 前 600 字摘要(向后兼容老代码的 e.body)
-// 注:A1 阶段限 10 封最新未读以控制 BODY.PEEK[] 全文拉取的内网带宽。A2-a 加分页/过滤参数。
+// ── IMAP SEARCH 字符串转义(双引号包裹 + 转义 \" \\)─────────────────────
+// 适合纯 ASCII 关键词(邮箱地址、英文主题)。中文关键词需要服务端支持 CHARSET UTF-8 SEARCH,
+// 多数 Exchange/邮局支持,这里实现 CHARSET 兜底。
+function imapQuote(s) { return '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"' }
+function needsUtf8Search(s) { return /[^\x00-\x7F]/.test(String(s || '')) }
+
+// ── 主接口:抓取邮件(支持分页 + 服务端筛选)──────────────────────────
+//   opts:{ from?, subject?, days?=1, onlyUnseen?=true, limit?=10, cursor?=0 }
+//   返回 { emails, nextCursor, totalMatched }
+//   · emails  — 每封含 from/subject/date/messageId/text/html/attachments/uid/body
+//   · nextCursor — 还有更多就返回下次该传的 cursor;null 表示已到末尾
+//   · totalMatched — SEARCH 命中总数(给 agent 知道还剩多少)
 async function fetchUnread(cfg, opts) {
   if (!cfg || !cfg.host || !cfg.user) throw new Error('邮件服务器未配置(host/user 缺失)')
   const pass = decryptPass(cfg.passEncrypted)
   if (!pass) throw new Error('邮件密码未配置')
   opts = opts || {}
-  const limit = Math.max(1, Math.min(+opts.limit || 10, 30))
-  const days = Math.max(1, +opts.days || 1)
+  const limit  = Math.max(1, Math.min(+opts.limit  || 10, 30))
+  const cursor = Math.max(0, +opts.cursor || 0)
+  const days   = Math.max(1, +opts.days   || 1)
+  const onlyUnseen = opts.onlyUnseen !== false
 
   const client = new ImapClient()
   await client.connect(cfg.host, cfg.port || 993, cfg.secure !== false, cfg.allowSelfSigned)
   try {
-    await client.send(`LOGIN "${cfg.user.replace(/"/g, '\\"')}" "${pass.replace(/"/g, '\\"')}"`)
+    await client.send(`LOGIN ${imapQuote(cfg.user)} ${imapQuote(pass)}`)
     await client.send('SELECT INBOX')
 
+    // 服务端 SEARCH:UID SEARCH 拿稳定 UID,后面 UID FETCH 用
+    const crit = []
+    if (onlyUnseen) crit.push('UNSEEN')
     const since = new Date(Date.now() - days * 24 * 3600 * 1000)
-    const dateStr = `${since.getDate()}-${MONTHS[since.getMonth()]}-${since.getFullYear()}`
-    const searchResp = await client.send(`SEARCH UNSEEN SINCE ${dateStr}`)
-    const seqMatch = searchResp.match(/\* SEARCH([\d\s]*)/i)
-    const seqs = (seqMatch ? seqMatch[1] : '').trim().split(/\s+/).filter(Boolean)
-    if (!seqs.length) { client.quit(); return [] }
+    crit.push(`SINCE ${since.getDate()}-${MONTHS[since.getMonth()]}-${since.getFullYear()}`)
+    if (opts.from)    crit.push(`FROM ${imapQuote(opts.from)}`)
+    if (opts.subject) crit.push(`SUBJECT ${imapQuote(opts.subject)}`)
+    const useUtf8 = needsUtf8Search(opts.from) || needsUtf8Search(opts.subject)
+    const searchCmd = useUtf8 ? `UID SEARCH CHARSET UTF-8 ${crit.join(' ')}` : `UID SEARCH ${crit.join(' ')}`
+    let searchResp
+    try { searchResp = await client.send(searchCmd) }
+    catch (e) {                                    // 服务端不支持 CHARSET UTF-8 → 降级到 ASCII SEARCH
+      if (useUtf8) searchResp = await client.send(`UID SEARCH ${crit.join(' ')}`)
+      else throw e
+    }
+    const uidMatch = searchResp.match(/\* SEARCH([\d\s]*)/i)
+    const uids = (uidMatch ? uidMatch[1] : '').trim().split(/\s+/).filter(Boolean).map(Number)
+    if (!uids.length) { client.quit(); return { emails: [], nextCursor: null, totalMatched: 0 } }
 
-    const take = seqs.slice(-limit).join(',')
+    // 新邮件在前(UID 大的在前);按 cursor 分页
+    const sorted = uids.slice().sort((a, b) => b - a)
+    const slice = sorted.slice(cursor, cursor + limit)
+    if (!slice.length) { client.quit(); return { emails: [], nextCursor: null, totalMatched: sorted.length } }
+
+    const take = slice.join(',')
     // BODY.PEEK[] 拿全文(含附件);PEEK 不置 \Seen 标记
-    const fetchResp = await client.send(`FETCH ${take} (UID BODY.PEEK[])`)
+    const fetchResp = await client.send(`UID FETCH ${take} (UID BODY.PEEK[])`)
     client.quit()
 
     const msgs = extractMessages(fetchResp)
+    // FETCH 响应顺序不一定按请求顺序 → 按 UID 对回我们的 slice 排序
+    const byUid = {}
+    for (const m of msgs) if (m.uid != null) byUid[m.uid] = m
+
     const emails = []
-    for (const m of msgs) {
+    for (const uid of slice) {
+      const m = byUid[uid]; if (!m) continue
       try {
         const parsed = parseRfc822(m.raw)
         const summary = (parsed.text || stripHtml(parsed.html)).replace(/\s+/g, ' ').slice(0, 600)
-        // attachments 字段对 prompt 友好:不暴露 bytes,只 metadata
         const attMeta = parsed.attachments.map((a) => ({ filename: a.filename, mime: a.mime, size: a.size }))
         emails.push({
-          uid: m.uid, seq: m.seq,
+          uid, seq: m.seq,
           from: parsed.from, subject: parsed.subject, date: parsed.date,
           messageId: parsed.messageId, inReplyTo: parsed.inReplyTo, references: parsed.references,
           text: parsed.text, html: parsed.html,
           attachments: attMeta,
-          _rawAttachments: parsed.attachments,        // 主进程内部用,A3 会写盘;不要传出
-          body: summary, bodySummary: summary,        // 向后兼容老代码的 e.body
+          _rawAttachments: parsed.attachments,    // 主进程内部用,A3 会写盘
+          body: summary, bodySummary: summary,    // 向后兼容老代码的 e.body
         })
-      } catch (e) {
-        emails.push({ uid: m.uid, seq: m.seq, error: '解析失败: ' + e.message })
-      }
+      } catch (e) { emails.push({ uid, seq: m.seq, error: '解析失败: ' + e.message }) }
     }
-    return emails
+    const nextCursor = sorted.length > cursor + limit ? cursor + limit : null
+    return { emails, nextCursor, totalMatched: sorted.length }
   } catch (e) { client.quit(); throw e }
 }
 

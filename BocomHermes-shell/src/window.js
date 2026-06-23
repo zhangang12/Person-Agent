@@ -42,8 +42,11 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
           if (req.url === '/mail/list') {
             const imap = S.settings.imap
             if (!imap || !imap.host || !imap.user || !imap.passEncrypted) return reply({ error: 'IMAP 未配置' })
-            const emails = await email.fetchUnread(imap)
-            return reply({ ok: true, emails })
+            // 透传 agent 的筛选/分页参数:from / subject / days / onlyUnseen / limit / cursor
+            const r = await email.fetchUnread(imap, a || {})
+            // 缓存最近一次结果,给 todo 回填邮件元信息用(mail-cache 持久化在 A4-b)
+            S.mailLastBatch = { ts: Date.now(), emails: r.emails }
+            return reply({ ok: true, emails: r.emails, nextCursor: r.nextCursor, totalMatched: r.totalMatched })
           }
           if (req.url === '/mail/send') {
             const cfg = S.effectiveSmtp(); if (!cfg) return reply({ error: 'SMTP 未配置' })
@@ -236,9 +239,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const imap = S.settings.imap
     if (!imap || !imap.host || !imap.user || !imap.passEncrypted) throw new Error('IMAP 未配置')
     log('email: fetching unread emails…')
-    const emails = await email.fetchUnread(imap)
+    const r = await email.fetchUnread(imap, { limit: 10 })
+    const emails = r.emails || []
     if (!emails.length) { log('email: no unread emails'); return 0 }
-    log('email: fetched ' + emails.length + ' emails')
+    log('email: fetched ' + emails.length + ' / ' + r.totalMatched + ' emails (nextCursor=' + r.nextCursor + ')')
     // 把这次抓的邮件存到内存,供"加待办时回填邮件元信息" / agent 通过 mail-cache 读
     S.mailLastBatch = { ts: Date.now(), emails }
     const prompt = email.formatEmailPrompt(emails)
@@ -1635,8 +1639,8 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('email-test', async () => {
     const imap = S.settings.imap
     if (!imap || !imap.host || !imap.user || !imap.passEncrypted) throw new Error('IMAP 未配置')
-    const emails = await email.fetchUnread(imap)
-    return { count: emails.length, sample: emails.slice(0, 2).map(e => ({ from: e.from, subject: e.subject })) }
+    const r = await email.fetchUnread(imap, { limit: 5 })
+    return { count: r.totalMatched, sample: r.emails.slice(0, 2).map(e => ({ from: e.from, subject: e.subject })) }
   })
 
   // ── Settings: IMAP 字段读写 ───────────────────────────────────────────────

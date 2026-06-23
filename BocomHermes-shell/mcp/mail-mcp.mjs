@@ -37,7 +37,14 @@ function relayPost(urlPath, body) {
 }
 
 const TOOLS = [
-  { name: 'mail_list', description: '抓取未读邮件清单(最近 1 天,最多 30 封)。每封含 from/subject/date/body(前 800 字)。', inputSchema: { type: 'object', properties: {} } },
+  { name: 'mail_list', description: '抓取邮件清单(默认最近 1 天未读,一次最多返回 10 封摘要)。每封含 from/subject/date/messageId/attachments(metadata)/body(前 600 字摘要)。长邮件全文用 mail_get_full(messageId)。', inputSchema: { type: 'object', properties: {
+    from:       { type: 'string', description: '发件人邮箱或名字关键词(IMAP 服务端 FROM 筛选)' },
+    subject:    { type: 'string', description: '主题关键词(IMAP 服务端 SUBJECT 筛选)' },
+    days:       { type: 'number', description: '回看多少天(默认 1,信贷场景同事一般当天处理;查上周设 7)' },
+    onlyUnseen: { type: 'boolean', description: '默认 true 只看未读;设 false 看所有(配合 from/subject 找历史邮件)' },
+    limit:      { type: 'number', description: '本次返回多少封,默认 10,最大 30。一次性塞太多会撑爆 128K 上下文' },
+    cursor:     { type: 'number', description: '分页游标。第一次不传;之后传上次返回的 nextCursor 继续翻页' },
+  } } },
   { name: 'mail_send', description: '发送一封邮件(text/plain UTF-8)。to 可以是字符串或数组;cc 可选;失败抛错。', inputSchema: { type: 'object', properties: { to: { type: 'string', description: '收件人,多个用逗号分隔' }, subject: { type: 'string' }, text: { type: 'string', description: '邮件正文(text/plain)' }, cc: { type: 'string', description: '可选抄送,多个用逗号' } }, required: ['to', 'subject', 'text'] } },
   { name: 'mail_reply', description: '回复某封刚读的邮件(基于 mail_list 拿到的 subject + from)。会自动加 "Re: " 前缀(若没有)、自动 To 原发件人,你只填 text(回复正文)。', inputSchema: { type: 'object', properties: { originalSubject: { type: 'string', description: '原邮件主题' }, originalFrom: { type: 'string', description: '原邮件发件人(直接传 from 字段,会自动提邮箱地址)' }, text: { type: 'string', description: '回复正文' } }, required: ['originalSubject', 'originalFrom', 'text'] } },
   { name: 'todo_add', description: '加一条待办。urgency 可选 高/中/低(默认中)。可关联邮件:传 mailSubject/mailDate/mailBody 元信息,待办面板能展开看原邮件。', inputSchema: { type: 'object', properties: { text: { type: 'string' }, from: { type: 'string', description: '来源(发件人 / 项目 / 自填)' }, urgency: { type: 'string', enum: ['高', '中', '低'] }, mailSubject: { type: 'string' }, mailDate: { type: 'string' }, mailBody: { type: 'string' } }, required: ['text'] } },
@@ -55,10 +62,19 @@ async function callTool(name, a) {
   a = a || {}
   if (name === 'mail_list') {
     try {
-      const r = await relayPost('/mail/list', {})
+      const r = await relayPost('/mail/list', {
+        from: a.from, subject: a.subject, days: a.days,
+        onlyUnseen: a.onlyUnseen, limit: a.limit, cursor: a.cursor,
+      })
       const emails = r.emails || []
-      if (!emails.length) return '(无未读邮件)'
-      return `共 ${emails.length} 封未读:\n` + emails.map((e, i) => `\n#${i + 1}  ${e.date || ''}\n  发件人: ${e.from}\n  主题: ${e.subject}\n  正文摘要: ${(e.body || '').slice(0, 300).replace(/\s+/g, ' ')}`).join('\n')
+      if (!emails.length) return '(无邮件命中)'
+      const header = `命中 ${r.totalMatched} 封,本次返回 ${emails.length} 封${r.nextCursor != null ? ` · 下一页 cursor=${r.nextCursor}` : ' · 已到末尾'}:`
+      const body = emails.map((e, i) => {
+        const att = (e.attachments && e.attachments.length)
+          ? `\n  附件: ${e.attachments.map((x) => `${x.filename}(${Math.round(x.size / 1024)}KB)`).join(', ')}` : ''
+        return `\n#${i + 1}  ${e.date || ''}  [msgId:${e.messageId || '?'}]\n  发件人: ${e.from}\n  主题: ${e.subject}${att}\n  正文摘要: ${(e.body || '').slice(0, 300).replace(/\s+/g, ' ')}`
+      }).join('\n')
+      return header + body + '\n\n(提示:要回复某封 → mail_reply 用上面的 msgId;要看全文 → mail_get_full)'
     } catch (e) { return 'mail_list 失败: ' + e.message }
   }
   if (name === 'mail_send') {
