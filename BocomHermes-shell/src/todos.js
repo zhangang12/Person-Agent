@@ -13,18 +13,30 @@ module.exports = function initTodos(S, { ipcMain, app, path, fs, log }) {
     const list = load()
     // 去重:同 text + from 不重复(已 done 的也算重复 → 避免反复加同样的事)
     if (list.some(t => t.text === item.text && t.from === item.from)) return null
-    // mailIdx 在场 → 从 lastBatch 取邮件主题/日期/正文摘要回填(rich.js 解析 TODO 行时透传过来)
-    let mailMeta = {}
-    if (item.mailIdx && S.mailLastBatch && Array.isArray(S.mailLastBatch.emails)) {
+    // 回填邮件 metadata 优先顺序:
+    //  1) mailMsgId(跨会话稳定)→ 先 mailLastBatch(有正文),否则 mailCache(仅 metadata)
+    //  2) mailIdx(本会话序号,老格式)→ mailLastBatch
+    //  3) 调用方显式传入的 mailSubject / mailDate / mailBody
+    let mailMeta = {}, resolvedMsgId = ''
+    if (item.mailMsgId) {
+      resolvedMsgId = String(item.mailMsgId).replace(/^<|>$/g, '')
+      const m1 = S.mailLastBatch && Array.isArray(S.mailLastBatch.emails)
+        ? S.mailLastBatch.emails.find(e => e.messageId === resolvedMsgId) : null
+      if (m1) {
+        mailMeta = { mailSubject: m1.subject || '', mailDate: m1.date || '', mailBody: (m1.body || '').slice(0, 2000) }
+        if (!item.from) item.from = m1.from || ''
+      } else if (S.mailCache && S.mailCache.has(resolvedMsgId)) {
+        const c = S.mailCache.get(resolvedMsgId)
+        mailMeta = { mailSubject: c.subject || '', mailDate: c.date || '', mailBody: '' }
+        if (!item.from) item.from = c.from || ''
+      }
+    }
+    if (!mailMeta.mailSubject && item.mailIdx && S.mailLastBatch && Array.isArray(S.mailLastBatch.emails)) {
       const idx = parseInt(item.mailIdx) - 1
       const mail = idx >= 0 && idx < S.mailLastBatch.emails.length ? S.mailLastBatch.emails[idx] : null
       if (mail) {
-        mailMeta = {
-          mailSubject: mail.subject || '',
-          mailDate: mail.date || '',
-          mailBody: (mail.body || '').slice(0, 2000),
-        }
-        // from 没填的话用邮件发件人
+        mailMeta = { mailSubject: mail.subject || '', mailDate: mail.date || '', mailBody: (mail.body || '').slice(0, 2000) }
+        if (!resolvedMsgId) resolvedMsgId = mail.messageId || ''
         if (!item.from) item.from = mail.from || ''
       }
     }
@@ -36,13 +48,14 @@ module.exports = function initTodos(S, { ipcMain, app, path, fs, log }) {
       done: false,
       createdAt: Date.now(),
       source: item.source || 'manual',
+      mailMsgId:   resolvedMsgId || (item.mailMsgId ? String(item.mailMsgId).replace(/^<|>$/g, '') : ''),
       mailSubject: mailMeta.mailSubject || (item.mailSubject ? String(item.mailSubject).slice(0, 200) : ''),
       mailDate:    mailMeta.mailDate    || (item.mailDate    ? String(item.mailDate).slice(0, 50) : ''),
       mailBody:    mailMeta.mailBody    || (item.mailBody    ? String(item.mailBody).slice(0, 2000) : ''),
     }
     list.unshift(todo)
     save(list)
-    log('todo-add: ' + todo.text.slice(0, 60) + (todo.source === 'email' ? ' [来自邮件' + (todo.mailSubject ? ':'+todo.mailSubject.slice(0,30) : '') + ']' : ''))
+    log('todo-add: ' + todo.text.slice(0, 60) + (todo.source === 'email' ? ' [来自邮件' + (todo.mailSubject ? ':' + todo.mailSubject.slice(0,30) : '') + (todo.mailMsgId ? ' msgId=' + todo.mailMsgId.slice(0,30) : '') + ']' : ''))
     return todo
   })
 

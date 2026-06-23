@@ -3,6 +3,7 @@ const USE_ACRYLIC = false
 const { clipboard, session } = require('electron')
 const email = require('./email')
 const attachments = require('./attachments')
+const mailCache = require('./mail-cache')
 
 module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }) {
   // 额外窗口引用
@@ -47,7 +48,13 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
             const r = await email.fetchUnread(imap, a || {})
             // 附件落盘 + 文本化(strip _rawAttachments bytes,attachments[] 改为带 hasText 的 meta)
             try { await attachments.saveAttachments(r.emails, app.getPath('userData'), log) } catch (e) { log('saveAttachments err: ' + e.message) }
-            // 缓存最近一次结果,给 todo 回填邮件元信息用(mail-cache 持久化在 A4-b)
+            // 持久化每封邮件 metadata 到 mail-cache.jsonl(跨会话 msgId → uid 寻址)
+            for (const em of r.emails) {
+              if (!em.messageId) continue
+              mailCache.put(app.getPath('userData'), em)
+              S.mailCache.set(em.messageId, { messageId: em.messageId, uid: em.uid, from: em.from, subject: em.subject, date: em.date, attCount: (em.attachments || []).length, savedAt: Date.now() })
+            }
+            // 缓存最近一次结果,给 todo 回填邮件元信息用 / mail_get_full 快速命中
             S.mailLastBatch = { ts: Date.now(), emails: r.emails }
             return reply({ ok: true, emails: r.emails, nextCursor: r.nextCursor, totalMatched: r.totalMatched })
           }
@@ -122,6 +129,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   startMailRelay()
   // 启动时清理 30 天前的附件目录(异步执行不阻塞主流程)
   try { attachments.cleanupOld(app.getPath('userData'), log) } catch (e) { log('att cleanup err: ' + e.message) }
+  // 加载 mail-cache(metadata 持久化,跨会话引用 msgId)+ 启动时 prune 30 天前
+  S.mailCache = mailCache.load(app.getPath('userData'))
+  try { mailCache.prune(app.getPath('userData'), null, log) } catch (e) { log('mail-cache prune err: ' + e.message) }
   const projName = () => S.settings.projectDir ? path.basename(S.settings.projectDir) : '未选目录'
 
   function applyProject(dir) {

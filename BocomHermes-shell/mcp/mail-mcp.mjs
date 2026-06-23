@@ -20,6 +20,22 @@ function userData() {
 const DATA = userData()
 function loadTodos() { try { const a = JSON.parse(fs.readFileSync(path.join(DATA, 'todos.json'), 'utf8')); return Array.isArray(a) ? a : [] } catch { return [] } }
 function saveTodos(list) { try { fs.writeFileSync(path.join(DATA, 'todos.json'), JSON.stringify(list, null, 2)) } catch (e) { log('save todos err: ' + e.message) } }
+// mail-cache.jsonl 只读(metadata):agent 用 mailMsgId 加 todo 时 lookup 主题/日期/from
+function lookupMailCache(messageId) {
+  if (!messageId) return null
+  const fp = path.join(DATA, 'mail-cache.jsonl')
+  if (!fs.existsSync(fp)) return null
+  const want = String(messageId).replace(/^<|>$/g, '')
+  try {
+    const lines = fs.readFileSync(fp, 'utf8').split('\n')
+    let found = null
+    for (const ln of lines) {
+      if (!ln.trim()) continue
+      try { const o = JSON.parse(ln); if (o && o.messageId === want) found = o } catch {}
+    }
+    return found
+  } catch { return null }
+}
 
 // 邮件 IMAP/SMTP 走主进程的本地 HTTP 中继(主进程有 electron safeStorage 能解密密码;MCP 子进程没有)
 function relayCfg() { try { return JSON.parse(fs.readFileSync(path.join(DATA, 'mail-relay.json'), 'utf8')) } catch { return null } }
@@ -66,7 +82,7 @@ const TOOLS = [
     messageIds: { type: 'array', items: { type: 'string' }, description: 'mail_list 里 [msgId:xxx] 的 xxx 列表' },
     folder:     { type: 'string', description: '目标文件夹,默认 "Archive"。常见: Archive / 已归档 / [Gmail]/All Mail。' },
   }, required: ['messageIds'] } },
-  { name: 'todo_add', description: '加一条待办。urgency 可选 高/中/低(默认中)。可关联邮件:传 mailSubject/mailDate/mailBody 元信息,待办面板能展开看原邮件。', inputSchema: { type: 'object', properties: { text: { type: 'string' }, from: { type: 'string', description: '来源(发件人 / 项目 / 自填)' }, urgency: { type: 'string', enum: ['高', '中', '低'] }, mailSubject: { type: 'string' }, mailDate: { type: 'string' }, mailBody: { type: 'string' } }, required: ['text'] } },
+  { name: 'todo_add', description: '加一条待办。urgency 可选 高/中/低(默认中)。关联邮件:传 mailMsgId(推荐,跨会话稳定;从 mail_list 的 [msgId:xxx] 抠出)→ 自动回填主题/日期/正文。或显式传 mailSubject/mailDate/mailBody。', inputSchema: { type: 'object', properties: { text: { type: 'string' }, from: { type: 'string', description: '来源(发件人 / 项目 / 自填)' }, urgency: { type: 'string', enum: ['高', '中', '低'] }, mailMsgId: { type: 'string', description: '关联邮件的 Message-ID(从 mail_list 输出抠);系统会自动回填邮件主题/日期/正文' }, mailSubject: { type: 'string' }, mailDate: { type: 'string' }, mailBody: { type: 'string' } }, required: ['text'] } },
   { name: 'todo_list', description: '列出所有待办(未完成在前)。可按 onlyPending 过滤。', inputSchema: { type: 'object', properties: { onlyPending: { type: 'boolean' }, limit: { type: 'number' } } } },
   { name: 'todo_complete', description: '把某条待办标为完成。传 id(从 todo_list 返回)。', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
 ]
@@ -147,18 +163,27 @@ async function callTool(name, a) {
   }
   if (name === 'todo_add') {
     const list = loadTodos()
+    // mailMsgId → 查 mail-cache 补全 subject/date/from(MCP 子进程没正文,只能填 metadata)
+    let cached = null, msgId = a.mailMsgId ? String(a.mailMsgId).replace(/^<|>$/g, '') : ''
+    if (msgId && !a.mailSubject) cached = lookupMailCache(msgId)
+    if (cached) {
+      if (!a.from) a.from = cached.from || ''
+      if (!a.mailSubject) a.mailSubject = cached.subject || ''
+      if (!a.mailDate) a.mailDate = cached.date || ''
+    }
     if (list.some((t) => t.text === a.text && t.from === (a.from || ''))) return '(已存在同 text+from 的待办,跳过)'
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
     const todo = {
       id, text: String(a.text || '').slice(0, 200), from: String(a.from || ''),
       urgency: a.urgency || '中', done: false, createdAt: Date.now(),
-      source: a.mailSubject ? 'email' : 'agent',
+      source: (a.mailSubject || msgId) ? 'email' : 'agent',
+      mailMsgId: msgId,
       mailSubject: a.mailSubject ? String(a.mailSubject).slice(0, 200) : '',
       mailDate: a.mailDate ? String(a.mailDate).slice(0, 50) : '',
       mailBody: a.mailBody ? String(a.mailBody).slice(0, 2000) : '',
     }
     list.unshift(todo); saveTodos(list)
-    return `✓ 待办已加 (id=${id}) — [${todo.urgency}] ${todo.text}${todo.from ? ' (来自 ' + todo.from + ')' : ''}`
+    return `✓ 待办已加 (id=${id}) — [${todo.urgency}] ${todo.text}${todo.from ? ' (来自 ' + todo.from + ')' : ''}${todo.mailMsgId ? ' [📧 msgId=' + todo.mailMsgId.slice(0, 30) + ']' : ''}`
   }
   if (name === 'todo_list') {
     let list = loadTodos()
