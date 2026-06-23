@@ -61,7 +61,19 @@ const TOOLS = [
     limit:      { type: 'number', description: '本次返回多少封,默认 10,最大 30。一次性塞太多会撑爆 128K 上下文' },
     cursor:     { type: 'number', description: '分页游标。第一次不传;之后传上次返回的 nextCursor 继续翻页' },
   } } },
-  { name: 'mail_send', description: '发送一封邮件(text/plain UTF-8)。to 可以是字符串或数组;cc 可选;失败抛错。', inputSchema: { type: 'object', properties: { to: { type: 'string', description: '收件人,多个用逗号分隔' }, subject: { type: 'string' }, text: { type: 'string', description: '邮件正文(text/plain)' }, cc: { type: 'string', description: '可选抄送,多个用逗号' } }, required: ['to', 'subject', 'text'] } },
+  { name: 'mail_send', description: '发送一封邮件(默认 multipart/alternative:text + 自动生成 html)。要保留格式发 → 传 html 字段直接发 HTML;附件传本地路径不要传 base64(base64 会撑爆 128K 上下文)。失败抛错。', inputSchema: { type: 'object', properties: {
+    to:      { type: 'string', description: '收件人,多个用逗号分隔' },
+    subject: { type: 'string' },
+    text:    { type: 'string', description: '纯文本正文(plain 段)。没传 html 时,html 段自动用此文本生成(\\n→<br>+escape)' },
+    html:    { type: 'string', description: '可选 HTML 正文。传了就直接用,不再从 text 自动生成。Outlook 会显示 HTML 段;纯文本客户端 fallback 显示 text 段' },
+    cc:      { type: 'string', description: '可选抄送,多个用逗号' },
+    bcc:     { type: 'string', description: '可选密抄,多个用逗号(不在收件人头里)' },
+    attachments: { type: 'array', description: '附件列表(本地文件路径,主进程读盘 base64 编码)', items: { type: 'object', properties: {
+      path:     { type: 'string', description: '本地文件绝对路径' },
+      filename: { type: 'string', description: '可选,显示给收件人的文件名,默认取 basename(path)' },
+      mime:     { type: 'string', description: '可选,默认按扩展名猜' },
+    }, required: ['path'] } },
+  }, required: ['to', 'subject'] } },
   { name: 'mail_get_full', description: '取某封邮件的完整正文(可分段读)。先 mail_list 拿 [msgId:xxx],再用本工具按需取全文。短邮件(<8KB)一次性给完,长邮件返回 hasMore=true,你按 nextOffset 继续取。', inputSchema: { type: 'object', properties: {
     messageId: { type: 'string', description: 'mail_list 输出里 [msgId:xxx] 的 xxx' },
     part:      { type: 'string', enum: ['text', 'html'], description: 'text=纯文本(默认,适合读内容);html=原始 HTML 源码(只在你要回复时取,mail_reply 会自动 quote 这段)' },
@@ -137,9 +149,13 @@ async function callTool(name, a) {
   if (name === 'mail_send') {
     try {
       const tos = String(a.to).split(/[,;]\s*/).filter(Boolean)
-      const ccs = a.cc ? String(a.cc).split(/[,;]\s*/).filter(Boolean) : []
-      await relayPost('/mail/send', { to: tos, cc: ccs, subject: a.subject, text: a.text })
-      return `✓ 已发送 → ${tos.join(', ')}  · 主题: ${a.subject}`
+      const ccs = a.cc  ? String(a.cc ).split(/[,;]\s*/).filter(Boolean) : []
+      const bccs= a.bcc ? String(a.bcc).split(/[,;]\s*/).filter(Boolean) : []
+      const atts = Array.isArray(a.attachments) ? a.attachments : []
+      await relayPost('/mail/send', { to: tos, cc: ccs, bcc: bccs, subject: a.subject, text: a.text, html: a.html, attachments: atts })
+      const attStr = atts.length ? ` · 附件 ${atts.length} 个` : ''
+      const htmlStr = a.html ? ' [HTML]' : ''
+      return `✓ 已发送 → ${tos.join(', ')}${ccs.length ? ' (cc ' + ccs.length + ')' : ''}${bccs.length ? ' (bcc ' + bccs.length + ')' : ''}  · 主题: ${a.subject}${attStr}${htmlStr}`
     } catch (e) { return 'mail_send 失败: ' + e.message }
   }
   if (name === 'mail_reply') {

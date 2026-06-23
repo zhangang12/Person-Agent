@@ -7,6 +7,9 @@
 //  · RFC 2047 主题/From 解码:走同一个 decodeBytes,避免原代码 toString('binary') 中文乱码
 const tls = require('tls')
 const net = require('net')
+const fs = require('fs')
+const path = require('path')
+const crypto = require('crypto')
 
 const TIMEOUT = 25000
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
@@ -555,7 +558,148 @@ function decryptPass(stored) {
   return stored
 }
 
-// ── 极简 SMTP(A1 保持原样,A5 升级 multipart/alternative + 附件)──────
+// ── SMTP 邮件组装工具 ───────────────────────────────────────────────────
+const _esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+// text → 简单 HTML(用户硬约束:发邮件必须有 html 段,Outlook 才显格式)
+function textToHtml(t) {
+  return '<div style="white-space:pre-wrap;font-family:Calibri,Arial,微软雅黑,sans-serif;font-size:11pt;line-height:1.5">'
+    + _esc(t).replace(/\r?\n/g, '<br>')
+    + '</div>'
+}
+// base64 + 76 字节折行(RFC 5322)
+function b64lines(buf) {
+  const b64 = (Buffer.isBuffer(buf) ? buf : Buffer.from(String(buf), 'utf8')).toString('base64')
+  return (b64.match(/.{1,76}/g) || ['']).join('\r\n')
+}
+const _rnd = (n) => crypto.randomBytes(n).toString('hex')
+
+// 编码主题/附件名(RFC 2047):非 ASCII → =?UTF-8?B?xxx?=
+function encWord(s) {
+  s = String(s || '')
+  if (/^[\x00-\x7F]*$/.test(s)) return s
+  return '=?UTF-8?B?' + Buffer.from(s, 'utf8').toString('base64') + '?='
+}
+// 附件 filename:ASCII 走 filename="x",非 ASCII 走 RFC 2231 filename*=UTF-8''xxx
+function fnHeader(name) {
+  if (/^[\x00-\x7F]*$/.test(name)) return 'filename="' + name.replace(/"/g, '\\"') + '"'
+  return "filename*=UTF-8''" + encodeURIComponent(name)
+}
+
+// 组一个 MIME part(text/plain 或 text/html),固定 base64 CTE(8bit 字符安全)
+function mimeTextPart(mime, charset, content) {
+  return [
+    'Content-Type: ' + mime + '; charset=' + charset,
+    'Content-Transfer-Encoding: base64',
+    '',
+    b64lines(content),
+  ].join('\r\n')
+}
+function mimeFilePart(filename, mime, bytes) {
+  const nameW = encWord(filename)
+  return [
+    'Content-Type: ' + mime + '; name="' + nameW + '"',
+    'Content-Transfer-Encoding: base64',
+    'Content-Disposition: attachment; ' + fnHeader(filename) + (nameW !== filename ? '; ' + 'filename="' + nameW + '"' : ''),
+    '',
+    b64lines(bytes),
+  ].join('\r\n')
+}
+
+// 给定 msg 组完整邮件(headers + body)
+//   msg: { to, cc, bcc, subject, text, html, attachments:[{path,filename?,mime?}], inReplyTo, references, from, messageId }
+//   返回完整 RFC 5322 邮件文本(以 \r\n 分隔,无末尾换行)
+function buildMime(msg, fromAddr) {
+  const tos = Array.isArray(msg.to) ? msg.to : [msg.to]
+  // text + html 至少有一个;两个都没就退化为空字符串
+  const text = msg.text != null ? String(msg.text) : (msg.html ? stripHtml(msg.html) : '')
+  // 硬约束:即使只传 text 也必须有 html → 自动生成
+  const html = msg.html != null ? String(msg.html) : (text ? textToHtml(text) : '')
+
+  // 加载附件(读盘)
+  const atts = []
+  for (const att of (msg.attachments || [])) {
+    try {
+      const bytes = fs.readFileSync(att.path)
+      atts.push({
+        filename: att.filename || path.basename(att.path),
+        mime: att.mime || guessMime(att.filename || att.path),
+        bytes,
+      })
+    } catch (e) { throw new Error('读附件失败 ' + att.path + ': ' + e.message) }
+  }
+
+  // 通用 headers
+  const headers = []
+  headers.push('From: ' + fromAddr)
+  headers.push('To: ' + tos.join(', '))
+  if (msg.cc)  headers.push('Cc: '  + (Array.isArray(msg.cc)  ? msg.cc.join(', ')  : msg.cc))
+  // Bcc 不进 headers,只走 RCPT TO(smtpSend 单独处理)
+  headers.push('Subject: ' + encWord(msg.subject || ''))
+  headers.push('Date: ' + new Date().toUTCString())
+  if (msg.messageId) headers.push('Message-ID: <' + String(msg.messageId).replace(/^<|>$/g, '') + '>')
+  if (msg.inReplyTo) headers.push('In-Reply-To: <' + String(msg.inReplyTo).replace(/^<|>$/g, '') + '>')
+  if (msg.references && msg.references.length) {
+    const refs = (Array.isArray(msg.references) ? msg.references : [msg.references])
+      .map((r) => '<' + String(r).replace(/^<|>$/g, '') + '>').join(' ')
+    headers.push('References: ' + refs)
+  }
+  headers.push('MIME-Version: 1.0')
+
+  // 双段 alternative(text + html)
+  const altB = 'ALT_' + _rnd(8)
+  const altBody = [
+    '--' + altB,
+    mimeTextPart('text/plain', 'UTF-8', text),
+    '',
+    '--' + altB,
+    mimeTextPart('text/html',  'UTF-8', html),
+    '',
+    '--' + altB + '--',
+  ].join('\r\n')
+
+  if (!atts.length) {
+    // 无附件:顶层就是 multipart/alternative
+    headers.push('Content-Type: multipart/alternative; boundary="' + altB + '"')
+    return headers.join('\r\n') + '\r\n\r\n' + altBody
+  }
+
+  // 有附件:multipart/mixed 包 alternative + 附件
+  const mixB = 'MIX_' + _rnd(8)
+  headers.push('Content-Type: multipart/mixed; boundary="' + mixB + '"')
+  const parts = [
+    '--' + mixB,
+    'Content-Type: multipart/alternative; boundary="' + altB + '"',
+    '',
+    altBody,
+    '',
+  ]
+  for (const a of atts) {
+    parts.push('--' + mixB)
+    parts.push(mimeFilePart(a.filename, a.mime, a.bytes))
+    parts.push('')
+  }
+  parts.push('--' + mixB + '--')
+  return headers.join('\r\n') + '\r\n\r\n' + parts.join('\r\n')
+}
+
+// 极简 MIME 猜测(按扩展名)
+function guessMime(name) {
+  const ext = path.extname(name || '').toLowerCase()
+  const map = {
+    '.pdf':'application/pdf', '.doc':'application/msword',
+    '.docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.xls':'application/vnd.ms-excel',
+    '.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.ppt':'application/vnd.ms-powerpoint',
+    '.pptx':'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    '.zip':'application/zip', '.rar':'application/x-rar-compressed',
+    '.txt':'text/plain', '.csv':'text/csv', '.html':'text/html', '.json':'application/json',
+    '.png':'image/png', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.gif':'image/gif',
+  }
+  return map[ext] || 'application/octet-stream'
+}
+
+// ── SMTP:连接 + AUTH + 发送(支持 multipart/alternative + 附件)──────────
 function smtpSend(cfg, msg) {
   return new Promise((resolve, reject) => {
     const host = cfg.host, port = +cfg.port || 587
@@ -565,7 +709,7 @@ function smtpSend(cfg, msg) {
     const useTLS = !!cfg.secure
     const tlsOpts = { rejectUnauthorized: !cfg.allowSelfSigned, host }
     let sock, buf = '', onResp = null, finished = false
-    const timer = setTimeout(() => done(new Error('SMTP 超时(30s)')), 30000)
+    const timer = setTimeout(() => done(new Error('SMTP 超时(60s)')), 60000)    // 大附件给 60s
     function done(err) {
       if (finished) return; finished = true
       try { sock && sock.destroy() } catch {}
@@ -573,6 +717,7 @@ function smtpSend(cfg, msg) {
       err ? reject(err) : resolve(true)
     }
     function write(line) { try { sock.write(line + '\r\n') } catch (e) { done(e) } }
+    function writeRaw(s) { try { sock.write(s) } catch (e) { done(e) } }
     function expectCode(code) {
       return new Promise((res, rej) => {
         onResp = (lines) => {
@@ -612,21 +757,15 @@ function smtpSend(cfg, msg) {
         write(Buffer.from(pass).toString('base64')); await expectCode('235')
         const from = msg.from || user
         const tos = Array.isArray(msg.to) ? msg.to : [msg.to]
+        const ccs = msg.cc ? (Array.isArray(msg.cc) ? msg.cc : [msg.cc]) : []
+        const bccs = msg.bcc ? (Array.isArray(msg.bcc) ? msg.bcc : [msg.bcc]) : []
         write('MAIL FROM:<' + from + '>'); await expectCode('250')
-        for (const to of tos) { write('RCPT TO:<' + to + '>'); await expectCode('250') }
+        for (const to of [...tos, ...ccs, ...bccs]) { write('RCPT TO:<' + to + '>'); await expectCode('250') }
         write('DATA'); await expectCode('354')
-        const headers = []
-        headers.push('From: ' + from)
-        headers.push('To: ' + tos.join(', '))
-        if (msg.cc) headers.push('Cc: ' + (Array.isArray(msg.cc) ? msg.cc.join(', ') : msg.cc))
-        headers.push('Subject: =?UTF-8?B?' + Buffer.from(String(msg.subject || '')).toString('base64') + '?=')
-        headers.push('Date: ' + new Date().toUTCString())
-        headers.push('MIME-Version: 1.0')
-        headers.push('Content-Type: text/plain; charset=UTF-8')
-        headers.push('Content-Transfer-Encoding: 8bit')
-        if (msg.inReplyTo) headers.push('In-Reply-To: ' + msg.inReplyTo)
-        const text = String(msg.text || '').replace(/\r?\n/g, '\r\n').replace(/^\./gm, '..')
-        write(headers.join('\r\n') + '\r\n\r\n' + text + '\r\n.')
+        // 组邮件 + 点行转义 + 末尾 .\r\n
+        const mime = buildMime(msg, from)
+        const dotstuffed = mime.replace(/(\r\n|^)\./g, '$1..')
+        writeRaw(dotstuffed + '\r\n.\r\n')
         await expectCode('250')
         write('QUIT')
         setTimeout(() => done(null), 100)
@@ -646,4 +785,6 @@ module.exports = {
   formatEmailPrompt, encryptPass, decryptPass, sendMail,
   // 暴露解析工具给后续阶段(A2-b mail_get_full、A3 附件保存、A5 reply 拼 quote)用
   parseRfc822, decodeBytes, decodeWords, stripHtml,
+  // SMTP/MIME 辅助:A5-c 回复时拼 HTML quote、A5-d APPEND 到 Sent 文件夹用
+  buildMime, textToHtml,
 }

@@ -60,7 +60,13 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
           }
           if (req.url === '/mail/send') {
             const cfg = S.effectiveSmtp(); if (!cfg) return reply({ error: 'SMTP 未配置' })
-            await email.sendMail(cfg, { to: a.to, cc: a.cc, subject: a.subject, text: a.text })
+            // 透传 html / attachments / cc / bcc / inReplyTo / references —— 没传 html 时 buildMime 自动从 text 生成
+            await email.sendMail(cfg, {
+              to: a.to, cc: a.cc, bcc: a.bcc,
+              subject: a.subject, text: a.text, html: a.html,
+              attachments: a.attachments,
+              inReplyTo: a.inReplyTo, references: a.references,
+            })
             return reply({ ok: true })
           }
           if (req.url === '/mail/get') {
