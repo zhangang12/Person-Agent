@@ -96,11 +96,17 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
             for (const em of r.emails) {
               if (!em.messageId) continue
               mailCache.put(app.getPath('userData'), em)
-              S.mailCache.set(em.messageId, { messageId: em.messageId, uid: em.uid, from: em.from, subject: em.subject, date: em.date, attCount: (em.attachments || []).length, savedAt: Date.now() })
+              S.mailCache.set(em.messageId, { messageId: em.messageId, uid: em.uid, folder: em.folder || 'INBOX', from: em.from, subject: em.subject, date: em.date, attCount: (em.attachments || []).length, savedAt: Date.now() })
             }
             // 缓存最近一次结果,给 todo 回填邮件元信息用 / mail_get_full 快速命中
             S.mailLastBatch = { ts: Date.now(), emails: r.emails }
             return reply({ ok: true, emails: r.emails, nextCursor: r.nextCursor, totalMatched: r.totalMatched })
+          }
+          if (req.url === '/mail/folders') {
+            const imap = S.settings.imap
+            if (!imap || !imap.host || !imap.user || !imap.passEncrypted) return reply({ error: 'IMAP 未配置' })
+            try { const folders = await email.listFolders(imap); return reply({ ok: true, folders }) }
+            catch (e) { return reply({ error: e.message }) }
           }
           if (req.url === '/mail/send') {
             const cfg = S.effectiveSmtp(); if (!cfg) return reply({ error: 'SMTP 未配置' })
@@ -132,7 +138,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
             mail = batch.find((e) => e.messageId === msgId) || null
             if (!mail) {
               try {
-                mail = await email.fetchByMessageId(imap, msgId)
+                const cached = S.mailCache && S.mailCache.get(msgId)
+                const fld = a.folder || (cached && cached.folder) || 'INBOX'   // 跨文件夹:去这封邮件所在文件夹找
+                mail = await email.fetchByMessageId(imap, msgId, fld)
                 if (mail) { try { await attachments.saveAttachments([mail], app.getPath('userData'), log) } catch (e) { log('saveAtts err: ' + e.message) } }
               } catch (e) { return reply({ error: 'IMAP 兜底搜失败: ' + e.message }) }
             }
@@ -162,7 +170,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
             const batch = S.mailLastBatch && Array.isArray(S.mailLastBatch.emails) ? S.mailLastBatch.emails : []
             orig = batch.find((e) => e.messageId === msgId) || null
             if (!orig) {
-              try { orig = await email.fetchByMessageId(imap, msgId) } catch (e) { return reply({ error: '取原邮件失败: ' + e.message }) }
+              const cached = S.mailCache && S.mailCache.get(msgId)
+              const fld = a.folder || (cached && cached.folder) || 'INBOX'
+              try { orig = await email.fetchByMessageId(imap, msgId, fld) } catch (e) { return reply({ error: '取原邮件失败: ' + e.message }) }
             }
             if (!orig) return reply({ error: '找不到原邮件 msgId=' + msgId })
             try { checkAttachments(a.attachments) } catch (e) { return reply({ error: e.message }) }
@@ -255,7 +265,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (!imap || !imap.host || !imap.user || !imap.passEncrypted) return { error: 'IMAP 未配置' }
     const id = String(msgId || '').replace(/^<|>$/g, ''); if (!id) return { error: 'msgId 为空' }
     let mail = (S.mailLastBatch && Array.isArray(S.mailLastBatch.emails) ? S.mailLastBatch.emails : []).find((e) => e.messageId === id) || null
-    if (!mail) { try { mail = await email.fetchByMessageId(imap, id) } catch (e) { return { error: e.message } } }
+    if (!mail) { const cached = S.mailCache && S.mailCache.get(id); try { mail = await email.fetchByMessageId(imap, id, cached && cached.folder) } catch (e) { return { error: e.message } } }
     if (!mail) return { error: '找不到原邮件（可能已归档或不在收件箱）' }
     return { ok: true, id, from: mail.from, subject: mail.subject, date: mail.date, text: mail.text || email.stripHtml(mail.html || '') }
   }
@@ -476,7 +486,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       for (const em of fresh) {
         if (!em.messageId) continue
         mailCache.put(app.getPath('userData'), em)
-        S.mailCache.set(em.messageId, { messageId: em.messageId, uid: em.uid, from: em.from, subject: em.subject, date: em.date, attCount: (em.attachments || []).length, savedAt: Date.now() })
+        S.mailCache.set(em.messageId, { messageId: em.messageId, uid: em.uid, folder: em.folder || 'INBOX', from: em.from, subject: em.subject, date: em.date, attCount: (em.attachments || []).length, savedAt: Date.now() })
       }
       // 内存缓存这次结果,UI 加待办时能回填邮件正文
       S.mailLastBatch = { ts: Date.now(), emails: fresh }

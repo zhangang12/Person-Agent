@@ -60,7 +60,21 @@ const TOOLS = [
     onlyUnseen: { type: 'boolean', description: '默认 true 只看未读;设 false 看所有(配合 from/subject 找历史邮件)' },
     limit:      { type: 'number', description: '本次返回多少封,默认 10,最大 30。一次性塞太多会撑爆 128K 上下文' },
     cursor:     { type: 'number', description: '分页游标。第一次不传;之后传上次返回的 nextCursor 继续翻页' },
+    folder:     { type: 'string', description: '从哪个文件夹读,默认 INBOX。可填 Sent/已发送/Archive 等(用 mail_list_folders 查实际名)' },
   } } },
+  { name: 'mail_search', description: '在邮箱里搜邮件(比 mail_list 更全的检索条件,默认搜全部已读未读)。常用:找"上个月某人发的/我发给谁的/正文提到 X 的"邮件。可跨文件夹(folder)。返回同 mail_list 格式,带 [msgId:xxx] 可继续 mail_get_full/mail_reply。', inputSchema: { type: 'object', properties: {
+    from:    { type: 'string', description: '发件人邮箱/名字关键词(IMAP FROM)' },
+    to:      { type: 'string', description: '收件人邮箱/名字关键词(IMAP TO)—— 找"我发给谁"的邮件配合 folder=Sent' },
+    subject: { type: 'string', description: '主题关键词(IMAP SUBJECT)' },
+    body:    { type: 'string', description: '正文关键词(IMAP BODY,服务端全文搜,可能较慢)' },
+    days:    { type: 'number', description: '回看多少天,默认 30。查更早就调大(如 365)' },
+    before:  { type: 'string', description: '只要此日期之前的,YYYY-MM-DD(配合 days 圈定区间)' },
+    onlyUnseen: { type: 'boolean', description: '默认 false(搜全部);只搜未读设 true' },
+    folder:  { type: 'string', description: '搜哪个文件夹,默认 INBOX。Sent/Archive/Drafts 等' },
+    limit:   { type: 'number', description: '返回多少封,默认 10,最大 30' },
+    cursor:  { type: 'number', description: '分页游标,续传上次 nextCursor' },
+  } } },
+  { name: 'mail_list_folders', description: '列出邮箱服务器上的所有文件夹(IMAP LIST)。在跨文件夹读取/搜索/归档前用它拿到准确的文件夹名(不同邮箱叫法不同:Sent / 已发送 / [Gmail]/All Mail)。', inputSchema: { type: 'object', properties: {} } },
   { name: 'mail_send', description: '发送一封邮件(默认 multipart/alternative:text + 自动生成 html)。要保留格式发 → 传 html 字段直接发 HTML;附件传本地路径不要传 base64(base64 会撑爆 128K 上下文)。注意:发信经"发件箱"延迟发出(默认 15 秒,用户可撤销/立即发送),返回会注明几秒后发出;校验失败/未发出会抛错。', inputSchema: { type: 'object', properties: {
     to:      { type: 'string', description: '收件人,多个用逗号分隔' },
     subject: { type: 'string' },
@@ -79,6 +93,7 @@ const TOOLS = [
     part:      { type: 'string', enum: ['text', 'html'], description: 'text=纯文本(默认,适合读内容);html=原始 HTML 源码(只在你要回复时取,mail_reply 会自动 quote 这段)' },
     offset:    { type: 'number', description: '从第几个字符开始,默认 0' },
     limit:     { type: 'number', description: '本次取多少字符,默认 8000,最大 50000。返回有 hasMore + nextOffset 让你翻下一段' },
+    folder:    { type: 'string', description: '邮件所在文件夹,默认自动(命中过 mail_search 的非 INBOX 邮件需带上,如 Sent)' },
   }, required: ['messageId'] } },
   { name: 'mail_get_attachment_text', description: '读某封邮件某个附件的文本内容(已自动提取:PDF/Word/Excel/CSV/TXT/HTML/JSON/XML;Excel 转 CSV)。支持分段。> 3MB 或非文本格式的附件无文本可读,会返回 extractError 提示。', inputSchema: { type: 'object', properties: {
     messageId: { type: 'string', description: 'mail_list 输出里 [msgId:xxx] 的 xxx' },
@@ -92,6 +107,7 @@ const TOOLS = [
     html:        { type: 'string', description: '可选,显式 HTML 回复(传了就直接用,不再从 text 转;系统仍会在下面 quote 原邮件 HTML)' },
     cc:          { type: 'string', description: '可选抄送,多个用逗号' },
     bcc:         { type: 'string', description: '可选密抄,多个用逗号' },
+    folder:      { type: 'string', description: '原邮件所在文件夹,默认自动(回复非 INBOX 里搜到的邮件需带上)' },
     attachments: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, filename: { type: 'string' }, mime: { type: 'string' } }, required: ['path'] } },
   }, required: ['messageId'] } },
   { name: 'mail_mark_read', description: '把一批邮件标已读(IMAP +Flags \\Seen)。处理完一封别忘了标,下次 mail_list 才不会重复返回。', inputSchema: { type: 'object', properties: {
@@ -115,28 +131,51 @@ function extractEmail(s) {
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 function invalidRecipients(arr) { return (arr || []).filter((s) => !EMAIL_RE.test(extractEmail(s))) }
 
+// 共享:把 /mail/list 返回渲染成给 agent 的文本(mail_list 和 mail_search 共用)
+function renderMailList(r, folder) {
+  const emails = r.emails || []
+  if (!emails.length) return '(无邮件命中)'
+  const todoMsgIds = new Set()
+  for (const t of loadTodos()) if (t.mailMsgId) todoMsgIds.add(t.mailMsgId)
+  const fld = folder && folder !== 'INBOX' ? ` · 文件夹 ${folder}` : ''
+  const header = `命中 ${r.totalMatched} 封,本次返回 ${emails.length} 封${fld}${r.nextCursor != null ? ` · 下一页 cursor=${r.nextCursor}` : ' · 已到末尾'}:`
+  const body = emails.map((e, i) => {
+    const att = (e.attachments && e.attachments.length)
+      ? `\n  附件: ${e.attachments.map((x) => `${x.filename}(${Math.round(x.size / 1024)}KB${x.hasText ? `,可读 ${x.textLen}字` : x.extractError ? ',✗' + x.extractError : ''})`).join(', ')}` : ''
+    const processed = e.messageId && todoMsgIds.has(e.messageId) ? '  ✓已建todo' : ''
+    return `\n#${i + 1}  ${e.date || ''}  [msgId:${e.messageId || '?'}]${processed}\n  发件人: ${e.from}\n  主题: ${e.subject}${att}\n  正文摘要: ${(e.body || '').slice(0, 300).replace(/\s+/g, ' ')}`
+  }).join('\n')
+  return header + body + '\n\n(提示:回复 → mail_reply 用 msgId;看全文 → mail_get_full;读附件 → mail_get_attachment_text' + (folder && folder !== 'INBOX' ? ';非 INBOX 的邮件,get_full/reply 记得带 folder=' + folder : '') + ';✓已建todo 的别重复处理)'
+}
+
 async function callTool(name, a) {
   a = a || {}
   if (name === 'mail_list') {
     try {
       const r = await relayPost('/mail/list', {
-        from: a.from, subject: a.subject, days: a.days,
+        from: a.from, subject: a.subject, days: a.days, folder: a.folder,
         onlyUnseen: a.onlyUnseen, limit: a.limit, cursor: a.cursor,
       })
-      const emails = r.emails || []
-      if (!emails.length) return '(无邮件命中)'
-      // 查 todos.json 命中过的 mailMsgId → 标 ✓已建todo,让 agent 跳过不重复处理
-      const todoMsgIds = new Set()
-      for (const t of loadTodos()) if (t.mailMsgId) todoMsgIds.add(t.mailMsgId)
-      const header = `命中 ${r.totalMatched} 封,本次返回 ${emails.length} 封${r.nextCursor != null ? ` · 下一页 cursor=${r.nextCursor}` : ' · 已到末尾'}:`
-      const body = emails.map((e, i) => {
-        const att = (e.attachments && e.attachments.length)
-          ? `\n  附件: ${e.attachments.map((x) => `${x.filename}(${Math.round(x.size / 1024)}KB${x.hasText ? `,可读 ${x.textLen}字` : x.extractError ? ',✗' + x.extractError : ''})`).join(', ')}` : ''
-        const processed = e.messageId && todoMsgIds.has(e.messageId) ? '  ✓已建todo' : ''
-        return `\n#${i + 1}  ${e.date || ''}  [msgId:${e.messageId || '?'}]${processed}\n  发件人: ${e.from}\n  主题: ${e.subject}${att}\n  正文摘要: ${(e.body || '').slice(0, 300).replace(/\s+/g, ' ')}`
-      }).join('\n')
-      return header + body + '\n\n(提示:回复 → mail_reply 用 msgId;看全文 → mail_get_full;读附件 → mail_get_attachment_text;✓已建todo 的别重复处理)'
+      return renderMailList(r, a.folder)
     } catch (e) { return 'mail_list 失败: ' + e.message }
+  }
+  if (name === 'mail_search') {
+    try {
+      const r = await relayPost('/mail/list', {
+        from: a.from, to: a.to, subject: a.subject, body: a.body,
+        days: a.days != null ? a.days : 30, before: a.before, folder: a.folder,
+        onlyUnseen: a.onlyUnseen === true, limit: a.limit, cursor: a.cursor,
+      })
+      return renderMailList(r, a.folder)
+    } catch (e) { return 'mail_search 失败: ' + e.message }
+  }
+  if (name === 'mail_list_folders') {
+    try {
+      const r = await relayPost('/mail/folders', {})
+      const fs2 = (r.folders || []).filter((f) => f.selectable !== false)
+      if (!fs2.length) return '(没有可用文件夹)'
+      return '邮箱文件夹(共 ' + fs2.length + '):\n' + fs2.map((f) => '  · ' + f.name).join('\n') + '\n\n(读/搜某文件夹:mail_list/mail_search 传 folder=名字)'
+    } catch (e) { return 'mail_list_folders 失败: ' + e.message }
   }
   if (name === 'mail_get_attachment_text') {
     try {
@@ -147,7 +186,7 @@ async function callTool(name, a) {
   }
   if (name === 'mail_get_full') {
     try {
-      const r = await relayPost('/mail/get', { messageId: a.messageId, part: a.part || 'text', offset: a.offset, limit: a.limit })
+      const r = await relayPost('/mail/get', { messageId: a.messageId, part: a.part || 'text', offset: a.offset, limit: a.limit, folder: a.folder })
       const partLabel = a.part === 'html' ? 'HTML' : '文本'
       const head = `${r.from || '?'}  ·  ${r.subject || ''}  ·  ${r.date || ''}\n[${partLabel}  ${r.content.length} / ${r.totalLen} 字${r.hasMore ? `,继续传 offset=${r.nextOffset}` : ',已完整'}]\n──────────\n`
       const attLine = (r.attachments && r.attachments.length)
@@ -182,7 +221,7 @@ async function callTool(name, a) {
     if (bad.length) throw new Error('mail_reply 拒绝(防误发):cc/bcc 里这些不是有效邮箱 → ' + bad.join(', '))
     try {
       const r = await relayPost('/mail/reply', {
-        messageId: a.messageId, text: a.text, html: a.html,
+        messageId: a.messageId, text: a.text, html: a.html, folder: a.folder,
         cc: ccs, bcc: bccs, attachments: Array.isArray(a.attachments) ? a.attachments : [],
       })
       const hold = r && r.holdSeconds

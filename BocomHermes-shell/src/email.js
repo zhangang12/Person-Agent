@@ -383,6 +383,7 @@ function extractMessages(resp) {
 // 多数 Exchange/邮局支持,这里实现 CHARSET 兜底。
 function imapQuote(s) { return '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"' }
 function needsUtf8Search(s) { return /[^\x00-\x7F]/.test(String(s || '')) }
+function imapDate(d) { return `${d.getDate()}-${MONTHS[d.getMonth()]}-${d.getFullYear()}` }
 
 // ── 主接口:抓取邮件(支持分页 + 服务端筛选)──────────────────────────
 //   opts:{ from?, subject?, days?=1, onlyUnseen?=true, limit?=10, cursor?=0 }
@@ -399,21 +400,25 @@ async function fetchUnread(cfg, opts) {
   const cursor = Math.max(0, +opts.cursor || 0)
   const days   = Math.max(1, +opts.days   || 1)
   const onlyUnseen = opts.onlyUnseen !== false
+  const folder = String(opts.folder || 'INBOX')   // 支持读 Sent/Archive/Drafts 等任意文件夹
 
   const client = new ImapClient()
   await client.connect(cfg.host, cfg.port || 993, cfg.secure !== false, cfg.allowSelfSigned)
   try {
     await client.send(`LOGIN ${imapQuote(cfg.user)} ${imapQuote(pass)}`)
-    await client.send('SELECT INBOX')
+    await client.send(`SELECT ${imapQuote(folder)}`)
 
     // 服务端 SEARCH:UID SEARCH 拿稳定 UID,后面 UID FETCH 用
     const crit = []
     if (onlyUnseen) crit.push('UNSEEN')
     const since = new Date(Date.now() - days * 24 * 3600 * 1000)
-    crit.push(`SINCE ${since.getDate()}-${MONTHS[since.getMonth()]}-${since.getFullYear()}`)
+    crit.push(`SINCE ${imapDate(since)}`)
+    if (opts.before) { const bd = new Date(opts.before); if (!isNaN(bd.getTime())) crit.push(`BEFORE ${imapDate(bd)}`) }
     if (opts.from)    crit.push(`FROM ${imapQuote(opts.from)}`)
+    if (opts.to)      crit.push(`TO ${imapQuote(opts.to)}`)
     if (opts.subject) crit.push(`SUBJECT ${imapQuote(opts.subject)}`)
-    const useUtf8 = needsUtf8Search(opts.from) || needsUtf8Search(opts.subject)
+    if (opts.body)    crit.push(`BODY ${imapQuote(opts.body)}`)
+    const useUtf8 = [opts.from, opts.to, opts.subject, opts.body].some(needsUtf8Search)
     const searchCmd = useUtf8 ? `UID SEARCH CHARSET UTF-8 ${crit.join(' ')}` : `UID SEARCH ${crit.join(' ')}`
     let searchResp
     try { searchResp = await client.send(searchCmd) }
@@ -448,7 +453,7 @@ async function fetchUnread(cfg, opts) {
         const summary = (parsed.text || stripHtml(parsed.html)).replace(/\s+/g, ' ').slice(0, 600)
         const attMeta = parsed.attachments.map((a) => ({ filename: a.filename, mime: a.mime, size: a.size }))
         emails.push({
-          uid, seq: m.seq,
+          uid, seq: m.seq, folder,                 // folder:跨文件夹寻址(get_full/reply 回查时知道去哪个文件夹)
           from: parsed.from, subject: parsed.subject, date: parsed.date,
           messageId: parsed.messageId, inReplyTo: parsed.inReplyTo, references: parsed.references,
           text: parsed.text, html: parsed.html,
@@ -524,6 +529,31 @@ async function archiveMessages(cfg, messageIds, folder) {
   })
 }
 
+// ── 列出服务器上的文件夹(IMAP LIST)──────────────────────────────────────
+// 返回 [{ name, selectable, flags }]。给 agent 选目标文件夹 / 校验文件夹名用
+async function listFolders(cfg) {
+  if (!cfg || !cfg.host || !cfg.user) throw new Error('邮件服务器未配置')
+  const pass = decryptPass(cfg.passEncrypted)
+  if (!pass) throw new Error('邮件密码未配置')
+  const client = new ImapClient()
+  await client.connect(cfg.host, cfg.port || 993, cfg.secure !== false, cfg.allowSelfSigned)
+  try {
+    await client.send(`LOGIN ${imapQuote(cfg.user)} ${imapQuote(pass)}`)
+    const resp = await client.send('LIST "" "*"')
+    // 形如:* LIST (\HasNoChildren) "/" "INBOX"   或   * LIST (\Noselect) "/" "[Gmail]"
+    const re = /^\* LIST \(([^)]*)\) (?:"(?:[^"\\]|\\.)*"|NIL) (?:"((?:[^"\\]|\\.)*)"|(\S+))\s*$/gm
+    const out = []; const seen = new Set(); let m
+    while ((m = re.exec(resp))) {
+      const flags = (m[1] || '').trim()
+      const name = (m[2] != null ? m[2].replace(/\\(.)/g, '$1') : m[3]) || ''
+      if (!name || seen.has(name)) continue
+      seen.add(name)
+      out.push({ name, selectable: !/\\Noselect/i.test(flags), flags })
+    }
+    return out
+  } finally { client.quit() }
+}
+
 // ── APPEND 一封刚发出去的邮件到 IMAP Sent 文件夹 ────────────────────────
 async function appendToSent(cfg, folder, mimeStr) {
   return _withImap(cfg, async (client) => {
@@ -533,16 +563,17 @@ async function appendToSent(cfg, folder, mimeStr) {
 
 // ── 按 Message-ID 抓单封邮件(给 mail_get_full / mail_reply 兜底用)──────
 // 缓存没命中时走这个;在 INBOX 里搜 HEADER "Message-ID" "<msgid>"
-async function fetchByMessageId(cfg, messageId) {
+async function fetchByMessageId(cfg, messageId, folder) {
   if (!messageId) throw new Error('messageId 为空')
   if (!cfg || !cfg.host || !cfg.user) throw new Error('邮件服务器未配置')
   const pass = decryptPass(cfg.passEncrypted)
   if (!pass) throw new Error('邮件密码未配置')
+  folder = String(folder || 'INBOX')
   const client = new ImapClient()
   await client.connect(cfg.host, cfg.port || 993, cfg.secure !== false, cfg.allowSelfSigned)
   try {
     await client.send(`LOGIN ${imapQuote(cfg.user)} ${imapQuote(pass)}`)
-    await client.send('SELECT INBOX')
+    await client.send(`SELECT ${imapQuote(folder)}`)
     const mid = '<' + String(messageId).replace(/^<|>$/g, '') + '>'
     const searchResp = await client.send(`UID SEARCH HEADER "Message-ID" ${imapQuote(mid)}`)
     const uidMatch = searchResp.match(/\* SEARCH([\d\s]*)/i)
@@ -555,7 +586,7 @@ async function fetchByMessageId(cfg, messageId) {
     if (!msgs.length) return null
     const parsed = parseRfc822(msgs[0].raw)
     return {
-      uid: +uid,
+      uid: +uid, folder,
       from: parsed.from, subject: parsed.subject, date: parsed.date,
       messageId: parsed.messageId, inReplyTo: parsed.inReplyTo, references: parsed.references,
       text: parsed.text, html: parsed.html,
@@ -850,7 +881,7 @@ async function sendMail(cfg, msg) {
 }
 
 module.exports = {
-  fetchUnread, fetchByMessageId, markRead, archiveMessages, appendToSent,
+  fetchUnread, fetchByMessageId, listFolders, markRead, archiveMessages, appendToSent,
   formatEmailPrompt, encryptPass, decryptPass, encryptionAvailable, sendMail,
   // 暴露解析工具给后续阶段(A2-b mail_get_full、A3 附件保存、A5 reply 拼 quote)用
   parseRfc822, decodeBytes, decodeWords, stripHtml,

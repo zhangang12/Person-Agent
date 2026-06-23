@@ -35,6 +35,7 @@ function put(userDataDir, meta) {
   const entry = {
     messageId: meta.messageId,
     uid: meta.uid || null,
+    folder: meta.folder || 'INBOX',   // 跨文件夹寻址:记住这封邮件来自哪个文件夹
     from: meta.from || '',
     subject: meta.subject || '',
     date: meta.date || '',
