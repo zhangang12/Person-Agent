@@ -11,6 +11,19 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // ── 设置 ────────────────────────────────────────────────────────────────────
   function loadSettings() { try { return { ...S.settings, ...JSON.parse(fs.readFileSync(S.settingsFile, 'utf8')) } } catch { return { ...S.settings } } }
   function saveSettings() { try { fs.writeFileSync(S.settingsFile, JSON.stringify(S.settings)) } catch {} }
+  // 解析"有效的" SMTP 配置:sameAsImap=true 时用户名/密码从 IMAP 取(host/port/secure 仍从 SMTP 取)
+  function effectiveSmtp(S) {
+    const sm = S.settings.smtp || {}
+    if (!sm.host) return null
+    const out = { host: sm.host, port: sm.port || 587, secure: !!sm.secure, allowSelfSigned: !!sm.allowSelfSigned, from: sm.from || '' }
+    const im = S.settings.imap || {}
+    if (sm.sameAsImap !== false && !sm.user) { out.user = im.user; out.passEncrypted = im.passEncrypted }
+    else { out.user = sm.user; out.passEncrypted = sm.passEncrypted }
+    if (!out.user || !out.passEncrypted) return null
+    if (!out.from) out.from = out.user
+    return out
+  }
+  S.effectiveSmtp = () => effectiveSmtp(S)   // 供其它模块/MCP 用
   const projName = () => S.settings.projectDir ? path.basename(S.settings.projectDir) : '未选目录'
 
   function applyProject(dir) {
@@ -1497,6 +1510,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('open-settings', () => openSettings())
   ipcMain.on('get-settings', (e) => {
     const im = S.settings.imap || {}
+    const sm = S.settings.smtp || {}
     e.returnValue = {
       theme: S.settings.theme, editorCmd: S.settings.editorCmd || '', serveBin: S.settings.serveBin || '',
       serveBinEffective: process.env.BOCOMHERMES_SERVE_BIN || S.settings.serveBin || (app.isPackaged ? 'bocomcode' : 'opencode'),
@@ -1504,8 +1518,9 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       proxy: S.settings.proxy || '',
       project: projName(), projectDir: S.settings.projectDir || '', recentDirs: S.settings.recentDirs || [],
       backendDir: S.settings.backendDir || '',
-      planMode: S.settings.planMode !== false,   // 默认 ON:先方案后人审再改
+      planMode: S.settings.planMode !== false,
       imap: { host: im.host || '', port: im.port || 993, secure: im.secure !== false, allowSelf: !!im.allowSelfSigned, user: im.user || '', hasPass: !!im.passEncrypted, scheduleHour: im.scheduleHour ?? 9 },
+      smtp: { host: sm.host || '', port: sm.port || 587, secure: !!sm.secure, allowSelf: !!sm.allowSelfSigned, sameAsImap: sm.sameAsImap !== false, user: sm.user || '', hasPass: !!sm.passEncrypted, from: sm.from || '' },
     }
   })
   ipcMain.handle('spawn-card', (_e, title) => spawnCard(title))
@@ -1610,7 +1625,30 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       if (im.pass && im.pass.trim()) S.settings.imap.passEncrypted  = email.encryptPass(im.pass.trim())
       if (im.scheduleHour !== undefined) S.settings.imap.scheduleHour = parseInt(im.scheduleHour) || 9
     }
+    if (patch && patch.smtp) {
+      S.settings.smtp = S.settings.smtp || {}
+      const sm = patch.smtp
+      if (sm.host       !== undefined) S.settings.smtp.host           = String(sm.host).trim()
+      if (sm.port       !== undefined) S.settings.smtp.port           = parseInt(sm.port) || 587
+      if (sm.secure     !== undefined) S.settings.smtp.secure         = !!sm.secure
+      if (sm.allowSelf  !== undefined) S.settings.smtp.allowSelfSigned = !!sm.allowSelf
+      if (sm.sameAsImap !== undefined) S.settings.smtp.sameAsImap     = !!sm.sameAsImap
+      if (sm.user       !== undefined) S.settings.smtp.user           = String(sm.user).trim()
+      if (sm.pass && sm.pass.trim())   S.settings.smtp.passEncrypted  = email.encryptPass(sm.pass.trim())
+      if (sm.from       !== undefined) S.settings.smtp.from           = String(sm.from).trim()
+    }
     saveSettings(); return true
+  })
+
+  // SMTP 测试:给自己发一封空邮件,失败把错误返回前端展示
+  ipcMain.handle('smtp-test', async () => {
+    const cfg = effectiveSmtp(S)
+    if (!cfg) return { ok: false, error: 'SMTP 未配置(填 host/user/密码,或勾"同 IMAP")' }
+    try {
+      const to = cfg.from || cfg.user
+      await email.sendMail(cfg, { to, subject: 'BocomHermes SMTP 测试 - ' + new Date().toLocaleString('zh-CN'), text: '这是一封由桌面智能体发出的 SMTP 测试邮件。\n如果你收到了,说明 SMTP 配置 OK,agent 可以代发邮件了。' })
+      return { ok: true, to }
+    } catch (e) { return { ok: false, error: e.message } }
   })
 
   // 取本次 session 的 git diff(前端+后端目录),给"查看本次改动"用,改完直接展示给用户看

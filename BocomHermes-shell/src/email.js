@@ -211,4 +211,95 @@ async function fetchUnread(cfg) {
   }
 }
 
-module.exports = { fetchUnread, formatEmailPrompt, encryptPass, decryptPass }
+// ── 极简 SMTP 客户端 ─────────────────────────────────────────────────────
+// 零外部依赖,Node 内置 net/tls。支持:
+//   · 端口 465 (implicit TLS) 直 tls.connect
+//   · 端口 587/25 (STARTTLS) net.connect → EHLO → STARTTLS → 升级 TLS → EHLO → AUTH
+//   · AUTH LOGIN (base64 user/pass);text/plain UTF-8 邮件
+function smtpSend(cfg, msg) {
+  return new Promise((resolve, reject) => {
+    const host = cfg.host, port = +cfg.port || 587
+    const user = cfg.user, pass = decryptPass(cfg.passEncrypted)
+    if (!host || !user) return reject(new Error('SMTP 未配置(host/user 缺失)'))
+    if (!pass) return reject(new Error('SMTP 密码未配置'))
+    const useTLS = !!cfg.secure
+    const tlsOpts = { rejectUnauthorized: !cfg.allowSelfSigned, host }
+    let sock, buf = '', onResp = null, finished = false
+    const timer = setTimeout(() => done(new Error('SMTP 超时(30s)')), 30000)
+    function done(err) {
+      if (finished) return; finished = true
+      try { sock && sock.destroy() } catch {}
+      clearTimeout(timer)
+      err ? reject(err) : resolve(true)
+    }
+    function write(line) { try { sock.write(line + '\r\n') } catch (e) { done(e) } }
+    function expectCode(code) {
+      return new Promise((res, rej) => {
+        onResp = (lines) => {
+          for (const ln of lines) {
+            const m = ln.match(/^(\d{3})([ -])(.*)$/); if (!m) continue
+            if (m[1] !== code) { onResp = null; rej(new Error('SMTP 期望 ' + code + ' 实际 ' + ln.slice(0, 120))); return }
+            if (m[2] === ' ') { onResp = null; res(); return }
+          }
+        }
+      })
+    }
+    function attach(s) {
+      s.setEncoding('utf8')
+      s.on('data', (c) => {
+        buf += c
+        const lines = buf.split('\r\n'); buf = lines.pop() || ''
+        if (onResp && lines.length) onResp(lines)
+      })
+      s.on('error', done)
+    }
+    ;(async () => {
+      try {
+        sock = useTLS ? tls.connect(port, host, tlsOpts) : net.connect(port, host)
+        attach(sock)
+        await expectCode('220')
+        write('EHLO localhost'); await expectCode('250')
+        if (!useTLS && port !== 25) {
+          write('STARTTLS'); await expectCode('220')
+          // 升级 TLS,复用原 socket
+          sock.removeAllListeners('data'); sock.removeAllListeners('error')
+          sock = tls.connect({ ...tlsOpts, socket: sock })
+          buf = ''; onResp = null; attach(sock)
+          await new Promise((r, rj) => { sock.once('secureConnect', r); sock.once('error', rj) })
+          write('EHLO localhost'); await expectCode('250')
+        }
+        write('AUTH LOGIN'); await expectCode('334')
+        write(Buffer.from(user).toString('base64')); await expectCode('334')
+        write(Buffer.from(pass).toString('base64')); await expectCode('235')
+        const from = msg.from || user
+        const tos = Array.isArray(msg.to) ? msg.to : [msg.to]
+        write('MAIL FROM:<' + from + '>'); await expectCode('250')
+        for (const to of tos) { write('RCPT TO:<' + to + '>'); await expectCode('250') }
+        write('DATA'); await expectCode('354')
+        const headers = []
+        headers.push('From: ' + from)
+        headers.push('To: ' + tos.join(', '))
+        if (msg.cc) headers.push('Cc: ' + (Array.isArray(msg.cc) ? msg.cc.join(', ') : msg.cc))
+        headers.push('Subject: =?UTF-8?B?' + Buffer.from(String(msg.subject || '')).toString('base64') + '?=')
+        headers.push('Date: ' + new Date().toUTCString())
+        headers.push('MIME-Version: 1.0')
+        headers.push('Content-Type: text/plain; charset=UTF-8')
+        headers.push('Content-Transfer-Encoding: 8bit')
+        if (msg.inReplyTo) headers.push('In-Reply-To: ' + msg.inReplyTo)
+        const text = String(msg.text || '').replace(/\r?\n/g, '\r\n').replace(/^\./gm, '..')
+        write(headers.join('\r\n') + '\r\n\r\n' + text + '\r\n.')
+        await expectCode('250')
+        write('QUIT')
+        setTimeout(() => done(null), 100)
+      } catch (e) { done(e) }
+    })()
+  })
+}
+
+async function sendMail(cfg, msg) {
+  if (!msg || !msg.to || !msg.subject) throw new Error('需要 to + subject')
+  await smtpSend(cfg, msg)
+  return { ok: true, to: msg.to, subject: msg.subject, at: Date.now() }
+}
+
+module.exports = { fetchUnread, formatEmailPrompt, encryptPass, decryptPass, sendMail }

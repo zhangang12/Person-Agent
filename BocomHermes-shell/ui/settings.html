@@ -89,7 +89,7 @@
       </div>
 
       <div class="fld">
-        <span class="lbl">邮件服务器 (IMAP)</span>
+        <span class="lbl">收件 IMAP <span class="hint" style="font-weight:400">(用于晨间摘要 / agent 读邮件)</span></span>
         <div class="row">
           <input id="imapHost" class="in" style="flex:3" placeholder="imap.company.com" spellcheck="false" />
           <input id="imapPort" class="in" style="width:64px;flex:none" placeholder="993" spellcheck="false" />
@@ -106,9 +106,30 @@
           <span class="hint">时（工作日自动触发）</span>
         </div>
         <div class="row">
-          <button id="testImap" class="chip">测试连接</button>
+          <button id="testImap" class="chip">测试 IMAP</button>
           <span id="imapMsg" class="hint" style="color:var(--green)"></span>
         </div>
+      </div>
+
+      <div class="fld">
+        <span class="lbl">发件 SMTP <span class="hint" style="font-weight:400">(用于 agent 自动回复 / 发邮件)</span></span>
+        <div class="row">
+          <input id="smtpHost" class="in" style="flex:3" placeholder="smtp.company.com" spellcheck="false" />
+          <input id="smtpPort" class="in" style="width:64px;flex:none" placeholder="587" spellcheck="false" />
+        </div>
+        <div class="row" style="gap:12px">
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" id="smtpSecure" style="accent-color:var(--brand)" /> implicit TLS (465 用)</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" id="smtpSelf" style="accent-color:var(--brand)" /> 允许自签证书</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" id="smtpSameAsImap" style="accent-color:var(--brand)" /> 用户名/密码同 IMAP</label>
+        </div>
+        <input id="smtpUser" class="in" placeholder="发件用户名 / 邮箱 (同 IMAP 时可空)" spellcheck="false" autocomplete="username" />
+        <input id="smtpPass" class="in" type="password" placeholder="密码 (留空=不修改 / 用 IMAP 密码)" autocomplete="current-password" />
+        <input id="smtpFrom" class="in" placeholder="From 显示地址 (留空=用上面用户名)" spellcheck="false" />
+        <div class="row">
+          <button id="testSmtp" class="chip">测试 SMTP (发到自己)</button>
+          <span id="smtpMsg" class="hint" style="color:var(--green)"></span>
+        </div>
+        <span class="hint">端口 465 = 直 TLS,勾上面 implicit TLS;587 = STARTTLS,不勾;25 = 明文。</span>
       </div>
 
       <div class="fld">
@@ -220,7 +241,6 @@
   $('testImap').addEventListener('click', async () => {
     const imapMsg = $('imapMsg')
     imapMsg.style.color = 'var(--txt3)'; imapMsg.textContent = '连接中…'
-    // 先保存再测试
     await save(true)
     try {
       const r = await window.BocomHermes.emailTest()
@@ -228,6 +248,31 @@
     } catch (e) {
       imapMsg.style.color = 'var(--diff-del)'; imapMsg.textContent = '✗ ' + (e.message || '连接失败')
     }
+  })
+
+  // SMTP 字段初始化
+  const sm = cur.smtp || {}
+  $('smtpHost').value = sm.host || ''
+  $('smtpPort').value = sm.port || 587
+  $('smtpSecure').checked = !!sm.secure
+  $('smtpSelf').checked = !!sm.allowSelf
+  $('smtpSameAsImap').checked = sm.sameAsImap !== false   // 默认 ON
+  $('smtpUser').value = sm.user || ''
+  $('smtpPass').placeholder = sm.hasPass ? '密码已保存（留空=不修改）' : '密码（加密存储,留空=用 IMAP 密码）'
+  $('smtpFrom').value = sm.from || ''
+  // 同 IMAP 时灰化 user/pass
+  function syncSameAsImap() { const on = $('smtpSameAsImap').checked; ['smtpUser', 'smtpPass'].forEach((k) => { $(k).disabled = on; $(k).style.opacity = on ? .55 : 1 }) }
+  syncSameAsImap(); $('smtpSameAsImap').addEventListener('change', syncSameAsImap)
+  // 测试 SMTP(给自己发一封)
+  $('testSmtp').addEventListener('click', async () => {
+    const smtpMsg = $('smtpMsg')
+    smtpMsg.style.color = 'var(--txt3)'; smtpMsg.textContent = '发送中…(收件箱看自己邮件)'
+    await save(true)
+    try {
+      const r = await window.BocomHermes.smtpTest()
+      if (r && r.ok) { smtpMsg.style.color = 'var(--green)'; smtpMsg.textContent = '✓ 已发送到 ' + r.to }
+      else { smtpMsg.style.color = 'var(--diff-del)'; smtpMsg.textContent = '✗ ' + ((r && r.error) || '发送失败') }
+    } catch (e) { smtpMsg.style.color = 'var(--diff-del)'; smtpMsg.textContent = '✗ ' + (e.message || '发送失败') }
   })
 
   // 保存
@@ -241,8 +286,18 @@
       secure: $('imapSecure').checked,
       allowSelf: $('imapSelf').checked,
       user: $('imapUser').value.trim(),
-      pass: $('imapPass').value,   // 空=不更新，window.js 里会判断
+      pass: $('imapPass').value,
       scheduleHour: $('imapHour').value.trim(),
+    }
+    patch.smtp = {
+      host: $('smtpHost').value.trim(),
+      port: $('smtpPort').value.trim(),
+      secure: $('smtpSecure').checked,
+      allowSelf: $('smtpSelf').checked,
+      sameAsImap: $('smtpSameAsImap').checked,
+      user: $('smtpUser').value.trim(),
+      pass: $('smtpPass').value,
+      from: $('smtpFrom').value.trim(),
     }
     try {
       await window.BocomHermes.setSettings(patch)

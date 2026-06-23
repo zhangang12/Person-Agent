@@ -67,6 +67,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   // 邮件摘要
   triggerEmailSummary: () => ipcRenderer.invoke('trigger-email-summary'),
   emailTest: () => ipcRenderer.invoke('email-test'),
+  smtpTest:  () => ipcRenderer.invoke('smtp-test'),
   openTodos: () => ipcRenderer.invoke('open-todos'),
   // 内嵌浏览器
   openBrowser:          (url) => ipcRenderer.invoke('open-browser', url),
