@@ -61,7 +61,7 @@ const TOOLS = [
     limit:      { type: 'number', description: '本次返回多少封,默认 10,最大 30。一次性塞太多会撑爆 128K 上下文' },
     cursor:     { type: 'number', description: '分页游标。第一次不传;之后传上次返回的 nextCursor 继续翻页' },
   } } },
-  { name: 'mail_send', description: '发送一封邮件(默认 multipart/alternative:text + 自动生成 html)。要保留格式发 → 传 html 字段直接发 HTML;附件传本地路径不要传 base64(base64 会撑爆 128K 上下文)。失败抛错。', inputSchema: { type: 'object', properties: {
+  { name: 'mail_send', description: '发送一封邮件(默认 multipart/alternative:text + 自动生成 html)。要保留格式发 → 传 html 字段直接发 HTML;附件传本地路径不要传 base64(base64 会撑爆 128K 上下文)。注意:发信经"发件箱"延迟发出(默认 15 秒,用户可撤销/立即发送),返回会注明几秒后发出;校验失败/未发出会抛错。', inputSchema: { type: 'object', properties: {
     to:      { type: 'string', description: '收件人,多个用逗号分隔' },
     subject: { type: 'string' },
     text:    { type: 'string', description: '纯文本正文(plain 段)。没传 html 时,html 段自动用此文本生成(\\n→<br>+escape)' },
@@ -165,10 +165,12 @@ async function callTool(name, a) {
     if (bad.length) throw new Error('mail_send 拒绝(防误发):这些不是有效邮箱地址 → ' + bad.join(', ') + '。请填真实邮箱,不要用人名/称呼;不确定先问用户要邮箱。')
     try {
       const atts = Array.isArray(a.attachments) ? a.attachments : []
-      await relayPost('/mail/send', { to: tos, cc: ccs, bcc: bccs, subject: a.subject, text: a.text, html: a.html, attachments: atts })
+      const r = await relayPost('/mail/send', { to: tos, cc: ccs, bcc: bccs, subject: a.subject, text: a.text, html: a.html, attachments: atts })
       const attStr = atts.length ? ` · 附件 ${atts.length} 个` : ''
       const htmlStr = a.html ? ' [HTML]' : ''
-      return `✓ 已发送 → ${tos.join(', ')}${ccs.length ? ' (cc ' + ccs.length + ')' : ''}${bccs.length ? ' (bcc ' + bccs.length + ')' : ''}  · 主题: ${a.subject}${attStr}${htmlStr}`
+      const hold = r && r.holdSeconds
+      const head = hold > 0 ? `✓ 已加入发件箱,${hold} 秒后自动发出(用户可在发件箱面板「撤销」或「立即发送」)` : '✓ 已发送'
+      return `${head} → ${tos.join(', ')}${ccs.length ? ' (cc ' + ccs.length + ')' : ''}${bccs.length ? ' (bcc ' + bccs.length + ')' : ''}  · 主题: ${a.subject}${attStr}${htmlStr}`
     } catch (e) { throw new Error('mail_send 失败(邮件未发出): ' + e.message) }   // 抛出 → MCP 层 isError=true,agent 不会误以为已发
   }
   if (name === 'mail_reply') {
@@ -183,7 +185,9 @@ async function callTool(name, a) {
         messageId: a.messageId, text: a.text, html: a.html,
         cc: ccs, bcc: bccs, attachments: Array.isArray(a.attachments) ? a.attachments : [],
       })
-      return `✓ 已回复 → ${r.to}  · 主题: ${r.subject}  · 自动 HTML quote 原邮件 (来自 ${r.quotedFrom})`
+      const hold = r && r.holdSeconds
+      const head = hold > 0 ? `✓ 回复已加入发件箱,${hold} 秒后自动发出(用户可「撤销」或「立即发送」)` : '✓ 已回复'
+      return `${head} → ${r.to}  · 主题: ${r.subject}  · 自动 HTML quote 原邮件 (来自 ${r.quotedFrom})`
     } catch (e) { throw new Error('mail_reply 失败(邮件未发出): ' + e.message) }
   }
   if (name === 'mail_mark_read') {

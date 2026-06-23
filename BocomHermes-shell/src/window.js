@@ -1,10 +1,11 @@
 ﻿'use strict'
 const USE_ACRYLIC = false
-const { clipboard, session } = require('electron')
+const { clipboard, session, Notification } = require('electron')
 const email = require('./email')
 const attachments = require('./attachments')
 const mailCache = require('./mail-cache')
 const emailSummarySeen = require('./email-summary-seen')
+const initOutbox = require('./outbox')
 
 module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }) {
   // 额外窗口引用
@@ -27,6 +28,31 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     return out
   }
   S.effectiveSmtp = () => effectiveSmtp(S)   // 供其它模块/MCP 用
+
+  // ── 发件箱(发信安全闸门)──────────────────────────────────────────────────
+  function notifyMail(title, body) {
+    try { if (Notification && Notification.isSupported()) new Notification({ title: 'BocomHermes · ' + title, body: String(body || '').slice(0, 160) }).show() } catch {}
+  }
+  function broadcastOutbox() {
+    try { if (S.outboxWin && !S.outboxWin.isDestroyed()) S.outboxWin.webContents.send('outbox-updated') } catch {}
+  }
+  // 真正发送一条队列项:走已解密的 SMTP,成功后异步 APPEND 到 Sent
+  async function sendQueued(it) {
+    const cfg = S.effectiveSmtp(); if (!cfg) throw new Error('SMTP 未配置')
+    const res = await email.sendMail(cfg, it.msg)
+    const imap = S.settings.imap
+    if (imap && imap.host && res.mime) {
+      email.appendToSent(imap, imap.sentFolder || 'Sent', res.mime).catch((e) => log('APPEND Sent err: ' + e.message))
+    }
+    return res
+  }
+  S.outbox = initOutbox({
+    file: path.join(app.getPath('userData'), 'outbox.json'),
+    fs, log, send: sendQueued, broadcast: broadcastOutbox, notify: notifyMail,
+  })
+  function outboxHold() { const h = S.settings.outboxHoldSeconds; return h == null ? 15 : Math.max(0, Math.min(+h || 0, 3600)) }
+  // 入队后:若有延迟窗,弹出发件箱面板让用户能看到倒计时并可撤销
+  function afterEnqueue(hold) { if (hold > 0 && typeof openOutbox === 'function') { try { openOutbox() } catch {} } else broadcastOutbox() }
 
   // 本地 HTTP 中继:MCP 子进程没法用 electron safeStorage 解密 IMAP/SMTP 密码 → 主进程开个
   // 127.0.0.1 localhost http server,MCP 通过 HTTP 调,主进程用已解密的 cfg 跑 IMAP/SMTP。
@@ -81,20 +107,19 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
             const allRcpt = [...(Array.isArray(a.to) ? a.to : [a.to]), ...(a.cc || []), ...(a.bcc || [])].filter(Boolean)
             const bad = badRecipients(allRcpt); if (bad.length) return reply({ error: '收件人格式不对,拒绝发送: ' + bad.join(', ') })
             try { checkAttachments(a.attachments) } catch (e) { return reply({ error: e.message }) }
-            // 透传 html / attachments / cc / bcc / inReplyTo / references —— 没传 html 时 buildMime 自动从 text 生成
-            const res = await email.sendMail(cfg, {
+            // 不再即时发出:进发件箱队列,延迟窗内用户可撤销(软撤回)/立即发送
+            const hold = outboxHold()
+            const msg = {
               to: a.to, cc: a.cc, bcc: a.bcc,
               subject: a.subject, text: a.text, html: a.html,
               attachments: a.attachments,
               inReplyTo: a.inReplyTo, references: a.references,
-            })
-            // A5-d: 异步 APPEND 到 IMAP Sent(失败不影响主流程,只警告)
-            const imap = S.settings.imap
-            if (imap && imap.host && res.mime) {
-              email.appendToSent(imap, imap.sentFolder || 'Sent', res.mime)
-                .catch((e) => log('APPEND Sent err: ' + e.message))
             }
-            return reply({ ok: true })
+            const toStr = (Array.isArray(a.to) ? a.to : [a.to]).filter(Boolean).join(', ')
+            const q = S.outbox.enqueue({ kind: 'send', msg, holdSeconds: hold,
+              meta: { to: toStr, subject: a.subject || '(无主题)', attCount: (a.attachments || []).length } })
+            afterEnqueue(hold)
+            return reply({ ok: true, queued: true, id: q.id, sendAt: q.sendAt, holdSeconds: hold })
           }
           if (req.url === '/mail/get') {
             // 取某封邮件全文(分段)。先查 mailLastBatch 缓存,没命中再走 IMAP HEADER 搜
@@ -169,24 +194,17 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
               '<blockquote style="margin:0 0 0 .8ex;border-left:2px #1a73e8 solid;padding-left:1ex">' +
                 origHtmlBlock +
               '</blockquote>'
-            try {
-              const res = await email.sendMail(cfg, {
-                to: fromAddr,
-                cc: a.cc, bcc: a.bcc,
-                subject,
-                text: finalText,
-                html: finalHtml,
-                attachments: a.attachments,
-                inReplyTo: msgId,
-                references: refs,
-              })
-              // A5-d: 异步 APPEND 这封回复到 Sent;失败只警告
-              if (imap && imap.host && res.mime) {
-                email.appendToSent(imap, imap.sentFolder || 'Sent', res.mime)
-                  .catch((e) => log('APPEND Sent err (reply): ' + e.message))
-              }
-              return reply({ ok: true, to: fromAddr, subject, quotedFrom: orig.from })
-            } catch (e) { return reply({ error: 'mail_reply 发送失败: ' + e.message }) }
+            // 进发件箱队列(回复也走安全闸门),原邮件已在此刻取好并拼进 msg
+            const hold = outboxHold()
+            const msg = {
+              to: fromAddr, cc: a.cc, bcc: a.bcc,
+              subject, text: finalText, html: finalHtml,
+              attachments: a.attachments, inReplyTo: msgId, references: refs,
+            }
+            const q = S.outbox.enqueue({ kind: 'reply', msg, holdSeconds: hold,
+              meta: { to: fromAddr, subject, attCount: (a.attachments || []).length } })
+            afterEnqueue(hold)
+            return reply({ ok: true, queued: true, id: q.id, sendAt: q.sendAt, holdSeconds: hold, to: fromAddr, subject, quotedFrom: orig.from })
           }
           if (req.url === '/mail/markRead') {
             const imap = S.settings.imap
@@ -486,6 +504,15 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     S.todosWin = new BrowserWindow(baseOpts({ width: 400, height: 560, x: tx, y: ty, skipTaskbar: false, alwaysOnTop: true, resizable: true, minWidth: 320, minHeight: 300 }))
     S.todosWin.loadFile(path.join(__dirname, '..', 'ui', 'todos.html'), { query: orbAnchorFor(tx, ty, 400, 560) })
     S.todosWin.on('closed', () => { S.todosWin = null })
+  }
+
+  function openOutbox() {
+    if (S.outboxWin && !S.outboxWin.isDestroyed()) { S.outboxWin.show(); S.outboxWin.focus(); S.outboxWin.webContents.send('outbox-updated'); return }
+    const { width } = screen.getPrimaryDisplay().workAreaSize
+    const ox = Math.round(width / 2 - 215), oy = 130
+    S.outboxWin = new BrowserWindow(baseOpts({ width: 430, height: 500, x: ox, y: oy, skipTaskbar: false, alwaysOnTop: true, resizable: true, minWidth: 340, minHeight: 280 }))
+    S.outboxWin.loadFile(path.join(__dirname, '..', 'ui', 'outbox.html'), { query: orbAnchorFor(ox, oy, 430, 500) })
+    S.outboxWin.on('closed', () => { S.outboxWin = null })
   }
 
   function toggleInput() { toggleOrbInput() }
@@ -1711,6 +1738,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       { label: '唤起输入框', accelerator: 'Ctrl+Shift+Space', click: toggleInput },
       { label: '🌐 调试工作台（Agent + 浏览器）', accelerator: 'Ctrl+Shift+B', click: () => createWorkspace() },
       { label: '📧 邮件摘要', click: () => spawnEmailCard().catch((e) => log('email card err: ' + e.message)) },
+      { label: '📤 发件箱', click: openOutbox },
       { label: '📋 待办事项', click: openTodos },
       { label: '卡坞 · 历史对话', click: openDock },
       { label: '切换深 / 浅主题', click: toggleTheme },
@@ -1793,6 +1821,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       backendDir: S.settings.backendDir || '',
       planMode: S.settings.planMode !== false,
       encryptionAvailable: email.encryptionAvailable(),   // false → 密码只能明文落盘,设置面板要红字告警
+      outboxHoldSeconds: S.settings.outboxHoldSeconds == null ? 15 : S.settings.outboxHoldSeconds,   // 发信延迟窗(软撤回),0=立即发
       imap: { host: im.host || '', port: im.port || 993, secure: im.secure !== false, allowSelf: !!im.allowSelfSigned, user: im.user || '', hasPass: !!im.passEncrypted, scheduleHour: im.scheduleHour ?? 9, sentFolder: im.sentFolder || 'Sent', archiveFolder: im.archiveFolder || 'Archive' },
       smtp: { host: sm.host || '', port: sm.port || 587, secure: !!sm.secure, allowSelf: !!sm.allowSelfSigned, sameAsImap: sm.sameAsImap !== false, user: sm.user || '', hasPass: !!sm.passEncrypted, from: sm.from || '' },
     }
@@ -1883,6 +1912,11 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     const r = await email.fetchUnread(imap, { limit: 5 })
     return { count: r.totalMatched, sample: r.emails.slice(0, 2).map(e => ({ from: e.from, subject: e.subject })) }
   })
+  // ── 发件箱(发信安全闸门)IPC ─────────────────────────────────────────────
+  ipcMain.handle('open-outbox', () => openOutbox())
+  ipcMain.handle('outbox-list', () => S.outbox.list())
+  ipcMain.handle('outbox-cancel', (_e, id) => S.outbox.cancel(id))
+  ipcMain.handle('outbox-send-now', (_e, id) => S.outbox.sendNow(id))
 
   // ── MCP 一键注册到 opencode/bocomcode 配置文件 ────────────────────────────
   // 扫描候选路径 → 让前端展示 → 用户挑一个 → 备份 + 深合并 mcp.* 字段 + 写回
@@ -1980,6 +2014,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
         .catch((e) => log('setProxy err: ' + e.message))
     }
     if (patch && typeof patch.planMode === 'boolean') S.settings.planMode = patch.planMode
+    if (patch && patch.outboxHoldSeconds !== undefined) S.settings.outboxHoldSeconds = Math.max(0, Math.min(parseInt(patch.outboxHoldSeconds) || 0, 3600))
     if (patch && patch.imap) {
       S.settings.imap = S.settings.imap || {}
       const im = patch.imap
@@ -2797,5 +2832,5 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('open-history', (_e, { sid, title }) => spawnCard(title, sid))
   ipcMain.handle('clear-history', () => { S.history = []; saveHistory(); return true })
 
-  return { createOrb, createBrowser, createWorkspace, spawnCard, spawnFanout, spawnWorkflow, spawnEmailCard, toggleInput, toggleOrbInput, buildTray, openDock, openTodos, openSettings, applyProject, projName, recordHistory, touchHistory }
+  return { createOrb, createBrowser, createWorkspace, spawnCard, spawnFanout, spawnWorkflow, spawnEmailCard, toggleInput, toggleOrbInput, buildTray, openDock, openTodos, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory }
 }

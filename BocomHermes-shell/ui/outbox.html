@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>发件箱 · BocomHermes</title>
+<script>try { document.documentElement.dataset.theme = window.BocomHermes.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
+<script>(function(){try{var p=new URLSearchParams(location.search),d=document.documentElement.style;['gox','goy','gfx','gfy'].forEach(function(k){var v=p.get(k);if(v)d.setProperty('--'+k,v)})}catch(e){}})()</script>
+<link rel="stylesheet" href="glass.css" />
+<style>
+  .panel { display: flex; flex-direction: column; height: 100%; padding: 11px 13px 12px; gap: 9px; }
+  .hd { display: flex; align-items: center; gap: 7px; flex: none; }
+  .ttl { flex: 1; font-size: 13px; font-weight: 600; }
+  .hbtn { border: none; background: transparent; color: var(--txt3); cursor: pointer; padding: 3px 7px; border-radius: 6px; font-size: 11px; display: flex; align-items: center; gap: 4px; }
+  .hbtn:hover { color: var(--txt); background: var(--composer-bg); }
+  .body { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; padding-right: 2px; }
+  .body::-webkit-scrollbar { width: 5px; } .body::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  .empty { color: var(--txt3); font-size: 12px; text-align: center; margin-top: 48px; line-height: 1.6; }
+
+  .item { background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 10px; padding: 9px 11px; }
+  .item.pending { border-color: var(--accent); }
+  .row1 { display: flex; align-items: center; gap: 7px; }
+  .badge { font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 999px; border: 1px solid; flex: none; }
+  .b-pending { color: var(--accent); border-color: var(--accent); }
+  .b-sending { color: var(--warn-txt); border-color: var(--warn-border); background: var(--warn-bg); }
+  .b-sent    { color: var(--green); border-color: var(--green); }
+  .b-canceled{ color: var(--txt3); border-color: var(--composer-border); }
+  .b-failed, .b-unknown { color: var(--diff-del); border-color: var(--diff-del); background: var(--diff-del-bg); }
+  .subj { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--txt); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .to { font-size: 11px; color: var(--txt3); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .err { font-size: 11px; color: var(--diff-del); margin-top: 4px; line-height: 1.45; }
+  .acts { display: flex; gap: 6px; margin-top: 8px; align-items: center; }
+  .count { flex: 1; font-size: 11.5px; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .act { border: .5px solid var(--composer-border); background: transparent; color: var(--txt2); font-size: 11px; padding: 3px 11px; border-radius: 7px; cursor: pointer; }
+  .act:hover { color: var(--txt); border-color: var(--accent); }
+  .act.danger:hover { color: var(--diff-del); border-color: var(--diff-del); background: var(--diff-del-bg); }
+  .act:disabled { opacity: .5; cursor: default; }
+  .ft { flex: none; font-size: 11px; color: var(--txt3); text-align: center; }
+</style>
+</head>
+<body>
+<div class="glass">
+  <span class="hl"></span>
+  <div class="panel">
+    <div class="hd">
+      <span class="ttl">📤 发件箱</span>
+      <button id="x" class="hbtn nodrag" title="关闭"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div id="body" class="body nodrag"></div>
+    <div class="ft">延迟发送期间可「撤销」(软撤回)或「立即发送」 · 延迟时长在设置里调</div>
+  </div>
+</div>
+<script>
+  window.BocomHermes.onTheme((t) => { document.documentElement.dataset.theme = t })
+  document.getElementById('x').addEventListener('click', () => window.BocomHermes.closeSelf())
+  const bodyEl = document.getElementById('body')
+
+  const BADGE = { pending: '待发', sending: '发送中', sent: '已发出', canceled: '已撤销', failed: '失败', unknown: '未知' }
+  function escHtml(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') }
+  function fmtTime(ts) { try { return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) } catch (e) { return '' } }
+
+  let list = []
+  async function refresh() { try { list = await window.BocomHermes.outboxList() || [] } catch (e) { list = [] } render() }
+
+  function render() {
+    bodyEl.innerHTML = ''
+    if (!list.length) { bodyEl.innerHTML = '<div class="empty">暂无发件记录<br><span style="font-size:11px">Agent 发信会先进这里延迟发出,你可在此拦下</span></div>'; return }
+    const now = Date.now()
+    for (const it of list) {
+      const d = document.createElement('div'); d.className = 'item' + (it.status === 'pending' ? ' pending' : '')
+      const badge = `<span class="badge b-${it.status}">${BADGE[it.status] || it.status}</span>`
+      const kind = it.kind === 'reply' ? '↩︎ ' : ''
+      d.innerHTML = `<div class="row1">${badge}<span class="subj">${kind}${escHtml(it.subject)}</span></div>` +
+        `<div class="to">→ ${escHtml(it.to)}${it.attCount ? ' · 📎' + it.attCount : ''}</div>`
+      if (it.status === 'failed' || it.status === 'unknown') {
+        const e = document.createElement('div'); e.className = 'err'; e.textContent = '✗ ' + (it.error || '发送失败'); d.appendChild(e)
+      } else if (it.status === 'sent') {
+        const e = document.createElement('div'); e.className = 'to'; e.textContent = '✓ ' + fmtTime(it.sendAt) + ' 已发出'; d.appendChild(e)
+      }
+      if (it.status === 'pending') {
+        const left = Math.max(0, Math.ceil((it.sendAt - now) / 1000))
+        const acts = document.createElement('div'); acts.className = 'acts'
+        const c = document.createElement('span'); c.className = 'count'; c.textContent = left > 0 ? `${left} 秒后发出` : '正在发出…'
+        const sendNow = document.createElement('button'); sendNow.className = 'act'; sendNow.textContent = '立即发送'
+        const cancel = document.createElement('button'); cancel.className = 'act danger'; cancel.textContent = '撤销'
+        sendNow.addEventListener('click', async () => { sendNow.disabled = cancel.disabled = true; await window.BocomHermes.outboxSendNow(it.id); refresh() })
+        cancel.addEventListener('click', async () => { sendNow.disabled = cancel.disabled = true; await window.BocomHermes.outboxCancel(it.id); refresh() })
+        acts.append(c, sendNow, cancel); d.appendChild(acts)
+      }
+      bodyEl.appendChild(d)
+    }
+  }
+
+  window.BocomHermes.onOutboxUpdated(() => refresh())
+  // 每秒重绘一次倒计时(有待发项时)
+  setInterval(() => { if (list.some((it) => it.status === 'pending')) render() }, 1000)
+  refresh()
+</script>
+</body>
+</html>

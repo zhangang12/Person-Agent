@@ -74,6 +74,12 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   emailTest: () => ipcRenderer.invoke('email-test'),
   smtpTest:  () => ipcRenderer.invoke('smtp-test'),
   openTodos: () => ipcRenderer.invoke('open-todos'),
+  // 发件箱(发信安全闸门)
+  openOutbox:    () => ipcRenderer.invoke('open-outbox'),
+  outboxList:    () => ipcRenderer.invoke('outbox-list'),
+  outboxCancel:  (id) => ipcRenderer.invoke('outbox-cancel', id),
+  outboxSendNow: (id) => ipcRenderer.invoke('outbox-send-now', id),
+  onOutboxUpdated: (cb) => ipcRenderer.on('outbox-updated', () => cb()),
   // 内嵌浏览器
   openBrowser:          (url) => ipcRenderer.invoke('open-browser', url),
   browserNavigate:      (url) => ipcRenderer.invoke('browser-navigate', url),

@@ -140,6 +140,12 @@
           <span id="smtpMsg" class="hint" style="color:var(--green)"></span>
         </div>
         <span class="hint">端口 465 = 直 TLS,勾上面 implicit TLS;587 = STARTTLS,不勾;25 = 明文。</span>
+        <div class="row" style="align-items:center;gap:8px;margin-top:8px">
+          <span style="font-size:12px;color:var(--txt2)">发送延迟(软撤回)</span>
+          <input id="outboxHold" class="in" style="width:60px;flex:none" placeholder="15" />
+          <span style="font-size:12px;color:var(--txt2)">秒</span>
+        </div>
+        <span class="hint">Agent 发信先进"发件箱",延迟期内可撤销或立即发送 —— 防误发。设 0 = 立即发出(不拦)。</span>
       </div>
 
       <div class="fld">
@@ -286,6 +292,7 @@
   $('smtpUser').value = sm.user || ''
   $('smtpPass').placeholder = sm.hasPass ? '密码已保存（留空=不修改）' : '密码（加密存储,留空=用 IMAP 密码）'
   $('smtpFrom').value = sm.from || ''
+  $('outboxHold').value = (cur.outboxHoldSeconds == null ? 15 : cur.outboxHoldSeconds)
   // 同 IMAP 时灰化 user/pass
   function syncSameAsImap() { const on = $('smtpSameAsImap').checked; ['smtpUser', 'smtpPass'].forEach((k) => { $(k).disabled = on; $(k).style.opacity = on ? .55 : 1 }) }
   syncSameAsImap(); $('smtpSameAsImap').addEventListener('change', syncSameAsImap)
@@ -367,6 +374,7 @@
       pass: $('smtpPass').value,
       from: $('smtpFrom').value.trim(),
     }
+    { const v = $('outboxHold').value.trim(); if (v !== '') patch.outboxHoldSeconds = parseInt(v) || 0 }
     try {
       await window.BocomHermes.setSettings(patch)
       if (!silent) { msg.textContent = '已保存 ✓'; setTimeout(() => { msg.textContent = '' }, 1800) }
