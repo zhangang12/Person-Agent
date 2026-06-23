@@ -111,6 +111,9 @@ function extractEmail(s) {
   const m = String(s || '').match(/<([^>]+)>/); if (m) return m[1].trim()
   const m2 = String(s || '').match(/[\w.\-+]+@[\w.\-]+\.\w+/); return m2 ? m2[0] : String(s || '').trim()
 }
+// 邮箱格式校验 —— 防 agent 把"张三经理"这种人名/称呼当收件人误发
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+function invalidRecipients(arr) { return (arr || []).filter((s) => !EMAIL_RE.test(extractEmail(s))) }
 
 async function callTool(name, a) {
   a = a || {}
@@ -154,29 +157,34 @@ async function callTool(name, a) {
     } catch (e) { return 'mail_get_full 失败: ' + e.message }
   }
   if (name === 'mail_send') {
+    const tos = String(a.to || '').split(/[,;]\s*/).filter(Boolean)
+    const ccs = a.cc  ? String(a.cc ).split(/[,;]\s*/).filter(Boolean) : []
+    const bccs= a.bcc ? String(a.bcc).split(/[,;]\s*/).filter(Boolean) : []
+    if (!tos.length) throw new Error('mail_send 拒绝:收件人 to 为空')
+    const bad = invalidRecipients([...tos, ...ccs, ...bccs])
+    if (bad.length) throw new Error('mail_send 拒绝(防误发):这些不是有效邮箱地址 → ' + bad.join(', ') + '。请填真实邮箱,不要用人名/称呼;不确定先问用户要邮箱。')
     try {
-      const tos = String(a.to).split(/[,;]\s*/).filter(Boolean)
-      const ccs = a.cc  ? String(a.cc ).split(/[,;]\s*/).filter(Boolean) : []
-      const bccs= a.bcc ? String(a.bcc).split(/[,;]\s*/).filter(Boolean) : []
       const atts = Array.isArray(a.attachments) ? a.attachments : []
       await relayPost('/mail/send', { to: tos, cc: ccs, bcc: bccs, subject: a.subject, text: a.text, html: a.html, attachments: atts })
       const attStr = atts.length ? ` · 附件 ${atts.length} 个` : ''
       const htmlStr = a.html ? ' [HTML]' : ''
       return `✓ 已发送 → ${tos.join(', ')}${ccs.length ? ' (cc ' + ccs.length + ')' : ''}${bccs.length ? ' (bcc ' + bccs.length + ')' : ''}  · 主题: ${a.subject}${attStr}${htmlStr}`
-    } catch (e) { return 'mail_send 失败: ' + e.message }
+    } catch (e) { throw new Error('mail_send 失败(邮件未发出): ' + e.message) }   // 抛出 → MCP 层 isError=true,agent 不会误以为已发
   }
   if (name === 'mail_reply') {
     if (!a.messageId) return '(messageId 必填)'
     if (!a.text && !a.html) return '(text 或 html 至少传一个)'
     const ccs = a.cc  ? String(a.cc ).split(/[,;]\s*/).filter(Boolean) : []
     const bccs= a.bcc ? String(a.bcc).split(/[,;]\s*/).filter(Boolean) : []
+    const bad = invalidRecipients([...ccs, ...bccs])
+    if (bad.length) throw new Error('mail_reply 拒绝(防误发):cc/bcc 里这些不是有效邮箱 → ' + bad.join(', '))
     try {
       const r = await relayPost('/mail/reply', {
         messageId: a.messageId, text: a.text, html: a.html,
         cc: ccs, bcc: bccs, attachments: Array.isArray(a.attachments) ? a.attachments : [],
       })
       return `✓ 已回复 → ${r.to}  · 主题: ${r.subject}  · 自动 HTML quote 原邮件 (来自 ${r.quotedFrom})`
-    } catch (e) { return 'mail_reply 失败: ' + e.message }
+    } catch (e) { throw new Error('mail_reply 失败(邮件未发出): ' + e.message) }
   }
   if (name === 'mail_mark_read') {
     try {
@@ -192,7 +200,7 @@ async function callTool(name, a) {
       if (!ids.length) return '(messageIds 为空)'
       const r = await relayPost('/mail/archive', { messageIds: ids.slice(0, 30), folder: a.folder })
       return `✓ 已归档 ${r.moved.length} 封 → ${r.folder}${r.notFound && r.notFound.length ? ` · 未找到 ${r.notFound.length} 封` : ''}`
-    } catch (e) { return 'mail_archive 失败: ' + e.message }
+    } catch (e) { throw new Error('mail_archive 失败: ' + e.message) }
   }
   if (name === 'todo_add') {
     const list = loadTodos()

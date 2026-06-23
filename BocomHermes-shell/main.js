@@ -1,5 +1,5 @@
 ﻿'use strict'
-const { app, BrowserWindow, WebContentsView, globalShortcut, ipcMain, screen, dialog, Tray, Menu, nativeImage, shell, clipboard, session, net } = require('electron')
+const { app, BrowserWindow, WebContentsView, globalShortcut, ipcMain, screen, dialog, Tray, Menu, nativeImage, shell, clipboard, session, net, Notification } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const oc = require('./opencode')
@@ -97,7 +97,7 @@ app.whenReady().then(() => {
   initSession(S, { ipcMain, path, fs, shell, oc, log, recordHistory, touchHistory })
   initOrch(S, { ipcMain, oc, orch, log })
   initTodos(S, { ipcMain, app, path, fs, log })
-  initTrigger(S, { path, fs, app, log, spawnEmailCard })
+  initTrigger(S, { path, fs, app, log, spawnEmailCard, Notification })
 
   // 代理:settings.proxy 在场即应用(支持 'http://host:port' 或 PAC 'pac+http://...')
   if (S.settings && S.settings.proxy) {

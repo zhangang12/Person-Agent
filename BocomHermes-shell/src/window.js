@@ -32,6 +32,23 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // 127.0.0.1 localhost http server,MCP 通过 HTTP 调,主进程用已解密的 cfg 跑 IMAP/SMTP。
   // token 防本机其它进程蹭用(写在 userData/mail-relay.json,只有 Agent + 自家 MCP 看得到)
   const http = require('http')
+  // 防数据外泄:发信附件只允许来自 下载/桌面/文档/项目目录/邮件附件缓存,且 ≤25MB(否则 agent 可被诱导把任意文件当附件发出)
+  function checkAttachments(atts) {
+    if (!Array.isArray(atts) || !atts.length) return
+    const MAX = 25 * 1024 * 1024
+    const allow = [app.getPath('downloads'), app.getPath('desktop'), app.getPath('documents'),
+      path.join(app.getPath('userData'), 'mail-att'), S.settings.projectDir, S.settings.backendDir]
+      .filter(Boolean).map((d) => path.resolve(d) + path.sep)
+    for (const att of atts) {
+      let p; try { p = fs.realpathSync(path.resolve(String(att.path || ''))) } catch { throw new Error('附件不存在: ' + att.path) }
+      if (!allow.some((base) => (p + path.sep).startsWith(base))) throw new Error('拒绝发送该附件(不在允许目录,防外泄): ' + att.path + ' — 只允许 下载/桌面/文档/项目目录/邮件缓存 里的文件')
+      let sz = 0; try { sz = fs.statSync(p).size } catch {}
+      if (sz > MAX) throw new Error('附件过大(>25MB),拒绝发送: ' + att.path)
+    }
+  }
+  // 收件人格式兜底校验(MCP 层已校验,这里二次防线)
+  const RCPT_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  function badRecipients(arr) { return (arr || []).filter((s) => { const e = (String(s).match(/<([^>]+)>/) || [])[1] || s; return !RCPT_RE.test(String(e).trim()) }) }
   function startMailRelay() {
     const token = require('crypto').randomBytes(16).toString('hex')
     const srv = http.createServer(async (req, res) => {
@@ -61,6 +78,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
           }
           if (req.url === '/mail/send') {
             const cfg = S.effectiveSmtp(); if (!cfg) return reply({ error: 'SMTP 未配置' })
+            const allRcpt = [...(Array.isArray(a.to) ? a.to : [a.to]), ...(a.cc || []), ...(a.bcc || [])].filter(Boolean)
+            const bad = badRecipients(allRcpt); if (bad.length) return reply({ error: '收件人格式不对,拒绝发送: ' + bad.join(', ') })
+            try { checkAttachments(a.attachments) } catch (e) { return reply({ error: e.message }) }
             // 透传 html / attachments / cc / bcc / inReplyTo / references —— 没传 html 时 buildMime 自动从 text 生成
             const res = await email.sendMail(cfg, {
               to: a.to, cc: a.cc, bcc: a.bcc,
@@ -120,6 +140,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
               try { orig = await email.fetchByMessageId(imap, msgId) } catch (e) { return reply({ error: '取原邮件失败: ' + e.message }) }
             }
             if (!orig) return reply({ error: '找不到原邮件 msgId=' + msgId })
+            try { checkAttachments(a.attachments) } catch (e) { return reply({ error: e.message }) }
             // 抽 To(从原 from)
             const fromAddr = (orig.from.match(/<([^>]+)>/) || [])[1] || (orig.from.match(/[\w.\-+]+@[\w.\-]+\.\w+/) || [])[0] || orig.from
             // Subject:Re: 前缀去重
@@ -209,6 +230,29 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   try { mailCache.prune(app.getPath('userData'), null, log) } catch (e) { log('mail-cache prune err: ' + e.message) }
   // 启动时 prune "已整理"集合 30 天前的条目
   try { emailSummarySeen.prune(app.getPath('userData'), null, log) } catch (e) { log('email-seen prune err: ' + e.message) }
+
+  // 待办 → 邮件闭环：按 msgId 取原邮件（先内存批次，再 IMAP 兜底搜）
+  async function loadMailByMsgId(msgId) {
+    const imap = S.settings.imap
+    if (!imap || !imap.host || !imap.user || !imap.passEncrypted) return { error: 'IMAP 未配置' }
+    const id = String(msgId || '').replace(/^<|>$/g, ''); if (!id) return { error: 'msgId 为空' }
+    let mail = (S.mailLastBatch && Array.isArray(S.mailLastBatch.emails) ? S.mailLastBatch.emails : []).find((e) => e.messageId === id) || null
+    if (!mail) { try { mail = await email.fetchByMessageId(imap, id) } catch (e) { return { error: e.message } } }
+    if (!mail) return { error: '找不到原邮件（可能已归档或不在收件箱）' }
+    return { ok: true, id, from: mail.from, subject: mail.subject, date: mail.date, text: mail.text || email.stripHtml(mail.html || '') }
+  }
+  ipcMain.handle('mail-get-full', async (_e, msgId) => {
+    const r = await loadMailByMsgId(msgId)
+    return r.error ? r : { ok: true, from: r.from, subject: r.subject, date: r.date, text: String(r.text).slice(0, 20000) }
+  })
+  ipcMain.handle('mail-reply-card', async (_e, arg) => {
+    const r = await loadMailByMsgId(arg && arg.msgId)
+    if (r.error) return r
+    const prompt = `请帮我回复这封邮件。**先把回复草稿写出来给我看,我确认后你再调用 mail_reply 工具发送(messageId=${r.id})**,在我说"发"之前不要真发。\n\n## 原邮件\n发件人:${r.from}\n时间:${r.date}\n主题:${r.subject}\n正文:\n${String(r.text).slice(0, 4000)}`
+    spawnCard('回复 · ' + String(r.subject || '邮件').slice(0, 18), null, prompt, '✉️ 起草回复:' + String(r.subject || '').slice(0, 40))
+    return { ok: true }
+  })
+
   const projName = () => S.settings.projectDir ? path.basename(S.settings.projectDir) : '未选目录'
 
   function applyProject(dir) {
@@ -416,8 +460,6 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         mailCache.put(app.getPath('userData'), em)
         S.mailCache.set(em.messageId, { messageId: em.messageId, uid: em.uid, from: em.from, subject: em.subject, date: em.date, attCount: (em.attachments || []).length, savedAt: Date.now() })
       }
-      // 标记 seen(只标真正交给 agent 的;下次按钮再点这些就跳过)
-      emailSummarySeen.markSeen(app.getPath('userData'), fresh.map((e) => e.messageId).filter(Boolean))
       // 内存缓存这次结果,UI 加待办时能回填邮件正文
       S.mailLastBatch = { ts: Date.now(), emails: fresh }
       const prompt = email.formatEmailPrompt(fresh)
@@ -426,6 +468,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       const title = '📧 邮件整理 · ' + new Date().toLocaleDateString('zh-CN') + ' · 新 ' + fresh.length + (skipped ? '/已跳 ' + skipped : '')
       // flash:卡片加载完后任务栏闪 + 抢焦点 + 短暂置顶 1.5s → 用户一眼能找到新弹的卡
       spawnCard(title, null, prompt2, null, { flash: true })
+      // 标记 seen 放在卡片建好之后:摘要卡若没弹出来,这些邮件不会被误标"已整理"而永久漏掉
+      emailSummarySeen.markSeen(app.getPath('userData'), fresh.map((e) => e.messageId).filter(Boolean))
       log('email: summarized ' + fresh.length + ' new of ' + all.length + ' total (skipped ' + skipped + ' already-seen)')
       sendOrbState('done')   // 球绿色脉冲,2.2s 后自动回 idle
       return fresh.length

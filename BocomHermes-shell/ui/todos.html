@@ -37,6 +37,12 @@
   .ft-count { flex: 1; font-size: 11px; color: var(--txt3); }
   .btn-ghost { font-size: 11.5px; color: var(--txt2); background: transparent; border: .5px solid var(--composer-border); border-radius: 8px; padding: 5px 12px; cursor: pointer; }
   .btn-ghost:hover { color: var(--txt); }
+  /* 邮件待办的动作（看原邮件 / 起草回复）*/
+  .mail-acts { display: flex; gap: 6px; margin-top: 6px; }
+  .mail-act { border: .5px solid var(--composer-border); background: var(--composer-bg); color: var(--txt2); font-size: 11px; padding: 3px 9px; border-radius: 7px; cursor: pointer; }
+  .mail-act:hover { color: var(--txt); border-color: var(--accent); }
+  .mail-act:disabled { opacity: .6; cursor: default; }
+  .mail-full { white-space: pre-wrap; background: rgba(255,255,255,.04); border-left: 2px solid var(--accent); padding: 7px 10px; margin-top: 5px; border-radius: 0 6px 6px 0; font-size: 11.5px; color: var(--txt2); line-height: 1.55; max-height: 240px; overflow: auto; }
 </style>
 </head>
 <body>
@@ -100,6 +106,29 @@
           body.appendChild(det)
           meta.addEventListener('click', () => { det.style.display = det.style.display === 'none' ? 'block' : 'none' })
         }
+      }
+      // 邮件待办：看原邮件 / 起草回复（闭环 —— 从"知道"到"处理"）
+      if (t.mailMsgId) {
+        const acts = document.createElement('div'); acts.className = 'mail-acts'
+        const bView = document.createElement('button'); bView.className = 'mail-act'; bView.textContent = '📄 原邮件'
+        const bReply = document.createElement('button'); bReply.className = 'mail-act'; bReply.textContent = '✉️ 起草回复'
+        let full = null
+        bView.addEventListener('click', async () => {
+          if (full) { full.style.display = full.style.display === 'none' ? 'block' : 'none'; return }
+          bView.disabled = true; const o = bView.textContent; bView.textContent = '加载中…'
+          const r = await window.BocomHermes.mailGetFull(t.mailMsgId)
+          bView.disabled = false; bView.textContent = o
+          full = document.createElement('div'); full.className = 'mail-full'
+          full.textContent = (r && r.ok) ? (r.from + ' · ' + (r.date || '') + '\n主题：' + (r.subject || '') + '\n\n' + (r.text || '')) : ('✗ ' + ((r && r.error) || '加载失败'))
+          body.appendChild(full)
+        })
+        bReply.addEventListener('click', async () => {
+          bReply.disabled = true; bReply.textContent = '打开中…'
+          const r = await window.BocomHermes.mailReplyCard(t.mailMsgId)
+          if (r && r.ok) window.BocomHermes.closeSelf()
+          else { bReply.disabled = false; bReply.textContent = '✉️ 起草回复'; const e = document.createElement('div'); e.className = 'mail-full'; e.textContent = '✗ ' + ((r && r.error) || '打开失败'); body.appendChild(e) }
+        })
+        acts.append(bView, bReply); body.appendChild(acts)
       }
       const del = document.createElement('button'); del.className = 'del-btn'; del.title = '删除'; del.textContent = '×'
       del.addEventListener('click', async () => { await window.BocomHermes.todoDelete(t.id); render() })

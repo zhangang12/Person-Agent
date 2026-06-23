@@ -1,7 +1,12 @@
 'use strict'
 
-module.exports = function initTrigger(S, { path, fs, app, log, spawnEmailCard }) {
+module.exports = function initTrigger(S, { path, fs, app, log, spawnEmailCard, Notification }) {
   const stateFile = path.join(app.getPath('userData'), 'trigger-state.json')
+  // 自动摘要"真失败"(连不上 IMAP 等)时弹桌面通知 —— 否则用户以为"今天没邮件",其实是拉挂了
+  const BENIGN = /没有邮件|已整理过|IMAP 未配置/
+  function notifyFail(msg) {
+    try { if (Notification && Notification.isSupported()) new Notification({ title: 'BocomHermes · 邮件自动摘要失败', body: msg.slice(0, 160) }).show() } catch {}
+  }
 
   function loadState() { try { return JSON.parse(fs.readFileSync(stateFile, 'utf8')) } catch { return {} } }
   function saveState(s) { try { fs.writeFileSync(stateFile, JSON.stringify(s)) } catch {} }
@@ -20,6 +25,7 @@ module.exports = function initTrigger(S, { path, fs, app, log, spawnEmailCard })
       await spawnEmailCard()
     } catch (e) {
       log('trigger: 邮件摘要失败: ' + e.message)
+      if (!BENIGN.test(e.message || '')) notifyFail(e.message || '未知错误')   // 真失败才打扰用户
     }
   }
 

@@ -757,6 +757,20 @@ function smtpSend(cfg, msg, prebuiltMime) {
         }
       })
     }
+    // 收集 EHLO 通告的能力集(逐行 250-…,末行 250 空格结束),用于判断是否支持 STARTTLS
+    function ehloCaps() {
+      return new Promise((res, rej) => {
+        const caps = new Set()
+        onResp = (lines) => {
+          for (const ln of lines) {
+            const m = ln.match(/^(\d{3})([ -])(.*)$/); if (!m) continue
+            if (m[1] !== '250') { onResp = null; rej(new Error('EHLO 失败: ' + ln.slice(0, 120))); return }
+            const cap = (m[3].trim().split(/\s+/)[0] || '').toUpperCase(); if (cap) caps.add(cap)
+            if (m[2] === ' ') { onResp = null; res(caps); return }
+          }
+        }
+      })
+    }
     function attach(s) {
       s.setEncoding('utf8')
       s.on('data', (c) => {
@@ -771,14 +785,20 @@ function smtpSend(cfg, msg, prebuiltMime) {
         sock = useTLS ? tls.connect(port, host, tlsOpts) : net.connect(port, host)
         attach(sock)
         await expectCode('220')
-        write('EHLO localhost'); await expectCode('250')
-        if (!useTLS && port !== 25) {
-          write('STARTTLS'); await expectCode('220')
-          sock.removeAllListeners('data'); sock.removeAllListeners('error')
-          sock = tls.connect({ ...tlsOpts, socket: sock })
-          buf = ''; onResp = null; attach(sock)
-          await new Promise((r, rj) => { sock.once('secureConnect', r); sock.once('error', rj) })
-          write('EHLO localhost'); await expectCode('250')
+        write('EHLO localhost')
+        const caps = await ehloCaps()
+        if (!useTLS) {
+          // 明文连接:服务器支持 STARTTLS 就强制升级;不支持则拒发,绝不在明文上送账号密码(防内网抓包窃凭据)
+          if (caps.has('STARTTLS')) {
+            write('STARTTLS'); await expectCode('220')
+            sock.removeAllListeners('data'); sock.removeAllListeners('error')
+            sock = tls.connect({ ...tlsOpts, socket: sock })
+            buf = ''; onResp = null; attach(sock)
+            await new Promise((r, rj) => { sock.once('secureConnect', r); sock.once('error', rj) })
+            write('EHLO localhost'); await expectCode('250')
+          } else {
+            throw new Error('SMTP 服务器未通告 STARTTLS,拒绝在明文连接上发送账号密码;请在设置里把 SMTP 改成 TLS(常见 465 端口),或确认服务器支持加密')
+          }
         }
         write('AUTH LOGIN'); await expectCode('334')
         write(Buffer.from(user).toString('base64')); await expectCode('334')
