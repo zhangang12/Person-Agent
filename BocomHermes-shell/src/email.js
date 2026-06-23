@@ -426,6 +426,67 @@ async function fetchUnread(cfg, opts) {
   } catch (e) { client.quit(); throw e }
 }
 
+// ── IMAP 会话辅助:open/login/select → fn → quit ────────────────────────
+async function _withImap(cfg, fn) {
+  if (!cfg || !cfg.host || !cfg.user) throw new Error('邮件服务器未配置')
+  const pass = decryptPass(cfg.passEncrypted)
+  if (!pass) throw new Error('邮件密码未配置')
+  const client = new ImapClient()
+  await client.connect(cfg.host, cfg.port || 993, cfg.secure !== false, cfg.allowSelfSigned)
+  try {
+    await client.send(`LOGIN ${imapQuote(cfg.user)} ${imapQuote(pass)}`)
+    await client.send('SELECT INBOX')
+    return await fn(client)
+  } finally { client.quit() }
+}
+
+// 一组 messageIds → 对应 INBOX 内的 UIDs(未找到的丢弃)
+async function _uidsForMessageIds(client, messageIds) {
+  const out = []
+  for (const mid of messageIds || []) {
+    const stripped = String(mid || '').replace(/^<|>$/g, '')
+    if (!stripped) continue
+    const wrapped = '<' + stripped + '>'
+    const r = await client.send(`UID SEARCH HEADER "Message-ID" ${imapQuote(wrapped)}`)
+    const match = r.match(/\* SEARCH([\d\s]*)/i)
+    const uids = (match ? match[1] : '').trim().split(/\s+/).filter(Boolean).map(Number)
+    for (const u of uids) out.push({ messageId: stripped, uid: u })
+  }
+  return out
+}
+
+// ── 批量标已读 ─────────────────────────────────────────────────────────
+async function markRead(cfg, messageIds) {
+  return _withImap(cfg, async (client) => {
+    const found = await _uidsForMessageIds(client, messageIds)
+    if (!found.length) return { marked: [], notFound: messageIds || [] }
+    const uids = found.map((f) => f.uid).join(',')
+    await client.send(`UID STORE ${uids} +FLAGS (\\Seen)`)
+    const markedIds = found.map((f) => f.messageId)
+    return { marked: markedIds, notFound: (messageIds || []).filter((m) => !markedIds.includes(String(m).replace(/^<|>$/g, ''))) }
+  })
+}
+
+// ── 批量归档(移动到指定文件夹,默认 "Archive";支持 MOVE 不行就 COPY+\Deleted+EXPUNGE)─
+async function archiveMessages(cfg, messageIds, folder) {
+  const target = folder || 'Archive'
+  return _withImap(cfg, async (client) => {
+    const found = await _uidsForMessageIds(client, messageIds)
+    if (!found.length) return { moved: [], notFound: messageIds || [] }
+    const uids = found.map((f) => f.uid).join(',')
+    try { await client.send(`UID MOVE ${uids} ${imapQuote(target)}`) }
+    catch (e) {                                  // 不支持 MOVE → 退化到 COPY+DEL+EXPUNGE
+      try { await client.send(`UID COPY ${uids} ${imapQuote(target)}`) }
+      catch (e2) { throw new Error('归档失败,文件夹 "' + target + '" 可能不存在: ' + e2.message) }
+      await client.send(`UID STORE ${uids} +FLAGS (\\Deleted)`)
+      try { await client.send(`UID EXPUNGE ${uids}`) }
+      catch { await client.send('EXPUNGE') }    // 服务端不支持 UID EXPUNGE,退化全库 EXPUNGE
+    }
+    const movedIds = found.map((f) => f.messageId)
+    return { moved: movedIds, folder: target, notFound: (messageIds || []).filter((m) => !movedIds.includes(String(m).replace(/^<|>$/g, ''))) }
+  })
+}
+
 // ── 按 Message-ID 抓单封邮件(给 mail_get_full / mail_reply 兜底用)──────
 // 缓存没命中时走这个;在 INBOX 里搜 HEADER "Message-ID" "<msgid>"
 async function fetchByMessageId(cfg, messageId) {
@@ -581,7 +642,8 @@ async function sendMail(cfg, msg) {
 }
 
 module.exports = {
-  fetchUnread, fetchByMessageId, formatEmailPrompt, encryptPass, decryptPass, sendMail,
+  fetchUnread, fetchByMessageId, markRead, archiveMessages,
+  formatEmailPrompt, encryptPass, decryptPass, sendMail,
   // 暴露解析工具给后续阶段(A2-b mail_get_full、A3 附件保存、A5 reply 拼 quote)用
   parseRfc822, decodeBytes, decodeWords, stripHtml,
 }

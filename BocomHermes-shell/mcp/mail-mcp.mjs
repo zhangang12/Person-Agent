@@ -59,6 +59,13 @@ const TOOLS = [
     limit:     { type: 'number', description: '本次取多少字符,默认 8000,最大 50000' },
   }, required: ['messageId', 'filename'] } },
   { name: 'mail_reply', description: '回复某封刚读的邮件(基于 mail_list 拿到的 subject + from)。会自动加 "Re: " 前缀(若没有)、自动 To 原发件人,你只填 text(回复正文)。', inputSchema: { type: 'object', properties: { originalSubject: { type: 'string', description: '原邮件主题' }, originalFrom: { type: 'string', description: '原邮件发件人(直接传 from 字段,会自动提邮箱地址)' }, text: { type: 'string', description: '回复正文' } }, required: ['originalSubject', 'originalFrom', 'text'] } },
+  { name: 'mail_mark_read', description: '把一批邮件标已读(IMAP +Flags \\Seen)。处理完一封别忘了标,下次 mail_list 才不会重复返回。', inputSchema: { type: 'object', properties: {
+    messageIds: { type: 'array', items: { type: 'string' }, description: 'mail_list 里 [msgId:xxx] 的 xxx 列表;一次最多 30 个' },
+  }, required: ['messageIds'] } },
+  { name: 'mail_archive', description: '把一批邮件归档(MOVE 到指定文件夹,默认 Archive;MOVE 不支持时 COPY+DEL+EXPUNGE)。不可逆,先想清楚。', inputSchema: { type: 'object', properties: {
+    messageIds: { type: 'array', items: { type: 'string' }, description: 'mail_list 里 [msgId:xxx] 的 xxx 列表' },
+    folder:     { type: 'string', description: '目标文件夹,默认 "Archive"。常见: Archive / 已归档 / [Gmail]/All Mail。' },
+  }, required: ['messageIds'] } },
   { name: 'todo_add', description: '加一条待办。urgency 可选 高/中/低(默认中)。可关联邮件:传 mailSubject/mailDate/mailBody 元信息,待办面板能展开看原邮件。', inputSchema: { type: 'object', properties: { text: { type: 'string' }, from: { type: 'string', description: '来源(发件人 / 项目 / 自填)' }, urgency: { type: 'string', enum: ['高', '中', '低'] }, mailSubject: { type: 'string' }, mailDate: { type: 'string' }, mailBody: { type: 'string' } }, required: ['text'] } },
   { name: 'todo_list', description: '列出所有待办(未完成在前)。可按 onlyPending 过滤。', inputSchema: { type: 'object', properties: { onlyPending: { type: 'boolean' }, limit: { type: 'number' } } } },
   { name: 'todo_complete', description: '把某条待办标为完成。传 id(从 todo_list 返回)。', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
@@ -121,6 +128,22 @@ async function callTool(name, a) {
     const sub = /^re:/i.test(a.originalSubject || '') ? a.originalSubject : ('Re: ' + (a.originalSubject || ''))
     try { await relayPost('/mail/send', { to, subject: sub, text: a.text }); return `✓ 已回复 → ${to}  · 主题: ${sub}` }
     catch (e) { return 'mail_reply 失败: ' + e.message }
+  }
+  if (name === 'mail_mark_read') {
+    try {
+      const ids = Array.isArray(a.messageIds) ? a.messageIds : []
+      if (!ids.length) return '(messageIds 为空)'
+      const r = await relayPost('/mail/markRead', { messageIds: ids.slice(0, 30) })
+      return `✓ 已标已读 ${r.marked.length} 封${r.notFound && r.notFound.length ? ` · 未找到 ${r.notFound.length} 封(可能已归档或不在 INBOX)` : ''}`
+    } catch (e) { return 'mail_mark_read 失败: ' + e.message }
+  }
+  if (name === 'mail_archive') {
+    try {
+      const ids = Array.isArray(a.messageIds) ? a.messageIds : []
+      if (!ids.length) return '(messageIds 为空)'
+      const r = await relayPost('/mail/archive', { messageIds: ids.slice(0, 30), folder: a.folder })
+      return `✓ 已归档 ${r.moved.length} 封 → ${r.folder}${r.notFound && r.notFound.length ? ` · 未找到 ${r.notFound.length} 封` : ''}`
+    } catch (e) { return 'mail_archive 失败: ' + e.message }
   }
   if (name === 'todo_add') {
     const list = loadTodos()

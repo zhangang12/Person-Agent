@@ -85,6 +85,23 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
               attachments: mail.attachments || [],
             })
           }
+          if (req.url === '/mail/markRead') {
+            const imap = S.settings.imap
+            if (!imap || !imap.host || !imap.user || !imap.passEncrypted) return reply({ error: 'IMAP 未配置' })
+            const ids = Array.isArray(a.messageIds) ? a.messageIds : (a.messageId ? [a.messageId] : [])
+            if (!ids.length) return reply({ error: 'messageIds 必填' })
+            try { const r = await email.markRead(imap, ids); return reply({ ok: true, ...r }) }
+            catch (e) { return reply({ error: e.message }) }
+          }
+          if (req.url === '/mail/archive') {
+            const imap = S.settings.imap
+            if (!imap || !imap.host || !imap.user || !imap.passEncrypted) return reply({ error: 'IMAP 未配置' })
+            const ids = Array.isArray(a.messageIds) ? a.messageIds : (a.messageId ? [a.messageId] : [])
+            if (!ids.length) return reply({ error: 'messageIds 必填' })
+            const folder = a.folder || (imap.archiveFolder) || 'Archive'
+            try { const r = await email.archiveMessages(imap, ids, folder); return reply({ ok: true, ...r }) }
+            catch (e) { return reply({ error: e.message }) }
+          }
           if (req.url === '/mail/attachment') {
             try {
               const r = attachments.readAttachmentText(app.getPath('userData'), a.messageId, a.filename, a.offset, a.limit)
