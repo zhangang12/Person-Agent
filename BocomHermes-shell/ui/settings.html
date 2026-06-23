@@ -105,6 +105,12 @@
           <input id="imapHour" class="in" style="width:52px;flex:none" placeholder="9" />
           <span class="hint">时（工作日自动触发）</span>
         </div>
+        <div class="row" style="align-items:center;gap:8px">
+          <span class="hint" style="flex:none">Sent 文件夹</span>
+          <input id="imapSentFolder" class="in" style="flex:1" placeholder="Sent" spellcheck="false" />
+          <span class="hint" style="flex:none">归档</span>
+          <input id="imapArchiveFolder" class="in" style="flex:1" placeholder="Archive" spellcheck="false" />
+        </div>
         <div class="row">
           <button id="testImap" class="chip">测试 IMAP</button>
           <span id="imapMsg" class="hint" style="color:var(--green)"></span>
@@ -236,6 +242,8 @@
   $('imapUser').value = im.user || ''
   $('imapPass').placeholder = im.hasPass ? '密码已保存（留空=不修改）' : '密码（加密存储）'
   $('imapHour').value = im.scheduleHour ?? 9
+  $('imapSentFolder').value = im.sentFolder || 'Sent'
+  $('imapArchiveFolder').value = im.archiveFolder || 'Archive'
 
   // 测试 IMAP 连接
   $('testImap').addEventListener('click', async () => {
@@ -288,6 +296,8 @@
       user: $('imapUser').value.trim(),
       pass: $('imapPass').value,
       scheduleHour: $('imapHour').value.trim(),
+      sentFolder: $('imapSentFolder').value.trim() || 'Sent',
+      archiveFolder: $('imapArchiveFolder').value.trim() || 'Archive',
     }
     patch.smtp = {
       host: $('smtpHost').value.trim(),

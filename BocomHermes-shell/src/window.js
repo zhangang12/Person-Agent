@@ -61,12 +61,18 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
           if (req.url === '/mail/send') {
             const cfg = S.effectiveSmtp(); if (!cfg) return reply({ error: 'SMTP 未配置' })
             // 透传 html / attachments / cc / bcc / inReplyTo / references —— 没传 html 时 buildMime 自动从 text 生成
-            await email.sendMail(cfg, {
+            const res = await email.sendMail(cfg, {
               to: a.to, cc: a.cc, bcc: a.bcc,
               subject: a.subject, text: a.text, html: a.html,
               attachments: a.attachments,
               inReplyTo: a.inReplyTo, references: a.references,
             })
+            // A5-d: 异步 APPEND 到 IMAP Sent(失败不影响主流程,只警告)
+            const imap = S.settings.imap
+            if (imap && imap.host && res.mime) {
+              email.appendToSent(imap, imap.sentFolder || 'Sent', res.mime)
+                .catch((e) => log('APPEND Sent err: ' + e.message))
+            }
             return reply({ ok: true })
           }
           if (req.url === '/mail/get') {
@@ -142,7 +148,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
                 origHtmlBlock +
               '</blockquote>'
             try {
-              await email.sendMail(cfg, {
+              const res = await email.sendMail(cfg, {
                 to: fromAddr,
                 cc: a.cc, bcc: a.bcc,
                 subject,
@@ -152,6 +158,11 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
                 inReplyTo: msgId,
                 references: refs,
               })
+              // A5-d: 异步 APPEND 这封回复到 Sent;失败只警告
+              if (imap && imap.host && res.mime) {
+                email.appendToSent(imap, imap.sentFolder || 'Sent', res.mime)
+                  .catch((e) => log('APPEND Sent err (reply): ' + e.message))
+              }
               return reply({ ok: true, to: fromAddr, subject, quotedFrom: orig.from })
             } catch (e) { return reply({ error: 'mail_reply 发送失败: ' + e.message }) }
           }
@@ -1696,7 +1707,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       project: projName(), projectDir: S.settings.projectDir || '', recentDirs: S.settings.recentDirs || [],
       backendDir: S.settings.backendDir || '',
       planMode: S.settings.planMode !== false,
-      imap: { host: im.host || '', port: im.port || 993, secure: im.secure !== false, allowSelf: !!im.allowSelfSigned, user: im.user || '', hasPass: !!im.passEncrypted, scheduleHour: im.scheduleHour ?? 9 },
+      imap: { host: im.host || '', port: im.port || 993, secure: im.secure !== false, allowSelf: !!im.allowSelfSigned, user: im.user || '', hasPass: !!im.passEncrypted, scheduleHour: im.scheduleHour ?? 9, sentFolder: im.sentFolder || 'Sent', archiveFolder: im.archiveFolder || 'Archive' },
       smtp: { host: sm.host || '', port: sm.port || 587, secure: !!sm.secure, allowSelf: !!sm.allowSelfSigned, sameAsImap: sm.sameAsImap !== false, user: sm.user || '', hasPass: !!sm.passEncrypted, from: sm.from || '' },
     }
   })
@@ -1801,6 +1812,8 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       if (im.user      !== undefined) S.settings.imap.user          = String(im.user).trim()
       if (im.pass && im.pass.trim()) S.settings.imap.passEncrypted  = email.encryptPass(im.pass.trim())
       if (im.scheduleHour !== undefined) S.settings.imap.scheduleHour = parseInt(im.scheduleHour) || 9
+      if (im.sentFolder !== undefined) S.settings.imap.sentFolder    = String(im.sentFolder).trim() || 'Sent'
+      if (im.archiveFolder !== undefined) S.settings.imap.archiveFolder = String(im.archiveFolder).trim() || 'Archive'
     }
     if (patch && patch.smtp) {
       S.settings.smtp = S.settings.smtp || {}

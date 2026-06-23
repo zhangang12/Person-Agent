@@ -298,6 +298,11 @@ class ImapClient {
       }
       this._respStr += line + '\n'
       if (!this._pending) continue
+      // IMAP continuation(APPEND literal):服务端发 "+ Ready" 表示可以发数据了
+      if (line.startsWith('+') && this._pending.onContinuation) {
+        try { this._pending.onContinuation() } catch (e) { const p = this._pending; this._pending = null; p.reject(e) }
+        continue
+      }
       const tag = this._pending.tag
       if (line.startsWith(tag + ' OK') || line.toLowerCase().startsWith(tag.toLowerCase() + ' ok')) {
         const p = this._pending; this._pending = null
@@ -315,6 +320,21 @@ class ImapClient {
       this._pending = { tag, resolve, reject }
       this._respStr = ''
       this._sock.write(tag + ' ' + cmd + '\r\n')
+    })
+  }
+
+  // APPEND 到指定文件夹(用于把发出去的邮件写进 Sent)。mimeStr 必须全 ASCII(buildMime 输出符合)
+  sendAppend(folder, mimeStr, flags) {
+    const tag = 'A' + String(++this._tagN).padStart(3, '0')
+    return new Promise((resolve, reject) => {
+      const byteLen = Buffer.byteLength(mimeStr, 'utf8')
+      const flagsStr = flags ? ' (' + flags + ')' : ''
+      this._pending = {
+        tag, resolve, reject,
+        onContinuation: () => { this._sock.write(mimeStr + '\r\n') },
+      }
+      this._respStr = ''
+      this._sock.write(`${tag} APPEND "${String(folder).replace(/"/g, '\\"')}"${flagsStr} {${byteLen}}\r\n`)
     })
   }
 
@@ -487,6 +507,13 @@ async function archiveMessages(cfg, messageIds, folder) {
     }
     const movedIds = found.map((f) => f.messageId)
     return { moved: movedIds, folder: target, notFound: (messageIds || []).filter((m) => !movedIds.includes(String(m).replace(/^<|>$/g, ''))) }
+  })
+}
+
+// ── APPEND 一封刚发出去的邮件到 IMAP Sent 文件夹 ────────────────────────
+async function appendToSent(cfg, folder, mimeStr) {
+  return _withImap(cfg, async (client) => {
+    await client.sendAppend(folder || 'Sent', mimeStr, '\\Seen')
   })
 }
 
@@ -700,7 +727,8 @@ function guessMime(name) {
 }
 
 // ── SMTP:连接 + AUTH + 发送(支持 multipart/alternative + 附件)──────────
-function smtpSend(cfg, msg) {
+//   可选参数 prebuiltMime — 调用方已经构造好 mime 字符串(可复用给 APPEND-Sent 等)
+function smtpSend(cfg, msg, prebuiltMime) {
   return new Promise((resolve, reject) => {
     const host = cfg.host, port = +cfg.port || 587
     const user = cfg.user, pass = decryptPass(cfg.passEncrypted)
@@ -762,8 +790,8 @@ function smtpSend(cfg, msg) {
         write('MAIL FROM:<' + from + '>'); await expectCode('250')
         for (const to of [...tos, ...ccs, ...bccs]) { write('RCPT TO:<' + to + '>'); await expectCode('250') }
         write('DATA'); await expectCode('354')
-        // 组邮件 + 点行转义 + 末尾 .\r\n
-        const mime = buildMime(msg, from)
+        // 组邮件(或用调用方传的预构 mime)+ 点行转义 + 末尾 .\r\n
+        const mime = prebuiltMime || buildMime(msg, from)
         const dotstuffed = mime.replace(/(\r\n|^)\./g, '$1..')
         writeRaw(dotstuffed + '\r\n.\r\n')
         await expectCode('250')
@@ -776,12 +804,15 @@ function smtpSend(cfg, msg) {
 
 async function sendMail(cfg, msg) {
   if (!msg || !msg.to || !msg.subject) throw new Error('需要 to + subject')
-  await smtpSend(cfg, msg)
-  return { ok: true, to: msg.to, subject: msg.subject, at: Date.now() }
+  // 先建 mime,SMTP 用它发,同时返回给调用方(给 A5-d APPEND-Sent 复用,免再 build 一次)
+  const from = msg.from || cfg.user
+  const mime = buildMime(msg, from)
+  await smtpSend(cfg, msg, mime)
+  return { ok: true, to: msg.to, subject: msg.subject, at: Date.now(), mime, from }
 }
 
 module.exports = {
-  fetchUnread, fetchByMessageId, markRead, archiveMessages,
+  fetchUnread, fetchByMessageId, markRead, archiveMessages, appendToSent,
   formatEmailPrompt, encryptPass, decryptPass, sendMail,
   // 暴露解析工具给后续阶段(A2-b mail_get_full、A3 附件保存、A5 reply 拼 quote)用
   parseRfc822, decodeBytes, decodeWords, stripHtml,
