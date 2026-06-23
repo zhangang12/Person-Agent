@@ -82,8 +82,24 @@
       body.innerHTML = `<div class="todo-text">${urg}${escHtml(t.text)}</div>`
       if (t.from || t.source) {
         const meta = document.createElement('div'); meta.className = 'todo-meta'
-        meta.textContent = [t.from && '来自：' + t.from, t.source === 'email' && '邮件'].filter(Boolean).join(' · ')
+        const parts = []
+        if (t.from) parts.push('来自：' + t.from)
+        if (t.source === 'email') parts.push('📧 邮件')
+        if (t.mailSubject) parts.push('「' + t.mailSubject.slice(0, 40) + (t.mailSubject.length > 40 ? '…' : '') + '」')
+        if (t.mailDate) parts.push(t.mailDate.slice(0, 16))
+        meta.textContent = parts.join(' · ')
         body.appendChild(meta)
+        // 有 mailBody → 点 meta 展开原邮件正文
+        if (t.mailBody) {
+          meta.style.cursor = 'pointer'
+          meta.title = '点击展开原邮件正文'
+          const det = document.createElement('div')
+          det.className = 'mail-body'
+          det.style.cssText = 'display:none;white-space:pre-wrap;background:rgba(255,255,255,.04);border-left:2px solid var(--accent);padding:7px 10px;margin-top:5px;border-radius:0 6px 6px 0;font-size:11.5px;color:var(--txt2);line-height:1.55;max-height:200px;overflow:auto'
+          det.textContent = t.mailBody
+          body.appendChild(det)
+          meta.addEventListener('click', () => { det.style.display = det.style.display === 'none' ? 'block' : 'none' })
+        }
       }
       const del = document.createElement('button'); del.className = 'del-btn'; del.title = '删除'; del.textContent = '×'
       del.addEventListener('click', async () => { await window.BocomHermes.todoDelete(t.id); render() })

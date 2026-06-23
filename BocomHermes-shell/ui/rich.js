@@ -136,15 +136,22 @@
     return html.replace(/@@CB(\d+)@@/g, function (m, n) { return blocks[+n] })
   }
 
-  // ---- TODO 块：识别 "TODO: [高/中/低] [来自：xxx] 事项" 并渲染为可操作卡 ----
+  // ---- TODO 块：识别 "TODO: [高/中/低] [来自：xxx] 事项 [mailIdx:N]" 并渲染为可操作卡 ----
+  // mailIdx 是 agent 在邮件摘要里给的"原邮件序号",卡片侧据此从 lastBatch 取邮件主题/日期/正文回填
   const TODO_RE = /^TODO:\s*\[?(高|中|低)\]?\s*(?:\[?来自[：:]\s*([^\]]*)\]?)?\s*(.*)/i
+  const MAILIDX_RE = /\[mailIdx[：:]\s*(\d+)\s*\]/i
   function renderTodoLine(line) {
     const m = line.match(TODO_RE); if (!m) return null
-    const urgency = m[1] || '中', from = (m[2] || '').trim(), text = (m[3] || '').trim()
+    const urgency = m[1] || '中', from = (m[2] || '').trim()
+    let text = (m[3] || '').trim()
+    let mailIdx = ''
+    const mi = text.match(MAILIDX_RE)
+    if (mi) { mailIdx = mi[1]; text = text.replace(MAILIDX_RE, '').trim() }
     const urgCls = urgency === '高' ? 'sev-must' : urgency === '中' ? 'sev-sugg' : 'sev-info'
-    return `<div class="todo-blk" data-act="todo" data-urgency="${esc(urgency)}" data-from="${esc(from)}" data-text="${esc(text)}">`
+    return `<div class="todo-blk" data-act="todo" data-urgency="${esc(urgency)}" data-from="${esc(from)}" data-text="${esc(text)}"${mailIdx ? ' data-mailidx="' + esc(mailIdx) + '"' : ''}>`
       + `<span class="sev ${urgCls}">${esc(urgency)}</span>`
       + (from ? `<span style="font-size:11px;color:var(--txt3);margin-right:6px">来自：${esc(from)}</span>` : '')
+      + (mailIdx ? `<span style="font-size:10.5px;color:var(--accent);margin-right:6px" title="关联原邮件 #${esc(mailIdx)}">📧#${esc(mailIdx)}</span>` : '')
       + `<span style="font-size:12.5px">${esc(text)}</span>`
       + `<button class="rbtn-ghost" data-act="todo" style="margin-left:auto;flex:none;font-size:11px">＋ 加入待办</button>`
       + `</div>`
@@ -183,7 +190,7 @@
       else if (act === 'run') { h.run && h.run({ raw }, btn) }
       else if (act === 'todo') {
         const blk = btn.closest('.todo-blk'); if (!blk || !h.todo) return
-        h.todo({ urgency: blk.dataset.urgency, from: blk.dataset.from, text: blk.dataset.text }, btn)
+        h.todo({ urgency: blk.dataset.urgency, from: blk.dataset.from, text: blk.dataset.text, mailIdx: blk.dataset.mailidx || '' }, btn)
       }
     })
   }

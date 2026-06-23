@@ -332,10 +332,11 @@
   // 富结果动作：应用/运行 = 向同一会话发指令（agent 用工具做、经内联权限）；复制/打开在 rich.js/本地
   window.Rich.wireActions(feed, {
     open: (file, line) => window.BocomHermes.openLoc(file, line),
-    todo: async ({ urgency, from, text }, btn) => {
+    todo: async ({ urgency, from, text, mailIdx }, btn) => {
       const orig = btn.textContent; btn.disabled = true; btn.textContent = '保存中…'
       try {
-        const r = await window.BocomHermes.todoAdd({ urgency, from, text, source: 'email' })
+        // 有 mailIdx 时,主进程会从 lastBatch 拿邮件主题/日期/正文回填
+        const r = await window.BocomHermes.todoAdd({ urgency, from, text, source: 'email', mailIdx: mailIdx || null })
         if (r) { btn.textContent = '已加入 ✓'; btn.classList.add('done'); window.BocomHermes.notifyTodosUpdated() }
         else { btn.textContent = '已存在'; btn.classList.add('done') }
       } catch { btn.textContent = orig; btn.disabled = false }

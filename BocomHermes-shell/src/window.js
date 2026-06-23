@@ -201,8 +201,12 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const emails = await email.fetchUnread(imap)
     if (!emails.length) { log('email: no unread emails'); return 0 }
     log('email: fetched ' + emails.length + ' emails')
+    // 把这次抓的邮件存到内存,供"加待办时回填邮件元信息" / agent 通过 mail-cache 读
+    S.mailLastBatch = { ts: Date.now(), emails }
     const prompt = email.formatEmailPrompt(emails)
-    spawnCard('📧 邮件摘要 · ' + new Date().toLocaleDateString('zh-CN'), null, prompt)
+    // 把"加待办"操作引导写进 prompt:让 agent 直接调 IPC todo-add 时把 mailSubject/mailBody/mailDate 一并带
+    const prompt2 = prompt + '\n\n注意:你提取的 TODO 行,如果对应某封具体邮件,请同时在那条 TODO 行后面追加 `[mailIdx:N]`(N 是上面邮件的序号),系统会自动回填邮件主题/日期/正文摘要进待办,方便日后回看。'
+    spawnCard('📧 邮件摘要 · ' + new Date().toLocaleDateString('zh-CN'), null, prompt2)
     return emails.length
   }
 
