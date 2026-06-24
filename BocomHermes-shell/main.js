@@ -38,6 +38,30 @@ const S = {
 const { Menu: __Menu } = require('electron')
 __Menu.setApplicationMenu(null)
 
+// ── 内嵌浏览器自定义启动参数 ────────────────────────────────────────────────
+// settings.browserArgs(如 "--disable-web-security --ignore-certificate-errors")里的 Chromium 开关，
+// 必须在 app ready 前 appendSwitch。跨域本身已由每个标签页的 webSecurity:false 在运行期解决(见 window.js newTab)，
+// 这里负责把其余高级开关也透传给 Chromium。
+// ⚠ 主动过滤 --user-data-dir：Electron 把它等同整个应用的 userData，挂上去会把设置/日志搬走 → 丢配置；
+//   而且跨域不需要它(那是 Chrome 对默认 profile 的限制，Electron 没有)。
+function applyBrowserSwitches() {
+  let cfg = null
+  try { cfg = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'settings.json'), 'utf8')) } catch { return }
+  const raw = cfg && typeof cfg.browserArgs === 'string' ? cfg.browserArgs.trim() : ''
+  if (!raw) return
+  const toks = []; const re = /"([^"]*)"|'([^']*)'|(\S+)/g; let m
+  while ((m = re.exec(raw))) toks.push(m[1] != null ? m[1] : (m[2] != null ? m[2] : m[3]))
+  for (const t of toks) {
+    const s = t.replace(/^--?/, '')
+    const eq = s.indexOf('=')
+    const key = (eq >= 0 ? s.slice(0, eq) : s).toLowerCase()
+    if (!key) continue
+    if (key === 'user-data-dir') { try { console.log('[BocomHermes] 已忽略 --user-data-dir(会搬走应用数据;跨域已由 webSecurity:false 解决)') } catch {} ; continue }
+    try { eq >= 0 ? app.commandLine.appendSwitch(key, s.slice(eq + 1)) : app.commandLine.appendSwitch(key) } catch {}
+  }
+}
+applyBrowserSwitches()
+
 app.whenReady().then(() => {
   S.settingsFile = path.join(app.getPath('userData'), 'settings.json')
   S.historyFile  = path.join(app.getPath('userData'), 'history.json')

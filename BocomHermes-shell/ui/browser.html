@@ -66,13 +66,15 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 .nb:disabled{opacity:.25;cursor:default}
 .nb svg{width:15px;height:15px}
 
-.urlwrap{flex:1;min-width:0;height:32px;background:rgba(255,255,255,.05);
+.urlwrap{flex:1 1 auto;min-width:140px;height:32px;background:rgba(255,255,255,.05);
   border:1px solid var(--line);border-radius:9px;display:flex;align-items:center;
   padding:0 11px;gap:7px;transition:border-color .15s,background .15s}
 .urlwrap:focus-within{border-color:var(--accent);background:rgba(255,255,255,.07)}
+/* 聚焦地址栏 → 让位:暂时隐藏右侧工具组,URL 栏铺满整条工具栏,看全长链接与参数 */
+#toolbar.urlfocus #devseg,#toolbar.urlfocus .zoom,#toolbar.urlfocus .tb{display:none}
 .lock{flex:none;color:var(--txt3);display:flex}.lock svg{width:12px;height:12px}
 #url{flex:1;min-width:0;border:none;outline:none;background:transparent;color:var(--txt);
-  font-size:13px;font-family:-apple-system,'SF Mono',monospace}
+  font-size:13px;font-family:-apple-system,'SF Mono',monospace;text-overflow:ellipsis}
 #url::placeholder{color:var(--txt3)}
 
 .seg{display:flex;flex:none;background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:8px;overflow:hidden;height:30px}
@@ -262,7 +264,7 @@ body.wsdrag{cursor:col-resize}
   <button class="nb" id="bf" disabled title="前进 (⌘])"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></button>
   <button class="nb" id="br" title="刷新 (⌘R)"><svg id="brsvg" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.5 15a9 9 0 1 1-2.4-9.2L23 10"/></svg></button>
 
-  <div class="urlwrap">
+  <div class="urlwrap" id="urlwrap">
     <span class="lock" id="lock"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
     <input id="url" placeholder="输入网址，回车访问  ·  http://localhost:5173" spellcheck="false" autocomplete="off" list="urlhist">
     <datalist id="urlhist"></datalist>
@@ -422,6 +424,7 @@ H.onBrowserTabs(({ tabs, activeId }) => {
 /* ── 导航状态 ── */
 H.onBrowserNav(({ url, canBack, canForward, loading: ld, zoom, device, errN, warnN }) => {
   if (document.activeElement !== $('url')) $('url').value = (url && url !== 'about:blank' && !url.endsWith('newtab.html')) ? url : ''
+  $('urlwrap').title = (url && url !== 'about:blank' && !url.endsWith('newtab.html')) ? url : ''   // hover 看完整长链接(含参数)
   $('bb').disabled = !canBack
   $('bf').disabled = !canForward
   loading = ld
@@ -633,10 +636,11 @@ ceval.addEventListener('keydown', async e => {
 /* ── URL 栏 ── */
 const url = $('url')
 url.addEventListener('keydown', e => {
-  if (e.key === 'Enter') { H.browserNavigate(url.value.trim()); url.blur() }
-  if (e.key === 'Escape') url.blur()
+  if (e.key === 'Enter') { e.preventDefault(); H.browserNavigate(url.value.trim()); url.blur() }
+  if (e.key === 'Escape') { e.preventDefault(); url.blur() }
 })
 url.addEventListener('focus', () => {
+  $('toolbar').classList.add('urlfocus')   // 聚焦 → 隐藏右侧工具组,地址栏铺满,看全长链接
   requestAnimationFrame(() => url.select())
   // 拉一次访问历史填进 datalist(每次聚焦都更新,反映最近的导航)
   try {
@@ -645,6 +649,7 @@ url.addEventListener('focus', () => {
     list.innerHTML = hist.map(u => `<option value="${u.replace(/"/g, '&quot;')}"></option>`).join('')
   } catch {}
 })
+url.addEventListener('blur', () => { $('toolbar').classList.remove('urlfocus') })
 
 /* ── 下载提示:开始/进度/完成,完成可点"在文件夹打开" ── */
 const dlState = new Map()   // id → {el, total}

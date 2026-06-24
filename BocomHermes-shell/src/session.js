@@ -170,6 +170,28 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
     return { sessionId, project: S.settings.projectDir ? path.basename(S.settings.projectDir) : '未选目录', reattached: false }
   })
 
+  // 切项目目录后即时重绑本卡:opencode 一个 serve 只认一个 cwd,换项目 = 换 serve + 换会话。
+  // 工作台内嵌卡用它实现"切目录立刻生效",不用关掉重开。
+  ipcMain.handle('card-reinit', async (e) => {
+    const old = S.sessionByWc.get(e.sender.id)
+    if (old) {
+      const si = S.sessionInfo.get(old)
+      if (si) { try { oc.abort(si.serve, old) } catch {} }
+      S.sessionInfo.delete(old); S.streamBuf.delete(old); S.sentPrompt.delete(old); S.firstMsgCtx.delete(old)
+    }
+    S.sessionByWc.delete(e.sender.id)
+    const dir = S.settings.projectDir || ''
+    const serve = await oc.ensureServe(dir, S.handlers, log)
+    const sessionId = await oc.createSession(serve, 'BocomHermes 对话')
+    if (!sessionId) throw new Error('create session failed')
+    S.sessionByWc.set(e.sender.id, sessionId)
+    S.sessionInfo.set(sessionId, { wc: e.sender, serve })
+    const ctx = loadMemory() + loadProjectContext(dir); if (ctx) S.firstMsgCtx.set(sessionId, ctx)
+    recordHistory(sessionId, 'BocomHermes 对话', dir)
+    log('card-reinit → [' + (dir || '(home)') + '] session ' + sessionId)
+    return { sessionId, project: dir ? path.basename(dir) : '未选目录' }
+  })
+
   ipcMain.handle('card-send', async (e, text) => {
     const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
     if (!si) throw new Error('session not ready')
