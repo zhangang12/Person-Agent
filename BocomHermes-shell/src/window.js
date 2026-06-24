@@ -6,6 +6,7 @@ const attachments = require('./attachments')
 const mailCache = require('./mail-cache')
 const emailSummarySeen = require('./email-summary-seen')
 const initOutbox = require('./outbox')
+const db = require('./db')
 
 module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }) {
   // 额外窗口引用
@@ -28,6 +29,14 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     return out
   }
   S.effectiveSmtp = () => effectiveSmtp(S)   // 供其它模块/MCP 用
+
+  // OceanBase 连接配置(密码 safeStorage 解密);DB 连接走主进程(MCP 子进程没法解密)
+  function effectiveOb() {
+    const ob = S.settings.ob || {}
+    if (!ob.host || !ob.user || !ob.passEncrypted) return null
+    return { host: ob.host, port: ob.port || 3306, user: ob.user, password: email.decryptPass(ob.passEncrypted), database: ob.database || '' }
+  }
+  S.effectiveOb = effectiveOb
 
   // ── 发件箱(发信安全闸门)──────────────────────────────────────────────────
   function notifyMail(title, body, onClick) {
@@ -264,6 +273,18 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
               return reply({ ok: true, ...r })
             } catch (e) { return reply({ error: e.message, code: e.code || null }) }
           }
+          // ── OceanBase 只读(全部经 effectiveOb 解密;只读守卫在 db.js)─────────
+          if (req.url.startsWith('/db/')) {
+            const cfg = effectiveOb(); if (!cfg) return reply({ error: 'OceanBase 未配置(设置面板填 host/端口/user@租户#集群/密码/库)' })
+            try {
+              if (req.url === '/db/tables') return reply({ ok: true, rows: await db.tables(cfg, a.keyword) })
+              if (req.url === '/db/schema') return reply({ ok: true, schema: await db.schema(cfg, a.table) })
+              if (req.url === '/db/grep')   return reply({ ok: true, rows: await db.columnsGrep(cfg, a.keyword) })
+              if (req.url === '/db/sample') return reply({ ok: true, rows: await db.sample(cfg, a.table, a.limit, a.where) })
+              if (req.url === '/db/query')  return reply({ ok: true, rows: await db.query(cfg, a.sql) })
+              if (req.url === '/db/ping')   return reply({ ok: true, ...(await db.ping(cfg)) })
+            } catch (e) { return reply({ error: e.message }) }
+          }
           return reply({ error: 'unknown ' + req.url })
         } catch (e) { reply({ error: e.message }) }
       })
@@ -363,6 +384,22 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     S.inputWin.setIgnoreMouseEvents(true, { forward: true })
     S.inputWin.loadFile(path.join(__dirname, '..', 'ui', 'orb.html'))
     S.inputWin.on('closed', () => { S.inputWin = null })
+    // "不用应用时隐藏桌面悬浮球":窗口照建(给 orb-input 做锚点定位用),但不显示
+    if (S.settings.orbHidden) { try { S.inputWin.hide() } catch {} }
+  }
+
+  // 隐藏/显示桌面悬浮球。隐藏只是 hide()——窗口仍在(留作 orb-input 锚点),全局快捷键/托盘照常唤起;
+  // 全部功能窗口都关掉时 window-all-closed 也不会误判"无窗口"而重建球。
+  function setOrbHidden(hidden) {
+    S.settings.orbHidden = !!hidden
+    saveSettings()
+    if (hidden) {
+      if (S.inputWin && !S.inputWin.isDestroyed()) S.inputWin.hide()
+    } else {
+      if (!S.inputWin || S.inputWin.isDestroyed()) createOrb()
+      else { S.inputWin.show(); ensureOrbAlive() }
+    }
+    refreshTrayMenu()
   }
 
   // 自由拖动：可在桌面任意位置；只做轻量夹取，避免球被拖出屏幕外抓不回来
@@ -1052,7 +1089,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const b = S.browser
     if (!b.win || b.win.isDestroyed()) return
     const id = ++b.seq
-    const view = new WebContentsView({ webPreferences: { nodeIntegration: false, contextIsolation: true, devTools: true, sandbox: true } })
+    // 跨域开关:settings.browserArgs 里含 --disable-web-security → 本标签页关同源策略(运行期即生效,新开标签立刻可用)。
+    // 解决"本地项目请求服务端跨域";配合主进程 appendSwitch 兜底。
+    const wsOff = /disable-web-security/i.test(S.settings.browserArgs || '')
+    const view = new WebContentsView({ webPreferences: { nodeIntegration: false, contextIsolation: true, devTools: true, sandbox: true, webSecurity: !wsOff, allowRunningInsecureContent: wsOff } })
     const tab = { id, view, title: '新标签页', url: '', loading: false, favicon: '', console: [], errN: 0, warnN: 0, zoom: 1, device: null, net: [], netById: new Map(), preserveNet: false, dbg: false }
     b.tabs.push(tab)
     brWireTab(tab)
@@ -1062,6 +1102,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const doLoad = () => { if (view.webContents.isDestroyed()) return; if (u) view.webContents.loadURL(u); else view.webContents.loadFile(path.join(__dirname, '..', 'ui', 'newtab.html')) }
     // 等 Network/Page 域就绪再加载，确保首个文档请求也进网络面板
     if (tab._dbgReady) tab._dbgReady.then(doLoad, doLoad); else doLoad()
+    // 空白新标签：键盘焦点交给外壳地址栏(而非 newtab 页里的搜索框)，否则用户敲完第一次回车会落到页面空框里 → 看着像"跳回首页"
+    if (!u) setTimeout(() => { if (b.win && !b.win.isDestroyed() && b.activeId === id) b.win.webContents.send('browser-focus-url') }, 60)
     return tab
   }
 
@@ -1786,12 +1828,11 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     })
   }
 
-  function buildTray() {
-    const img = nativeImage.createFromPath(path.join(__dirname, '..', 'assets', 'tray.png'))
-    S.tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img)
-    S.tray.setToolTip('BocomHermes')
-    S.tray.setContextMenu(Menu.buildFromTemplate([
+  function trayMenuTemplate() {
+    return [
       { label: '唤起输入框', accelerator: 'Ctrl+Shift+Space', click: toggleInput },
+      { label: S.settings.orbHidden ? '显示桌面悬浮球' : '隐藏桌面悬浮球', click: () => setOrbHidden(!S.settings.orbHidden) },
+      { type: 'separator' },
       { label: '🌐 调试工作台（Agent + 浏览器）', accelerator: 'Ctrl+Shift+B', click: () => createWorkspace() },
       { label: '📧 邮件摘要', click: () => spawnEmailCard().catch((e) => log('email card err: ' + e.message)) },
       { label: '📤 发件箱', click: openOutbox },
@@ -1802,7 +1843,16 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       { label: '打开日志', click: () => { if (S.logFile) shell.openPath(S.logFile).catch(() => {}) } },
       { type: 'separator' },
       { label: '退出', click: () => app.quit() },
-    ]))
+    ]
+  }
+  function refreshTrayMenu() {
+    if (S.tray && !S.tray.isDestroyed()) S.tray.setContextMenu(Menu.buildFromTemplate(trayMenuTemplate()))
+  }
+  function buildTray() {
+    const img = nativeImage.createFromPath(path.join(__dirname, '..', 'assets', 'tray.png'))
+    S.tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img)
+    S.tray.setToolTip('BocomHermes')
+    refreshTrayMenu()
     S.tray.on('click', toggleOrbInput)
   }
 
@@ -1868,11 +1918,14 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.on('get-settings', (e) => {
     const im = S.settings.imap || {}
     const sm = S.settings.smtp || {}
+    const ob = S.settings.ob || {}
     e.returnValue = {
+      ob: { host: ob.host || '', port: ob.port || 3306, user: ob.user || '', hasPass: !!ob.passEncrypted, database: ob.database || '' },
       theme: S.settings.theme, editorCmd: S.settings.editorCmd || '', serveBin: S.settings.serveBin || '',
       serveBinEffective: process.env.BOCOMHERMES_SERVE_BIN || S.settings.serveBin || (app.isPackaged ? 'bocomcode' : 'opencode'),
       serveBinLocked: !!process.env.BOCOMHERMES_SERVE_BIN,
       proxy: S.settings.proxy || '',
+      browserArgs: S.settings.browserArgs || '',
       project: projName(), projectDir: S.settings.projectDir || '', recentDirs: S.settings.recentDirs || [],
       backendDir: S.settings.backendDir || '',
       planMode: S.settings.planMode !== false,
@@ -1993,6 +2046,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       'BocomHermes-git':     { type: 'local', command: ['node', b + '/git-mcp.mjs'],     enabled: true },
       'BocomHermes-repro':   { type: 'local', command: ['node', b + '/repro-mcp.mjs'],   enabled: true },
       'BocomHermes-mail':    { type: 'local', command: ['node', b + '/mail-mcp.mjs'],    enabled: true },
+      'BocomHermes-db':      { type: 'local', command: ['node', b + '/db-mcp.mjs'],      enabled: true },
     }
   }
   function configCandidates() {
@@ -2070,6 +2124,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
         .then(() => log('proxy updated: ' + (rules || '(direct)')))
         .catch((e) => log('setProxy err: ' + e.message))
     }
+    if (patch && typeof patch.browserArgs === 'string') S.settings.browserArgs = patch.browserArgs.trim()
     if (patch && typeof patch.planMode === 'boolean') S.settings.planMode = patch.planMode
     if (patch && patch.outboxHoldSeconds !== undefined) S.settings.outboxHoldSeconds = Math.max(0, Math.min(parseInt(patch.outboxHoldSeconds) || 0, 3600))
     if (patch && patch.imap) {
@@ -2098,10 +2153,28 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       if (sm.from       !== undefined) S.settings.smtp.from           = String(sm.from).trim()
     }
     if (patch && patch.imapIdleEnabled !== undefined) S.settings.imapIdleEnabled = !!patch.imapIdleEnabled
+    if (patch && patch.ob) {
+      S.settings.ob = S.settings.ob || {}
+      const o = patch.ob
+      if (o.host     !== undefined) S.settings.ob.host         = String(o.host).trim()
+      if (o.port     !== undefined) S.settings.ob.port         = parseInt(o.port) || 3306
+      if (o.user     !== undefined) S.settings.ob.user         = String(o.user).trim()   // user@租户#集群
+      if (o.database !== undefined) S.settings.ob.database     = String(o.database).trim()
+      if (o.pass && o.pass.trim())  S.settings.ob.passEncrypted = email.encryptPass(o.pass.trim())
+      try { db.closePool() } catch {}   // 配置变了,丢弃旧连接池
+    }
     saveSettings()
     // IMAP 配置/IDLE 开关变化 → 重启监听
     if (patch && (patch.imap || patch.imapIdleEnabled !== undefined)) { try { startIdleWatcher() } catch (e) { log('idle restart err: ' + e.message) } }
     return true
+  })
+
+  // OceanBase 测试连接:SELECT 1 + 库名 + 表数
+  ipcMain.handle('db-test', async () => {
+    const cfg = effectiveOb()
+    if (!cfg) return { ok: false, error: 'OceanBase 未配置(填 host/端口/user@租户#集群/密码/库)' }
+    try { const r = await db.ping(cfg); return { ok: true, database: r.database, tableCount: r.tableCount } }
+    catch (e) { return { ok: false, error: e.message } }
   })
 
   // SMTP 测试:给自己发一封空邮件,失败把错误返回前端展示

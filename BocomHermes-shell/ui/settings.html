@@ -80,6 +80,16 @@
       </div>
 
       <div class="fld">
+        <span class="lbl">内嵌浏览器启动参数</span>
+        <input id="browserArgs" class="in" placeholder="--disable-web-security --ignore-certificate-errors" spellcheck="false" />
+        <div class="row">
+          <button class="chip" id="chipNoCors">禁用跨域(--disable-web-security)</button>
+          <button class="chip" id="chipIgnoreCert">忽略证书错误</button>
+        </div>
+        <span class="hint">透传给 Chromium 的启动开关。含 <code>--disable-web-security</code> 时，<b>新开的标签页</b>立刻关掉同源策略（解决本地项目请求服务端跨域），<b>无需重启</b>；其余开关重启后生效。<br>注：<code>--user-data-dir</code> 在 Electron 会搬走整个应用数据目录、导致设置丢失，已自动忽略——关跨域用上面的开关即可，不需要它。</span>
+      </div>
+
+      <div class="fld">
         <span class="lbl">修复流程</span>
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px;color:var(--txt)">
           <input type="checkbox" id="planMode" style="width:14px;height:14px" />
@@ -150,7 +160,23 @@
       </div>
 
       <div class="fld">
-        <span class="lbl">🔌 注册 MCP 到 bocomcode / opencode <span class="hint" style="font-weight:400">(让 agent 看到邮件/浏览器/抓包/git/复现 5 类工具)</span></span>
+        <span class="lbl">🗄️ OceanBase 数据库 <span class="hint" style="font-weight:400">(只读 · 给 agent 查表结构/字段/采样 —— DB 是真相,胜过过时字典)</span></span>
+        <div class="row">
+          <input id="obHost" class="in" style="flex:3" placeholder="OBProxy 主机 IP / 域名" spellcheck="false" />
+          <input id="obPort" class="in" style="width:64px;flex:none" placeholder="3306" spellcheck="false" />
+        </div>
+        <input id="obUser" class="in" placeholder="用户名@租户#集群  (如 root@sys#obcluster)" spellcheck="false" autocomplete="off" />
+        <input id="obPass" class="in" type="password" placeholder="密码 (留空=不修改 · 加密存储)" autocomplete="off" />
+        <input id="obDatabase" class="in" placeholder="库名 (database / schema)" spellcheck="false" />
+        <div class="row">
+          <button id="testDb" class="chip">测试连接</button>
+          <span id="dbMsg" class="hint" style="color:var(--green)"></span>
+        </div>
+        <span class="hint">只读铁律:agent 只能 SELECT/SHOW/DESCRIBE,任何写操作被拦。连的是<b>测试库</b>,允许行采样辅助理解字段。密码用系统密钥库加密存本机。</span>
+      </div>
+
+      <div class="fld">
+        <span class="lbl">🔌 注册 MCP 到 bocomcode / opencode <span class="hint" style="font-weight:400">(让 agent 看到邮件/数据库/浏览器/抓包/git/复现 6 类工具)</span></span>
         <div id="mcpCandList" style="display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:var(--txt2);font-family:monospace"></div>
         <div class="row" style="margin-top:6px">
           <button id="mcpRegisterAuto" class="chip">🔌 自动注册(选已有/或建默认)</button>
@@ -213,6 +239,17 @@
 
   // 代理
   const proxy = $('proxy'); proxy.value = cur.proxy || ''
+
+  // 内嵌浏览器启动参数
+  const browserArgs = $('browserArgs'); browserArgs.value = cur.browserArgs || ''
+  function addArg(flag) {
+    const has = browserArgs.value.split(/\s+/).some((t) => t.replace(/^--?/, '').toLowerCase() === flag.replace(/^--?/, '').toLowerCase())
+    if (!has) browserArgs.value = (browserArgs.value.trim() + ' ' + flag).trim()
+    browserArgs.focus()
+  }
+  $('chipNoCors').addEventListener('click', () => addArg('--disable-web-security'))
+  $('chipIgnoreCert').addEventListener('click', () => addArg('--ignore-certificate-errors'))
+
   const planMode = $('planMode'); planMode.checked = cur.planMode !== false   // 默认 ON
 
   // 当前项目 + 最近仓库
@@ -298,6 +335,13 @@
   // 同 IMAP 时灰化 user/pass
   function syncSameAsImap() { const on = $('smtpSameAsImap').checked; ['smtpUser', 'smtpPass'].forEach((k) => { $(k).disabled = on; $(k).style.opacity = on ? .55 : 1 }) }
   syncSameAsImap(); $('smtpSameAsImap').addEventListener('change', syncSameAsImap)
+  // OceanBase 字段载入
+  const ob = cur.ob || {}
+  $('obHost').value = ob.host || ''
+  $('obPort').value = ob.port || 3306
+  $('obUser').value = ob.user || ''
+  $('obPass').placeholder = ob.hasPass ? '密码已保存（留空=不修改）' : '密码（加密存储）'
+  $('obDatabase').value = ob.database || ''
   // ── MCP 一键注册 ──────────────────────────────────────────────────────
   const mcpMsg = $('mcpMsg'); const mcpCandList = $('mcpCandList')
   async function refreshMcpStatus() {
@@ -338,6 +382,18 @@
   $('mcpRefreshStatus').addEventListener('click', refreshMcpStatus)
   refreshMcpStatus()
 
+  // 测试 OceanBase 连接
+  $('testDb').addEventListener('click', async () => {
+    const dbMsg = $('dbMsg')
+    dbMsg.style.color = 'var(--txt3)'; dbMsg.textContent = '连接中…'
+    await save(true)
+    try {
+      const r = await window.BocomHermes.dbTest()
+      if (r && r.ok) { dbMsg.style.color = 'var(--green)'; dbMsg.textContent = '✓ 连上了 · 库 ' + (r.database || '?') + (r.tableCount != null ? ' · ' + r.tableCount + ' 张表' : '') }
+      else { dbMsg.style.color = 'var(--diff-del)'; dbMsg.textContent = '✗ ' + ((r && r.error) || '连接失败') }
+    } catch (e) { dbMsg.style.color = 'var(--diff-del)'; dbMsg.textContent = '✗ ' + (e.message || '连接失败') }
+  })
+
   // 测试 SMTP(给自己发一封)
   $('testSmtp').addEventListener('click', async () => {
     const smtpMsg = $('smtpMsg')
@@ -353,7 +409,7 @@
   // 保存
   const msg = $('msg')
   async function save(silent) {
-    const patch = { editorCmd: editorCmd.value, proxy: proxy.value, planMode: !!planMode.checked }
+    const patch = { editorCmd: editorCmd.value, proxy: proxy.value, browserArgs: browserArgs.value, planMode: !!planMode.checked }
     if (!cur.serveBinLocked) patch.serveBin = serveBin.value
     patch.imap = {
       host: $('imapHost').value.trim(),
@@ -375,6 +431,13 @@
       user: $('smtpUser').value.trim(),
       pass: $('smtpPass').value,
       from: $('smtpFrom').value.trim(),
+    }
+    patch.ob = {
+      host: $('obHost').value.trim(),
+      port: $('obPort').value.trim(),
+      user: $('obUser').value.trim(),
+      pass: $('obPass').value,
+      database: $('obDatabase').value.trim(),
     }
     { const v = $('outboxHold').value.trim(); if (v !== '') patch.outboxHoldSeconds = parseInt(v) || 0 }
     patch.imapIdleEnabled = $('imapIdle').checked

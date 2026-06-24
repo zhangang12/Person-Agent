@@ -29,6 +29,8 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   // MCP 注册到 opencode/bocomcode 的 opencode.json
   mcpRegisterStatus: () => ipcRenderer.invoke('mcp-register-status'),
   mcpRegister: (targetPath) => ipcRenderer.invoke('mcp-register', targetPath || null),
+  // OceanBase 测试连接
+  dbTest: () => ipcRenderer.invoke('db-test'),
   // 卡坞 / 会话历史
   openDock: () => ipcRenderer.invoke('open-dock'),
   getHistory: () => ipcRenderer.sendSync('get-history'),
@@ -45,6 +47,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   onCardInject: (cb) => ipcRenderer.on('card-inject', (_e, p) => cb(p)),
   onCardNote: (cb) => ipcRenderer.on('card-note', (_e, p) => cb(p)),
   cardSend: (text) => ipcRenderer.invoke('card-send', text),
+  cardReinit: () => ipcRenderer.invoke('card-reinit'),
   cardAbort: () => ipcRenderer.send('card-abort'),
   onStream: (cb) => ipcRenderer.on('card-stream', (_e, p) => cb(p)),
   openLoc: (file, line) => ipcRenderer.invoke('open-loc', { file, line }),
