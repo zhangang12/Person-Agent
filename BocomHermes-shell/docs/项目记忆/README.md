@@ -13,4 +13,4 @@
 - `project_intranet_mode.md` — 内网部署模式:连接内网 opencode serve,非本地 spawn
 - `project_embedded_browser.md` — 内嵌浏览器相关背景
 - `project_personal_agent_focus.md` — 产品定位:个人桌面智能体,功能优先级按个人场景排
-- `project_sdlc_roadmap.md` — 研发流程功能路线图(见 `docs/研发功能路线图.md`),待逐个详聊
+- `project_sdlc_roadmap.md` — 当前做"需求分析自动化"(多Agent 对抗式,详见 `docs/需求分析自动化-多Agent对抗方案.md`);弃用信贷大方案,只锚代码+DB
