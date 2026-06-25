@@ -126,7 +126,7 @@ async function detectPerm(base) {
 async function ensureServe(dir, handlers, log = console.log, opts = {}) {
   const { tryShare = true, scanStart = 4096, scanEnd = 4110 } = opts
   const key = dir || '__home__'
-  startKeepAlive(scanStart, scanEnd, log)   // 保活:周期 GET /global/health 刷所有 serve 端口(纯保活,不判死不重启)
+  startKeepAlive(log)   // 保活:周期 GET /global/health 只刷本会话在用的 serve(纯保活,不判死不重启)
   const existing = pool.get(key)
   if (existing) {
     let alive = true
@@ -359,24 +359,25 @@ let keepAliveTimer = null, keepAliveListener = null
 const KEEPALIVE_MS = 120000        // 2 分钟刷一次(你要的 2-3 分钟区间,取保守的下限更稳)
 // 注册保活结果监听:每拍刷完回调一次 results={port:healthy},供 UI 更新各会话窗的探活状态灯
 function onKeepAlive(fn) { keepAliveListener = fn }
-function startKeepAlive(startPort = 4096, endPort = 4110, log = console.log) {
+function startKeepAlive(log = console.log) {
   if (keepAliveTimer) return
-  const ports = []; for (let p = startPort; p <= endPort; p++) ports.push(p)
   const tick = async () => {
+    // 只保活"本会话实际在用的 serve"(baseToEntry 里登记的:自启的 + 复用的外部),不盲刷整段端口
+    const infos = [...new Set(baseToEntry.values())]
+    if (!infos.length) return
     const results = {}
-    await Promise.all(ports.map(async (p) => {
-      const base = `http://127.0.0.1:${p}`
-      const healthy = await pingHealth(base)
-      results[p] = healthy
-      const info = baseToEntry.get(base)   // 命中池里的 serve → 把探活结果挂到它的 info(各卡读 si.serve.healthy)
-      if (info) { info.healthy = healthy; info.healthyAt = Date.now() }
+    await Promise.all(infos.map(async (info) => {
+      if (!info || !info.base) return
+      const healthy = await pingHealth(info.base)
+      info.healthy = healthy; info.healthyAt = Date.now()
+      results[info.port] = healthy
     }))
     if (keepAliveListener) { try { keepAliveListener(results) } catch {} }
   }
   tick()                           // 立即先刷一次,不等第一个间隔
   keepAliveTimer = setInterval(() => { tick().catch(() => {}) }, KEEPALIVE_MS)
   if (keepAliveTimer.unref) keepAliveTimer.unref()   // 不阻止进程退出
-  log(`keepalive: GET /global/health 每 ${KEEPALIVE_MS / 1000}s 刷端口 ${startPort}-${endPort}(纯保活)`)
+  log(`keepalive: GET /global/health 每 ${KEEPALIVE_MS / 1000}s 保活本会话在用的 serve(只刷在用端口)`)
 }
 function stopKeepAlive() { if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null } }
 
