@@ -7,7 +7,33 @@
 <script>(function(){try{var p=new URLSearchParams(location.search),d=document.documentElement.style;['gox','goy','gfx','gfy'].forEach(function(k){var v=p.get(k);if(v)d.setProperty('--'+k,v)})}catch(e){}})()</script>
 <link rel="stylesheet" href="glass.css" />
 <style>
-  .card { display: flex; flex-direction: column; height: 100%; padding: 11px 13px 12px; gap: 9px; }
+  .card { display: flex; flex-direction: column; height: 100%; padding: 11px 13px 12px; gap: 9px; position: relative; }
+  /* 探活日志抽屉 */
+  .probedraw { position: absolute; top: 0; right: 0; bottom: 0; width: 320px; max-width: 80%; z-index: 40;
+    background: var(--bg, #12131a); border-left: 1px solid var(--line, rgba(255,255,255,.1));
+    box-shadow: -10px 0 30px rgba(0,0,0,.45); display: flex; flex-direction: column;
+    animation: pdslide .18s ease-out; }
+  .probedraw[hidden] { display: none; }
+  @keyframes pdslide { from { transform: translateX(100%) } to { transform: translateX(0) } }
+  .pd-hd { display: flex; align-items: center; gap: 7px; padding: 10px 12px; flex: none; border-bottom: 1px solid var(--line, rgba(255,255,255,.08)); flex-wrap: wrap; }
+  .pd-title { font-size: 12.5px; font-weight: 700; color: var(--txt); }
+  .pd-sub { font-size: 10px; color: var(--txt3); font-family: var(--mono); }
+  .pd-now { margin-left: auto; font-size: 10.5px; color: var(--accent); background: var(--accent-dim, rgba(74,168,255,.12)); border: .5px solid rgba(74,168,255,.3); border-radius: 6px; padding: 3px 8px; cursor: pointer; }
+  .pd-now:hover { background: rgba(74,168,255,.22); }
+  .pd-x { font-size: 13px; color: var(--txt2); background: transparent; border: none; cursor: pointer; padding: 2px 5px; }
+  .pd-x:hover { color: var(--txt); }
+  .pd-list { flex: 1; overflow-y: auto; padding: 6px 8px; font-family: var(--mono); font-size: 11px; line-height: 1.5; }
+  .pd-empty { color: var(--txt3); text-align: center; padding: 24px 12px; font-size: 11.5px; }
+  .pd-row { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 8px; align-items: baseline; padding: 5px 6px; border-radius: 6px; border-left: 2px solid transparent; }
+  .pd-row + .pd-row { margin-top: 2px; }
+  .pd-row.ok { border-left-color: #2bb673; background: rgba(43,182,115,.06); }
+  .pd-row.bad { border-left-color: #e5534b; background: rgba(229,83,75,.08); }
+  .pd-t { color: var(--txt3); font-variant-numeric: tabular-nums; }
+  .pd-m { color: var(--txt2); grid-column: 2; word-break: break-all; }
+  .pd-r { grid-column: 2; font-weight: 600; }
+  .pd-row.ok .pd-r { color: #2bb673; }
+  .pd-row.bad .pd-r { color: #e5534b; }
+  .pd-ms { grid-row: 1; grid-column: 3; color: var(--txt3); }
   .hd { display: flex; align-items: center; gap: 7px; flex: none; }
   .icn { width: 16px; height: 16px; flex: none; display: inline-flex; }
   .ttl { flex: 1; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -130,7 +156,8 @@
       <span id="st" class="icn"></span>
       <span id="ttl" class="ttl">对话</span>
       <span id="proj" class="proj"></span>
-      <span id="hb" class="hb" title="引擎探活检测中…"><i class="hb-dot"></i><span class="hb-txt">探活</span></span>
+      <span id="hb" class="hb" title="引擎保活心跳检测中…"><i class="hb-dot"></i><span class="hb-txt">保活</span></span>
+      <button id="bprobe" class="hbtn nodrag" title="保活心跳日志（看 POST /heartbeat 的报文）" aria-label="保活日志"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5 7 5-14 2.5 7H21"/></svg></button>
       <button id="pin" class="hbtn nodrag" title="置顶" aria-label="置顶"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l-1.2 5.2L17 12v2H7v-2l3.2-2.8z"/><path d="M12 14v6"/></svg></button>
       <button id="max" class="hbtn nodrag" title="最大化 / 还原" aria-label="最大化"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></button>
       <button id="min" class="hbtn nodrag" title="最小化" aria-label="最小化"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
@@ -141,6 +168,17 @@
     <div class="composer nodrag">
       <textarea id="ci" rows="1" placeholder="继续对话…（Enter 发送，Shift+Enter 换行）"></textarea>
       <button id="send" class="send" aria-label="发送"></button>
+    </div>
+
+    <!-- 探活日志抽屉:右侧滑出,显示 GET /global/health 的报文 -->
+    <div id="probedraw" class="probedraw nodrag" hidden>
+      <div class="pd-hd">
+        <span class="pd-title">📡 保活心跳日志</span>
+        <span class="pd-sub">每 2 分钟 POST /heartbeat</span>
+        <button id="pd-now" class="pd-now" title="当场发一次心跳">⟳ 立即保活</button>
+        <button id="pd-x" class="pd-x" aria-label="关闭">✕</button>
+      </div>
+      <div id="pd-list" class="pd-list"></div>
     </div>
   </div>
 </div>
@@ -155,9 +193,47 @@
     window.BocomHermes.onServeHealth && window.BocomHermes.onServeHealth((p) => {
       const ok = p && p.healthy
       hb.classList.toggle('ok', !!ok); hb.classList.toggle('bad', !ok)
-      if (txt) txt.textContent = ok ? '探活正常' : '探活失败'
+      if (txt) txt.textContent = ok ? '保活正常' : '保活失败'
       const when = p && p.at ? new Date(p.at).toLocaleTimeString('zh-CN') : ''
-      hb.title = (ok ? '引擎探活正常' : '引擎探活失败') + (p && p.port ? '（serve :' + p.port + '）' : '') + (when ? '\n最近检测 ' + when : '')
+      hb.title = (ok ? '引擎保活正常' : '引擎保活失败') + (p && p.port ? '（serve :' + p.port + '）' : '') + (when ? '\n最近心跳 ' + when : '')
+    })
+  })()
+
+  // 探活日志抽屉:看每次 GET /global/health 的报文
+  ;(function () {
+    const draw = document.getElementById('probedraw'), btn = document.getElementById('bprobe')
+    const list = document.getElementById('pd-list'), pdx = document.getElementById('pd-x'), pdnow = document.getElementById('pd-now')
+    if (!draw || !btn) return
+    const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const fmt = (p) => {
+      const t = p.at ? new Date(p.at).toLocaleTimeString('zh-CN') : ''
+      const ok = !!p.healthy
+      const res = ok ? '✓ success' : ('✗ ' + (p.status ? 'HTTP ' + p.status + ' ' : '') + esc(p.body || ''))
+      return '<div class="pd-row ' + (ok ? 'ok' : 'bad') + '">'
+        + '<span class="pd-t">' + t + '</span>'
+        + '<span class="pd-m">POST 127.0.0.1:' + (p.port || '?') + '/heartbeat</span>'
+        + '<span class="pd-r">' + res + '</span>'
+        + '<span class="pd-ms">' + (p.ms != null ? p.ms + 'ms' : '') + '</span>'
+        + '</div>'
+    }
+    let history = []
+    const render = () => { list.innerHTML = history.length ? history.slice().reverse().map(fmt).join('') : '<div class="pd-empty">还没有保活记录<br>(每 2 分钟一条，或点「立即保活」)</div>' }
+    async function open() {
+      draw.hidden = false; btn.classList.add('on')
+      try { history = await window.BocomHermes.getProbeLog() || [] } catch { history = [] }
+      render()
+    }
+    function close() { draw.hidden = true; btn.classList.remove('on') }
+    btn.addEventListener('click', () => draw.hidden ? open() : close())
+    pdx && pdx.addEventListener('click', close)
+    pdnow && pdnow.addEventListener('click', async () => {
+      pdnow.disabled = true; const o = pdnow.textContent; pdnow.textContent = '保活中…'
+      try { const e = await window.BocomHermes.probeNow(); if (e) { history.push(e); if (history.length > 50) history.shift(); render() } }
+      catch {} finally { pdnow.disabled = false; pdnow.textContent = o }
+    })
+    window.BocomHermes.onServeProbe && window.BocomHermes.onServeProbe((p) => {
+      history.push(p); if (history.length > 50) history.shift()
+      if (!draw.hidden) render()
     })
   })()
 

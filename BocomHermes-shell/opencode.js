@@ -337,24 +337,31 @@ async function restartServe(info, handlers, log) {
 // ── 保活心跳 ────────────────────────────────────────────────────────────────
 // 周期性 GET /global/health 刷所有 serve 端口(4096-4110),把 idle 计时按住,serve 不空闲自杀。
 // 纯保活:只发请求(带超时,不卡循环),返回与否都不管;不判死、不重启、不自启 —— 那些交给 ensureServe 用时处理。
-// 健康探测:GET /global/health,读返回体判 {"healthy":true}。带超时,不卡保活循环。
-function pingHealth(base, ms = 4000) {
+// 保活心跳:POST /heartbeat(无请求体),返回 true 或 {"success":true} 即成功。返回报文细节供日志展示。
+function sendHeartbeat(base, ms = 4000) {
+  const t0 = Date.now()
   return new Promise((resolve) => {
-    let done = false; const fin = (v) => { if (!done) { done = true; resolve(v) } }
-    let u; try { u = new URL(base + '/global/health') } catch { return fin(false) }
-    const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname, method: 'GET', timeout: ms }, (res) => {
+    let done = false; const fin = (o) => { if (!done) { done = true; resolve(o) } }
+    let u; try { u = new URL(base + '/heartbeat') } catch { return fin({ healthy: false, status: 0, body: '(无效地址)', ms: 0 }) }
+    const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname, method: 'POST', timeout: ms, headers: { 'content-length': 0 } }, (res) => {
       let txt = ''; res.setEncoding('utf8')
       res.on('data', (c) => { txt += c })
       res.on('end', () => {
-        try { const j = JSON.parse(txt); fin(j && j.healthy === true) }   // 严格按 {"healthy":true}
-        catch { fin(res.statusCode >= 200 && res.statusCode < 300) }       // 非 JSON 但 2xx 也算通(兼容)
+        const s = (txt || '').trim()
+        let ok = false
+        try { const j = JSON.parse(s); ok = j === true || (j && j.success === true) }   // true / {"success":true}
+        catch { ok = s === 'true' }
+        if (!ok && !s && res.statusCode >= 200 && res.statusCode < 300) ok = true        // 2xx 空 body 兜底算成功
+        fin({ healthy: ok, status: res.statusCode || 0, body: s.slice(0, 200), ms: Date.now() - t0 })
       })
     })
-    req.on('timeout', () => { try { req.destroy() } catch {} ; fin(false) })
-    req.on('error', () => fin(false))
-    req.end()
+    req.on('timeout', () => { try { req.destroy() } catch {} ; fin({ healthy: false, status: 0, body: '(超时 ' + ms + 'ms)', ms: Date.now() - t0 }) })
+    req.on('error', (e) => fin({ healthy: false, status: 0, body: '(' + (e.code || e.message) + ')', ms: Date.now() - t0 }))
+    req.end()   // POST 无请求体
   })
 }
+// 单次保活(给"立即保活"按钮用)
+async function probeOnce(base) { return sendHeartbeat(base) }
 let keepAliveTimer = null, keepAliveListener = null
 const KEEPALIVE_MS = 120000        // 2 分钟刷一次(你要的 2-3 分钟区间,取保守的下限更稳)
 // 注册保活结果监听:每拍刷完回调一次 results={port:healthy},供 UI 更新各会话窗的探活状态灯
@@ -365,19 +372,22 @@ function startKeepAlive(log = console.log) {
     // 只保活"本会话实际在用的 serve"(baseToEntry 里登记的:自启的 + 复用的外部),不盲刷整段端口
     const infos = [...new Set(baseToEntry.values())]
     if (!infos.length) return
-    const results = {}
+    const results = {}, probes = []
     await Promise.all(infos.map(async (info) => {
       if (!info || !info.base) return
-      const healthy = await pingHealth(info.base)
-      info.healthy = healthy; info.healthyAt = Date.now()
-      results[info.port] = healthy
+      const r = await sendHeartbeat(info.base)
+      info.healthy = r.healthy; info.healthyAt = Date.now()
+      results[info.port] = r.healthy
+      const entry = { base: info.base, port: info.port, healthy: r.healthy, status: r.status, body: r.body, ms: r.ms, at: info.healthyAt }
+      probes.push(entry)
+      info.probeLog = info.probeLog || []; info.probeLog.push(entry); if (info.probeLog.length > 50) info.probeLog.shift()
     }))
-    if (keepAliveListener) { try { keepAliveListener(results) } catch {} }
+    if (keepAliveListener) { try { keepAliveListener(results, probes) } catch {} }
   }
-  tick()                           // 立即先刷一次,不等第一个间隔
+  setTimeout(() => tick().catch(() => {}), 2000)   // 2s 后先探一次(等 serve 注册进 baseToEntry,日志立刻有数据)
   keepAliveTimer = setInterval(() => { tick().catch(() => {}) }, KEEPALIVE_MS)
   if (keepAliveTimer.unref) keepAliveTimer.unref()   // 不阻止进程退出
-  log(`keepalive: GET /global/health 每 ${KEEPALIVE_MS / 1000}s 保活本会话在用的 serve(只刷在用端口)`)
+  log(`keepalive: POST /heartbeat 每 ${KEEPALIVE_MS / 1000}s 保活本会话在用的 serve(只刷在用端口)`)
 }
 function stopKeepAlive() { if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null } }
 
@@ -401,4 +411,4 @@ function killAll() {
   pool.clear(); baseToEntry.clear()
 }
 
-module.exports = { ensureServe, createSession, sendMessage, abort, replyPermission, sessionExists, getMessages, killAll, setServeBin, onKeepAlive, AUTO_ALLOW }
+module.exports = { ensureServe, createSession, sendMessage, abort, replyPermission, sessionExists, getMessages, killAll, setServeBin, onKeepAlive, probeOnce, AUTO_ALLOW }

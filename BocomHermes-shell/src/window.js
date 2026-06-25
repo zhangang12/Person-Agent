@@ -303,9 +303,31 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     try { wc.send('serve-health', { healthy: serve.healthy !== false, port: serve.port || null, at: serve.healthyAt || Date.now() }) } catch {}
   }
   S.pushServeHealth = pushServeHealth   // 供 session.js 建会话时立即推一次
-  oc.onKeepAlive(() => {
+  oc.onKeepAlive((results, probes) => {
     if (!S.sessionInfo) return
-    for (const si of S.sessionInfo.values()) if (si && si.wc && si.serve) pushServeHealth(si.wc, si.serve)
+    for (const si of S.sessionInfo.values()) {
+      if (!si || !si.wc || si.wc.isDestroyed() || !si.serve) continue
+      pushServeHealth(si.wc, si.serve)
+      const probe = (probes || []).find((p) => p.port === si.serve.port)   // 推本卡 serve 的探活报文给日志面板
+      if (probe) { try { si.wc.send('serve-probe', probe) } catch {} }
+    }
+  })
+  // 探活日志:取本卡 serve 的历史(开面板时拉)
+  ipcMain.handle('get-probe-log', (e) => {
+    const sid = S.sessionByWc.get(e.sender.id); if (!sid) return []
+    const si = S.sessionInfo.get(sid)
+    return (si && si.serve && si.serve.probeLog) ? si.serve.probeLog : []
+  })
+  // 立即探活:当场 GET 一次 /global/health,记进日志并回传
+  ipcMain.handle('probe-now', async (e) => {
+    const sid = S.sessionByWc.get(e.sender.id); if (!sid) return null
+    const si = S.sessionInfo.get(sid); if (!si || !si.serve || !si.serve.base) return null
+    const r = await oc.probeOnce(si.serve.base)
+    const entry = { base: si.serve.base, port: si.serve.port, healthy: r.healthy, status: r.status, body: r.body, ms: r.ms, at: Date.now() }
+    si.serve.healthy = r.healthy; si.serve.healthyAt = entry.at
+    si.serve.probeLog = si.serve.probeLog || []; si.serve.probeLog.push(entry); if (si.serve.probeLog.length > 50) si.serve.probeLog.shift()
+    pushServeHealth(si.wc, si.serve)
+    return entry
   })
   setTimeout(() => { try { startIdleWatcher() } catch (e) { log('idle start err: ' + e.message) } }, 3000)   // 稍延后启动 IDLE,避开启动繁忙期
   // 启动时清理 30 天前的附件目录(异步执行不阻塞主流程)
