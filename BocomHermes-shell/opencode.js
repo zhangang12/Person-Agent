@@ -126,6 +126,7 @@ async function detectPerm(base) {
 async function ensureServe(dir, handlers, log = console.log, opts = {}) {
   const { tryShare = true, scanStart = 4096, scanEnd = 4110 } = opts
   const key = dir || '__home__'
+  startKeepAlive(scanStart, scanEnd, log)   // 保活:周期 GET /global/health 刷所有 serve 端口(纯保活,不判死不重启)
   const existing = pool.get(key)
   if (existing) {
     let alive = true
@@ -330,6 +331,31 @@ async function restartServe(info, handlers, log) {
   log(`serve: back on :${port} (permission: ${info.permStyle})`)
 }
 
+// ── 保活心跳 ────────────────────────────────────────────────────────────────
+// 周期性 GET /global/health 刷所有 serve 端口(4096-4110),把 idle 计时按住,serve 不空闲自杀。
+// 纯保活:只发请求(带超时,不卡循环),返回与否都不管;不判死、不重启、不自启 —— 那些交给 ensureServe 用时处理。
+function pingHealth(base, ms = 4000) {
+  return new Promise((resolve) => {
+    let done = false; const fin = (v) => { if (!done) { done = true; resolve(v) } }
+    let u; try { u = new URL(base + '/global/health') } catch { return fin(false) }
+    const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname, method: 'GET', timeout: ms }, (res) => { res.resume(); fin(true) })
+    req.on('timeout', () => { try { req.destroy() } catch {} ; fin(false) })
+    req.on('error', () => fin(false))
+    req.end()
+  })
+}
+let keepAliveTimer = null
+const KEEPALIVE_MS = 120000        // 2 分钟刷一次(你要的 2-3 分钟区间,取保守的下限更稳)
+function startKeepAlive(startPort = 4096, endPort = 4110, log = console.log) {
+  if (keepAliveTimer) return
+  const tick = () => { for (let p = startPort; p <= endPort; p++) pingHealth(`http://127.0.0.1:${p}`).catch(() => {}) }
+  tick()                           // 立即先刷一次,不等第一个间隔
+  keepAliveTimer = setInterval(tick, KEEPALIVE_MS)
+  if (keepAliveTimer.unref) keepAliveTimer.unref()   // 不阻止进程退出
+  log(`keepalive: GET /global/health 每 ${KEEPALIVE_MS / 1000}s 刷端口 ${startPort}-${endPort}(纯保活)`)
+}
+function stopKeepAlive() { if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null } }
+
 // 杀掉一个 serve：Windows 经 cmd.exe 起的是孙进程，必须按进程树杀，否则端口被旧 serve 占住
 function killProc(proc) {
   if (!proc || !proc.pid) return
@@ -339,6 +365,7 @@ function killProc(proc) {
   } catch {}
 }
 function killAll() {
+  stopKeepAlive()
   // 只杀我们自己 spawn 的 serve;复用的外部 serve(proc=null/external:true)留给它的主人
   const killed = new Set()
   for (const info of pool.values()) {
