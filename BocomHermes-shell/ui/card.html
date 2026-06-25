@@ -14,6 +14,12 @@
   .proj { font-size: 10.5px; font-family: var(--mono); color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 999px; padding: 2px 8px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; transition: color .12s, border-color .12s, background .12s; }
   .proj:hover { color: var(--txt); border-color: var(--accent); }
   .proj.empty { color: var(--accent); border-color: var(--accent); background: rgba(74,168,255,.08); }
+  .hb { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-family: var(--mono); color: var(--txt2); padding: 1px 6px 1px 5px; border-radius: 999px; border: .5px solid var(--composer-border); background: var(--composer-bg); user-select: none; cursor: default; }
+  .hb .hb-dot { width: 7px; height: 7px; border-radius: 50%; background: #9aa0a6; box-shadow: 0 0 0 0 rgba(0,0,0,0); transition: background .2s, box-shadow .2s; }
+  .hb.ok  .hb-dot { background: #2bb673; box-shadow: 0 0 6px rgba(43,182,115,.7); }
+  .hb.bad .hb-dot { background: #e5534b; box-shadow: 0 0 6px rgba(229,83,75,.7); }
+  .hb.ok  { color: #2bb673; border-color: rgba(43,182,115,.35); }
+  .hb.bad { color: #e5534b; border-color: rgba(229,83,75,.4); }
   .hbtn { border: none; background: transparent; color: var(--txt3); cursor: pointer; padding: 3px; border-radius: 6px; display: flex; align-items: center; }
   .hbtn:hover { color: var(--txt); background: var(--composer-bg); }
   .hbtn.on { color: var(--accent); }
@@ -124,6 +130,7 @@
       <span id="st" class="icn"></span>
       <span id="ttl" class="ttl">对话</span>
       <span id="proj" class="proj"></span>
+      <span id="hb" class="hb" title="引擎探活检测中…"><i class="hb-dot"></i><span class="hb-txt">探活</span></span>
       <button id="pin" class="hbtn nodrag" title="置顶" aria-label="置顶"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l-1.2 5.2L17 12v2H7v-2l3.2-2.8z"/><path d="M12 14v6"/></svg></button>
       <button id="max" class="hbtn nodrag" title="最大化 / 还原" aria-label="最大化"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></button>
       <button id="min" class="hbtn nodrag" title="最小化" aria-label="最小化"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
@@ -140,6 +147,19 @@
 <script src="rich.js"></script>
 <script>
   window.BocomHermes.onTheme((t) => { document.documentElement.dataset.theme = t })
+
+  // 引擎探活状态灯：保活心跳每 2 分钟刷一次 /global/health，结果(healthy)推过来更新本卡的灯
+  ;(function () {
+    const hb = document.getElementById('hb'); if (!hb) return
+    const dot = hb.querySelector('.hb-dot'), txt = hb.querySelector('.hb-txt')
+    window.BocomHermes.onServeHealth && window.BocomHermes.onServeHealth((p) => {
+      const ok = p && p.healthy
+      hb.classList.toggle('ok', !!ok); hb.classList.toggle('bad', !ok)
+      if (txt) txt.textContent = ok ? '探活正常' : '探活失败'
+      const when = p && p.at ? new Date(p.at).toLocaleTimeString('zh-CN') : ''
+      hb.title = (ok ? '引擎探活正常' : '引擎探活失败') + (p && p.port ? '（serve :' + p.port + '）' : '') + (when ? '\n最近检测 ' + when : '')
+    })
+  })()
 
   // Markdown 渲染 + 富结果块识别已抽到 ui/rich.js（window.Rich）。
   const renderMarkdown = (md) => window.Rich.renderMarkdown(md)

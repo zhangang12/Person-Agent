@@ -147,6 +147,7 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
       if (await oc.sessionExists(serve, sid)) {   // 会话还在 → 重连 + 回放（已有历史，不注入上下文）
         S.sessionByWc.set(e.sender.id, sid)
         S.sessionInfo.set(sid, { wc: e.sender, serve })
+        S.pushServeHealth && S.pushServeHealth(e.sender, serve)
         touchHistory(sid)
         let messages = []; try { messages = await oc.getMessages(serve, sid) } catch {}
         return { sessionId: sid, project: proj, reattached: true, messages }
@@ -155,6 +156,7 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
       if (!ns) throw new Error('create session failed')
       S.sessionByWc.set(e.sender.id, ns)
       S.sessionInfo.set(ns, { wc: e.sender, serve })
+      S.pushServeHealth && S.pushServeHealth(e.sender, serve)
       const ctx1 = loadMemory() + loadProjectContext(dir); if (ctx1) S.firstMsgCtx.set(ns, ctx1)
       recordHistory(ns, wantTitle || (h && h.title), dir)
       return { sessionId: ns, project: proj, reattached: false, stale: true }
@@ -165,6 +167,7 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
     if (!sessionId) throw new Error('create session failed')
     S.sessionByWc.set(e.sender.id, sessionId)
     S.sessionInfo.set(sessionId, { wc: e.sender, serve })
+    S.pushServeHealth && S.pushServeHealth(e.sender, serve)
     const ctx0 = loadMemory() + loadProjectContext(dir); if (ctx0) S.firstMsgCtx.set(sessionId, ctx0)
     recordHistory(sessionId, wantTitle, dir)
     return { sessionId, project: S.settings.projectDir ? path.basename(S.settings.projectDir) : '未选目录', reattached: false }
@@ -186,6 +189,7 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
     if (!sessionId) throw new Error('create session failed')
     S.sessionByWc.set(e.sender.id, sessionId)
     S.sessionInfo.set(sessionId, { wc: e.sender, serve })
+    S.pushServeHealth && S.pushServeHealth(e.sender, serve)
     const ctx = loadMemory() + loadProjectContext(dir); if (ctx) S.firstMsgCtx.set(sessionId, ctx)
     recordHistory(sessionId, 'BocomHermes 对话', dir)
     log('card-reinit → [' + (dir || '(home)') + '] session ' + sessionId)

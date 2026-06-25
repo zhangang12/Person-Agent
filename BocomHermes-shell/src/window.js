@@ -297,6 +297,16 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     })
   }
   startMailRelay()
+  // 保活心跳每拍刷完 → 把各 serve 的探活状态推给绑在它上面的会话窗(状态灯)
+  function pushServeHealth(wc, serve) {
+    if (!wc || wc.isDestroyed() || !serve) return
+    try { wc.send('serve-health', { healthy: serve.healthy !== false, port: serve.port || null, at: serve.healthyAt || Date.now() }) } catch {}
+  }
+  S.pushServeHealth = pushServeHealth   // 供 session.js 建会话时立即推一次
+  oc.onKeepAlive(() => {
+    if (!S.sessionInfo) return
+    for (const si of S.sessionInfo.values()) if (si && si.wc && si.serve) pushServeHealth(si.wc, si.serve)
+  })
   setTimeout(() => { try { startIdleWatcher() } catch (e) { log('idle start err: ' + e.message) } }, 3000)   // 稍延后启动 IDLE,避开启动繁忙期
   // 启动时清理 30 天前的附件目录(异步执行不阻塞主流程)
   try { attachments.cleanupOld(app.getPath('userData'), log) } catch (e) { log('att cleanup err: ' + e.message) }

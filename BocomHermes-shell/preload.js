@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   cardReinit: () => ipcRenderer.invoke('card-reinit'),
   cardAbort: () => ipcRenderer.send('card-abort'),
   onStream: (cb) => ipcRenderer.on('card-stream', (_e, p) => cb(p)),
+  onServeHealth: (cb) => ipcRenderer.on('serve-health', (_e, p) => cb(p)),
   openLoc: (file, line) => ipcRenderer.invoke('open-loc', { file, line }),
   applyDiff: (diffText) => ipcRenderer.invoke('apply-diff', diffText),
   onPermission: (cb) => ipcRenderer.on('permission-request', (_e, p) => cb(p)),

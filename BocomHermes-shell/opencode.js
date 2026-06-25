@@ -165,6 +165,7 @@ async function ensureServe(dir, handlers, log = console.log, opts = {}) {
         info.permStyle = await detectPerm(info.base)
         log(`复用外部 serve :${ext.port} for [${dir || '(home)'}] (permission: ${info.permStyle}) — 用户手动 bocomcode serve 或上轮自启`)
         runEventLoop(info, handlers, log)
+        info.healthy = true   // 刚探通,先置健康;之后保活心跳每 2 分钟刷新
       })()
       baseToEntry.set(ext.base, info)
       pool.set(key, info)
@@ -185,6 +186,7 @@ async function ensureServe(dir, handlers, log = console.log, opts = {}) {
     info.permStyle = await detectPerm(info.base)
     log(`serve ready on :${port} (permission endpoint: ${info.permStyle})`)
     runEventLoop(info, handlers, log)
+    info.healthy = true   // 刚探通,先置健康;之后保活心跳每 2 分钟刷新
   })()
   pool.set(key, info)
   try { await info.ready; baseToEntry.set(info.base, info) }
@@ -328,29 +330,51 @@ async function restartServe(info, handlers, log) {
   await waitHealthy(info.base, getExit, log)
   info.permStyle = await detectPerm(info.base)
   baseToEntry.set(info.base, info)
+  info.healthy = true
   log(`serve: back on :${port} (permission: ${info.permStyle})`)
 }
 
 // ── 保活心跳 ────────────────────────────────────────────────────────────────
 // 周期性 GET /global/health 刷所有 serve 端口(4096-4110),把 idle 计时按住,serve 不空闲自杀。
 // 纯保活:只发请求(带超时,不卡循环),返回与否都不管;不判死、不重启、不自启 —— 那些交给 ensureServe 用时处理。
+// 健康探测:GET /global/health,读返回体判 {"healthy":true}。带超时,不卡保活循环。
 function pingHealth(base, ms = 4000) {
   return new Promise((resolve) => {
     let done = false; const fin = (v) => { if (!done) { done = true; resolve(v) } }
     let u; try { u = new URL(base + '/global/health') } catch { return fin(false) }
-    const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname, method: 'GET', timeout: ms }, (res) => { res.resume(); fin(true) })
+    const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname, method: 'GET', timeout: ms }, (res) => {
+      let txt = ''; res.setEncoding('utf8')
+      res.on('data', (c) => { txt += c })
+      res.on('end', () => {
+        try { const j = JSON.parse(txt); fin(j && j.healthy === true) }   // 严格按 {"healthy":true}
+        catch { fin(res.statusCode >= 200 && res.statusCode < 300) }       // 非 JSON 但 2xx 也算通(兼容)
+      })
+    })
     req.on('timeout', () => { try { req.destroy() } catch {} ; fin(false) })
     req.on('error', () => fin(false))
     req.end()
   })
 }
-let keepAliveTimer = null
+let keepAliveTimer = null, keepAliveListener = null
 const KEEPALIVE_MS = 120000        // 2 分钟刷一次(你要的 2-3 分钟区间,取保守的下限更稳)
+// 注册保活结果监听:每拍刷完回调一次 results={port:healthy},供 UI 更新各会话窗的探活状态灯
+function onKeepAlive(fn) { keepAliveListener = fn }
 function startKeepAlive(startPort = 4096, endPort = 4110, log = console.log) {
   if (keepAliveTimer) return
-  const tick = () => { for (let p = startPort; p <= endPort; p++) pingHealth(`http://127.0.0.1:${p}`).catch(() => {}) }
+  const ports = []; for (let p = startPort; p <= endPort; p++) ports.push(p)
+  const tick = async () => {
+    const results = {}
+    await Promise.all(ports.map(async (p) => {
+      const base = `http://127.0.0.1:${p}`
+      const healthy = await pingHealth(base)
+      results[p] = healthy
+      const info = baseToEntry.get(base)   // 命中池里的 serve → 把探活结果挂到它的 info(各卡读 si.serve.healthy)
+      if (info) { info.healthy = healthy; info.healthyAt = Date.now() }
+    }))
+    if (keepAliveListener) { try { keepAliveListener(results) } catch {} }
+  }
   tick()                           // 立即先刷一次,不等第一个间隔
-  keepAliveTimer = setInterval(tick, KEEPALIVE_MS)
+  keepAliveTimer = setInterval(() => { tick().catch(() => {}) }, KEEPALIVE_MS)
   if (keepAliveTimer.unref) keepAliveTimer.unref()   // 不阻止进程退出
   log(`keepalive: GET /global/health 每 ${KEEPALIVE_MS / 1000}s 刷端口 ${startPort}-${endPort}(纯保活)`)
 }
@@ -376,4 +400,4 @@ function killAll() {
   pool.clear(); baseToEntry.clear()
 }
 
-module.exports = { ensureServe, createSession, sendMessage, abort, replyPermission, sessionExists, getMessages, killAll, setServeBin, AUTO_ALLOW }
+module.exports = { ensureServe, createSession, sendMessage, abort, replyPermission, sessionExists, getMessages, killAll, setServeBin, onKeepAlive, AUTO_ALLOW }
