@@ -92,6 +92,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   // 内嵌浏览器
   openBrowser:          (url) => ipcRenderer.invoke('open-browser', url),
   browserNavigate:      (url) => ipcRenderer.invoke('browser-navigate', url),
+  browserMenuOverlay:   (on)  => ipcRenderer.send('browser-menu-overlay', !!on),
   browserBack:          ()    => ipcRenderer.send('browser-back'),
   browserForward:       ()    => ipcRenderer.send('browser-forward'),
   browserReload:        ()    => ipcRenderer.send('browser-reload'),

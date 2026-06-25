@@ -698,7 +698,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const tab = brActive(); if (!tab) return
     if (b._dragging) return                     // 拖动分隔条时内容视图临时分离，跳过布局
     const rx = leftW + G                         // 右侧浏览器内容区左边界
-    const rw = Math.max(0, cw - rx)
+    const menuW = b.menuOpen ? 248 : 0           // ⋯ 更多菜单打开 → 网页层从右让出一条,否则原生层会盖住 HTML 菜单
+    const rw = Math.max(0, cw - rx - menuW)
     const areaH = Math.max(0, ch - BR_TOP_H - b.consoleH)
     const d = tab.device
     if (d && d.w) {
@@ -2290,6 +2291,8 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     }
   })
   ipcMain.handle('browser-navigate', (_e, url) => { const wc = brWC(); const u = normalizeUrl(url); if (wc && u) wc.loadURL(u) })
+  // ⋯ 更多菜单开/合 → 网页层从右让出/收回一条(否则原生层盖住 HTML 菜单)
+  ipcMain.on('browser-menu-overlay', (_e, on) => { const b = S.browser; if (!b || !b.win || b.win.isDestroyed()) return; b.menuOpen = !!on; brLayout() })
   ipcMain.on('browser-back',    () => { const wc = brWC(); if (wc && wc.canGoBack()) wc.goBack() })
   ipcMain.on('browser-forward', () => { const wc = brWC(); if (wc && wc.canGoForward()) wc.goForward() })
   ipcMain.on('browser-reload',  () => { const wc = brWC(); if (wc) wc.isLoading() ? wc.stop() : wc.reload() })

@@ -684,12 +684,17 @@ url.addEventListener('focus', () => {
 })
 
 // 更多工具菜单:开/合 + 点外面/Esc 关闭
+// 关键:网页是原生 WebContentsView,会盖住 HTML 菜单 → 开菜单时通知主进程让网页层从右让出一条
 ;(function () {
   const bmore = $('bmore'), menu = $('moremenu'); if (!bmore || !menu) return
-  const close = () => { menu.hidden = true; bmore.classList.remove('on') }
-  bmore.addEventListener('click', (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; bmore.classList.toggle('on', !menu.hidden) })
+  const overlay = (on) => { try { H.browserMenuOverlay && H.browserMenuOverlay(on) } catch {} }
+  const open  = () => { menu.hidden = false; bmore.classList.add('on');  overlay(true) }
+  const close = () => { menu.hidden = true;  bmore.classList.remove('on'); overlay(false) }
+  bmore.addEventListener('click', (e) => { e.stopPropagation(); menu.hidden ? open() : close() })
   document.addEventListener('click', (e) => { if (!menu.hidden && !menu.contains(e.target) && !bmore.contains(e.target)) close() })
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !menu.hidden) close() })
+  // 点动作项(.mitem)→ 先收回菜单(网页层恢复全宽)再让动作执行;设备/缩放行(.mrow)不收,可连点
+  menu.addEventListener('click', (e) => { if (e.target.closest('.mitem')) close() })
 })()
 
 /* ── 下载提示:开始/进度/完成,完成可点"在文件夹打开" ── */
