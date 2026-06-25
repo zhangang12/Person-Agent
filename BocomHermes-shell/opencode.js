@@ -126,17 +126,22 @@ async function detectPerm(base) {
 async function ensureServe(dir, handlers, log = console.log, opts = {}) {
   const { tryShare = true, scanStart = 4096, scanEnd = 4110 } = opts
   const key = dir || '__home__'
-  ensureHeartbeat(handlers, log)   // 首次进来即启动心跳监控(死了的 serve 自动重启/重扫)
   const existing = pool.get(key)
   if (existing) {
     let alive = true
     try { await existing.ready } catch { alive = false }
-    // 外部 serve(proc=null)用 /global/health 检测;自起的看 proc.exitCode
+    // 用时探活一次(外部 serve 看 /global/health,自起的看 proc.exitCode)。不再后台周期 ping —— 那对保活无用。
     if (alive) {
       if (existing.proc && existing.proc.exitCode != null) alive = false
       else if (!existing.proc && !(await healthAt(existing.base))) alive = false
     }
     if (alive) return existing
+    // 自起的 serve 死了 → 用时按需原地重启,复用同一 info(已绑会话引用自动跟到新 base)
+    if (existing.proc && !existing.external) {
+      try { await restartServe(existing, handlers, log); return existing }
+      catch (e) { log(`serve restart failed: ${e.message}`) }
+    }
+    existing.dead = true   // 停掉它的事件循环(原由心跳设置,现在用时检测即设)
     if (pool.get(key) === existing) pool.delete(key)
     if (existing.base) baseToEntry.delete(existing.base)
     log(`serve for [${dir || '(home)'}] not alive; will rescan/restart`)
@@ -159,7 +164,6 @@ async function ensureServe(dir, handlers, log = console.log, opts = {}) {
         info.permStyle = await detectPerm(info.base)
         log(`复用外部 serve :${ext.port} for [${dir || '(home)'}] (permission: ${info.permStyle}) — 用户手动 bocomcode serve 或上轮自启`)
         runEventLoop(info, handlers, log)
-        info.live = true   // 纳入心跳监控
       })()
       baseToEntry.set(ext.base, info)
       pool.set(key, info)
@@ -180,7 +184,6 @@ async function ensureServe(dir, handlers, log = console.log, opts = {}) {
     info.permStyle = await detectPerm(info.base)
     log(`serve ready on :${port} (permission endpoint: ${info.permStyle})`)
     runEventLoop(info, handlers, log)
-    info.live = true   // 纳入心跳监控
   })()
   pool.set(key, info)
   try { await info.ready; baseToEntry.set(info.base, info) }
@@ -311,9 +314,10 @@ function wireServeProc(info, log) {
 }
 
 // 原地重启一个自起的 serve(复用同一 info 对象):换新端口、重新探活、重测权限端点。
+// 用时按需触发(ensureServe 检测到自起的 serve 已死时调用),不再后台周期轮询。
 // 事件循环一直读 info.base,换 base 后会自动重连,无需重启循环;已绑该 info 的会话引用同一对象也自动指向新 base。
 async function restartServe(info, handlers, log) {
-  log(`heartbeat: restarting serve for [${info.dir || '(home)'}] (was :${info.port})`)
+  log(`serve: restarting for [${info.dir || '(home)'}] (was :${info.port})`)
   if (info.base) baseToEntry.delete(info.base)
   killProc(info.proc)
   const port = await freePort(info.port || 4096)
@@ -323,62 +327,7 @@ async function restartServe(info, handlers, log) {
   await waitHealthy(info.base, getExit, log)
   info.permStyle = await detectPerm(info.base)
   baseToEntry.set(info.base, info)
-  info.live = true
-  log(`heartbeat: serve back on :${port} (permission: ${info.permStyle})`)
-}
-
-// 快速探活:任意 HTTP 响应都算"还在"(serve 进程在);连接被拒/超时 = 不可达。带超时,避免卡死整个心跳。
-function quickHealth(base, ms = 4000) {
-  return new Promise((resolve) => {
-    let done = false; const fin = (v) => { if (!done) { done = true; resolve(v) } }
-    let u; try { u = new URL(base + '/global/health') } catch { return fin(false) }
-    const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname, method: 'GET', timeout: ms }, (res) => { res.resume(); fin(true) })
-    req.on('timeout', () => { try { req.destroy() } catch {} ; fin(false) })
-    req.on('error', () => fin(false))
-    req.end()
-  })
-}
-
-// ── 心跳监控 ────────────────────────────────────────────────────────────────
-// 每 HEARTBEAT_MS 体检 pool 里每个 serve。连续两次不可达(或进程已退):自起的原地重启,外部的清出 pool(下次 ensureServe 重扫/自起)。
-// 解决"用一会就找不到 serve":idle 期间 serve 悄悄死掉,不必等用户下条消息报错才发现。
-let heartbeatTimer = null, hbBusy = false, HB_HANDLERS = null, HB_LOG = console.log
-const HEARTBEAT_MS = 15000
-function ensureHeartbeat(handlers, log) {
-  if (handlers) HB_HANDLERS = handlers
-  if (log) HB_LOG = log
-  if (heartbeatTimer) return
-  heartbeatTimer = setInterval(() => { heartbeatTick().catch(() => {}) }, HEARTBEAT_MS)
-  if (heartbeatTimer.unref) heartbeatTimer.unref()   // 不阻止进程退出
-  HB_LOG('heartbeat: monitor started (every ' + (HEARTBEAT_MS / 1000) + 's)')
-}
-async function heartbeatTick() {
-  if (hbBusy) return        // 上一拍还没跑完(可能在等重启探活)→ 跳过,避免叠加
-  hbBusy = true
-  try {
-    const infos = [...new Set(pool.values())]   // 多 key 共享同一 info 时只查一次
-    for (const info of infos) {
-      if (!info || !info.live || info.dead) continue   // 启动中/重启中/已退的不打扰
-      if (await quickHealth(info.base)) { info.hbFail = 0; continue }
-      info.hbFail = (info.hbFail || 0) + 1
-      HB_LOG(`heartbeat: [${info.dir || '(home)'}] :${info.port} unreachable (${info.hbFail})`)
-      const procDead = info.proc && info.proc.exitCode != null
-      if (!info.proc || info.external) {
-        // 外部 serve(别人起的):重启不了,清出 pool,下次用到会重扫端口/自起
-        if (info.hbFail >= 2) {
-          info.dead = true; info.live = false
-          for (const [k, v] of pool) if (v === info) pool.delete(k)
-          if (info.base) baseToEntry.delete(info.base)
-          HB_LOG(`heartbeat: dropped external serve :${info.port}; next use will re-scan/spawn`)
-        }
-      } else if (procDead || info.hbFail >= 3) {
-        // 自起的 serve:进程已退 → 立刻重启;进程还在但连不上 → 等 3 拍(~45s)再重启,避开重负载下的瞬时不可达
-        info.live = false
-        try { await restartServe(info, HB_HANDLERS, HB_LOG); info.hbFail = 0 }
-        catch (e) { HB_LOG(`heartbeat: restart failed: ${e.message}`) }
-      }
-    }
-  } finally { hbBusy = false }
+  log(`serve: back on :${port} (permission: ${info.permStyle})`)
 }
 
 // 杀掉一个 serve：Windows 经 cmd.exe 起的是孙进程，必须按进程树杀，否则端口被旧 serve 占住
@@ -390,7 +339,6 @@ function killProc(proc) {
   } catch {}
 }
 function killAll() {
-  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null }
   // 只杀我们自己 spawn 的 serve;复用的外部 serve(proc=null/external:true)留给它的主人
   const killed = new Set()
   for (const info of pool.values()) {
