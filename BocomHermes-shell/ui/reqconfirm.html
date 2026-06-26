@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<script>try { document.documentElement.dataset.theme = window.BocomHermes.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
+<script>(function(){try{var p=new URLSearchParams(location.search),d=document.documentElement.style;['gox','goy','gfx','gfy'].forEach(function(k){var v=p.get(k);if(v)d.setProperty('--'+k,v)})}catch(e){}})()</script>
+<link rel="stylesheet" href="glass.css" />
+<style>
+  .card { display: flex; flex-direction: column; height: 100%; padding: 0; }
+  .hd { display: flex; align-items: center; gap: 7px; flex: none; padding: 10px 13px; border-bottom: .5px solid var(--composer-border); }
+  .orb { width: 11px; height: 11px; border-radius: 50%; background: var(--brand); flex: none; }
+  .ttl { flex: 1; font-size: 13px; font-weight: 600; }
+  .hbtn { border: none; background: transparent; color: var(--txt3); cursor: pointer; padding: 3px; border-radius: 6px; display: flex; }
+  .hbtn:hover { color: var(--txt); background: var(--composer-bg); }
+  .flt { display: flex; gap: 6px; flex-wrap: wrap; padding: 9px 13px; border-bottom: .5px solid var(--composer-border); flex: none; }
+  .fp { cursor: pointer; font-size: 11.5px; padding: 3px 10px; border-radius: 999px; border: .5px solid var(--composer-border); background: transparent; color: var(--txt2); }
+  .fp.on { background: var(--composer-bg); color: var(--txt); font-weight: 600; border-color: var(--accent); }
+  .list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 12px 13px; }
+  .list::-webkit-scrollbar { width: 7px; } .list::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  .item { border: .5px solid var(--composer-border); border-radius: 10px; padding: 11px 12px; }
+  .item.done { opacity: .55; }
+  .pill { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 9px; border-radius: 999px; font-weight: 600; }
+  .pg { background: rgba(10,157,110,.14); color: var(--green); } .pa { background: var(--warn-bg); color: var(--warn-txt); }
+  .pr { background: var(--diff-del-bg); color: var(--diff-del); } .pb { background: var(--me-bg); color: var(--me-txt); }
+  .quote { display: flex; gap: 6px; background: var(--composer-bg); border-radius: 8px; padding: 6px 9px; font-size: 12px; color: var(--txt2); margin: 7px 0; line-height: 1.45; }
+  .ev { font-family: var(--mono); font-size: 11px; padding: 3px 7px; border-radius: 6px; background: var(--me-bg); color: var(--me-txt); border: none; cursor: pointer; }
+  .opt { display: flex; gap: 7px; align-items: center; padding: 3px 0; font-size: 12.5px; color: var(--txt); }
+  .acts { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; margin-top: 9px; }
+  .btn { font-size: 12px; padding: 5px 11px; border-radius: 8px; border: .5px solid var(--composer-border); background: var(--composer-bg); color: var(--txt); cursor: pointer; }
+  .btn:hover { border-color: var(--accent); }
+  .foot { display: flex; align-items: center; gap: 10px; padding: 10px 13px; border-top: .5px solid var(--composer-border); flex: none; }
+  .bar { flex: 1; height: 6px; border-radius: 3px; background: var(--composer-bg); overflow: hidden; }
+  .barf { height: 100%; width: 0; background: var(--brand); transition: width .25s; }
+  .cta { display: inline-flex; align-items: center; gap: 6px; background: var(--brand); color: var(--send-fg); border: none; border-radius: 8px; padding: 7px 13px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+  .muted { color: var(--txt3); font-size: 11px; }
+  .glass, .card { -webkit-app-region: no-drag; }
+</style>
+</head>
+<body>
+<div class="glass">
+  <span class="hl"></span>
+  <div class="card">
+    <div class="hd">
+      <span class="orb"></span><span class="ttl">逐条确认</span>
+      <span id="prog" class="muted">0 / 0</span>
+      <button id="min" class="hbtn nodrag" title="最小化"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+      <button id="x" class="hbtn nodrag" title="关闭"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div id="flt" class="flt nodrag"></div>
+    <div id="list" class="list nodrag"></div>
+    <div class="foot nodrag">
+      <div class="bar"><div id="barf" class="barf"></div></div>
+      <span class="muted" style="white-space:nowrap">确认后 append-only 落档</span>
+      <button id="land" class="cta">落档 →</button>
+    </div>
+  </div>
+</div>
+<script>
+  window.BocomHermes.onTheme((t) => { document.documentElement.dataset.theme = t })
+  const reportId = new URLSearchParams(location.search).get('reportId') || ''
+  document.getElementById('x').addEventListener('click', () => window.BocomHermes.closeSelf())
+  document.getElementById('min').addEventListener('click', () => window.BocomHermes.minimizeSelf())
+  // 整张卡 JS 拖动（锁定尺寸，绝不缩放；列表区不参与，留给滚动/点选）
+  let _drag = false, _b = null, _mx = 0, _my = 0
+  document.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return
+    if (e.target.closest('button, input, a, textarea, select, label, .list')) return
+    _b = window.BocomHermes.getSelfBounds(); if (!_b) return
+    _drag = true; _mx = e.screenX; _my = e.screenY; e.preventDefault()
+  })
+  window.addEventListener('mousemove', (e) => {
+    if (!_drag || !_b) return
+    window.BocomHermes.setSelfBounds({ x: _b.x + (e.screenX - _mx), y: _b.y + (e.screenY - _my), width: _b.width, height: _b.height })
+  })
+  window.addEventListener('mouseup', () => { _drag = false; _b = null })
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const listEl = document.getElementById('list'), fltEl = document.getElementById('flt')
+  const PILL = { clear: 'pg', split: 'pa', conflict: 'pr', hidden: 'pb' }
+  const LAB = { clear: '明确·已解释', split: '不明确·待选', conflict: '矛盾·待裁', hidden: '隐藏·易漏' }
+  let items = [], total = 0, done = 0
+  const decisions = {}
+
+  function evChip(ref) {
+    const m = /(.+\.[a-zA-Z0-9]+):(\d+)/.exec(ref)
+    if (m) return '<button class="ev" data-file="' + esc(m[1]) + '" data-line="' + m[2] + '">' + esc(ref) + '</button>'
+    return '<span class="ev" style="cursor:default">' + esc(ref) + '</span>'
+  }
+  function readingRows(it) {
+    if (it.outcome === 'split') {
+      return it.readings.map((r, i) =>
+        '<label class="opt"><input type="radio" name="rd-' + it.id + '" value="' + esc(r.key) + '"' + (r.recommended ? ' checked' : '') + '>'
+        + '<span>' + esc(r.label || r.key) + '</span>'
+        + (r.recommended ? '<span class="pill pb">grounding 推荐</span>' : '')
+        + (r.confidence != null ? '<span class="muted" style="margin-left:auto">' + Math.round(r.confidence * 100) + '%</span>' : '')
+        + '</label>').join('')
+    }
+    if (it.outcome === 'conflict') {
+      return '<div style="display:flex;gap:7px;flex-wrap:wrap;margin:4px 0">' + it.readings.map((r) =>
+        '<div style="flex:1;min-width:120px;border:.5px solid var(--composer-border);border-radius:8px;padding:7px 9px"><div class="muted">' + esc((r.personas || []).join('/')) + '</div><div style="font-size:12.5px">' + esc(r.label || r.key) + '</div></div>').join('') + '</div>'
+    }
+    return ''
+  }
+  function actsFor(it) {
+    if (it.outcome === 'clear') return [['认领', 'claim'], ['纠正', 'fix']]
+    if (it.outcome === 'split') return [['确认选择', 'pick']]
+    if (it.outcome === 'conflict') return it.readings.map((r) => ['按「' + (r.label || r.key) + '」', 'rule:' + r.key]).concat([['都要·分支', 'branch']])
+    if (it.outcome === 'hidden') return [['纳入范围', 'include'], ['是 BUG·转缺陷', 'defect'], ['忽略', 'ignore']]
+    return [['确认', 'ok']]
+  }
+  function evList(it) {
+    const refs = []
+    for (const r of it.readings || []) for (const e of r.evidence || []) refs.push(e)
+    return refs.length ? '<div class="acts" style="margin-top:7px">' + refs.map(evChip).join('') + '</div>' : ''
+  }
+  function itemHtml(it) {
+    const rf = (it.riskFlags || []).length ? '<div class="muted" style="margin-top:6px">⚑ 挑刺派异见：' + it.riskFlags.map((f) => esc(f.reading)).join(' / ') + '</div>' : ''
+    return '<div class="item" data-cat="' + it.outcome + '" id="it-' + it.id + '">'
+      + '<span class="pill ' + (PILL[it.outcome] || 'pb') + '">' + LAB[it.outcome] + '</span>'
+      + (it.quote ? '<div class="quote">❝ ' + esc(it.quote) + '</div>' : '')
+      + (it.claim ? '<div style="font-weight:600;font-size:12.5px;margin:2px 0">' + esc(it.claim) + '</div>' : '')
+      + readingRows(it) + rf + evList(it)
+      + '<div class="acts" id="acts-' + it.id + '">' + actsFor(it).map(([t, c]) => '<button class="btn" data-act="' + esc(c) + '">' + esc(t) + '</button>').join('') + '</div>'
+      + '</div>'
+  }
+  function setFilter(cat, el) {
+    [...fltEl.children].forEach((c) => c.classList.remove('on')); el.classList.add('on')
+    listEl.querySelectorAll('.item').forEach((n) => { n.style.display = (cat === 'all' || n.dataset.cat === cat) ? '' : 'none' })
+  }
+  function confirm(it, act, btnWrap) {
+    if (decisions[it.id]) return
+    let choice = act
+    if (act === 'pick') { const sel = listEl.querySelector('input[name="rd-' + it.id + '"]:checked'); choice = 'pick:' + (sel ? sel.value : '') }
+    decisions[it.id] = { id: it.id, outcome: it.outcome, choice }
+    done++; document.getElementById('prog').textContent = done + ' / ' + total
+    document.getElementById('barf').style.width = Math.round(done / total * 100) + '%'
+    const node = document.getElementById('it-' + it.id); node.classList.add('done')
+    btnWrap.innerHTML = '<span class="pill pg">✓ 已确认 · ' + esc(labelOf(choice)) + '</span>'
+  }
+  function labelOf(c) {
+    if (c.startsWith('pick:')) return '选 ' + c.slice(5)
+    if (c.startsWith('rule:')) return '裁 ' + c.slice(5)
+    return ({ claim: '认领', fix: '待纠正', branch: '分支', include: '纳入', defect: '转缺陷', ignore: '忽略', ok: '确认' })[c] || c
+  }
+
+  ;(async () => {
+    const report = await window.BocomHermes.getReqReport(reportId)
+    if (!report) { listEl.innerHTML = '<div class="muted">报告不存在或已过期</div>'; return }
+    items = report.items || []; total = items.length
+    document.getElementById('prog').textContent = '0 / ' + total
+    const sum = report.summary || {}
+    const cats = [['all', '全部', total], ['clear', '明确', sum.clear || 0], ['split', '不明确', sum.split || 0], ['conflict', '矛盾', sum.conflict || 0], ['hidden', '隐藏', sum.hidden || 0]]
+    fltEl.innerHTML = cats.map(([c, t, n], i) => '<button class="fp ' + (i === 0 ? 'on' : '') + '" data-cat="' + c + '">' + t + ' ' + n + '</button>').join('')
+    fltEl.querySelectorAll('.fp').forEach((b) => b.addEventListener('click', () => setFilter(b.dataset.cat, b)))
+    listEl.innerHTML = items.map(itemHtml).join('')
+    listEl.addEventListener('click', (e) => {
+      const ev = e.target.closest('.ev[data-file]'); if (ev) { window.BocomHermes.openLoc(ev.dataset.file, ev.dataset.line); return }
+      const b = e.target.closest('button[data-act]'); if (!b) return
+      const node = b.closest('.item'); const it = items.find((x) => ('it-' + x.id) === node.id); if (!it) return
+      confirm(it, b.dataset.act, document.getElementById('acts-' + it.id))
+    })
+  })()
+
+  document.getElementById('land').addEventListener('click', async () => {
+    const arr = Object.values(decisions)
+    const r = await window.BocomHermes.reqLandfill(reportId, arr)
+    const land = document.getElementById('land')
+    if (r && r.ok) { land.textContent = '已落档 ' + (r.count || arr.length) + ' 条 ✓'; land.style.background = 'var(--green)' }
+    else { land.textContent = '落档失败'; land.style.background = 'var(--diff-del)' }
+  })
+</script>
+</body>
+</html>

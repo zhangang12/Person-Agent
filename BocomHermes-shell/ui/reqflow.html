@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<script>try { document.documentElement.dataset.theme = window.BocomHermes.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
+<script>(function(){try{var p=new URLSearchParams(location.search),d=document.documentElement.style;['gox','goy','gfx','gfy'].forEach(function(k){var v=p.get(k);if(v)d.setProperty('--'+k,v)})}catch(e){}})()</script>
+<link rel="stylesheet" href="glass.css" />
+<style>
+  .card { display: flex; flex-direction: column; height: 100%; padding: 11px 13px 12px; gap: 9px; }
+  .hd { display: flex; align-items: center; gap: 7px; flex: none; }
+  .orb { width: 11px; height: 11px; border-radius: 50%; background: var(--brand); flex: none; }
+  .ttl { flex: 1; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sub { font-size: 11px; color: var(--txt3); }
+  .hbtn { border: none; background: transparent; color: var(--txt3); cursor: pointer; padding: 3px; border-radius: 6px; display: flex; }
+  .hbtn:hover { color: var(--txt); background: var(--composer-bg); }
+  .body { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+  .body::-webkit-scrollbar { width: 7px; } .body::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  /* 整张卡 JS 拖动：关掉 app-region，靠鼠标事件 + 锁定尺寸移动窗口 */
+  .glass, .card { -webkit-app-region: no-drag; }
+  /* 导入态 */
+  .imp { margin: auto; width: 100%; max-width: 360px; text-align: center; border: 1.5px dashed var(--composer-border); border-radius: 14px; padding: 26px 20px; }
+  .imp .ic { font-size: 34px; } .imp .t { font-size: 14px; font-weight: 600; margin: 8px 0 3px; }
+  .imp .s { font-size: 11.5px; color: var(--txt3); line-height: 1.5; }
+  /* 阶段时间线 */
+  .stage { display: flex; gap: 10px; }
+  .rail { display: flex; flex-direction: column; align-items: center; width: 22px; flex: none; }
+  .dot { width: 20px; height: 20px; border-radius: 50%; flex: none; display: flex; align-items: center; justify-content: center; font-size: 12px; background: var(--composer-bg); color: var(--txt3); border: 1px solid var(--composer-border); }
+  .dot.run { border-color: var(--accent); color: var(--accent); animation: tw 1.4s ease-in-out infinite; }
+  .dot.ok { background: rgba(10,157,110,.14); border-color: var(--green); color: var(--green); }
+  .dot.err { background: var(--diff-del-bg); border-color: var(--diff-del); color: var(--diff-del); }
+  .dot.brand { background: var(--brand); border: none; color: #fff; }
+  .line { flex: 1; width: 2px; background: var(--composer-border); margin: 3px 0; min-height: 10px; }
+  .cnt { flex: 1; min-width: 0; padding-bottom: 14px; }
+  .sttl { font-size: 13px; font-weight: 600; margin: 1px 0 5px; }
+  .li { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--txt2); padding: 2px 0; }
+  .li .r { margin-left: auto; font-size: 11.5px; }
+  .pbar { height: 5px; border-radius: 3px; background: var(--composer-bg); overflow: hidden; margin: 5px 0 0; }
+  .pbar > div { height: 100%; width: 0; background: var(--brand); transition: width .2s; }
+  .pill { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; padding: 2px 9px; border-radius: 999px; font-weight: 600; }
+  .pg { background: rgba(10,157,110,.14); color: var(--green); } .pa { background: var(--warn-bg); color: var(--warn-txt); }
+  .pr { background: var(--diff-del-bg); color: var(--diff-del); } .pb { background: var(--me-bg); color: var(--me-txt); }
+  .doc { display: flex; align-items: center; gap: 10px; border: .5px solid var(--composer-border); border-radius: 10px; padding: 11px 12px; margin-top: 4px; }
+  .doc .ic { font-size: 22px; }
+  .cta { display: inline-flex; align-items: center; gap: 6px; background: var(--brand); color: var(--send-fg); border: none; border-radius: 8px; padding: 8px 15px; font-size: 12.5px; font-weight: 600; cursor: pointer; margin-top: 14px; }
+  .err { background: var(--warn-bg); color: var(--warn-txt); border: .5px solid var(--warn-border); border-radius: 9px; padding: 7px 10px; font-size: 12px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="glass">
+  <span class="hl"></span>
+  <div class="card">
+    <div class="hd">
+      <span class="orb"></span>
+      <span class="ttl">需求分析<span id="fn" class="sub"></span></span>
+      <button id="min" class="hbtn nodrag" title="最小化"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+      <button id="max" class="hbtn nodrag" title="最大化/还原"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></button>
+      <button id="x" class="hbtn nodrag" title="关闭"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div id="body" class="body nodrag"></div>
+  </div>
+</div>
+<script>
+  window.BocomHermes.onTheme((t) => { document.documentElement.dataset.theme = t })
+  const H = window.BocomHermes
+  const params = new URLSearchParams(location.search)
+  const docPath0 = params.get('docPath') || ''
+  document.getElementById('x').addEventListener('click', () => H.closeSelf())
+  document.getElementById('min').addEventListener('click', () => H.minimizeSelf())
+  document.getElementById('max').addEventListener('click', () => H.toggleMaximize())
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const base = (p) => String(p || '').replace(/^.*[\\\/]/, '')
+  const body = document.getElementById('body')
+  const fnEl = document.getElementById('fn')
+  const PERS = ['业务字面', '数据派', '流程派', '挑刺·对抗', '历史·跨页']
+  let started = false
+
+  // ── 导入态 ──
+  function renderImport() {
+    started = false; fnEl.textContent = ''
+    body.innerHTML =
+      '<div class="imp" id="imp"><div class="ic">📄</div>'
+      + '<div class="t">选择需求 Word 文档</div>'
+      + '<div class="s">点「选择文件」选 .docx · 内嵌图片自动走多模态（待接 Qwen）<br>多个 Agent 会各自独立读、把明确/不明确/矛盾摊给你</div>'
+      + '<button id="pick" class="cta">选择文件</button></div>'
+    document.getElementById('pick').addEventListener('click', async () => {
+      try { const p = await H.pickReqDocPath(); if (p) startAnalysis(p) } catch (e) {}
+    })
+  }
+
+  // ── 分析态 ──
+  function stageHtml(id, title, inner, st, last) {
+    return '<div class="stage"><div class="rail"><span id="dot-' + id + '" class="dot ' + (st === 'ok' ? 'ok' : st === 'pending' ? '' : st) + '">' + (st === 'ok' ? '✓' : '') + '</span>' + (last ? '' : '<span class="line"></span>') + '</div>'
+      + '<div class="cnt"><div class="sttl">' + title + '</div>' + inner + '</div></div>'
+  }
+  function readersHtml() {
+    return PERS.map((p, i) => '<div class="li"><span id="rk-' + i + '" style="width:13px">·</span>' + esc(p) + '<span id="rc-' + i + '" class="r" style="color:var(--txt3)">待读</span></div>').join('')
+  }
+  function renderStages(fname) {
+    body.innerHTML = [
+      stageHtml('imp', '① 导入文档', '<div class="li">' + esc(fname) + '</div>', 'ok'),
+      stageHtml('parse', '② 解析进度', '<div id="parse-d" class="li">等待…</div>', 'pending'),
+      stageHtml('read', '③ 多Agent 对抗分析', readersHtml() + '<div id="align-d" class="li" style="margin-top:4px"></div><div id="pbar" class="pbar" style="display:none"><div id="pbarf"></div></div>', 'pending'),
+      stageHtml('sum', '④ 汇总结论 · 产物文档', '<div id="sum-d" class="li">等待分析完成…</div>', 'pending', true),
+    ].join('')
+  }
+  function setDot(id, cls, glyph) { const d = document.getElementById('dot-' + id); if (d) { d.className = 'dot ' + cls; d.textContent = glyph || '' } }
+  function markReader(name, count) {
+    const i = PERS.indexOf(name); if (i < 0) return
+    const k = document.getElementById('rk-' + i), c = document.getElementById('rc-' + i)
+    if (k) { k.textContent = '✓'; k.style.color = 'var(--green)' }
+    if (c) { c.textContent = count + ' 条'; c.style.color = 'var(--txt2)' }
+  }
+  const setAlign = (t) => { const d = document.getElementById('align-d'); if (d) d.textContent = t }
+  function showBar(frac) { const b = document.getElementById('pbar'), f = document.getElementById('pbarf'); if (b) b.style.display = ''; if (f) f.style.width = Math.round(Math.max(0, Math.min(1, frac)) * 100) + '%' }
+  function hideBar() { const b = document.getElementById('pbar'); if (b) b.style.display = 'none' }
+  const fmt = (s) => '明确 ' + (s.clear || 0) + ' · 不明确 ' + (s.split || 0) + ' · 矛盾 ' + (s.conflict || 0) + ' · 隐藏 ' + (s.hidden || 0)
+  function showErr(msg) { const d = document.getElementById('sum-d'); if (d) d.innerHTML = '<div class="err">⚠ ' + esc(msg) + '</div>'; setDot('parse', 'err', '!'); setDot('read', 'err', '!') }
+
+  function startAnalysis(path) {
+    started = true
+    const fname = base(path); fnEl.textContent = ' · ' + fname
+    renderStages(fname)
+    H.reqAnalyze(path).catch((e) => showErr(e.message || e))
+  }
+
+  H.onReqEvent((ev) => {
+    if (!started) return
+    if (ev.type === 'parse') {
+      if (ev.phase === 'start') { setDot('parse', 'run'); const d = document.getElementById('parse-d'); if (d) d.textContent = '解析中…' }
+      else { setDot('parse', 'ok', '✓'); const d = document.getElementById('parse-d'); if (d) d.innerHTML = '文字 ' + ev.chars + ' 字 · 内嵌图片 ' + ev.images + ' 张' + (ev.images ? '（图片识别待接 Qwen）' : '') }
+    } else if (ev.type === 'readers') {
+      setDot('read', 'run'); setAlign('5 读者并行阅读中…（各自独立会话、互不通气）')
+    } else if (ev.type === 'stage') {
+      if (ev.stage === 'reader-done') markReader(ev.persona, ev.count)
+      else if (ev.stage === 'readers-done') { setAlign('收到 findings ' + ev.findings + ' 条，开始对齐…'); showBar(0) }
+      else if (ev.stage === 'topic-judge') { setAlign('话题对齐 · 裁判比对 ' + ev.done + ' / ' + ev.total + ' 对'); showBar(ev.total ? ev.done / ev.total : 0) }
+      else if (ev.stage === 'clustered') { setAlign('聚成 ' + ev.clusters + ' 个话题簇，开始判读法…'); showBar(0) }
+      else if (ev.stage === 'analyzing') { setAlign('判读法 ' + ev.done + ' / ' + ev.total + ' 簇 · ' + fmt(ev.summary)); showBar(ev.total ? ev.done / ev.total : 0) }
+      else if (ev.stage === 'analyzed') { setAlign('分类完成 · ' + fmt(ev.summary)); hideBar() }
+      else if (ev.stage === 'grounding') setAlign('grounding 回灌中…')
+    } else if (ev.type === 'done') {
+      setDot('read', 'ok', '✓'); setDot('sum', 'brand', '★'); showFinal(ev)
+    } else if (ev.type === 'error') {
+      showErr(ev.error)
+    }
+  })
+
+  function showFinal(ev) {
+    const s = ev.summary || {}
+    const d = document.getElementById('sum-d'); if (!d) return
+    d.innerHTML =
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 6px">'
+      + '<span class="pill pg">明确 ' + (s.clear || 0) + '</span><span class="pill pa">不明确 ' + (s.split || 0) + '</span>'
+      + '<span class="pill pr">矛盾 ' + (s.conflict || 0) + '</span><span class="pill pb">隐藏 ' + (s.hidden || 0) + '</span></div>'
+      + '<div class="doc"><span class="ic">📄</span><div style="flex:1;min-width:0">'
+      + '<div style="font-weight:600;font-size:12.5px">需求分析报告 · ' + esc(fnEl.textContent.replace(/^ · /, '') || '需求文档') + '</div>'
+      + '<div style="font-size:11.5px;color:var(--txt3)">' + (ev.findings || 0) + ' findings · ' + (ev.clusters || 0) + ' 话题簇 · 证据锚 + 待确认项</div></div></div>'
+      + '<div style="display:flex;align-items:center;gap:8px;margin-top:10px"><span style="font-size:11px;color:var(--txt3)">确认后 append-only 落档</span>'
+      + '<button id="open-confirm" class="cta" style="margin:0 0 0 auto">打开逐条确认 →</button></div>'
+    document.getElementById('open-confirm').addEventListener('click', () => H.openReqConfirm(ev.reportId))
+  }
+
+  // 整张卡 JS 拖动：抓取时读一次尺寸，移动时写回锁定尺寸 + 新坐标 → 绝不缩放
+  let _drag = false, _b = null, _mx = 0, _my = 0
+  document.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return
+    if (e.target.closest('button, input, a, textarea, select')) return
+    _b = H.getSelfBounds(); if (!_b) return
+    _drag = true; _mx = e.screenX; _my = e.screenY; e.preventDefault()
+  })
+  window.addEventListener('mousemove', (e) => {
+    if (!_drag || !_b) return
+    H.setSelfBounds({ x: _b.x + (e.screenX - _mx), y: _b.y + (e.screenY - _my), width: _b.width, height: _b.height })
+  })
+  window.addEventListener('mouseup', () => { _drag = false; _b = null })
+
+  if (docPath0) startAnalysis(docPath0); else renderImport()
+</script>
+</body>
+</html>

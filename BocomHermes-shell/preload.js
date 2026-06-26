@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   closeSelf: () => ipcRenderer.send('close-self'),
   hideSelf: () => ipcRenderer.send('hide-self'),
   minimizeSelf: () => ipcRenderer.send('minimize-self'),
+  getSelfBounds: () => ipcRenderer.sendSync('get-self-bounds'),
+  setSelfBounds: (b) => ipcRenderer.send('set-self-bounds', b),
   togglePin: () => ipcRenderer.invoke('toggle-pin'),
   toggleMaximize: () => ipcRenderer.invoke('toggle-maximize'),
   // 主题
@@ -42,6 +44,15 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   abortWorkflow: () => ipcRenderer.send('abort-workflow'),
   wfApprove: (reqId, decision, auto) => ipcRenderer.send('wf-approve', { reqId, decision, auto }),
   onWorkflowEvent: (cb) => ipcRenderer.on('wf-event', (_e, p) => cb(p)),
+  // 需求分析（多Agent 对抗 → 三类清单）
+  openReqAnalysis: () => ipcRenderer.invoke('open-req-analysis'),
+  pickReqDocPath: () => ipcRenderer.invoke('pick-req-doc-path'),
+  reqAnalyze: (docPath) => ipcRenderer.invoke('req-analyze', docPath),
+  reqAbort: () => ipcRenderer.send('req-abort'),
+  onReqEvent: (cb) => ipcRenderer.on('req-event', (_e, p) => cb(p)),
+  openReqConfirm: (reportId) => ipcRenderer.invoke('open-req-confirm', reportId),
+  getReqReport: (reportId) => ipcRenderer.invoke('get-req-report', reportId),
+  reqLandfill: (reportId, decisions) => ipcRenderer.invoke('req-landfill', { reportId, decisions }),
   // 对话 ↔ opencode 会话
   cardInit: (opts) => ipcRenderer.invoke('card-init', opts || {}),
   onCardInject: (cb) => ipcRenderer.on('card-inject', (_e, p) => cb(p)),

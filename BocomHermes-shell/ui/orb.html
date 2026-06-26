@@ -94,15 +94,16 @@ html,body{width:280px;height:280px;background:transparent;overflow:hidden;user-s
   letter-spacing:.02em;font-family:-apple-system,BlinkMacSystemFont,sans-serif;
 }
 
-/* 展开（7 个功能均匀环绕球体）*/
+/* 展开（8 个功能均匀环绕球体）*/
 .stage.open .ri{opacity:1;pointer-events:all}
-.stage.open .ri:nth-child(1){transform:translate(0,-100px) scale(1);transition-delay:.03s}
-.stage.open .ri:nth-child(2){transform:translate(78px,-62px) scale(1);transition-delay:.06s}
-.stage.open .ri:nth-child(3){transform:translate(97px,22px) scale(1);transition-delay:.09s}
-.stage.open .ri:nth-child(4){transform:translate(43px,90px) scale(1);transition-delay:.12s}
-.stage.open .ri:nth-child(5){transform:translate(-43px,90px) scale(1);transition-delay:.15s}
-.stage.open .ri:nth-child(6){transform:translate(-97px,22px) scale(1);transition-delay:.18s}
-.stage.open .ri:nth-child(7){transform:translate(-78px,-62px) scale(1);transition-delay:.21s}
+.stage.open .ri:nth-child(1){transform:translate(0,-98px) scale(1);transition-delay:.03s}
+.stage.open .ri:nth-child(2){transform:translate(69px,-69px) scale(1);transition-delay:.06s}
+.stage.open .ri:nth-child(3){transform:translate(98px,0) scale(1);transition-delay:.09s}
+.stage.open .ri:nth-child(4){transform:translate(69px,69px) scale(1);transition-delay:.12s}
+.stage.open .ri:nth-child(5){transform:translate(0,98px) scale(1);transition-delay:.15s}
+.stage.open .ri:nth-child(6){transform:translate(-69px,69px) scale(1);transition-delay:.18s}
+.stage.open .ri:nth-child(7){transform:translate(-98px,0) scale(1);transition-delay:.21s}
+.stage.open .ri:nth-child(8){transform:translate(-69px,-69px) scale(1);transition-delay:.24s}
 
 /* hover 状态：轻微提亮 */
 .ri:hover{
@@ -169,6 +170,12 @@ html,body{width:280px;height:280px;background:transparent;overflow:hidden;user-s
   <div class="ri" id="ri-settings">
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     <span class="ri-lbl">设置</span>
+  </div>
+
+  <!-- 功能模块 8: 需求分析（Word → 多Agent 对抗 → 三类清单）-->
+  <div class="ri" id="ri-reqdoc" title="需求分析：拖入 Word 需求文档，多Agent 对抗读出明确/不明确/矛盾">
+    <svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h5"/></svg>
+    <span class="ri-lbl">需求分析</span>
   </div>
 
   <!-- 球体 -->
@@ -260,6 +267,7 @@ document.getElementById('ri-email').addEventListener('click', async () => {
 document.getElementById('ri-todos').addEventListener('click', () => H.openTodos())
 document.getElementById('ri-fanout').addEventListener('click', () => H.toggleOrbInput('fanout'))
 document.getElementById('ri-settings').addEventListener('click', () => H.openSettings())
+document.getElementById('ri-reqdoc').addEventListener('click', () => H.openReqAnalysis())
 
 // 点击反馈：按下即播放涟漪脉冲（解决"点了没反应、生硬"）
 document.querySelectorAll('.ri').forEach(el => {

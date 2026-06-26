@@ -523,6 +523,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       const s = S.sessionByWc.get(wcId)
       if (s) { const si = S.sessionInfo.get(s); if (si) oc.abort(si.serve, s); S.sessionInfo.delete(s); S.streamBuf.delete(s); S.sentPrompt.delete(s); S.firstMsgCtx.delete(s) }
       S.sessionByWc.delete(wcId)
+      forgetBusy(wcId)   // 关卡即清"忙"，避免球卡在思考态
     })
     return id
   }
@@ -551,18 +552,53 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   function spawnWorkflow(goal) {
     const id = ++S.cardSeq
     const col = (id - 1) % 4, row = Math.floor((id - 1) / 4) % 4
+    const wx = 180 + col * 56, wy = 80 + row * 50 + col * 18
     const win = new BrowserWindow(baseOpts({
       width: 560, height: 680, minWidth: 420, minHeight: 380, resizable: true,
-      alwaysOnTop: false, skipTaskbar: false,
-      x: 180 + col * 56, y: 80 + row * 50 + col * 18,
+      alwaysOnTop: false, skipTaskbar: false, x: wx, y: wy,
     }))
     const wcId = win.webContents.id
-    win.loadFile(path.join(__dirname, '..', 'ui', 'workflow.html'), { query: { goal: goal || '未命名工作流', id: String(id) } })
+    win.loadFile(path.join(__dirname, '..', 'ui', 'workflow.html'), { query: { goal: goal || '未命名工作流', id: String(id), ...orbAnchorFor(wx, wy, 560, 680) } })
     win.on('closed', () => {
       const w = S.workflows.get(wcId)
       if (w) { try { w.ac.abort() } catch {}; for (const s of w.sessions) { try { oc.abort(w.serve, s) } catch {}; S.sessionInfo.delete(s) }; S.workflows.delete(wcId) }
     })
     return id
+  }
+
+  // ── 需求分析（多Agent 对抗 → 三类清单）────────────────────────────────────────
+  function spawnReqAnalysis(docPath) {
+    const id = ++S.cardSeq
+    const col = (id - 1) % 4, row = Math.floor((id - 1) / 4) % 4
+    const wx = 200 + col * 56, wy = 70 + row * 50 + col * 18
+    const win = new BrowserWindow(baseOpts({
+      width: 560, height: 700, resizable: false,
+      alwaysOnTop: false, skipTaskbar: false, x: wx, y: wy,
+    }))
+    const wcId = win.webContents.id
+    win.loadFile(path.join(__dirname, '..', 'ui', 'reqflow.html'), { query: { docPath: docPath || '', id: String(id), ...orbAnchorFor(wx, wy, 560, 700) } })
+    win.on('closed', () => {
+      const r = S.reqRuns && S.reqRuns.get(wcId)
+      if (r) { try { r.ac.abort() } catch {}; for (const s of r.sessions) { try { oc.abort(r.serve, s) } catch {}; S.sessionInfo.delete(s) }; S.reqRuns.delete(wcId) }
+    })
+    return id
+  }
+  function spawnReqConfirm(reportId) {
+    const id = ++S.cardSeq
+    const win = new BrowserWindow(baseOpts({
+      width: 600, height: 700, resizable: false,
+      alwaysOnTop: false, skipTaskbar: false, x: 270, y: 96,
+    }))
+    win.loadFile(path.join(__dirname, '..', 'ui', 'reqconfirm.html'), { query: { reportId: reportId || '', ...orbAnchorFor(270, 96, 600, 700) } })
+    return win.webContents.id
+  }
+  // 卡内"选择文件"用：只返回路径，不另开卡（在当前需求分析卡里就地开跑）
+  async function pickReqDocPath() {
+    const r = await dialog.showOpenDialog({
+      title: '选择需求文档（Word .docx）', properties: ['openFile'],
+      filters: [{ name: 'Word 文档', extensions: ['docx'] }, { name: '全部文件', extensions: ['*'] }],
+    })
+    return (!r.canceled && r.filePaths[0]) ? r.filePaths[0] : null
   }
 
   // ── 邮件整理卡 ─────────────────────────────────────────────────────────────
@@ -1868,6 +1904,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       { type: 'separator' },
       { label: '🌐 调试工作台（Agent + 浏览器）', accelerator: 'Ctrl+Shift+B', click: () => createWorkspace() },
       { label: '📧 邮件摘要', click: () => spawnEmailCard().catch((e) => log('email card err: ' + e.message)) },
+      { label: '📄 需求分析（Word）', click: () => spawnReqAnalysis('') },
       { label: '📤 发件箱', click: openOutbox },
       { label: '📋 待办事项', click: openTodos },
       { label: '卡坞 · 历史对话', click: openDock },
@@ -1974,6 +2011,8 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('spawn-fanout-roles', (_e, { goal, roles }) => spawnFanout(goal, roles))
   ipcMain.handle('get-fanout-roles', () => Object.entries(ROLES).map(([k, [label]]) => ({ key: k, label })))
   ipcMain.handle('spawn-workflow', (_e, goal) => spawnWorkflow(goal))
+  ipcMain.handle('open-req-analysis', () => spawnReqAnalysis(''))
+  ipcMain.handle('pick-req-doc-path', () => pickReqDocPath())
 
   // ── 任务完成通知 ────────────────────────────────────────────────────────────
   const busyCards = new Set()   // 正在运行任务的 webContents id
@@ -2009,10 +2048,24 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     if (busyCards.size > 0) updateTrayBusy()
     else if (S.tray) S.tray.setToolTip('BocomHermes')
   })
+  // 卡片关闭时清掉它的"忙"记录 —— 否则正在生成的卡被关，wcId 永留 busyCards，球会一直思考态
+  function forgetBusy(wcId) {
+    if (!busyCards.delete(wcId)) return
+    if (busyCards.size === 0) {
+      sendOrbState('idle')
+      if (S.tray && !S.tray.isDestroyed()) S.tray.setToolTip('BocomHermes')
+    } else updateTrayBusy()
+  }
 
   ipcMain.on('close-self', (e) => BrowserWindow.fromWebContents(e.sender)?.close())
   ipcMain.on('hide-self', (e) => BrowserWindow.fromWebContents(e.sender)?.hide())
   ipcMain.on('minimize-self', (e) => BrowserWindow.fromWebContents(e.sender)?.minimize())
+  // JS 拖动支撑：抓取时读一次窗口 bounds，移动时写回「锁定尺寸 + 新坐标」——尺寸恒定，绝不缩放
+  ipcMain.on('get-self-bounds', (e) => { const w = BrowserWindow.fromWebContents(e.sender); e.returnValue = (w && !w.isDestroyed()) ? w.getBounds() : null })
+  ipcMain.on('set-self-bounds', (e, b) => {
+    const w = BrowserWindow.fromWebContents(e.sender)
+    if (w && !w.isDestroyed() && b) w.setBounds({ x: Math.round(b.x), y: Math.round(b.y), width: Math.round(b.width), height: Math.round(b.height) })
+  })
   ipcMain.handle('toggle-pin', (e) => {
     const w = BrowserWindow.fromWebContents(e.sender); if (!w) return false
     const v = !w.isAlwaysOnTop(); w.setAlwaysOnTop(v); return v
@@ -3001,5 +3054,5 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('open-history', (_e, { sid, title }) => spawnCard(title, sid))
   ipcMain.handle('clear-history', () => { S.history = []; saveHistory(); return true })
 
-  return { createOrb, createBrowser, createWorkspace, spawnCard, spawnFanout, spawnWorkflow, spawnEmailCard, toggleInput, toggleOrbInput, buildTray, openDock, openTodos, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory }
+  return { createOrb, createBrowser, createWorkspace, spawnCard, spawnFanout, spawnWorkflow, spawnReqAnalysis, spawnReqConfirm, spawnEmailCard, toggleInput, toggleOrbInput, buildTray, openDock, openTodos, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory }
 }

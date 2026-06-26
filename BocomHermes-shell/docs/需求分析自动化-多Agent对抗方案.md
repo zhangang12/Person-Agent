@@ -174,3 +174,60 @@
 - **没有角色对抗**:自我怀疑 ≠ 独立反对;挑刺派/历史派的价值来自它们跟别人不通气。
 
 多 Agent 给的是:独立读法(真分歧信号)+ 并行 grounding + 专职找茬的 critic。
+
+---
+
+## 十二、对齐引擎已锁定的实现决策(2026-06-26 续,用户拍板)
+
+把第八节三个硬问题往实现推时,用户做了三个"从简"决定,以及多模态、UI 的定调。这些是后续编码的硬前提。
+
+### 模型(三问都收敛到"统一 MiniMax M2.5")
+- **5 个读者 + 裁判 + grounder 全用 MiniMax M2.5**,不做模型级去相关。
+- **代价(写明、别忘):同模型 = 独立性只剩 persona 一条腿。** MiniMax 的盲区 5 个读者会一起踩、然后"全体一致"——这个一致是假的(模型自我点头)。因此去掉模型层后,下面几根补偿腿从可选变**必须**:
+  1. persona 要**真对立**(挑刺派硬指令"假设文档是错的";数据派只准用 DB 词汇说话);
+  2. **温度拉开 + 裸上下文**(同模型至少让采样发散,且绝不互看输出);
+  3. **保守偏置更重要**(同模型更易假一致,阈值更狠地往"不明确"推);
+  4. **挑刺派不对称 = 抓共享盲区的主防线**(孤证也能掀旗)。
+- **裁判:单个、也是 MiniMax**,只判模糊边界;先单裁判跑起来看错误率,**不上双裁判**(别过度设计)。
+- **置信度:只排序 + 打标签,不决策。** 机器永远不替人拍板,分数只用来给三类清单排序/标"明确 vs 不明确";保守偏置——拿不准就往"不明确"推,不纠结 4:1 算不算明确。
+
+### 多模态(Word 内嵌图片)
+- 输入只认 **Word(.docx)**,但 **Word 里的图片(流程图/截图/字段表)要切到 Qwen3.6 多模态识别**。
+- 管线:解析分两路——文字/表格走 MiniMax 线(mammoth);内嵌图片**逐张喂 Qwen 翻成文字、按原位置插回正文**变成 `[图N:…]`,5 个读者拿到的是"图已翻成字"的统一文本,全程不碰图片。
+- 要点:**位置要保留**(第3节流程图≠附录截图);**字段表截图尽量还原成文字表**(数据派的料);**Qwen 读不准要诚实标** `[图N:读不准,原图在此]`(继承"诚实摊开");**翻一次缓存**。
+- **命门:这把方案B(按请求传 modelID)重新拉回关键路径**——要在引擎用 MiniMax 的同时单独调一次 Qwen。前提风险:**bocomcode 的 `POST /message` 到底吃不吃 `model` 字段**(见 opencode-serve-api 记忆:model 字段形状按版本变、稳妥是不传)。"能不能程序化切到 Qwen"是整条多模态线能否自动化的命门,**得先用探针验证**(沿用 compat-check 那套,内网跑)。
+- 注意:Qwen 是**引擎外的预处理翻译器**(进来时跑一次、跑完即切),不破坏"统一 MiniMax"——对抗引擎(读者+裁判+grounder)仍全 MiniMax。
+
+### UI(两块定清楚,样式沿用现智能体)
+- **① 单窗口工作流**:一个窗口、一条竖向工作流——导入 Word → 解析进度(详细:文字/表 + 图片逐张 Qwen 状态)→ 多Agent 分析进度(详细:5 读者各自命中数 + 对齐引擎计数 + grounding 收敛/坐实)→ 汇总结论 + **产物文档**(`需求分析报告_xxx.docx`,可导出 Word / 打开逐条确认)。
+- **② 独立逐条确认面板**(从工作流窗口"打开逐条确认"另开):三类清单可筛选(明确/不明确/矛盾/隐藏);每条**钉回原话** + 挂**可点证据**(`表.字段`→看 schema、`file:line`→编辑器);四种确认动作各异(明确→认领/纠正;不明确→并列读法单选+grounding 推荐;矛盾→两端并排裁决;隐藏→纳入/转缺陷/忽略);确认满才走**落档**(append-only)。
+- 样式取真实令牌:浅磨砂玻璃窗 + `─ ☐ ✕` 窗钮、深藏蓝字 `#111228`、品牌**紫→青渐变** `#8b5cf6→#0891b2` 只用在主操作与序号球、蓝=信息证据、绿/琥珀/红=三类语义。
+
+### 对齐引擎已落地的砖(`align.js`,纯逻辑可单测,裁判注入)
+- **第一块·话题聚簇(硬问题①)**:`spanOverlapRatio`(交集/较短 span)+ 并查集 + `clusterByTopic(findings,{overlapHi,overlapLo,judge})`。`judge(a,b)->'same'|'different'` 注入,缺省 null 只用结构信号;裁判只问"桥接两个不同分量"的模糊对、已同簇则跳过(把调用压到刀刃)。
+- **第二块·读法分簇 + 分类 + 置信度(硬问题②)**:`analyzeCluster(cluster,{readingJudge,criticPersona,weightOf,groundingBoost})` + `analyzeClusters`。簇内按 readingKey 二次聚簇,`readingJudge(a,b)->'same'|'different'|'contradict'` 注入(same 合并/different 并列/contradict 标冲突);**分类结构决定、置信度只排序**(`clear/split/conflict/hidden`);**挑刺派不对称**——独家异见不把多数拉成 split,而是单独挂 `riskFlags`;置信度 = 背书 × grounding 加成归一化(`weightOf` 是视角权重的注入点,默认按人头数 1)。
+- **跨页桥接(补)**:`clusterByTopic` 增加 `term`(归一化概念)信号——共享 term 但 span 零重叠的对也交裁判,跨页冲突两端才聚得到一起(纯 span 永远聚不上)。
+- 自测 `npm run align:test` = **31/31**。
+
+### 端到端管线已落地(`reqanalysis.js`,纯逻辑可单测,run/ground 注入)
+整条线串通,用假 run/ground 端到端跑通,自测 `npm run req:test` = **18/18**。
+
+- **多视角对抗阅读** `readDocument(run)`:5 个 persona(业务字面/数据派/流程派/挑刺·对抗/历史·跨页,提示词在 `PERSONAS`,信贷域口径可细化)并行、各自独立 `run`(生产=各自会话/裸上下文)、互不通气;`parseFindings` 容错抽 JSON(剥 `<think>`)+ `locateSpan` 把读者引用的原文片段定位成 `[start,end]`(找不到给 null,不给错偏移)。
+- **裁判封装** `makeTopicJudge` / `makeReadingJudge`:包注入 run,构造提示词 + `pickVerdict` 容错解析 same/different/contradict。
+- **grounding 编排** `groundCluster(ground)`:对 split/conflict 的每个读法 fan-out 注入的 `ground`(生产=查 `db-mcp`/grep),产出 `groundingBoost` + evidence 回灌再分析(真相收敛/坐实)。
+- **报告装配** `assembleReport`:引擎输出 → 逐条确认面板吃的 JSON(钉回原话 quote、并列读法、grounding 证据 ref、三类汇总 summary)。
+- **管线** `analyzeRequirement(sourceText,{run,ground,...})`:读者 → `clusterByTopic` → `analyzeClusters` → grounding 回灌 → `assembleReport`,一把出 `{findings,clusters,analyses,report}`。
+- **Word 图片预处理** `parseDocx(path,{describeImage})`:mammoth `convertToHtml` 抠图原位留 `[[IMGk]]` 占位 → 注入 `describeImage` 走 Qwen 翻字 → `spliceImageDescriptions` 按位插回(读不准诚实标);`htmlToText`/`spliceImageDescriptions` 纯逻辑已测,`parseDocx` 需对真实 .docx 在装 mammoth 的环境跑。
+- **切模型探针** `npm run modelroute [baseURL] [目标关键词]`:验证 serve `POST /message` 吃不吃 `model` 字段、能否按请求切到 Qwen(深搜 serve 回报的 model 元数据 + 自报名作判据);零依赖,**内网由用户跑**,贴回输出据此定多模态线怎么接。
+
+### Electron 集成已接通(`npm start` 启动干净)
+管线已接进真 app,端到端可走:**托盘「📄 需求分析（Word）」→ 选 .docx → 单窗口工作流(`reqflow.html`,逐段推进度)→ 跑真分析 → 汇总 + 产物文档 → 打开逐条确认面板(`reqconfirm.html`,三类清单可筛/原话/证据/认领·选读法·裁矛盾)→ 落档**。
+- `src/reqanalysis-ipc.js`:`req-analyze`(解析 Word → 5 读者各自独立 opencode 会话跑 `analyzeRequirement` → 推 `req-event`)、`open-req-confirm`、`get-req-report`、`req-landfill`(append-only 写 `userData/req-knowledge.jsonl`)。
+- `src/window.js`:`spawnReqAnalysis`/`spawnReqConfirm`/`pickReqDoc` 窗口工厂 + 托盘入口;`main.js` 接 `initReqAnalysis`;`preload.js` 暴露 `reqAnalyze/onReqEvent/openReqConfirm/getReqReport/reqLandfill`。
+- 实测:`npm start` 启动无报错(复用 serve :4096、event stream connected、reqanalysis 模块加载正常)。
+
+**仍待办(需你/内网):**
+- **`run` 已接实(读者=独立会话);`ground` 与 `describeImage` 暂为 null** —— grounding 接 `db-mcp`/Grep、Qwen 读图接多模态,**都等 `npm run modelroute` 探针结论 + OB 配置**。当前:图片按"读不准"诚实标、split 不加 grounding 推荐(回落按背书排序)。
+- **persona 提示词口径细化**(信贷域,尤其挑刺派/数据派硬指令)。
+- **你的视觉确认**:选一份真 .docx 走一遍,看两窗渲染/进度/三类清单/落档。
+- 落档**回灌加载**(下次分析先读 `req-knowledge.jsonl`,settled 的不再问)。
