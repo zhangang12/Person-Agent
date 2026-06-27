@@ -16,10 +16,38 @@ module.exports = function initReqAnalysis(S, { ipcMain, app, path, fs, oc, log, 
 
   // ── 场景 Profile：需求分析要 grounding 的仓库集（块5）──
   // 场景一填 3 仓、场景二/三填 1 仓；缺省回落到项目目录 + 后端目录。
+  // repo 条目支持两种形态：旧=纯路径字符串；新={ path, system, aliases[] }。统一归一化成对象。
+  const normRepo = (r) => {
+    if (typeof r === 'string') return { path: r.trim(), system: '', aliases: [] }
+    if (r && typeof r === 'object') return {
+      path: String(r.path || '').trim(),
+      system: String(r.system || '').trim(),
+      aliases: Array.isArray(r.aliases) ? r.aliases.map((a) => String(a).trim()).filter(Boolean) : [],
+    }
+    return { path: '', system: '', aliases: [] }
+  }
   const reqRepos = () => {
     const p = S.settings.reqProfile
-    const repos = (p && Array.isArray(p.repos) && p.repos.length) ? p.repos : [S.settings.projectDir, S.settings.backendDir]
-    return [...new Set((repos || []).filter(Boolean))]
+    const raw = (p && Array.isArray(p.repos) && p.repos.length) ? p.repos : [S.settings.projectDir, S.settings.backendDir]
+    const out = [], seen = new Set()
+    for (const r of (raw || [])) {
+      const n = normRepo(r)
+      if (n.path && !seen.has(n.path)) { seen.add(n.path); out.push(n) }
+    }
+    return out
+  }
+  // 在需求文字里识别某个仓对应的系统（命中系统名或别名）
+  const matchSystem = (text, repo) => {
+    if (!repo.system) return false
+    const hay = String(text || '')
+    if (hay.includes(repo.system)) return true
+    return (repo.aliases || []).some((a) => a && hay.includes(a))
+  }
+  // 把"系统名/别名命中本段需求文字"的仓排到前面（ground 取首个命中、locate 优先收集 → 多系统定位更准）
+  const orderReposForText = (text, repos) => {
+    const hit = [], rest = []
+    for (const r of repos) (matchSystem(text, r) ? hit : rest).push(r)
+    return hit.length ? hit.concat(rest) : repos
   }
 
   // ── 跨仓确定性检索原语（块2，方案B：代码不进模型上下文）──
@@ -103,9 +131,11 @@ module.exports = function initReqAnalysis(S, { ipcMain, app, path, fs, oc, log, 
     const repos = reqRepos()
     const ground = async (q) => {
       const terms = extractAsciiTokens([q.claim, q.reading, q.readingKey].join(' '))
-      for (const repo of repos) for (const t of terms) {
-        const h = gitGrep(repo, t, 1)[0]
-        if (h) return { found: true, ref: h.path + ':' + h.line }
+      // 用读法的中文文字识别归属系统 → 命中系统的仓优先 grep，证据带【系统】前缀
+      const ordered = orderReposForText([q.claim, q.reading].join(' '), repos)
+      for (const repo of ordered) for (const t of terms) {
+        const h = gitGrep(repo.path, t, 1)[0]
+        if (h) return { found: true, ref: (repo.system ? '【' + repo.system + '】' : '') + h.path + ':' + h.line }
       }
       return { found: false, ref: null }
     }
@@ -201,17 +231,19 @@ module.exports = function initReqAnalysis(S, { ipcMain, app, path, fs, oc, log, 
         for (const t of extractAsciiTokens(kw, 8)) terms.push(t)
       } catch {}
       terms = [...new Set(terms)].slice(0, 8)
+      // 命中本需求点系统的仓优先收集 → refs/slices 带 system，模型出方案时"归哪个系统"有据可依
+      const ordered = orderReposForText([point.reqPoint, point.intent, point.quote].join(' '), repos)
       const refs = []
-      for (const repo of repos) {
+      for (const repo of ordered) {
         for (const t of terms) {
-          for (const h of gitGrep(repo, t, 6)) { refs.push(h); if (refs.length >= 24) break }
+          for (const h of gitGrep(repo.path, t, 6)) { refs.push({ ...h, system: repo.system || '' }); if (refs.length >= 24) break }
           if (refs.length >= 24) break
         }
         if (refs.length >= 24) break
       }
       const slices = []
-      for (const h of refs.slice(0, 8)) { const txt = readSlice(h._full, h.line); if (txt) slices.push({ path: h.path, line: h.line, text: txt }) }
-      return { refs: refs.map((h) => ({ path: h.path, line: h.line, symbol: '' })), slices }
+      for (const h of refs.slice(0, 8)) { const txt = readSlice(h._full, h.line); if (txt) slices.push({ path: h.path, line: h.line, text: txt, system: h.system || '' }) }
+      return { refs: refs.map((h) => ({ path: h.path, line: h.line, symbol: '', system: h.system || '' })), slices }
     }
     const plan = async (point, located) => run(reqplan.buildPlanPrompt(point, located), { kind: 'plan' })
 

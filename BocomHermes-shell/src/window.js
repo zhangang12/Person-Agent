@@ -368,6 +368,28 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       text: String(r.text || '').slice(0, 50000), html: String(r.html || '').slice(0, 400000), hasHtml: r.hasHtml }
   })
   ipcMain.handle('open-mail-view', (_e, msgId) => openMailView(msgId))
+  ipcMain.handle('open-mail-center', (_e, tab) => createMailCenter(tab))
+  // 邮件中心收件箱列表：复用 fetchUnread，只回摘要字段（不带正文/附件二进制）
+  ipcMain.handle('mail-list', async (_e, opts) => {
+    const imap = S.settings.imap
+    if (!imap || !imap.host || !imap.user || !imap.passEncrypted) throw new Error('IMAP 未配置（去「设置」填写收件服务器）')
+    const o = opts || {}
+    const r = await email.fetchUnread(imap, {
+      onlyUnseen: o.onlyUnseen !== false,
+      days: Math.max(1, +o.days || 3),
+      limit: Math.max(1, Math.min(+o.limit || 30, 30)),
+      folder: o.folder || 'INBOX',
+    })
+    return {
+      ok: true,
+      totalMatched: r.totalMatched || 0,
+      emails: (r.emails || []).filter((e) => !e.error).map((e) => ({
+        from: e.from || '', subject: e.subject || '', date: e.date || '',
+        messageId: e.messageId || '', attachments: (e.attachments || []).length,
+        preview: (e.bodySummary || e.body || '').replace(/\s+/g, ' ').slice(0, 120),
+      })),
+    }
+  })
 
   const projName = () => S.settings.projectDir ? path.basename(S.settings.projectDir) : '未选目录'
 
@@ -684,6 +706,19 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     S.mailViewWin.loadFile(path.join(__dirname, '..', 'ui', 'mailview.html'), { query: { msgId: id, ...orbAnchorFor(mx, my, 640, 640) } })
   }
 
+  // 邮件中心：收件箱 + 设置一体（邮件模块的设置归口在此）
+  function createMailCenter(tab) {
+    const { width } = screen.getPrimaryDisplay().workAreaSize
+    const mx = Math.round(width / 2 - 360), my = 80
+    if (!(S.mailCenterWin && !S.mailCenterWin.isDestroyed())) {
+      S.mailCenterWin = new BrowserWindow(baseOpts({ width: 720, height: 660, x: mx, y: my, skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 480, minHeight: 420 }))
+      S.mailCenterWin.on('closed', () => { S.mailCenterWin = null })
+    } else { S.mailCenterWin.show(); S.mailCenterWin.focus() }
+    const query = { ...orbAnchorFor(mx, my, 720, 660) }
+    if (tab) query.tab = tab
+    S.mailCenterWin.loadFile(path.join(__dirname, '..', 'ui', 'mailcenter.html'), { query })
+  }
+
   function toggleInput() { toggleOrbInput() }
 
   function toggleTheme() {
@@ -742,7 +777,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const tab = brActive(); if (!tab) return
     if (b._dragging) return                     // 拖动分隔条时内容视图临时分离，跳过布局
     const rx = leftW + G                         // 右侧浏览器内容区左边界
-    const menuW = b.menuOpen ? 248 : 0           // ⋯ 更多菜单打开 → 网页层从右让出一条,否则原生层会盖住 HTML 菜单
+    // ⋯ 更多菜单 / 设置抽屉打开 → 网页层从右让出一条,否则原生层会盖住 HTML 浮层（设置抽屉更宽）
+    const menuW = b.settingsOpen ? 360 : (b.menuOpen ? 248 : 0)
     const rw = Math.max(0, cw - rx - menuW)
     const areaH = Math.max(0, ch - BR_TOP_H - b.consoleH)
     const d = tab.device
@@ -1911,6 +1947,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       { label: S.settings.orbHidden ? '显示桌面悬浮球' : '隐藏桌面悬浮球', click: () => setOrbHidden(!S.settings.orbHidden) },
       { type: 'separator' },
       { label: '🌐 调试工作台（Agent + 浏览器）', accelerator: 'Ctrl+Shift+B', click: () => createWorkspace() },
+      { label: '📧 邮件中心（收件箱 + 设置）', accelerator: 'Ctrl+Shift+M', click: () => createMailCenter() },
       { label: '📧 邮件摘要', click: () => spawnEmailCard().catch((e) => log('email card err: ' + e.message)) },
       { label: '📄 需求分析（Word）', click: () => spawnReqAnalysis('') },
       { label: '📤 发件箱', click: openOutbox },
@@ -2250,7 +2287,17 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     if (patch && patch.imapIdleEnabled !== undefined) S.settings.imapIdleEnabled = !!patch.imapIdleEnabled
     if (patch && patch.reqProfile && Array.isArray(patch.reqProfile.repos)) {
       S.settings.reqProfile = S.settings.reqProfile || {}
-      S.settings.reqProfile.repos = [...new Set(patch.reqProfile.repos.map((s) => String(s).trim()).filter(Boolean))]
+      // repo 支持 { path, system, aliases[] }（新）与纯路径字符串（旧）；按 path 去重，无系统名则退回纯字符串保持兼容
+      const seen = new Set(), out = []
+      for (const r of patch.reqProfile.repos) {
+        const rp = String((typeof r === 'string' ? r : (r && r.path)) || '').trim()
+        if (!rp || seen.has(rp)) continue
+        seen.add(rp)
+        const system = (r && typeof r === 'object' && r.system) ? String(r.system).trim() : ''
+        const aliases = (r && typeof r === 'object' && Array.isArray(r.aliases)) ? r.aliases.map((a) => String(a).trim()).filter(Boolean) : []
+        out.push((system || aliases.length) ? { path: rp, system, aliases } : rp)
+      }
+      S.settings.reqProfile.repos = out
     }
     if (patch && patch.ob) {
       S.settings.ob = S.settings.ob || {}
@@ -2359,6 +2406,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('browser-navigate', (_e, url) => { const wc = brWC(); const u = normalizeUrl(url); if (wc && u) wc.loadURL(u) })
   // ⋯ 更多菜单开/合 → 网页层从右让出/收回一条(否则原生层盖住 HTML 菜单)
   ipcMain.on('browser-menu-overlay', (_e, on) => { const b = S.browser; if (!b || !b.win || b.win.isDestroyed()) return; b.menuOpen = !!on; brLayout() })
+  ipcMain.on('browser-settings-overlay', (_e, on) => { const b = S.browser; if (!b || !b.win || b.win.isDestroyed()) return; b.settingsOpen = !!on; brLayout() })
   ipcMain.on('browser-back',    () => { const wc = brWC(); if (wc && wc.canGoBack()) wc.goBack() })
   ipcMain.on('browser-forward', () => { const wc = brWC(); if (wc && wc.canGoForward()) wc.goForward() })
   ipcMain.on('browser-reload',  () => { const wc = brWC(); if (wc) wc.isLoading() ? wc.stop() : wc.reload() })
@@ -3067,5 +3115,5 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('open-history', (_e, { sid, title }) => spawnCard(title, sid))
   ipcMain.handle('clear-history', () => { S.history = []; saveHistory(); return true })
 
-  return { createOrb, createBrowser, createWorkspace, spawnCard, spawnFanout, spawnWorkflow, spawnReqAnalysis, spawnReqConfirm, spawnReqPlan, spawnEmailCard, toggleInput, toggleOrbInput, buildTray, openDock, openTodos, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory }
+  return { createOrb, createBrowser, createWorkspace, createMailCenter, spawnCard, spawnFanout, spawnWorkflow, spawnReqAnalysis, spawnReqConfirm, spawnReqPlan, spawnEmailCard, toggleInput, toggleOrbInput, buildTray, openDock, openTodos, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory }
 }

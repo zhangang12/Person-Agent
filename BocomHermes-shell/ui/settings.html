@@ -74,22 +74,6 @@
       </div>
 
       <div class="fld">
-        <span class="lbl">代理（内嵌浏览器用）</span>
-        <input id="proxy" class="in" placeholder="http://127.0.0.1:8080  或留空走直连" spellcheck="false" />
-        <span class="hint">格式：<code>http=host:port;https=host:port</code> 或 <code>http://host:port</code>；PAC 用 <code>pac+http://...</code>。保存即生效，无需重启。</span>
-      </div>
-
-      <div class="fld">
-        <span class="lbl">内嵌浏览器启动参数</span>
-        <input id="browserArgs" class="in" placeholder="--disable-web-security --ignore-certificate-errors" spellcheck="false" />
-        <div class="row">
-          <button class="chip" id="chipNoCors">禁用跨域(--disable-web-security)</button>
-          <button class="chip" id="chipIgnoreCert">忽略证书错误</button>
-        </div>
-        <span class="hint">透传给 Chromium 的启动开关。含 <code>--disable-web-security</code> 时，<b>新开的标签页</b>立刻关掉同源策略（解决本地项目请求服务端跨域），<b>无需重启</b>；其余开关重启后生效。<br>注：<code>--user-data-dir</code> 在 Electron 会搬走整个应用数据目录、导致设置丢失，已自动忽略——关跨域用上面的开关即可，不需要它。</span>
-      </div>
-
-      <div class="fld">
         <span class="lbl">修复流程</span>
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px;color:var(--txt)">
           <input type="checkbox" id="planMode" style="width:14px;height:14px" />
@@ -103,60 +87,9 @@
       </div>
 
       <div class="fld">
-        <span class="lbl">收件 IMAP <span class="hint" style="font-weight:400">(用于晨间摘要 / agent 读邮件)</span></span>
-        <div class="row">
-          <input id="imapHost" class="in" style="flex:3" placeholder="imap.company.com" spellcheck="false" />
-          <input id="imapPort" class="in" style="width:64px;flex:none" placeholder="993" spellcheck="false" />
-        </div>
-        <div class="row" style="gap:12px">
-          <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" id="imapSecure" style="accent-color:var(--brand)" /> TLS</label>
-          <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" id="imapSelf" style="accent-color:var(--brand)" /> 允许自签证书</label>
-        </div>
-        <input id="imapUser" class="in" placeholder="用户名 / 邮箱" spellcheck="false" autocomplete="username" />
-        <input id="imapPass" class="in" type="password" placeholder="密码（加密存储，留空=不修改）" autocomplete="current-password" />
-        <div class="row" style="align-items:center;gap:8px">
-          <span class="hint" style="flex:none">晨间摘要时间</span>
-          <input id="imapHour" class="in" style="width:52px;flex:none" placeholder="9" />
-          <span class="hint">时（工作日自动触发）</span>
-        </div>
-        <div class="row" style="align-items:center;gap:8px">
-          <span class="hint" style="flex:none">Sent 文件夹</span>
-          <input id="imapSentFolder" class="in" style="flex:1" placeholder="Sent" spellcheck="false" />
-          <span class="hint" style="flex:none">归档</span>
-          <input id="imapArchiveFolder" class="in" style="flex:1" placeholder="Archive" spellcheck="false" />
-        </div>
-        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;margin-top:2px"><input type="checkbox" id="imapIdle" style="accent-color:var(--brand)" /> 实时新邮件提醒(IMAP IDLE)<span class="hint" style="font-weight:400">— 新邮件到达即弹通知,点击整理摘要</span></label>
-        <div class="row">
-          <button id="testImap" class="chip">测试 IMAP</button>
-          <span id="imapMsg" class="hint" style="color:var(--green)"></span>
-        </div>
-      </div>
-
-      <div class="fld">
-        <span class="lbl">发件 SMTP <span class="hint" style="font-weight:400">(给 agent 调 mail_send / mail_reply 用 — 你让它发它才发,不会自动)</span></span>
-        <div class="row">
-          <input id="smtpHost" class="in" style="flex:3" placeholder="smtp.company.com" spellcheck="false" />
-          <input id="smtpPort" class="in" style="width:64px;flex:none" placeholder="587" spellcheck="false" />
-        </div>
-        <div class="row" style="gap:12px">
-          <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" id="smtpSecure" style="accent-color:var(--brand)" /> implicit TLS (465 用)</label>
-          <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" id="smtpSelf" style="accent-color:var(--brand)" /> 允许自签证书</label>
-          <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer"><input type="checkbox" id="smtpSameAsImap" style="accent-color:var(--brand)" /> 用户名/密码同 IMAP</label>
-        </div>
-        <input id="smtpUser" class="in" placeholder="发件用户名 / 邮箱 (同 IMAP 时可空)" spellcheck="false" autocomplete="username" />
-        <input id="smtpPass" class="in" type="password" placeholder="密码 (留空=不修改 / 用 IMAP 密码)" autocomplete="current-password" />
-        <input id="smtpFrom" class="in" placeholder="From 显示地址 (留空=用上面用户名)" spellcheck="false" />
-        <div class="row">
-          <button id="testSmtp" class="chip">测试 SMTP (发到自己)</button>
-          <span id="smtpMsg" class="hint" style="color:var(--green)"></span>
-        </div>
-        <span class="hint">端口 465 = 直 TLS,勾上面 implicit TLS;587 = STARTTLS,不勾;25 = 明文。</span>
-        <div class="row" style="align-items:center;gap:8px;margin-top:8px">
-          <span style="font-size:12px;color:var(--txt2)">发送延迟(软撤回)</span>
-          <input id="outboxHold" class="in" style="width:60px;flex:none" placeholder="15" />
-          <span style="font-size:12px;color:var(--txt2)">秒</span>
-        </div>
-        <span class="hint">Agent 发信先进"发件箱",延迟期内可撤销或立即发送 —— 防误发。设 0 = 立即发出(不拦)。</span>
+        <span class="lbl">📧 邮件（收发 / 晨间摘要）</span>
+        <span class="hint">IMAP 收件、SMTP 发件、晨间摘要、IDLE 实时提醒等配置已搬到独立的「邮件中心」，连同收件箱一起管理。</span>
+        <div class="row" style="margin-top:4px"><button id="openMailCenter" class="chip">打开邮件中心（收件箱 + 设置）</button></div>
       </div>
 
       <div class="fld">
@@ -237,18 +170,8 @@
   if (cur.serveBinLocked) { serveBin.disabled = true; serveBin.value = cur.serveBinEffective || ''; $('lock').style.display = 'inline-block' }
   else { serveBin.placeholder = cur.serveBinEffective ? '默认：' + cur.serveBinEffective : 'opencode / bocomcode' }
 
-  // 代理
-  const proxy = $('proxy'); proxy.value = cur.proxy || ''
-
-  // 内嵌浏览器启动参数
-  const browserArgs = $('browserArgs'); browserArgs.value = cur.browserArgs || ''
-  function addArg(flag) {
-    const has = browserArgs.value.split(/\s+/).some((t) => t.replace(/^--?/, '').toLowerCase() === flag.replace(/^--?/, '').toLowerCase())
-    if (!has) browserArgs.value = (browserArgs.value.trim() + ' ' + flag).trim()
-    browserArgs.focus()
-  }
-  $('chipNoCors').addEventListener('click', () => addArg('--disable-web-security'))
-  $('chipIgnoreCert').addEventListener('click', () => addArg('--ignore-certificate-errors'))
+  // 代理 / 内嵌浏览器启动参数已移到浏览器窗口的「⋯ → 代理 / 启动参数」抽屉
+  $('openMailCenter').addEventListener('click', () => { window.BocomHermes.openMailCenter(); window.BocomHermes.closeSelf() })
 
   const planMode = $('planMode'); planMode.checked = cur.planMode !== false   // 默认 ON
 
@@ -292,49 +215,10 @@
     try { await window.BocomHermes.clearBackend(); cur.backendDir = ''; paintBackend('') } catch (e) {}
   })
 
-  // IMAP 字段初始化
-  // 系统密钥库不可用 → 密码明文落盘,顶部红字告警
+  // 系统密钥库不可用 → 密码明文落盘,顶部红字告警（OceanBase 密码仍在本面板）
   try { $('encWarn').style.display = (cur.encryptionAvailable === false) ? 'block' : 'none' } catch (e) {}
 
-  const im = cur.imap || {}
-  $('imapHost').value = im.host || ''
-  $('imapPort').value = im.port || 993
-  $('imapSecure').checked = im.secure !== false
-  $('imapSelf').checked = !!im.allowSelf
-  $('imapUser').value = im.user || ''
-  $('imapPass').placeholder = im.hasPass ? '密码已保存（留空=不修改）' : '密码（加密存储）'
-  $('imapHour').value = im.scheduleHour ?? 9
-  $('imapIdle').checked = cur.imapIdleEnabled !== false
-  $('imapSentFolder').value = im.sentFolder || 'Sent'
-  $('imapArchiveFolder').value = im.archiveFolder || 'Archive'
-
-  // 测试 IMAP 连接
-  $('testImap').addEventListener('click', async () => {
-    const imapMsg = $('imapMsg')
-    imapMsg.style.color = 'var(--txt3)'; imapMsg.textContent = '连接中…'
-    await save(true)
-    try {
-      const r = await window.BocomHermes.emailTest()
-      imapMsg.style.color = 'var(--green)'; imapMsg.textContent = `✓ 连通，${r.count} 封未读`
-    } catch (e) {
-      imapMsg.style.color = 'var(--diff-del)'; imapMsg.textContent = '✗ ' + (e.message || '连接失败')
-    }
-  })
-
-  // SMTP 字段初始化
-  const sm = cur.smtp || {}
-  $('smtpHost').value = sm.host || ''
-  $('smtpPort').value = sm.port || 587
-  $('smtpSecure').checked = !!sm.secure
-  $('smtpSelf').checked = !!sm.allowSelf
-  $('smtpSameAsImap').checked = sm.sameAsImap !== false   // 默认 ON
-  $('smtpUser').value = sm.user || ''
-  $('smtpPass').placeholder = sm.hasPass ? '密码已保存（留空=不修改）' : '密码（加密存储,留空=用 IMAP 密码）'
-  $('smtpFrom').value = sm.from || ''
-  $('outboxHold').value = (cur.outboxHoldSeconds == null ? 15 : cur.outboxHoldSeconds)
-  // 同 IMAP 时灰化 user/pass
-  function syncSameAsImap() { const on = $('smtpSameAsImap').checked; ['smtpUser', 'smtpPass'].forEach((k) => { $(k).disabled = on; $(k).style.opacity = on ? .55 : 1 }) }
-  syncSameAsImap(); $('smtpSameAsImap').addEventListener('change', syncSameAsImap)
+  // IMAP / SMTP 字段已搬到「邮件中心」，此处不再读写
   // OceanBase 字段载入
   const ob = cur.ob || {}
   $('obHost').value = ob.host || ''
@@ -394,44 +278,11 @@
     } catch (e) { dbMsg.style.color = 'var(--diff-del)'; dbMsg.textContent = '✗ ' + (e.message || '连接失败') }
   })
 
-  // 测试 SMTP(给自己发一封)
-  $('testSmtp').addEventListener('click', async () => {
-    const smtpMsg = $('smtpMsg')
-    smtpMsg.style.color = 'var(--txt3)'; smtpMsg.textContent = '发送中…(收件箱看自己邮件)'
-    await save(true)
-    try {
-      const r = await window.BocomHermes.smtpTest()
-      if (r && r.ok) { smtpMsg.style.color = 'var(--green)'; smtpMsg.textContent = '✓ 已发送到 ' + r.to }
-      else { smtpMsg.style.color = 'var(--diff-del)'; smtpMsg.textContent = '✗ ' + ((r && r.error) || '发送失败') }
-    } catch (e) { smtpMsg.style.color = 'var(--diff-del)'; smtpMsg.textContent = '✗ ' + (e.message || '发送失败') }
-  })
-
-  // 保存
+  // 保存（IMAP/SMTP/代理/启动参数已分别移到「邮件中心」「浏览器」，此处不再处理）
   const msg = $('msg')
   async function save(silent) {
-    const patch = { editorCmd: editorCmd.value, proxy: proxy.value, browserArgs: browserArgs.value, planMode: !!planMode.checked }
+    const patch = { editorCmd: editorCmd.value, planMode: !!planMode.checked }
     if (!cur.serveBinLocked) patch.serveBin = serveBin.value
-    patch.imap = {
-      host: $('imapHost').value.trim(),
-      port: $('imapPort').value.trim(),
-      secure: $('imapSecure').checked,
-      allowSelf: $('imapSelf').checked,
-      user: $('imapUser').value.trim(),
-      pass: $('imapPass').value,
-      scheduleHour: $('imapHour').value.trim(),
-      sentFolder: $('imapSentFolder').value.trim() || 'Sent',
-      archiveFolder: $('imapArchiveFolder').value.trim() || 'Archive',
-    }
-    patch.smtp = {
-      host: $('smtpHost').value.trim(),
-      port: $('smtpPort').value.trim(),
-      secure: $('smtpSecure').checked,
-      allowSelf: $('smtpSelf').checked,
-      sameAsImap: $('smtpSameAsImap').checked,
-      user: $('smtpUser').value.trim(),
-      pass: $('smtpPass').value,
-      from: $('smtpFrom').value.trim(),
-    }
     patch.ob = {
       host: $('obHost').value.trim(),
       port: $('obPort').value.trim(),
@@ -439,8 +290,6 @@
       pass: $('obPass').value,
       database: $('obDatabase').value.trim(),
     }
-    { const v = $('outboxHold').value.trim(); if (v !== '') patch.outboxHoldSeconds = parseInt(v) || 0 }
-    patch.imapIdleEnabled = $('imapIdle').checked
     try {
       await window.BocomHermes.setSettings(patch)
       if (!silent) { msg.textContent = '已保存 ✓'; setTimeout(() => { msg.textContent = '' }, 1800) }

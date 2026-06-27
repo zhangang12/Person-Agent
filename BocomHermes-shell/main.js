@@ -116,7 +116,7 @@ app.whenReady().then(() => {
   })
 
   const deps = { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }
-  const { createOrb, createBrowser, createWorkspace, toggleOrbInput, buildTray, spawnEmailCard, recordHistory, touchHistory, spawnReqConfirm, spawnReqPlan } = initWindow(S, deps)
+  const { createOrb, createBrowser, createWorkspace, createMailCenter, toggleOrbInput, buildTray, spawnEmailCard, recordHistory, touchHistory, spawnReqConfirm, spawnReqPlan } = initWindow(S, deps)
   S.createOrb = createOrb   // 留给 window-all-closed 兜底拉起球
 
   initSession(S, { ipcMain, path, fs, shell, oc, log, recordHistory, touchHistory })
@@ -143,6 +143,7 @@ app.whenReady().then(() => {
 
   if (!globalShortcut.register('Control+Shift+Space', toggleOrbInput)) log('global shortcut register failed (maybe in use)')
   globalShortcut.register('Control+Shift+B', () => createWorkspace())
+  globalShortcut.register('Control+Shift+M', () => createMailCenter())
 
   // Ctrl+Shift+V：把剪贴板内容带入输入框（"选中即问"快捷路径）
   globalShortcut.register('Control+Shift+V', () => {

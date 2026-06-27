@@ -101,6 +101,8 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   openMailView: (msgId) => ipcRenderer.invoke('open-mail-view', msgId),
   emailTest: () => ipcRenderer.invoke('email-test'),
   smtpTest:  () => ipcRenderer.invoke('smtp-test'),
+  openMailCenter: (tab) => ipcRenderer.invoke('open-mail-center', tab),
+  mailList: (opts) => ipcRenderer.invoke('mail-list', opts),
   openTodos: () => ipcRenderer.invoke('open-todos'),
   // 发件箱(发信安全闸门)
   openOutbox:    () => ipcRenderer.invoke('open-outbox'),
@@ -112,6 +114,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   openBrowser:          (url) => ipcRenderer.invoke('open-browser', url),
   browserNavigate:      (url) => ipcRenderer.invoke('browser-navigate', url),
   browserMenuOverlay:   (on)  => ipcRenderer.send('browser-menu-overlay', !!on),
+  browserSettingsOverlay: (on) => ipcRenderer.send('browser-settings-overlay', !!on),
   browserBack:          ()    => ipcRenderer.send('browser-back'),
   browserForward:       ()    => ipcRenderer.send('browser-forward'),
   browserReload:        ()    => ipcRenderer.send('browser-reload'),

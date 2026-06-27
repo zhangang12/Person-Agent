@@ -61,7 +61,7 @@ function collectPoints(report, decisionsIn = {}) {
 // ---------------- plan 提示词 + 输出契约 ----------------
 const PLAN_OUTPUT_SPEC =
   '只输出 JSON，不要任何解释或 <think>。格式：\n' +
-  '{"system":"(可选)归属系统名，多系统时填本需求点落在哪个系统",' +
+  '{"system":"(可选)归属系统名；优先采用上方代码定位中【】标注的系统，多个则取命中最多的，没有标注再据需求判断",' +
   '"files":[{"path":"务必原样抄给你的路径，不要改写","line":行号数字,"symbol":"方法/类名","change":"该处怎么改"}],' +
   '"tables":[{"table":"表名","column":"字段","change":"数据怎么变"}],' +
   '"interfaces":[{"method":"GET/POST...","path":"接口路径","caller":"谁调用","change":"接口怎么变"}],' +
@@ -71,8 +71,8 @@ const PLAN_OUTPUT_SPEC =
   '拿不准的一律写进 opens，不要替人决定。'
 
 function buildPlanPrompt(point, located = {}) {
-  const refs = (located.refs || []).map((r) => '- ' + r.path + (r.line ? ':' + r.line : '') + (r.symbol ? ' ' + r.symbol : '')).join('\n')
-  const slices = (located.slices || []).map((s) => '# ' + s.path + (s.line ? ':' + s.line : '') + '\n' + s.text).join('\n\n')
+  const refs = (located.refs || []).map((r) => '- ' + (r.system ? '【' + r.system + '】' : '') + r.path + (r.line ? ':' + r.line : '') + (r.symbol ? ' ' + r.symbol : '')).join('\n')
+  const slices = (located.slices || []).map((s) => '# ' + (s.system ? '【' + s.system + '】' : '') + s.path + (s.line ? ':' + s.line : '') + '\n' + s.text).join('\n\n')
   return [
     '你是资深研发。为下面这个【已确认的需求点】写一份"详设级"实施方案。',
     '',

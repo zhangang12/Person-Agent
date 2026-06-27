@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>邮件中心 · BocomHermes</title>
+<script>try { document.documentElement.dataset.theme = window.BocomHermes.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
+<script>(function(){try{var p=new URLSearchParams(location.search),d=document.documentElement.style;['gox','goy','gfx','gfy'].forEach(function(k){var v=p.get(k);if(v)d.setProperty('--'+k,v)})}catch(e){}})()</script>
+<link rel="stylesheet" href="glass.css" />
+<style>
+  .mc { display: flex; flex-direction: column; height: 100%; padding: 12px 15px 13px; gap: 11px; }
+  .hd { display: flex; align-items: center; gap: 10px; flex: none; }
+  .hd .ttl { font-size: 14px; font-weight: 600; flex: none; }
+  .tabs { display: flex; background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 9px; padding: 2px; gap: 2px; }
+  .tabs button { border: none; background: transparent; color: var(--txt2); font-size: 12px; padding: 5px 15px; border-radius: 7px; cursor: pointer; font-family: var(--font); display: flex; align-items: center; gap: 5px; }
+  .tabs button.on { background: var(--brand); color: var(--send-fg); font-weight: 600; }
+  .tabs button .cnt { font-size: 10px; opacity: .85; }
+  .sp { flex: 1; }
+  .hbtn { border: none; background: transparent; color: var(--txt3); cursor: pointer; padding: 4px; border-radius: 7px; display: flex; }
+  .hbtn:hover { color: var(--txt); background: var(--composer-bg); }
+  .body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 2px; }
+  .body::-webkit-scrollbar { width: 6px; } .body::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  [hidden] { display: none !important; }
+
+  /* ── 收件箱 ── */
+  .ibbar { display: flex; align-items: center; gap: 8px; flex: none; margin-bottom: 9px; }
+  .ibbar .chip { font-size: 11px; color: var(--txt2); background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 999px; padding: 4px 11px; cursor: pointer; font-family: var(--font); display: inline-flex; align-items: center; gap: 5px; }
+  .ibbar .chip:hover { color: var(--txt); border-color: var(--accent); }
+  .ibbar .chip.on { color: var(--send-fg); background: var(--brand); border-color: transparent; }
+  .ibbar .chip svg { width: 12px; height: 12px; }
+  .ibbar .sp { flex: 1; }
+  .ibbar .st { font-size: 11px; color: var(--txt3); }
+  .mlist { display: flex; flex-direction: column; gap: 4px; }
+  .mrow { display: flex; flex-direction: column; gap: 3px; padding: 9px 11px; border-radius: 10px; background: var(--composer-bg); border: .5px solid var(--composer-border); cursor: pointer; transition: border-color .12s, background .12s; }
+  .mrow:hover { border-color: var(--accent); }
+  .mrow .top { display: flex; align-items: center; gap: 8px; }
+  .mrow .from { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--txt); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mrow .date { flex: none; font-size: 10.5px; color: var(--txt3); }
+  .mrow .subj { font-size: 12px; color: var(--txt); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mrow .prev { font-size: 11px; color: var(--txt3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.4; }
+  .mrow .att { font-size: 10px; color: var(--accent); flex: none; }
+  .state { text-align: center; color: var(--txt3); font-size: 12px; padding: 40px 16px; line-height: 1.6; }
+  .state a { color: var(--accent); cursor: pointer; }
+  .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--composer-border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; vertical-align: -2px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── 设置（复用 settings.html 风格） ── */
+  .fld { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+  .lbl { font-size: 12px; font-weight: 600; color: var(--txt); }
+  .hint { font-size: 11px; color: var(--txt3); line-height: 1.45; }
+  .hint code { font-family: var(--mono); background: var(--composer-bg); padding: 1px 5px; border-radius: 4px; }
+  .in { width: 100%; background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 9px; padding: 7px 10px; color: var(--txt); font-size: 12.5px; font-family: var(--mono); outline: none; }
+  .in:focus { border-color: var(--accent); }
+  .in:disabled { opacity: .6; cursor: not-allowed; }
+  .row { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+  .ck { display: flex; align-items: center; gap: 5px; font-size: 12px; cursor: pointer; }
+  .ck input { accent-color: var(--brand); }
+  .chip { font-size: 11px; color: var(--txt2); background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 999px; padding: 4px 11px; cursor: pointer; font-family: var(--font); }
+  .chip:hover { color: var(--txt); border-color: var(--accent); }
+  .warn { display: none; font-size: 11px; color: var(--warn-txt); background: var(--warn-bg); border: .5px solid var(--warn-border); border-radius: 8px; padding: 7px 10px; margin-bottom: 12px; line-height: 1.5; }
+  .ft { flex: none; display: flex; align-items: center; gap: 9px; padding-top: 4px; }
+  .ft .msg { flex: 1; font-size: 11.5px; color: var(--green); }
+  .btn-primary { font-size: 12.5px; font-weight: 600; color: var(--send-fg); background: var(--brand); border: none; border-radius: 9px; padding: 7px 18px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="glass">
+  <span class="hl"></span>
+  <div class="mc">
+    <div class="hd">
+      <span class="ttl">📧 邮件中心</span>
+      <div class="tabs nodrag">
+        <button id="tabInbox" class="on">收件箱<span class="cnt" id="inboxCnt"></span></button>
+        <button id="tabSettings">设置</button>
+      </div>
+      <span class="sp"></span>
+      <button id="x" class="hbtn nodrag" title="关闭" aria-label="关闭"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+
+    <!-- ── 收件箱 ── -->
+    <div id="paneInbox" class="nodrag" style="display:flex;flex-direction:column;flex:1;min-height:0">
+      <div class="ibbar">
+        <button id="btnRefresh" class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.5 15a9 9 0 1 1-2.4-9.2L23 10"/></svg>刷新</button>
+        <button id="btnUnread" class="chip on">只看未读</button>
+        <span class="sp"></span>
+        <span class="st" id="ibStatus"></span>
+      </div>
+      <div class="body"><div id="mlist" class="mlist"><div class="state">加载中… <span class="spin"></span></div></div></div>
+    </div>
+
+    <!-- ── 设置 ── -->
+    <div id="paneSettings" class="body nodrag" hidden>
+      <div class="warn" id="encWarn">⚠️ 系统密钥库不可用，邮箱密码将以明文落盘。请仅在受信任的本机使用。</div>
+
+      <div class="fld">
+        <span class="lbl">收件 IMAP <span class="hint" style="font-weight:400">(用于晨间摘要 / agent 读邮件 / 上方收件箱)</span></span>
+        <div class="row">
+          <input id="imapHost" class="in" style="flex:3" placeholder="imap.company.com" spellcheck="false" />
+          <input id="imapPort" class="in" style="width:64px;flex:none" placeholder="993" spellcheck="false" />
+        </div>
+        <div class="row" style="gap:12px">
+          <label class="ck"><input type="checkbox" id="imapSecure" /> TLS</label>
+          <label class="ck"><input type="checkbox" id="imapSelf" /> 允许自签证书</label>
+        </div>
+        <input id="imapUser" class="in" placeholder="用户名 / 邮箱" spellcheck="false" autocomplete="username" />
+        <input id="imapPass" class="in" type="password" placeholder="密码（加密存储，留空=不修改）" autocomplete="current-password" />
+        <div class="row" style="align-items:center;gap:8px">
+          <span class="hint" style="flex:none">晨间摘要时间</span>
+          <input id="imapHour" class="in" style="width:52px;flex:none" placeholder="9" />
+          <span class="hint">时（工作日自动触发）</span>
+        </div>
+        <div class="row" style="align-items:center;gap:8px">
+          <span class="hint" style="flex:none">Sent 文件夹</span>
+          <input id="imapSentFolder" class="in" style="flex:1" placeholder="Sent" spellcheck="false" />
+          <span class="hint" style="flex:none">归档</span>
+          <input id="imapArchiveFolder" class="in" style="flex:1" placeholder="Archive" spellcheck="false" />
+        </div>
+        <label class="ck" style="margin-top:2px"><input type="checkbox" id="imapIdle" /> 实时新邮件提醒(IMAP IDLE)<span class="hint" style="font-weight:400">— 新邮件到达即弹通知，点击整理摘要</span></label>
+        <div class="row">
+          <button id="testImap" class="chip">测试 IMAP</button>
+          <span id="imapMsg" class="hint" style="color:var(--green)"></span>
+        </div>
+      </div>
+
+      <div class="fld">
+        <span class="lbl">发件 SMTP <span class="hint" style="font-weight:400">(给 agent 调 mail_send / mail_reply 用 — 你让它发它才发，不会自动)</span></span>
+        <div class="row">
+          <input id="smtpHost" class="in" style="flex:3" placeholder="smtp.company.com" spellcheck="false" />
+          <input id="smtpPort" class="in" style="width:64px;flex:none" placeholder="587" spellcheck="false" />
+        </div>
+        <div class="row" style="gap:12px">
+          <label class="ck"><input type="checkbox" id="smtpSecure" /> implicit TLS (465 用)</label>
+          <label class="ck"><input type="checkbox" id="smtpSelf" /> 允许自签证书</label>
+          <label class="ck"><input type="checkbox" id="smtpSameAsImap" /> 用户名/密码同 IMAP</label>
+        </div>
+        <input id="smtpUser" class="in" placeholder="发件用户名 / 邮箱 (同 IMAP 时可空)" spellcheck="false" autocomplete="username" />
+        <input id="smtpPass" class="in" type="password" placeholder="密码 (留空=不修改 / 用 IMAP 密码)" autocomplete="current-password" />
+        <input id="smtpFrom" class="in" placeholder="From 显示地址 (留空=用上面用户名)" spellcheck="false" />
+        <div class="row">
+          <button id="testSmtp" class="chip">测试 SMTP (发到自己)</button>
+          <span id="smtpMsg" class="hint" style="color:var(--green)"></span>
+        </div>
+        <span class="hint">端口 465 = 直 TLS，勾上面 implicit TLS；587 = STARTTLS，不勾；25 = 明文。</span>
+        <div class="row" style="align-items:center;gap:8px;margin-top:8px">
+          <span style="font-size:12px;color:var(--txt2)">发送延迟(软撤回)</span>
+          <input id="outboxHold" class="in" style="width:60px;flex:none" placeholder="15" />
+          <span style="font-size:12px;color:var(--txt2)">秒</span>
+        </div>
+        <span class="hint">Agent 发信先进“发件箱”，延迟期内可撤销或立即发送 —— 防误发。设 0 = 立即发出(不拦)。</span>
+      </div>
+
+      <div class="ft">
+        <span class="msg" id="saveMsg"></span>
+        <button id="save" class="btn-primary">保存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const H = window.BocomHermes
+  const $ = (id) => document.getElementById(id)
+  H.onTheme && H.onTheme((t) => { document.documentElement.dataset.theme = t })
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+  $('x').addEventListener('click', () => H.closeSelf())
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') H.closeSelf() })
+
+  // ── Tab 切换 ──
+  const paneInbox = $('paneInbox'), paneSettings = $('paneSettings')
+  function showTab(which) {
+    const inbox = which === 'inbox'
+    $('tabInbox').classList.toggle('on', inbox)
+    $('tabSettings').classList.toggle('on', !inbox)
+    paneInbox.style.display = inbox ? 'flex' : 'none'
+    paneSettings.hidden = inbox
+    if (inbox && !inboxLoaded) loadInbox()
+  }
+  $('tabInbox').addEventListener('click', () => showTab('inbox'))
+  $('tabSettings').addEventListener('click', () => showTab('settings'))
+
+  // ── 收件箱 ──
+  let inboxLoaded = false, onlyUnread = true, loading = false
+  function fromName(raw) {
+    const s = String(raw || '')
+    const m = s.match(/^\s*"?([^"<]+?)"?\s*</)
+    return (m ? m[1] : s).trim() || s
+  }
+  function fmtDate(d) {
+    const t = Date.parse(d); if (isNaN(t)) return String(d || '').slice(0, 16)
+    const dt = new Date(t), now = new Date()
+    const sameDay = dt.toDateString() === now.toDateString()
+    const pad = (n) => String(n).padStart(2, '0')
+    return sameDay ? `${pad(dt.getHours())}:${pad(dt.getMinutes())}` : `${dt.getMonth() + 1}/${dt.getDate()} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`
+  }
+  async function loadInbox() {
+    if (loading) return
+    loading = true; inboxLoaded = true
+    const list = $('mlist'); $('ibStatus').textContent = ''
+    list.innerHTML = '<div class="state">加载中… <span class="spin"></span></div>'
+    try {
+      const r = await H.mailList({ onlyUnseen: onlyUnread, days: onlyUnread ? 3 : 7, limit: 30 })
+      if (!r || r.ok === false) throw new Error((r && r.error) || '拉取失败')
+      const emails = r.emails || []
+      $('inboxCnt').textContent = emails.length ? ' ' + emails.length : ''
+      $('ibStatus').textContent = emails.length ? `共 ${emails.length} 封` + (r.totalMatched > emails.length ? ` / ${r.totalMatched}` : '') : ''
+      if (!emails.length) {
+        list.innerHTML = '<div class="state">' + (onlyUnread ? '没有未读邮件 📭' : '收件箱为空') + '</div>'
+      } else {
+        list.innerHTML = emails.map((e) => {
+          const att = (e.attachments || 0) > 0 ? '<span class="att">📎' + e.attachments + '</span>' : ''
+          return '<div class="mrow" data-mid="' + esc(e.messageId) + '">'
+            + '<div class="top"><span class="from">' + esc(fromName(e.from)) + '</span>' + att + '<span class="date">' + esc(fmtDate(e.date)) + '</span></div>'
+            + '<div class="subj">' + esc(e.subject || '(无主题)') + '</div>'
+            + (e.preview ? '<div class="prev">' + esc(e.preview) + '</div>' : '')
+            + '</div>'
+        }).join('')
+      }
+    } catch (err) {
+      const m = (err && err.message) || '拉取失败'
+      list.innerHTML = '<div class="state">✗ ' + esc(m) + '<br><a id="goCfg">去「设置」检查 IMAP 配置</a></div>'
+      const g = $('goCfg'); if (g) g.addEventListener('click', () => showTab('settings'))
+    } finally { loading = false }
+  }
+  $('mlist').addEventListener('click', (e) => {
+    const row = e.target.closest('.mrow'); if (!row) return
+    const mid = row.dataset.mid; if (mid) H.openMailView(mid)
+  })
+  $('btnRefresh').addEventListener('click', () => loadInbox())
+  $('btnUnread').addEventListener('click', () => { onlyUnread = !onlyUnread; $('btnUnread').classList.toggle('on', onlyUnread); loadInbox() })
+
+  // ── 设置 ──
+  const cur = (function () { try { return H.getSettings() || {} } catch (e) { return {} } })()
+  try { $('encWarn').style.display = (cur.encryptionAvailable === false) ? 'block' : 'none' } catch (e) {}
+  const im = cur.imap || {}
+  $('imapHost').value = im.host || ''
+  $('imapPort').value = im.port || 993
+  $('imapSecure').checked = im.secure !== false
+  $('imapSelf').checked = !!im.allowSelf
+  $('imapUser').value = im.user || ''
+  $('imapPass').placeholder = im.hasPass ? '密码已保存（留空=不修改）' : '密码（加密存储）'
+  $('imapHour').value = im.scheduleHour ?? 9
+  $('imapIdle').checked = cur.imapIdleEnabled !== false
+  $('imapSentFolder').value = im.sentFolder || 'Sent'
+  $('imapArchiveFolder').value = im.archiveFolder || 'Archive'
+
+  const sm = cur.smtp || {}
+  $('smtpHost').value = sm.host || ''
+  $('smtpPort').value = sm.port || 587
+  $('smtpSecure').checked = !!sm.secure
+  $('smtpSelf').checked = !!sm.allowSelf
+  $('smtpSameAsImap').checked = sm.sameAsImap !== false
+  $('smtpUser').value = sm.user || ''
+  $('smtpPass').placeholder = sm.hasPass ? '密码已保存（留空=不修改）' : '密码（加密存储，留空=用 IMAP 密码）'
+  $('smtpFrom').value = sm.from || ''
+  $('outboxHold').value = (cur.outboxHoldSeconds == null ? 15 : cur.outboxHoldSeconds)
+  function syncSameAsImap() { const on = $('smtpSameAsImap').checked;['smtpUser', 'smtpPass'].forEach((k) => { $(k).disabled = on; $(k).style.opacity = on ? .55 : 1 }) }
+  syncSameAsImap(); $('smtpSameAsImap').addEventListener('change', syncSameAsImap)
+
+  async function save(silent) {
+    const patch = {}
+    patch.imap = {
+      host: $('imapHost').value.trim(), port: $('imapPort').value.trim(),
+      secure: $('imapSecure').checked, allowSelf: $('imapSelf').checked,
+      user: $('imapUser').value.trim(), pass: $('imapPass').value,
+      scheduleHour: $('imapHour').value.trim(),
+      sentFolder: $('imapSentFolder').value.trim() || 'Sent',
+      archiveFolder: $('imapArchiveFolder').value.trim() || 'Archive',
+    }
+    patch.smtp = {
+      host: $('smtpHost').value.trim(), port: $('smtpPort').value.trim(),
+      secure: $('smtpSecure').checked, allowSelf: $('smtpSelf').checked,
+      sameAsImap: $('smtpSameAsImap').checked,
+      user: $('smtpUser').value.trim(), pass: $('smtpPass').value, from: $('smtpFrom').value.trim(),
+    }
+    { const v = $('outboxHold').value.trim(); if (v !== '') patch.outboxHoldSeconds = parseInt(v) || 0 }
+    patch.imapIdleEnabled = $('imapIdle').checked
+    try {
+      await H.setSettings(patch)
+      if (!silent) { const m = $('saveMsg'); m.style.color = 'var(--green)'; m.textContent = '已保存 ✓'; setTimeout(() => { m.textContent = '' }, 1800) }
+    } catch (e) { const m = $('saveMsg'); m.style.color = 'var(--diff-del)'; m.textContent = '保存失败' }
+  }
+  $('save').addEventListener('click', () => save(false))
+
+  $('testImap').addEventListener('click', async () => {
+    const m = $('imapMsg'); m.style.color = 'var(--txt3)'; m.textContent = '连接中…'
+    await save(true)
+    try { const r = await H.emailTest(); m.style.color = 'var(--green)'; m.textContent = `✓ 连通，${r.count} 封未读` }
+    catch (e) { m.style.color = 'var(--diff-del)'; m.textContent = '✗ ' + (e.message || '连接失败') }
+  })
+  $('testSmtp').addEventListener('click', async () => {
+    const m = $('smtpMsg'); m.style.color = 'var(--txt3)'; m.textContent = '发送中…(收件箱看自己邮件)'
+    await save(true)
+    try {
+      const r = await H.smtpTest()
+      if (r && r.ok) { m.style.color = 'var(--green)'; m.textContent = '✓ 已发送到 ' + r.to }
+      else { m.style.color = 'var(--diff-del)'; m.textContent = '✗ ' + ((r && r.error) || '发送失败') }
+    } catch (e) { m.style.color = 'var(--diff-del)'; m.textContent = '✗ ' + (e.message || '发送失败') }
+  })
+
+  // 启动：默认进收件箱并加载（若 ?tab=settings 则进设置）
+  const initTab = new URLSearchParams(location.search).get('tab')
+  showTab(initTab === 'settings' ? 'settings' : 'inbox')
+</script>
+</body>
+</html>
