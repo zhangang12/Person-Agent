@@ -21,6 +21,17 @@
   .imp { margin: auto; width: 100%; max-width: 360px; text-align: center; border: 1.5px dashed var(--composer-border); border-radius: 14px; padding: 26px 20px; }
   .imp .ic { font-size: 34px; } .imp .t { font-size: 14px; font-weight: 600; margin: 8px 0 3px; }
   .imp .s { font-size: 11.5px; color: var(--txt3); line-height: 1.5; }
+  /* 仓库配置（grounding 真相源，就近配在入口）*/
+  .cfg { width: 100%; max-width: 380px; margin: 0 auto 13px; text-align: left; border: .5px solid var(--composer-border); border-radius: 12px; padding: 11px 12px; }
+  .cfg .ct { font-size: 12.5px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .cfg .cs { font-size: 11px; color: var(--txt3); line-height: 1.5; margin: 3px 0 9px; }
+  .repo { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--txt2); padding: 5px 8px; background: var(--composer-bg); border-radius: 7px; margin-bottom: 5px; }
+  .repo .rp { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .repo .del { border: none; background: transparent; color: var(--txt3); cursor: pointer; font-size: 13px; line-height: 1; padding: 0 2px; flex: none; }
+  .repo .del:hover { color: var(--diff-del); }
+  .addrepo { font-size: 12px; color: var(--accent); background: transparent; border: 1px dashed var(--composer-border); border-radius: 8px; padding: 7px 10px; cursor: pointer; width: 100%; }
+  .addrepo:hover { border-color: var(--accent); }
+  .empty { font-size: 11px; color: var(--txt3); line-height: 1.5; padding: 2px 0 9px; }
   /* 阶段时间线 */
   .stage { display: flex; gap: 10px; }
   .rail { display: flex; flex-direction: column; align-items: center; width: 22px; flex: none; }
@@ -42,6 +53,8 @@
   .doc { display: flex; align-items: center; gap: 10px; border: .5px solid var(--composer-border); border-radius: 10px; padding: 11px 12px; margin-top: 4px; }
   .doc .ic { font-size: 22px; }
   .cta { display: inline-flex; align-items: center; gap: 6px; background: var(--brand); color: var(--send-fg); border: none; border-radius: 8px; padding: 8px 15px; font-size: 12.5px; font-weight: 600; cursor: pointer; margin-top: 14px; }
+  .ghost { font-size: 12px; color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 8px; padding: 7px 11px; cursor: pointer; }
+  .ghost:hover { border-color: var(--accent); color: var(--txt); }
   .err { background: var(--warn-bg); color: var(--warn-txt); border: .5px solid var(--warn-border); border-radius: 9px; padding: 7px 10px; font-size: 12px; margin-top: 6px; }
 </style>
 </head>
@@ -73,17 +86,41 @@
   const fnEl = document.getElementById('fn')
   const PERS = ['业务字面', '数据派', '流程派', '挑刺·对抗', '历史·跨页']
   let started = false
+  let repos = []
+
+  // ── 仓库配置（grounding 真相源 = 场景 Profile，配在需求分析入口）──
+  function loadRepos() { try { repos = (H.getSettings() || {}).reqRepos || [] } catch (e) { repos = [] } }
+  async function saveRepos() { try { await H.setSettings({ reqProfile: { repos } }) } catch (e) {} }
+  function reposRows() {
+    if (!repos.length) return '<div class="empty">未配置 → 默认用当前项目目录找代码。<br>多系统需求（场景一）在此添加各系统的仓，用于 grep 定位 / 出实施方案。</div>'
+    return repos.map((r, i) => '<div class="repo"><span class="rp" title="' + esc(r) + '">' + esc(base(r)) + '　<span style="color:var(--txt3)">' + esc(r) + '</span></span><button class="del" data-i="' + i + '" title="移除">✕</button></div>').join('')
+  }
+  function refreshRepos() { const el = document.getElementById('repolist'); if (el) el.innerHTML = reposRows() }
 
   // ── 导入态 ──
   function renderImport() {
     started = false; fnEl.textContent = ''
+    loadRepos()
     body.innerHTML =
-      '<div class="imp" id="imp"><div class="ic">📄</div>'
+      '<div style="margin:auto;width:100%;max-width:380px">'
+      + '<div class="cfg"><div class="ct">📁 代码仓库 · grounding 真相源</div>'
+      + '<div class="cs">需求分析会在这些仓里 grep 定位代码、出实施方案。可加多个（场景一：个网 / 渠道管理台 / 渠道整合平台）。</div>'
+      + '<div id="repolist">' + reposRows() + '</div>'
+      + '<button id="addrepo" class="addrepo">+ 添加仓库</button></div>'
+      + '<div class="imp" id="imp" style="max-width:none;margin:0"><div class="ic">📄</div>'
       + '<div class="t">选择需求 Word 文档</div>'
-      + '<div class="s">点「选择文件」选 .docx · 内嵌图片自动走多模态（待接 Qwen）<br>多个 Agent 会各自独立读、把明确/不明确/矛盾摊给你</div>'
+      + '<div class="s">点「选择文件」选 .docx · 内嵌图片自动走多模态（待接 Qwen）<br>多个 Agent 各自独立读，把明确/不明确/矛盾摊给你</div>'
       + '<button id="pick" class="cta">选择文件</button></div>'
+      + '</div>'
     document.getElementById('pick').addEventListener('click', async () => {
       try { const p = await H.pickReqDocPath(); if (p) startAnalysis(p) } catch (e) {}
+    })
+    document.getElementById('addrepo').addEventListener('click', async () => {
+      try { const p = await H.pickReqRepo(); if (p && !repos.includes(p)) { repos.push(p); await saveRepos(); refreshRepos() } } catch (e) {}
+    })
+    document.getElementById('repolist').addEventListener('click', async (e) => {
+      const d = e.target.closest('.del'); if (!d) return
+      repos.splice(Number(d.dataset.i), 1); await saveRepos(); refreshRepos()
     })
   }
 
@@ -156,8 +193,14 @@
       + '<div style="font-weight:600;font-size:12.5px">需求分析报告 · ' + esc(fnEl.textContent.replace(/^ · /, '') || '需求文档') + '</div>'
       + '<div style="font-size:11.5px;color:var(--txt3)">' + (ev.findings || 0) + ' findings · ' + (ev.clusters || 0) + ' 话题簇 · 证据锚 + 待确认项</div></div></div>'
       + '<div style="display:flex;align-items:center;gap:8px;margin-top:10px"><span style="font-size:11px;color:var(--txt3)">确认后 append-only 落档</span>'
-      + '<button id="open-confirm" class="cta" style="margin:0 0 0 auto">打开逐条确认 →</button></div>'
+      + '<button id="export-md" class="ghost" style="margin-left:auto">导出报告</button>'
+      + '<button id="open-confirm" class="cta" style="margin-top:0">打开逐条确认 →</button></div>'
     document.getElementById('open-confirm').addEventListener('click', () => H.openReqConfirm(ev.reportId))
+    document.getElementById('export-md').addEventListener('click', async () => {
+      const b = document.getElementById('export-md'); b.textContent = '导出中…'
+      const r = await H.exportReqReport(ev.reportId)
+      b.textContent = (r && r.ok) ? '已导出 ✓' : (r && r.canceled) ? '导出报告' : '导出失败'
+    })
   }
 
   // 整张卡 JS 拖动：抓取时读一次尺寸，移动时写回锁定尺寸 + 新坐标 → 绝不缩放

@@ -592,6 +592,14 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     win.loadFile(path.join(__dirname, '..', 'ui', 'reqconfirm.html'), { query: { reportId: reportId || '', ...orbAnchorFor(270, 96, 600, 700) } })
     return win.webContents.id
   }
+  function spawnReqPlan(reportId) {
+    const win = new BrowserWindow(baseOpts({
+      width: 620, height: 720, resizable: false,
+      alwaysOnTop: false, skipTaskbar: false, x: 320, y: 80,
+    }))
+    win.loadFile(path.join(__dirname, '..', 'ui', 'reqplan.html'), { query: { reportId: reportId || '', ...orbAnchorFor(320, 80, 620, 720) } })
+    return win.webContents.id
+  }
   // 卡内"选择文件"用：只返回路径，不另开卡（在当前需求分析卡里就地开跑）
   async function pickReqDocPath() {
     const r = await dialog.showOpenDialog({
@@ -1998,6 +2006,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       browserArgs: S.settings.browserArgs || '',
       project: projName(), projectDir: S.settings.projectDir || '', recentDirs: S.settings.recentDirs || [],
       backendDir: S.settings.backendDir || '',
+      reqRepos: (S.settings.reqProfile && S.settings.reqProfile.repos) || [],
       planMode: S.settings.planMode !== false,
       encryptionAvailable: email.encryptionAvailable(),   // false → 密码只能明文落盘,设置面板要红字告警
       outboxHoldSeconds: S.settings.outboxHoldSeconds == null ? 15 : S.settings.outboxHoldSeconds,   // 发信延迟窗(软撤回),0=立即发
@@ -2239,6 +2248,10 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       if (sm.from       !== undefined) S.settings.smtp.from           = String(sm.from).trim()
     }
     if (patch && patch.imapIdleEnabled !== undefined) S.settings.imapIdleEnabled = !!patch.imapIdleEnabled
+    if (patch && patch.reqProfile && Array.isArray(patch.reqProfile.repos)) {
+      S.settings.reqProfile = S.settings.reqProfile || {}
+      S.settings.reqProfile.repos = [...new Set(patch.reqProfile.repos.map((s) => String(s).trim()).filter(Boolean))]
+    }
     if (patch && patch.ob) {
       S.settings.ob = S.settings.ob || {}
       const o = patch.ob
@@ -3054,5 +3067,5 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('open-history', (_e, { sid, title }) => spawnCard(title, sid))
   ipcMain.handle('clear-history', () => { S.history = []; saveHistory(); return true })
 
-  return { createOrb, createBrowser, createWorkspace, spawnCard, spawnFanout, spawnWorkflow, spawnReqAnalysis, spawnReqConfirm, spawnEmailCard, toggleInput, toggleOrbInput, buildTray, openDock, openTodos, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory }
+  return { createOrb, createBrowser, createWorkspace, spawnCard, spawnFanout, spawnWorkflow, spawnReqAnalysis, spawnReqConfirm, spawnReqPlan, spawnEmailCard, toggleInput, toggleOrbInput, buildTray, openDock, openTodos, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory }
 }

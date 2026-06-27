@@ -227,7 +227,28 @@
 - 实测:`npm start` 启动无报错(复用 serve :4096、event stream connected、reqanalysis 模块加载正常)。
 
 **仍待办(需你/内网):**
-- **`run` 已接实(读者=独立会话);`ground` 与 `describeImage` 暂为 null** —— grounding 接 `db-mcp`/Grep、Qwen 读图接多模态,**都等 `npm run modelroute` 探针结论 + OB 配置**。当前:图片按"读不准"诚实标、split 不加 grounding 推荐(回落按背书排序)。
+- **`describeImage` 暂为 null** —— Qwen 读图接多模态,等 `npm run modelroute` 探针结论 + OB 配置。当前图片按"读不准"诚实标。
 - **persona 提示词口径细化**(信贷域,尤其挑刺派/数据派硬指令)。
-- **你的视觉确认**:选一份真 .docx 走一遍,看两窗渲染/进度/三类清单/落档。
 - 落档**回灌加载**(下次分析先读 `req-knowledge.jsonl`,settled 的不再问)。
+
+---
+
+## 十三、出详设阶段落地(2026-06-27,扩边界:从"只摊清单"到"出实施方案")
+
+用户拍板把产物从"三类清单"推进到**详设级实施方案**(精确到 `file:line`/`表.字段`/接口签名/改动点/步骤,未决项显式标 `opens`,不替人拍板)。讨论敲定的设计前提:
+
+- **文档小(就几页)** → 上下文焦虑作废(MiniMax M2.5 = 128K,几页随便塞),重心整体移到**代码侧**。
+- **两阶段两 grounding 模式**:① 找问题 = 方案B 确定性 `git grep`(代码不进模型上下文);③ 出详设 = agent 只读 locate 命中的**切片**(上下文有界)。
+- **统一脊柱 + 按场景插**:对抗读/对齐/三类清单/确认/落档全保留;场景差异只在 `repos` 集 + grounding 策略(场景一多仓+归属、场景三跨层链)。多仓可达性选**方案B**(wrapper 侧跨仓 grep),场景 = `reqProfile.repos[]`(在需求分析入口 UI 里配,不碰 settings.json)。
+
+### 已落地(本次)
+- **`reqplan.js`**(纯逻辑、注入式,`npm run plan:test` = 20/20):`collectPoints`(三类清单+人确认决策→待出详设的需求点,ignore/defect 排除、未裁决标 `unresolved`)、`buildPlanPrompt`、`parsePlanCard`(剥 think+解析+铁律兜底:plan 没给 files 则回落挂 locate 命中)、`planRequirement`(locate→读切片→plan→装配,推进度)、`planToMarkdown` 产物文档。
+- **`src/reqanalysis-ipc.js`**:跨仓检索原语 `gitGrep`/`readSlice`/`extractAsciiTokens` + `reqRepos()`(读 `reqProfile.repos`,缺省回落 项目目录+后端目录);`locate`=确定性 ascii token + 模型补"中文需求→代码标识符"关键词 + 跨仓 grep+切片;`plan`=独立 opencode 会话;新 handler `req-plan`/`get-req-plan`/`open-req-plan`/`export-req-plan`;**`ground` 已接进 `req-analyze`**(读法 ascii token 跨仓 grep,命中即坐实+证据 ref;中文无 token 则退化,不破坏现有三类清单)。
+- **UI**:`ui/reqplan.html`(详设卡:需求点+系统归属+原文+总体改动+影响文件/数据/接口+步骤+`⛑未决`,证据 chip 可点 `openLoc`,带实时进度,导出实施方案);`reqconfirm.html` 底栏加「生成实施方案 →」(落档→开方案面板,出详设在那窗口里跑)。
+- **接线**:`window.js` `spawnReqPlan`、`main.js` 透传、`preload.js` 暴露 `reqPlan/onReqPlanEvent/openReqPlan/getReqPlan/exportReqPlan`。`npm start` 启动干净。
+- **仓库配置 UI(就近原则)**:`ui/reqflow.html` 导入页加「📁 代码仓库 · grounding 真相源」区——可增删多个仓,经通用 `getSettings().reqRepos` / `setSettings({reqProfile:{repos}})` 读写(白名单已加进 `window.js` get/set-settings),目录选择走 `pick-req-repo`。**配置在需求分析自己的入口,不进设置面板、不让用户手改文件。**
+
+### 仍待办(需你/内网)
+- **拿真仓走一遍 ③**:选一份真 .docx → 找问题 → 确认 → 生成实施方案,看 locate 命中质量与详设卡。`locate` 的"中文需求→代码关键词"桥是命门,内网用真仓调提示词。
+- **场景一多仓**:在**需求分析导入页**点「+ 添加仓库」配各系统的仓(个网/渠道管理台/渠道整合平台),经 `setSettings({reqProfile:{repos}})` 落盘——**配置就近放在功能入口,不进全局设置面板,更不让用户手改 settings.json**;`system` 归属靠 plan 判 + 路径前缀。
+- **`tables` 接 db-mcp** 做字段级坐实(当前 tables 仅由 plan 据切片推断,未反查 DB)。

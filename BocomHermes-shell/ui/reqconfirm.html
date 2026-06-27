@@ -51,7 +51,9 @@
     <div class="foot nodrag">
       <div class="bar"><div id="barf" class="barf"></div></div>
       <span class="muted" style="white-space:nowrap">确认后 append-only 落档</span>
-      <button id="land" class="cta">落档 →</button>
+      <button id="export" class="btn">导出报告</button>
+      <button id="land" class="btn">落档</button>
+      <button id="plan" class="cta">生成实施方案 →</button>
     </div>
   </div>
 </div>
@@ -160,12 +162,26 @@
     })
   })()
 
+  document.getElementById('export').addEventListener('click', async () => {
+    const b = document.getElementById('export'); b.textContent = '导出中…'
+    const r = await window.BocomHermes.exportReqReport(reportId)
+    b.textContent = (r && r.ok) ? '已导出 ✓' : (r && r.canceled) ? '导出报告' : '导出失败'
+  })
   document.getElementById('land').addEventListener('click', async () => {
     const arr = Object.values(decisions)
     const r = await window.BocomHermes.reqLandfill(reportId, arr)
     const land = document.getElementById('land')
-    if (r && r.ok) { land.textContent = '已落档 ' + (r.count || arr.length) + ' 条 ✓'; land.style.background = 'var(--green)' }
-    else { land.textContent = '落档失败'; land.style.background = 'var(--diff-del)' }
+    if (r && r.ok) { land.textContent = '已落档 ' + (r.count || arr.length) + ' ✓'; land.style.color = 'var(--green)' }
+    else { land.textContent = '落档失败'; land.style.color = 'var(--diff-del)' }
+  })
+  // 生成实施方案：先落档（人确认的结论），再开实施方案面板（出详设在那个窗口里跑、带进度）
+  document.getElementById('plan').addEventListener('click', async () => {
+    const b = document.getElementById('plan')
+    const arr = Object.values(decisions)
+    b.textContent = '准备中…'; b.disabled = true
+    try { await window.BocomHermes.reqLandfill(reportId, arr) } catch (e) {}
+    try { await window.BocomHermes.openReqPlan(reportId); b.textContent = '已打开方案面板 ✓' }
+    catch (e) { b.textContent = '失败：' + (e && e.message || e); b.disabled = false }
   })
 </script>
 </body>

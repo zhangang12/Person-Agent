@@ -116,14 +116,14 @@ app.whenReady().then(() => {
   })
 
   const deps = { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }
-  const { createOrb, createBrowser, createWorkspace, toggleOrbInput, buildTray, spawnEmailCard, recordHistory, touchHistory, spawnReqConfirm } = initWindow(S, deps)
+  const { createOrb, createBrowser, createWorkspace, toggleOrbInput, buildTray, spawnEmailCard, recordHistory, touchHistory, spawnReqConfirm, spawnReqPlan } = initWindow(S, deps)
   S.createOrb = createOrb   // 留给 window-all-closed 兜底拉起球
 
   initSession(S, { ipcMain, path, fs, shell, oc, log, recordHistory, touchHistory })
   initOrch(S, { ipcMain, oc, orch, log })
   initTodos(S, { ipcMain, app, path, fs, log })
   initTrigger(S, { path, fs, app, log, spawnEmailCard, Notification })
-  initReqAnalysis(S, { ipcMain, app, path, fs, oc, log, spawnReqConfirm })
+  initReqAnalysis(S, { ipcMain, app, path, fs, oc, log, dialog, shell, spawnReqConfirm, spawnReqPlan })
 
   // 代理:settings.proxy 在场即应用(支持 'http://host:port' 或 PAC 'pac+http://...')
   if (S.settings && S.settings.proxy) {

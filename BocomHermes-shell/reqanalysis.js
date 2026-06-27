@@ -279,8 +279,45 @@ async function parseDocx(path, opts = {}) {
   return { text, images: images.length, messages: result.messages || [] }
 }
 
+// 把报告渲染成 Markdown 产物文档（人可读、可粘进 Word/wiki、零依赖）
+function reportToMarkdown(report, meta = {}) {
+  const items = (report && report.items) || []
+  const s = (report && report.summary) || {}
+  const date = new Date(meta.ts || Date.now()).toLocaleString('zh-CN')
+  const LAB = { clear: '明确 · 已解释', split: '不明确 · 待选', conflict: '矛盾 · 待裁', hidden: '隐藏 · 易漏' }
+  const L = []
+  L.push('# 需求分析报告 · ' + (meta.file || '需求文档'))
+  L.push('')
+  L.push('> ' + date + ' · 共 ' + (meta.findings != null ? meta.findings + ' findings · ' : '') + items.length + ' 个话题')
+  L.push('> 明确 ' + (s.clear || 0) + ' ｜ 不明确 ' + (s.split || 0) + ' ｜ 矛盾 ' + (s.conflict || 0) + ' ｜ 隐藏 ' + (s.hidden || 0))
+  L.push('')
+  for (const cat of ['clear', 'split', 'conflict', 'hidden']) {
+    const sub = items.filter((it) => it.outcome === cat)
+    if (!sub.length) continue
+    L.push('## ' + LAB[cat] + '（' + sub.length + '）')
+    L.push('')
+    for (const it of sub) {
+      L.push('### ' + (it.claim || it.quote || '(未命名)'))
+      if (it.quote) L.push('> 原文：' + it.quote)
+      if (it.personas && it.personas.length) L.push('- 读者：' + it.personas.join('、'))
+      for (const r of (it.readings || [])) {
+        const conf = r.confidence != null ? '（' + Math.round(r.confidence * 100) + '%）' : ''
+        const rec = r.recommended ? ' ★推荐' : ''
+        const ev = (r.evidence && r.evidence.length) ? ' ｜证据：' + r.evidence.join('、') : ''
+        L.push('- 读法：' + (r.label || r.key) + conf + rec + ev)
+      }
+      for (const rf of (it.riskFlags || [])) L.push('- ⚑ 挑刺派异见：' + (rf.reading || ''))
+      L.push('')
+    }
+  }
+  L.push('---')
+  L.push('')
+  L.push('（机器只摊开三类清单、不替人拍板；经人工二次确认后才 append-only 落档。）')
+  return L.join('\n')
+}
+
 module.exports = {
   PERSONAS, OUTPUT_SPEC, buildReaderPrompt, locateSpan, parseFindings, readDocument,
   pickVerdict, makeTopicJudge, makeReadingJudge, groundCluster, assembleReport, analyzeRequirement,
-  htmlToText, spliceImageDescriptions, parseDocx,
+  htmlToText, spliceImageDescriptions, parseDocx, reportToMarkdown,
 }

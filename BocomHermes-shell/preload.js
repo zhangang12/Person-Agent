@@ -47,12 +47,20 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   // 需求分析（多Agent 对抗 → 三类清单）
   openReqAnalysis: () => ipcRenderer.invoke('open-req-analysis'),
   pickReqDocPath: () => ipcRenderer.invoke('pick-req-doc-path'),
+  pickReqRepo: () => ipcRenderer.invoke('pick-req-repo'),
   reqAnalyze: (docPath) => ipcRenderer.invoke('req-analyze', docPath),
   reqAbort: () => ipcRenderer.send('req-abort'),
   onReqEvent: (cb) => ipcRenderer.on('req-event', (_e, p) => cb(p)),
   openReqConfirm: (reportId) => ipcRenderer.invoke('open-req-confirm', reportId),
   getReqReport: (reportId) => ipcRenderer.invoke('get-req-report', reportId),
+  exportReqReport: (reportId) => ipcRenderer.invoke('export-req-report', reportId),
   reqLandfill: (reportId, decisions) => ipcRenderer.invoke('req-landfill', { reportId, decisions }),
+  // 出详设（实施方案）
+  reqPlan: (reportId, decisions) => ipcRenderer.invoke('req-plan', { reportId, decisions }),
+  onReqPlanEvent: (cb) => ipcRenderer.on('req-plan-event', (_e, p) => cb(p)),
+  openReqPlan: (reportId) => ipcRenderer.invoke('open-req-plan', reportId),
+  getReqPlan: (planId) => ipcRenderer.invoke('get-req-plan', planId),
+  exportReqPlan: (planId) => ipcRenderer.invoke('export-req-plan', planId),
   // 对话 ↔ opencode 会话
   cardInit: (opts) => ipcRenderer.invoke('card-init', opts || {}),
   onCardInject: (cb) => ipcRenderer.on('card-inject', (_e, p) => cb(p)),
