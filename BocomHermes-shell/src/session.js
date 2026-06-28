@@ -197,16 +197,30 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
     return { sessionId, project: dir ? path.basename(dir) : '未选目录' }
   })
 
-  ipcMain.handle('card-send', async (e, text) => {
+  ipcMain.handle('card-send', async (e, arg) => {
+    const { text, files } = (typeof arg === 'string') ? { text: arg } : (arg || {})   // 兼容老调用(纯字符串)与新 {text, files}
     const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
     if (!si) throw new Error('session not ready')
     // 首条消息：静默注入项目上下文前缀（用户看到原文，Serve 收到"背景+原文"）
     const ctxPrefix = S.firstMsgCtx.get(sessionId) || ''
     if (ctxPrefix) { S.firstMsgCtx.delete(sessionId); log('inject project context (' + ctxPrefix.length + ' chars) for ' + sessionId) }
-    const msg = ctxPrefix ? ctxPrefix + text : text
-    S.sentPrompt.set(sessionId, text); S.streamBuf.delete(sessionId)
+    const msg = ctxPrefix ? ctxPrefix + (text || '') : (text || '')
+    S.sentPrompt.set(sessionId, text || ''); S.streamBuf.delete(sessionId)
     touchHistory(sessionId)
-    try { return await oc.sendMessage(si.serve, sessionId, msg, si.model || S.settings.model) }   // 本卡选定 > 对话坞全局默认 > serve 默认
+    let model = si.model || S.settings.model || null
+    const fileArr = Array.isArray(files) ? files : []
+    const hasImage = fileArr.some((f) => f && /^image\//.test(f.mime || ''))
+    if (hasImage) {                                   // 有图 → 确保用支持图像的模型(动态切多模态)
+      try {
+        const models = await oc.listModels(si.serve)
+        const cur = model && models.find((m) => m.providerID === model.providerID && m.modelID === model.modelID)
+        if (!cur || !cur.image) {
+          const v = models.find((m) => m.image)
+          if (v) { model = { providerID: v.providerID, modelID: v.modelID, name: v.name }; if (!si.wc.isDestroyed()) si.wc.send('card-note', { text: '检测到图片，已临时切到多模态模型「' + v.name + '」识别', tone: 'muted' }) }
+        }
+      } catch {}
+    }
+    try { return await oc.sendMessage(si.serve, sessionId, msg, model, fileArr) }
     catch (err) {
       const m = String((err && err.message) || err)
       if (/ECONNREFUSED|ECONNRESET|socket hang up|ENOTFOUND|EPIPE|fetch failed/i.test(m))

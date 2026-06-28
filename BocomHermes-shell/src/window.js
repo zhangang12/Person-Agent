@@ -2021,6 +2021,10 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     if (!r.canceled && r.filePaths[0]) applyProject(r.filePaths[0])
     return projName()
   })
+  // 拖拽上传文档:把本地文档抽成文本(图片不走这,走 file part 给多模态)
+  ipcMain.handle('parse-doc', async (_e, filePath) => {
+    try { return await attachments.extractLocalFile(String(filePath || '')) } catch (e) { return { ok: false, error: e.message } }
+  })
   ipcMain.handle('set-project-dir', (_e, dir) => {
     if (dir && fs.existsSync(dir)) applyProject(dir)
     else { S.settings.recentDirs = (S.settings.recentDirs || []).filter((d) => d !== dir); saveSettings() }

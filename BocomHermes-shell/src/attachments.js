@@ -181,4 +181,17 @@ function cleanupOld(userDataDir, log) {
   return removed
 }
 
-module.exports = { saveAttachments, readAttachmentText, cleanupOld, TEXT_EXTRACT_LIMIT, KEEP_DAYS }
+// 把一个本地文档抽成文本(拖拽上传用)。按扩展名挑解析器,返回 {ok, text} 或 {ok:false, error}
+async function extractLocalFile(filePath) {
+  const kind = pickExtractor(path.basename(filePath), '')
+  if (!kind) return { ok: false, error: '不支持的文件类型(只认 PDF/DOCX/XLSX/CSV/TXT/MD/HTML/JSON/XML)' }
+  try {
+    const st = fs.statSync(filePath)
+    if (st.size > TEXT_EXTRACT_LIMIT) return { ok: false, error: '文件过大(>' + Math.round(TEXT_EXTRACT_LIMIT / 1024 / 1024) + 'MB)' }
+    const r = await extractText(filePath, kind)
+    if (r && typeof r === 'object' && r.err) return { ok: false, error: r.err }
+    return { ok: true, text: typeof r === 'string' ? r : '' }
+  } catch (e) { return { ok: false, error: e.message } }
+}
+
+module.exports = { saveAttachments, readAttachmentText, extractLocalFile, cleanupOld, TEXT_EXTRACT_LIMIT, KEEP_DAYS }

@@ -203,8 +203,14 @@ function extractText(msg) {
   if (Array.isArray(parts)) return parts.filter((p) => p?.type === 'text').map((p) => p.text).join('\n').trim()
   return typeof msg === 'string' ? msg : ''
 }
-async function sendMessage(info, sessionId, text, model) {
-  const body = { parts: [{ type: 'text', text }] }
+async function sendMessage(info, sessionId, text, model, files) {
+  const parts = []
+  if (text != null && text !== '') parts.push({ type: 'text', text })
+  for (const f of (files || [])) {                          // 图片/文档 = file part(mime + data URL,实测格式)
+    if (f && f.mime && f.url) parts.push({ type: 'file', mime: f.mime, url: f.url, ...(f.filename ? { filename: f.filename } : {}) })
+  }
+  if (!parts.length) parts.push({ type: 'text', text: text || '' })
+  const body = { parts }
   if (model && model.providerID && model.modelID) {        // 按请求指定模型(各版本字段名兼容,多塞几个,认哪个用哪个)
     body.model = { providerID: model.providerID, modelID: model.modelID }
     body.providerID = model.providerID; body.modelID = model.modelID
@@ -221,7 +227,8 @@ async function listModels(info) {
       const models = (p && p.models) || {}
       for (const mid of Object.keys(models)) {
         const m = models[mid] || {}
-        out.push({ providerID: p.id, modelID: mid, name: m.name || mid, provider: p.name || p.id })
+        const inp = (m.capabilities || {}).input || {}
+        out.push({ providerID: p.id, modelID: mid, name: m.name || mid, provider: p.name || p.id, image: !!inp.image })
       }
     }
     return out
