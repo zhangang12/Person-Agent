@@ -206,7 +206,7 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
     const msg = ctxPrefix ? ctxPrefix + text : text
     S.sentPrompt.set(sessionId, text); S.streamBuf.delete(sessionId)
     touchHistory(sessionId)
-    try { return await oc.sendMessage(si.serve, sessionId, msg, si.model) }   // si.model 为本卡选定的模型(没选=serve 默认)
+    try { return await oc.sendMessage(si.serve, sessionId, msg, si.model || S.settings.model) }   // 本卡选定 > 对话坞全局默认 > serve 默认
     catch (err) {
       const m = String((err && err.message) || err)
       if (/ECONNREFUSED|ECONNRESET|socket hang up|ENOTFOUND|EPIPE|fetch failed/i.test(m))
@@ -218,8 +218,10 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
   // 模型选择:列出可用模型 + 设置本卡模型(每个模块各自选)
   ipcMain.handle('list-models', async (e) => {
     const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
-    if (!si || !si.serve) return []
-    try { return await oc.listModels(si.serve) } catch { return [] }
+    let serve = si && si.serve
+    if (!serve) { try { serve = await oc.ensureServe(S.settings.projectDir || '', S.handlers, log) } catch {} }   // 对话坞等无卡窗口:按项目目录起/复用 serve 来列模型
+    if (!serve) return []
+    try { return await oc.listModels(serve) } catch { return [] }
   })
   ipcMain.handle('card-set-model', (e, model) => {
     const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)

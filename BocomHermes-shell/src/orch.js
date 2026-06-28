@@ -33,7 +33,7 @@ module.exports = function initOrch(S, { ipcMain, oc, orch, log }) {
       const sid = await oc.createSession(serve, '编排:' + (meta && meta.kind || 'task') + (meta && meta.id ? ':' + meta.id : ''))
       if (!sid) throw new Error('createSession 失败')
       S.sessionInfo.set(sid, { wc, serve }); entry.sessions.add(sid)
-      try { return await oc.sendMessage(serve, sid, prompt) }
+      try { return await oc.sendMessage(serve, sid, prompt, S.settings.model) }   // 工作流子任务用全局默认模型
       finally { S.sessionInfo.delete(sid); entry.sessions.delete(sid); S.streamBuf.delete(sid) }
     }
 

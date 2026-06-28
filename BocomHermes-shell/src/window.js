@@ -2050,6 +2050,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       backendDir: S.settings.backendDir || '',
       reqRepos: (S.settings.reqProfile && S.settings.reqProfile.repos) || [],
       planMode: S.settings.planMode !== false,
+      model: S.settings.model || null,   // 全局默认模型(对话坞设)
       encryptionAvailable: email.encryptionAvailable(),   // false → 密码只能明文落盘,设置面板要红字告警
       outboxHoldSeconds: S.settings.outboxHoldSeconds == null ? 15 : S.settings.outboxHoldSeconds,   // 发信延迟窗(软撤回),0=立即发
       imapIdleEnabled: S.settings.imapIdleEnabled !== false,   // IMAP IDLE 实时新邮件提醒,默认开
@@ -2273,6 +2274,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     if (patch && typeof patch.browserArgs === 'string') S.settings.browserArgs = patch.browserArgs.trim()
     if (patch && typeof patch.planMode === 'boolean') S.settings.planMode = patch.planMode
     if (patch && patch.outboxHoldSeconds !== undefined) S.settings.outboxHoldSeconds = Math.max(0, Math.min(parseInt(patch.outboxHoldSeconds) || 0, 3600))
+    if (patch && 'model' in patch) S.settings.model = (patch.model && patch.model.modelID) ? { providerID: patch.model.providerID, modelID: patch.model.modelID, name: patch.model.name } : null   // 全局默认模型(对话坞设;卡片可覆盖)
     if (patch && patch.imap) {
       S.settings.imap = S.settings.imap || {}
       const im = patch.imap
