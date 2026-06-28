@@ -18,6 +18,18 @@
   .hbtn { border: none; background: transparent; color: var(--txt3); cursor: pointer; padding: 4px; border-radius: 7px; display: flex; }
   .hbtn:hover { color: var(--txt); background: var(--composer-bg); }
 
+  /* 工作目录 + 模式 控制行 */
+  .ctlrow { display: flex; align-items: center; gap: 8px; flex: none; }
+  .proj-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 250px; font-size: 11.5px; color: var(--txt2); background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 999px; padding: 4px 11px; cursor: pointer; }
+  .proj-chip:hover { color: var(--txt); border-color: var(--accent); }
+  .proj-chip.empty { color: var(--accent); border-color: var(--accent); }
+  .proj-chip svg { width: 12px; height: 12px; flex: none; opacity: .8; }
+  .proj-chip #projn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sp { flex: 1; }
+  .seg { display: inline-flex; background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 999px; padding: 2px; gap: 2px; flex: none; }
+  .seg button { border: none; background: transparent; color: var(--txt3); font-size: 11px; padding: 3px 11px; border-radius: 999px; cursor: pointer; font-family: var(--font); white-space: nowrap; }
+  .seg button.on { background: var(--brand); color: var(--send-fg); font-weight: 600; }
+
   /* 开新会话 */
   .newrow { display: flex; gap: 8px; align-items: flex-end; flex: none; }
   .newrow textarea { flex: 1; resize: none; background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 12px; padding: 10px 12px; color: var(--txt); font-family: var(--font); font-size: 13px; line-height: 1.5; outline: none; min-height: 62px; max-height: 168px; }
@@ -55,6 +67,18 @@
       <button id="min" class="hbtn nodrag" title="最小化" aria-label="最小化"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
       <button id="max" class="hbtn nodrag" title="最大化 / 还原" aria-label="最大化"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></button>
       <button id="x" class="hbtn nodrag" title="关闭" aria-label="关闭"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+
+    <div class="ctlrow nodrag">
+      <button id="proj" class="proj-chip" title="工作目录：对话 / 工作流都对它说话（点击切换）">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        <span id="projn">未选目录</span>
+      </button>
+      <span class="sp"></span>
+      <div class="seg" title="自动：Agent 自己判断要不要拉队 ｜ 直接工作流：强制拉起动态编排">
+        <button id="mAuto" class="on">自动</button>
+        <button id="mWf">直接工作流</button>
+      </div>
     </div>
 
     <div class="newrow nodrag">
@@ -103,9 +127,30 @@
   }
   render()
 
-  // 开新会话:开一张对话卡(卡里 Agent 可自主升格为动态工作流)
+  // 工作目录:对话/工作流都对它说话(grounding 的真相源)
+  const projBtn = $('proj'), projN = $('projn')
+  function paintProj(name) {
+    const has = name && name !== '未选目录'
+    projN.textContent = has ? name : '未选目录'
+    projBtn.title = has ? '工作目录：' + name + '（对话 / 工作流都对它说话，点击切换）' : '未选工作目录，点击选择'
+    projBtn.classList.toggle('empty', !has)
+  }
+  try { paintProj(H.getProject && H.getProject()) } catch (e) {}
+  projBtn.addEventListener('click', async () => { try { paintProj(await H.pickProject()) } catch (e) {} setTimeout(() => goalEl.focus(), 30) })
+  H.onProject && H.onProject((p) => paintProj(p))
+
+  // 模式:自动(Agent 自判要不要升格) / 直接工作流(强制拉起动态编排)
+  let mode = 'auto'
+  $('mAuto').addEventListener('click', () => { mode = 'auto'; $('mAuto').classList.add('on'); $('mWf').classList.remove('on'); goalEl.focus() })
+  $('mWf').addEventListener('click', () => { mode = 'wf'; $('mWf').classList.add('on'); $('mAuto').classList.remove('on'); goalEl.focus() })
+
+  // 开新会话:自动=开对话卡(卡里 Agent 可自主升格);直接工作流=强制动态编排
   const goalEl = $('goal')
-  function go() { const v = goalEl.value.trim(); if (!v) return; try { H.spawnCard(v) } catch (e) {} H.closeSelf() }
+  function go() {
+    const v = goalEl.value.trim(); if (!v) return
+    try { if (mode === 'wf') H.spawnWorkflow(v); else H.spawnCard(v) } catch (e) {}
+    H.closeSelf()
+  }
   $('go').addEventListener('click', go)
   goalEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go() } })
   setTimeout(() => { try { goalEl.focus() } catch (e) {} }, 60)
