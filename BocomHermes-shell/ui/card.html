@@ -68,8 +68,8 @@
   .composer .send { margin-bottom: 1px; }
 
   /* 思考链折叠块 */
-  .reason { align-self: flex-start; max-width: 92%; background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 11px; }
-  .reason > summary { cursor: pointer; padding: 8px 12px; color: var(--txt2); font-size: 13px; font-weight: 500; list-style: none; display: flex; align-items: center; gap: 7px; user-select: none; }
+  .reason { align-self: flex-start; max-width: 92%; background: var(--c-think-bg); border: .5px solid var(--composer-border); border-left: 3px solid var(--c-think); border-radius: 0 11px 11px 0; }
+  .reason > summary { cursor: pointer; padding: 8px 12px; color: var(--c-think); font-size: 13px; font-weight: 600; list-style: none; display: flex; align-items: center; gap: 7px; user-select: none; }
   .reason > summary::-webkit-details-marker { display: none; }
   .reason > summary .chev { transition: transform .15s; }
   .reason[open] > summary .chev { transform: rotate(90deg); }
@@ -79,14 +79,16 @@
   /* Markdown */
   #feed { overflow-x: hidden; }
   .ai { overflow-wrap: anywhere; line-height: 1.55; }
-  .ai h1, .ai h2, .ai h3, .ai h4 { font-size: 15px; font-weight: 600; margin: 10px 0 5px; }
+  .ai h1, .ai h2, .ai h3, .ai h4 { font-size: 15px; font-weight: 600; margin: 10px 0 5px; color: var(--c-heading); }
   .ai p { margin: 5px 0; } .ai p:first-child { margin-top: 0; }
   .ai ul, .ai ol { margin: 5px 0; padding-left: 18px; } .ai li { margin: 2px 0; }
-  .ai code { font-family: var(--mono); font-size: 13px; background: var(--composer-bg); padding: 1px 5px; border-radius: 4px; }
+  .ai li::marker { color: var(--accent); }
+  .ai strong, .ai b { color: var(--c-strong); font-weight: 600; }
+  .ai code { font-family: var(--mono); font-size: 13px; color: var(--c-code); background: var(--c-codebg); padding: 1px 5px; border-radius: 4px; }
   .ai pre.code { background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 8px; padding: 9px 11px; overflow-x: auto; margin: 7px 0; }
-  .ai pre.code code { background: none; padding: 0; white-space: pre; }
+  .ai pre.code code { background: none; padding: 0; white-space: pre; color: var(--txt); }
   .ai hr { border: none; border-top: .5px solid var(--composer-border); margin: 9px 0; }
-  .ai blockquote { margin: 6px 0; padding: 3px 11px; border-left: 2.5px solid var(--accent); color: var(--txt2); background: var(--composer-bg); border-radius: 0 7px 7px 0; }
+  .ai blockquote { margin: 6px 0; padding: 3px 11px; border-left: 2.5px solid var(--c-quote); color: var(--c-quote); background: var(--composer-bg); border-radius: 0 7px 7px 0; }
   .floc { color: var(--accent); cursor: pointer; text-decoration: none; border-bottom: 1px dotted var(--accent); }
   .floc:hover { opacity: .75; }
   .ai table { border-collapse: collapse; margin: 7px 0; font-size: 13px; display: block; max-width: 100%; overflow-x: auto; }

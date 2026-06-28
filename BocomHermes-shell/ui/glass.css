@@ -14,6 +14,9 @@
   --hl: linear-gradient(90deg, transparent, rgba(255,255,255,.95), transparent);
   --me-bg: rgba(99,130,246,.20); --me-border: rgba(99,130,246,.32); --me-txt: #1f2b54;
   --ai-bg: rgba(252,253,255,.92); --ai-border: rgba(28,36,86,.14); --ai-txt: #14152b;
+  /* 富文本 / 角色 鲜明配色(明) */
+  --c-heading: #0b63c4; --c-code: #b4480c; --c-codebg: rgba(180,72,12,.10);
+  --c-think: #6d28d9; --c-think-bg: rgba(109,40,217,.07); --c-quote: #0e7490; --c-strong: #b1238e;
   --composer-bg: rgba(28,36,86,.05); --composer-border: rgba(28,36,86,.12);
   --orb-bg: rgba(124,140,255,.16); --orb-border: rgba(124,140,255,.30);
   --kbd-border: rgba(27,28,51,.18);
@@ -34,6 +37,9 @@ html[data-theme="dark"] {
   --hl: linear-gradient(90deg, transparent, rgba(150,200,255,.6), transparent);
   --me-bg: rgba(110,150,255,.26); --me-border: rgba(150,180,255,.34); --me-txt: #eef2ff;
   --ai-bg: rgba(32,38,66,.78); --ai-border: rgba(255,255,255,.16); --ai-txt: #f4f6ff;
+  /* 富文本 / 角色 鲜明配色(暗) */
+  --c-heading: #7bb7ff; --c-code: #ffb088; --c-codebg: rgba(255,176,136,.13);
+  --c-think: #c9b8ff; --c-think-bg: rgba(150,130,255,.12); --c-quote: #7dd3fc; --c-strong: #ff9ed8;
   --composer-bg: rgba(255,255,255,.06); --composer-border: rgba(255,255,255,.13);
   --orb-bg: rgba(124,140,255,.18); --orb-border: rgba(150,180,255,.25);
   --kbd-border: rgba(255,255,255,.16);
