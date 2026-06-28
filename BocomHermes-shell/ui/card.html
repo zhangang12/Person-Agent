@@ -325,8 +325,8 @@
     const r = modelEl.getBoundingClientRect()
     menuEl.style.top = (r.bottom + 6) + 'px'; menuEl.style.right = (window.innerWidth - r.right) + 'px'; menuEl.style.left = 'auto'
     menuEl.hidden = false; menuEl.innerHTML = '<div class="mhint">加载模型…</div>'
-    if (!modelsCache) { try { modelsCache = await window.BocomHermes.listModels() } catch (e) { modelsCache = [] } }
-    if (!modelsCache || !modelsCache.length) { menuEl.innerHTML = '<div class="mhint">没拿到模型列表（serve 未就绪或无权限）</div>'; return }
+    if (!modelsCache || !modelsCache.length) { try { modelsCache = await window.BocomHermes.listModels() } catch (e) { modelsCache = [] } }   // 空不缓存,下次重试
+    if (!modelsCache || !modelsCache.length) { menuEl.innerHTML = '<div class="mhint">没拿到模型列表（serve 未就绪，稍后再点）</div>'; return }
     menuEl.innerHTML = ''
     const mk = (cls, name, sub, on, fn) => { const d = document.createElement('div'); d.className = 'mi' + (on ? ' on' : ''); d.innerHTML = '<span class="mn">' + esc(name) + '</span><span class="mp">' + esc(sub) + '</span>'; d.addEventListener('click', fn); menuEl.appendChild(d) }
     mk('', 'serve 默认', '不指定，用 serve 配置的默认模型', !curModelKey, () => pickModel(null))

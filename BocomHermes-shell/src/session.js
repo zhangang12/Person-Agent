@@ -217,11 +217,11 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
 
   // 模型选择:列出可用模型 + 设置本卡模型(每个模块各自选)
   ipcMain.handle('list-models', async (e) => {
+    const tryServe = async (serve) => { if (!serve || !serve.base) return []; try { return await oc.listModels(serve) } catch { return [] } }
     const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
-    let serve = si && si.serve
-    if (!serve) { try { serve = await oc.ensureServe(S.settings.projectDir || '', S.handlers, log) } catch {} }   // 对话坞等无卡窗口:按项目目录起/复用 serve 来列模型
-    if (!serve) return []
-    try { return await oc.listModels(serve) } catch { return [] }
+    let out = await tryServe(si && si.serve)                                        // 先用本卡的 serve
+    if (!out.length) { try { out = await tryServe(await oc.ensureServe(S.settings.projectDir || '', S.handlers, log)) } catch {} }   // 拿不到 → 退到项目 serve(对话坞/嵌入卡也能列)
+    return out
   })
   ipcMain.handle('card-set-model', (e, model) => {
     const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)

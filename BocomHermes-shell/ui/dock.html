@@ -171,8 +171,8 @@
     const r = modelChip.getBoundingClientRect()
     modelMenu.style.top = (r.bottom + 6) + 'px'; modelMenu.style.left = r.left + 'px'; modelMenu.style.right = 'auto'
     modelMenu.hidden = false; modelMenu.innerHTML = '<div class="mhint">加载模型…</div>'
-    if (!modelsCache) { try { modelsCache = await H.listModels() } catch (e) { modelsCache = [] } }
-    if (!modelsCache || !modelsCache.length) { modelMenu.innerHTML = '<div class="mhint">没拿到模型列表（serve 未就绪？）</div>'; return }
+    if (!modelsCache || !modelsCache.length) { try { modelsCache = await H.listModels() } catch (e) { modelsCache = [] } }   // 空不缓存,下次重试
+    if (!modelsCache || !modelsCache.length) { modelMenu.innerHTML = '<div class="mhint">没拿到模型列表（serve 未就绪，稍后再点）</div>'; return }
     modelMenu.innerHTML = ''
     const mk = (name, sub, on, fn) => { const d = document.createElement('div'); d.className = 'mi' + (on ? ' on' : ''); d.innerHTML = '<span class="mn">' + esc(name) + '</span><span class="mp">' + esc(sub) + '</span>'; d.addEventListener('click', fn); modelMenu.appendChild(d) }
     mk('serve 默认', '不指定，用 serve 配置的默认模型', !curModelKey, () => pickModel(null))
