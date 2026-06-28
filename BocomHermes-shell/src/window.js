@@ -284,6 +284,14 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
               if (req.url === '/db/ping')   return reply({ ok: true, ...(await db.ping(cfg)) })
             } catch (e) { return reply({ error: e.message }) }
           }
+          // ── 拖入文档按需读取:opencode 调 read_document → 这里用客户端解析器抽文本(支持分段)──
+          if (req.url === '/doc/read') {
+            const r = await attachments.extractLocalFile(String(a.path || ''))
+            if (!r.ok) return reply({ error: r.error })
+            const text = r.text || ''
+            const off = Math.max(0, +a.offset || 0), lim = Math.max(1, Math.min(+a.limit || 20000, 100000))
+            return reply({ ok: true, total: text.length, content: text.slice(off, off + lim), hasMore: off + lim < text.length, nextOffset: off + lim < text.length ? off + lim : null })
+          }
           // ── 自主升格:对话卡 Agent 判断任务复杂 → 调 run_workflow → 拉起动态编排(带新大脑 + 人审闸)──
           if (req.url === '/orch/run') {
             const goal = String(a.goal || '').trim()
@@ -2202,6 +2210,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       'BocomHermes-mail':    { type: 'local', command: ['node', b + '/mail-mcp.mjs'],    enabled: true },
       'BocomHermes-db':      { type: 'local', command: ['node', b + '/db-mcp.mjs'],      enabled: true },
       'BocomHermes-orch':    { type: 'local', command: ['node', b + '/orch-mcp.mjs'],    enabled: true },
+      'BocomHermes-doc':     { type: 'local', command: ['node', b + '/doc-mcp.mjs'],     enabled: true },
     }
   }
   function configCandidates() {

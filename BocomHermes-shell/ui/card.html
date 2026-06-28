@@ -494,11 +494,8 @@
     const mime = file.type || ''
     if (/^image\//.test(mime)) {
       try { const dataUrl = await fileToDataUrl(file); pendingAtts.push({ kind: 'image', name: file.name || '截图.png', mime, dataUrl }); renderAtts() } catch (e) {}
-    } else if (file.path) {                                   // 文档 → 主进程解析成文本
-      const a = { kind: 'doc', name: file.name || '文档', text: '', loading: true }; pendingAtts.push(a); renderAtts()
-      try { const r = await window.BocomHermes.parseDoc(file.path); a.loading = false; if (r && r.ok) a.text = r.text || ''; else { a.name = (file.name || '文档') + '（解析失败）'; addNote('文档解析失败：' + ((r && r.error) || ''), 'muted') } }
-      catch (e) { a.loading = false; a.name = (file.name || '文档') + '（解析失败）' }
-      renderAtts()
+    } else if (file.path) {                                   // 文档 → 只记路径,opencode 用 read_document 工具按需读(A+B)
+      pendingAtts.push({ kind: 'doc', name: file.name || '文档', path: file.path }); renderAtts()
     } else { addNote('读不到拖入文件的路径', 'muted') }
   }
   ;['dragenter', 'dragover'].forEach((ev) => document.addEventListener(ev, (e) => { if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) { e.preventDefault(); dropHint.classList.add('show') } }))
@@ -512,9 +509,10 @@
   function submit() {
     const v = ci.value.trim()
     if ((!v && !pendingAtts.length) || busy) return
-    const docTexts = pendingAtts.filter((a) => a.kind === 'doc' && a.text).map((a) => '【附件文档：' + a.name + '】\n' + a.text).join('\n\n')
+    const docRefs = pendingAtts.filter((a) => a.kind === 'doc').map((a) => '- ' + a.path + '（' + a.name + '）').join('\n')
+    const docNote = docRefs ? '【用户拖入了文档，需要时用 read_document 工具读取其内容】\n' + docRefs : ''
     const images = pendingAtts.filter((a) => a.kind === 'image').map((a) => ({ mime: a.mime, url: a.dataUrl, filename: a.name }))
-    const full = [docTexts, v].filter(Boolean).join('\n\n')
+    const full = [docNote, v].filter(Boolean).join('\n\n')
     ci.value = ''; autoGrow()
     addMsg((v || (images.length ? '(图片)' : '(文档)')) + (pendingAtts.length ? '  📎' + pendingAtts.length : ''), 'me')
     pendingAtts.length = 0; renderAtts()
