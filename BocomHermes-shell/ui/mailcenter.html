@@ -89,6 +89,29 @@
   .btn-primary { font-size: 12.5px; font-weight: 600; color: var(--send-fg); background: var(--brand); border: none; border-radius: 9px; padding: 7px 18px; cursor: pointer; }
   .obrow { display: flex; align-items: center; gap: 9px; padding: 9px 11px; border: .5px solid var(--composer-border); border-radius: 10px; margin-bottom: 7px; }
   .obrow .info { flex: 1; min-width: 0; } .obrow .t1 { font-size: 12px; color: var(--txt); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .obrow .t2 { font-size: 10.5px; color: var(--txt3); margin-top: 2px; }
+
+  /* ── 待办 ── */
+  .todos-hd { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+  .section-label { font-size: 10.5px; font-weight: 600; color: var(--txt3); letter-spacing: .04em; padding: 6px 2px 3px; }
+  .todo { display: flex; align-items: flex-start; gap: 8px; background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 10px; padding: 8px 10px; margin-bottom: 6px; }
+  .todo.done { opacity: .5; }
+  .todo input[type=checkbox] { margin-top: 2px; flex: none; accent-color: var(--brand); cursor: pointer; width: 15px; height: 15px; }
+  .todo-body { flex: 1; min-width: 0; }
+  .todo-text { font-size: 12.5px; line-height: 1.45; color: var(--txt); }
+  .todo.done .todo-text { text-decoration: line-through; color: var(--txt3); }
+  .todo-meta { font-size: 11px; color: var(--txt3); margin-top: 3px; }
+  .urg { display: inline-block; font-size: 10px; font-weight: 600; padding: 0 6px; border-radius: 999px; margin-right: 5px; border: 1px solid; }
+  .urg-高 { color: var(--diff-del); border-color: var(--diff-del); background: var(--diff-del-bg); }
+  .urg-中 { color: var(--warn-txt); border-color: var(--warn-border); background: var(--warn-bg); }
+  .urg-低 { color: var(--txt3); border-color: var(--composer-border); background: transparent; }
+  .del-btn { border: none; background: transparent; color: var(--txt3); cursor: pointer; padding: 2px 4px; border-radius: 5px; font-size: 13px; line-height: 1; flex: none; opacity: 0; transition: opacity .12s; }
+  .todo:hover .del-btn { opacity: 1; }
+  .del-btn:hover { color: var(--diff-del); background: var(--diff-del-bg); }
+  .mail-acts { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .mail-act { border: .5px solid var(--composer-border); background: var(--composer-bg); color: var(--txt2); font-size: 11px; padding: 3px 9px; border-radius: 7px; cursor: pointer; }
+  .mail-act:hover { color: var(--txt); border-color: var(--accent); }
+  .mail-act:disabled { opacity: .6; cursor: default; }
+  .mail-full { white-space: pre-wrap; background: var(--composer-bg); border-left: 2px solid var(--accent); padding: 7px 10px; margin-top: 5px; border-radius: 0 6px 6px 0; font-size: 11.5px; color: var(--txt2); line-height: 1.55; max-height: 240px; overflow: auto; }
 </style>
 </head>
 <body>
@@ -100,6 +123,7 @@
       <div class="tabs nodrag">
         <button id="tabInbox" class="on">收件箱</button>
         <button id="tabOutbox">发件箱</button>
+        <button id="tabTodos">待办</button>
         <button id="tabSettings">设置</button>
       </div>
       <span class="sp"></span>
@@ -128,6 +152,12 @@
     <!-- ── 发件箱 ── -->
     <div id="viewOutbox" class="panel nodrag" hidden>
       <div id="oblist"><div class="empty">发件箱为空</div></div>
+    </div>
+
+    <!-- ── 待办 ── -->
+    <div id="viewTodos" class="panel nodrag" hidden>
+      <div class="todos-hd"><span id="tcount" class="hint"></span><span class="sp"></span><button id="tclr" class="chip2">清除已完成</button></div>
+      <div id="tlist"><div class="empty">加载中… <span class="spin"></span></div></div>
     </div>
 
     <!-- ── 设置 ── -->
@@ -175,16 +205,20 @@
   function showTab(which) {
     $('viewInbox').hidden = which !== 'inbox'
     $('viewOutbox').hidden = which !== 'outbox'
+    $('viewTodos').hidden = which !== 'todos'
     $('viewSettings').hidden = which !== 'settings'
     $('btnSummary').style.display = which === 'inbox' ? '' : 'none'
     $('tabInbox').classList.toggle('on', which === 'inbox')
     $('tabOutbox').classList.toggle('on', which === 'outbox')
+    $('tabTodos').classList.toggle('on', which === 'todos')
     $('tabSettings').classList.toggle('on', which === 'settings')
     if (which === 'inbox' && !inboxLoaded) loadInbox()
     if (which === 'outbox') loadOutbox()
+    if (which === 'todos') loadTodos()
   }
   $('tabInbox').addEventListener('click', () => showTab('inbox'))
   $('tabOutbox').addEventListener('click', () => showTab('outbox'))
+  $('tabTodos').addEventListener('click', () => showTab('todos'))
   $('tabSettings').addEventListener('click', () => showTab('settings'))
 
   // ── 收件箱列表 ──
@@ -352,6 +386,75 @@
   })
   H.onOutboxUpdated && H.onOutboxUpdated(() => { if (!$('viewOutbox').hidden) loadOutbox() })
 
+  // ── 待办(从独立窗口归并进邮件中心)──
+  const URG_ORDER = { '高': 0, '中': 1, '低': 2, '': 3 }
+  async function loadTodos() {
+    let list = []
+    try { list = await H.todoList() } catch (e) {}
+    const el = $('tlist')
+    if (!list || !list.length) { el.innerHTML = '<div class="empty">暂无待办 📭<br>读信时点「记为待办」，或邮件摘要后自动生成</div>'; $('tcount').textContent = ''; return }
+    const pending = list.filter((t) => !t.done).sort((a, b) => (URG_ORDER[a.urgency] ?? 3) - (URG_ORDER[b.urgency] ?? 3))
+    const done = list.filter((t) => t.done)
+    $('tcount').textContent = `${pending.length} 项待处理 · ${done.length} 项已完成`
+    el.innerHTML = ''
+    if (pending.length) { const l = document.createElement('div'); l.className = 'section-label'; l.textContent = '待处理'; el.appendChild(l); pending.forEach((t) => el.appendChild(makeTodo(t))) }
+    if (done.length) { const l = document.createElement('div'); l.className = 'section-label'; l.textContent = '已完成'; el.appendChild(l); done.forEach((t) => el.appendChild(makeTodo(t))) }
+  }
+  function makeTodo(t) {
+    const d = document.createElement('div'); d.className = 'todo' + (t.done ? ' done' : '')
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = t.done
+    cb.addEventListener('change', async () => { await H.todoToggle(t.id); loadTodos() })
+    const body = document.createElement('div'); body.className = 'todo-body'
+    const urg = t.urgency ? `<span class="urg urg-${t.urgency}">${t.urgency}</span>` : ''
+    body.innerHTML = `<div class="todo-text">${urg}${esc(t.text)}</div>`
+    if (t.from || t.source) {
+      const meta = document.createElement('div'); meta.className = 'todo-meta'
+      const parts = []
+      if (t.from) parts.push('来自：' + t.from)
+      if (t.source === 'email') parts.push('📧 邮件')
+      if (t.mailSubject) parts.push('「' + t.mailSubject.slice(0, 40) + (t.mailSubject.length > 40 ? '…' : '') + '」')
+      if (t.mailDate) parts.push(t.mailDate.slice(0, 16))
+      meta.textContent = parts.join(' · ')
+      body.appendChild(meta)
+      if (t.mailBody) {
+        meta.style.cursor = 'pointer'; meta.title = '点击展开原邮件正文'
+        const det = document.createElement('div'); det.className = 'mail-full'; det.style.display = 'none'; det.textContent = t.mailBody
+        body.appendChild(det)
+        meta.addEventListener('click', () => { det.style.display = det.style.display === 'none' ? 'block' : 'none' })
+      }
+    }
+    if (t.mailMsgId) {
+      const acts = document.createElement('div'); acts.className = 'mail-acts'
+      const bView = document.createElement('button'); bView.className = 'mail-act'; bView.textContent = '📄 原邮件'
+      const bWeb = document.createElement('button'); bWeb.className = 'mail-act'; bWeb.textContent = '🌐 网页视图'
+      const bReply = document.createElement('button'); bReply.className = 'mail-act'; bReply.textContent = '✉️ 起草回复'
+      bWeb.addEventListener('click', () => { try { H.openMailView(t.mailMsgId) } catch (e) {} })
+      let full = null
+      bView.addEventListener('click', async () => {
+        if (full) { full.style.display = full.style.display === 'none' ? 'block' : 'none'; return }
+        bView.disabled = true; const o = bView.textContent; bView.textContent = '加载中…'
+        const r = await H.mailGetFull(t.mailMsgId)
+        bView.disabled = false; bView.textContent = o
+        full = document.createElement('div'); full.className = 'mail-full'
+        full.textContent = (r && r.ok) ? (r.from + ' · ' + (r.date || '') + '\n主题：' + (r.subject || '') + '\n\n' + (r.text || '')) : ('✗ ' + ((r && r.error) || '加载失败'))
+        body.appendChild(full)
+      })
+      bReply.addEventListener('click', async () => {
+        bReply.disabled = true; const o = bReply.textContent; bReply.textContent = '打开中…'
+        const r = await H.mailReplyCard(t.mailMsgId)
+        bReply.disabled = false; bReply.textContent = o
+        if (!(r && r.ok)) { const e = document.createElement('div'); e.className = 'mail-full'; e.textContent = '✗ ' + ((r && r.error) || '打开失败'); body.appendChild(e) }
+      })
+      acts.append(bView, bWeb, bReply); body.appendChild(acts)
+    }
+    const del = document.createElement('button'); del.className = 'del-btn'; del.title = '删除'; del.textContent = '×'
+    del.addEventListener('click', async () => { await H.todoDelete(t.id); loadTodos() })
+    d.append(cb, body, del)
+    return d
+  }
+  $('tclr').addEventListener('click', async () => { await H.todoClearDone(); loadTodos() })
+  H.onTodosUpdated && H.onTodosUpdated(() => { if (!$('viewTodos').hidden) loadTodos() })
+
   // ── 设置(读写沿用全局口径) ──
   const cur = (function () { try { return H.getSettings() || {} } catch (e) { return {} } })()
   try { $('encWarn').style.display = (cur.encryptionAvailable === false) ? 'block' : 'none' } catch (e) {}
@@ -384,7 +487,7 @@
   // 启动：建立 AI 会话 + 默认进收件箱
   H.cardInit({ title: '邮件助手' }).catch(() => {})
   const initTab = new URLSearchParams(location.search).get('tab')
-  showTab(initTab === 'settings' ? 'settings' : initTab === 'outbox' ? 'outbox' : 'inbox')
+  showTab(['settings', 'outbox', 'todos'].includes(initTab) ? initTab : 'inbox')
   if (initTab === 'summary') { showTab('inbox'); setTimeout(runDailySummary, 200) }
 </script>
 </body>

@@ -10,7 +10,6 @@ const db = require('./db')
 
 module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }) {
   // 额外窗口引用
-  S.todosWin = null
   S.orbInputWin = null
   S.browser = { win: null, tabs: [], activeId: null, consoleH: 0, seq: 0, mode: 'standalone', leftW: 0, cardView: null, cardWcId: null, _dragging: false }
   // ── 设置 ────────────────────────────────────────────────────────────────────
@@ -685,15 +684,6 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       sendOrbState('idle')   // 失败立即回 idle,renderer 自己再红/绿闪
       throw e
     }
-  }
-
-  function openTodos() {
-    if (S.todosWin && !S.todosWin.isDestroyed()) { S.todosWin.show(); S.todosWin.focus(); return }
-    const { width } = screen.getPrimaryDisplay().workAreaSize
-    const tx = Math.round(width / 2 - 200), ty = 120
-    S.todosWin = new BrowserWindow(baseOpts({ width: 400, height: 560, x: tx, y: ty, skipTaskbar: false, alwaysOnTop: true, resizable: true, minWidth: 320, minHeight: 300 }))
-    S.todosWin.loadFile(path.join(__dirname, '..', 'ui', 'todos.html'), { query: orbAnchorFor(tx, ty, 400, 560) })
-    S.todosWin.on('closed', () => { S.todosWin = null })
   }
 
   function openOutbox() {
@@ -1958,7 +1948,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       { label: '📧 邮件（收件箱 · 摘要 · 设置）', accelerator: 'Ctrl+Shift+M', click: () => createMailCenter() },
       { label: '📄 需求分析（Word）', click: () => spawnReqAnalysis('') },
       { label: '📤 发件箱', click: openOutbox },
-      { label: '📋 待办事项', click: openTodos },
+      { label: '📋 待办事项', click: () => createMailCenter('todos') },
       { label: '卡坞 · 历史对话', click: openDock },
       { label: '切换深 / 浅主题', click: toggleTheme },
       { label: '设置…', click: openSettings },
@@ -2360,12 +2350,10 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     return out.length ? out.join('\n\n---\n\n') : '(本轮 session 无 git 改动)'
   })
 
-  // ── Todos 广播（卡片保存待办后通知 todos 面板刷新）────────────────────────
+  // ── Todos 广播（增删待办后通知邮件中心待办 tab 刷新）────────────────────────
   ipcMain.on('todos-updated', () => {
-    if (S.todosWin && !S.todosWin.isDestroyed()) S.todosWin.webContents.send('todos-updated')
+    for (const w of BrowserWindow.getAllWindows()) { try { w.webContents.send('todos-updated') } catch {} }
   })
-
-  ipcMain.handle('open-todos', () => openTodos())
 
   // ── Orb 窗口控制 ─────────────────────────────────────────────────────────
   ipcMain.on('orb-passthrough', (_e, pass) => {
@@ -3122,5 +3110,5 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('open-history', (_e, { sid, title }) => spawnCard(title, sid))
   ipcMain.handle('clear-history', () => { S.history = []; saveHistory(); return true })
 
-  return { createOrb, createBrowser, createWorkspace, createMailCenter, spawnCard, spawnFanout, spawnWorkflow, spawnReqAnalysis, spawnReqConfirm, spawnReqPlan, spawnEmailCard, toggleInput, toggleOrbInput, buildTray, openDock, openTodos, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory }
+  return { createOrb, createBrowser, createWorkspace, createMailCenter, spawnCard, spawnFanout, spawnWorkflow, spawnReqAnalysis, spawnReqConfirm, spawnReqPlan, spawnEmailCard, toggleInput, toggleOrbInput, buildTray, openDock, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory }
 }

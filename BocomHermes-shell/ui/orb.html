@@ -271,7 +271,7 @@ function flashSphere(cls) {
   setTimeout(() => sphere.classList.remove(cls), 1200)
 }
 document.getElementById('ri-email').addEventListener('click', () => { H.openMailCenter() })
-document.getElementById('ri-todos').addEventListener('click', () => H.openTodos())
+document.getElementById('ri-todos').addEventListener('click', () => H.openMailCenter('todos'))
 document.getElementById('ri-fanout').addEventListener('click', () => H.toggleOrbInput('fanout'))
 document.getElementById('ri-settings').addEventListener('click', () => H.openSettings())
 document.getElementById('ri-reqdoc').addEventListener('click', () => H.openReqAnalysis())
