@@ -276,31 +276,27 @@
     projEl.classList.toggle('empty', !name)
   }
   projEl.addEventListener('click', async () => {
-    // 工作台内嵌:切项目目录立刻重绑本卡(换 serve + 新会话),不用关掉工作台重开
-    if (params.get('embedded') === '1') {
-      const getDir = () => ((window.BocomHermes.getSettings && window.BocomHermes.getSettings()) || {}).projectDir || ''
-      const before = getDir()
-      let name
-      try { name = await window.BocomHermes.pickProject() } catch (e) { return }
-      const after = getDir()
-      paintProj(name && name !== '未选目录' ? name : '')
-      if (after === before) return   // 取消/没换目录 → 不动当前会话
-      if (busy) { try { window.BocomHermes.cardAbort() } catch {} }
-      cardReady = false; setBusy(true); resetConversation()
-      const boot = addMsg('', 'ai'); boot.textContent = '正在切换到新项目，重建调试会话…'
-      try {
-        const r = await window.BocomHermes.cardReinit()
-        boot.remove()
-        paintProj(r.project && r.project !== '未选目录' ? r.project : '')
-        cardReady = true; setBusy(false)
-        addMsg('已切换到项目「' + (r.project || '未选目录') + '」，新会话就绪。右侧浏览器复现后点「发给 Agent」，或直接提问。', 'ai')
-        maybeDrain()
-      } catch (e) {
-        boot.className = 'msg ai err'; boot.textContent = '⚠ 切换失败：' + (e.message || e); setBusy(false)
-      }
-      return
+    // 切项目目录 → 立刻重绑本卡(换 serve + 新会话);只有真换了目录才重建(取消/同目录不动)
+    const getDir = () => ((window.BocomHermes.getSettings && window.BocomHermes.getSettings()) || {}).projectDir || ''
+    const before = getDir()
+    let name
+    try { name = await window.BocomHermes.pickProject() } catch (e) { return }
+    const after = getDir()
+    paintProj(name && name !== '未选目录' ? name : '')
+    if (after === before) return   // 取消 / 没换目录 → 不动当前会话
+    if (busy) { try { window.BocomHermes.cardAbort() } catch {} }
+    cardReady = false; setBusy(true); resetConversation()
+    const boot = addMsg('', 'ai'); boot.textContent = '正在切换到新项目，重建会话…'
+    try {
+      const r = await window.BocomHermes.cardReinit()
+      boot.remove()
+      paintProj(r.project && r.project !== '未选目录' ? r.project : '')
+      cardReady = true; setBusy(false)
+      addMsg('已切换到项目「' + (r.project || '未选目录') + '」，新会话就绪，直接提问即可。', 'ai')
+      maybeDrain()
+    } catch (e) {
+      boot.className = 'msg ai err'; boot.textContent = '⚠ 切换失败：' + (e.message || e); setBusy(false)
     }
-    try { paintProj(await window.BocomHermes.pickProject()) } catch (e) {}
   })
   window.BocomHermes.onProject && window.BocomHermes.onProject((p) => paintProj(p))
   const feed = document.getElementById('feed'), st = document.getElementById('st')
