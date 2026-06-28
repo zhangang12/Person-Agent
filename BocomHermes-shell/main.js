@@ -122,7 +122,7 @@ app.whenReady().then(() => {
   initSession(S, { ipcMain, path, fs, shell, oc, log, recordHistory, touchHistory })
   initOrch(S, { ipcMain, oc, orch, log })
   initTodos(S, { ipcMain, app, path, fs, log })
-  initTrigger(S, { path, fs, app, log, spawnEmailCard, Notification })
+  initTrigger(S, { path, fs, app, log, spawnEmailCard, createMailCenter, Notification })
   initReqAnalysis(S, { ipcMain, app, path, fs, oc, log, dialog, shell, spawnReqConfirm, spawnReqPlan })
 
   // 代理:settings.proxy 在场即应用(支持 'http://host:port' 或 PAC 'pac+http://...')

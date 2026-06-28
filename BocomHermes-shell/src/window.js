@@ -79,10 +79,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     S.idleWatcher = email.createIdleWatcher(imap, {
       log,
       onNew: (n) => {
-        // 球绿色脉冲 + 通知;点击通知=拉摘要
+        // 球绿色脉冲 + 通知;点击通知=打开邮件中心(收件箱默认只看未读 → 新邮件自然置顶)
         try { sendOrbState && sendOrbState('done') } catch {}
-        notifyMail('📬 新邮件', (n > 1 ? n + ' 封新邮件到达' : '有新邮件到达') + ' — 点击整理摘要',
-          () => { spawnEmailCard().catch((e) => log('idle summary err: ' + e.message)) })
+        notifyMail('📬 新邮件', (n > 1 ? n + ' 封新邮件到达' : '有新邮件到达') + ' — 点击打开邮件中心',
+          () => { try { createMailCenter() } catch (e) { log('idle open center err: ' + e.message) } })
       },
     })
     log('idle: IMAP IDLE 实时监听已启动')
@@ -369,6 +369,16 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   })
   ipcMain.handle('open-mail-view', (_e, msgId) => openMailView(msgId))
   ipcMain.handle('open-mail-center', (_e, tab) => createMailCenter(tab))
+  ipcMain.handle('mail-mark-read', async (_e, msgIds) => {
+    const imap = S.settings.imap
+    if (!imap || !imap.host || !imap.user || !imap.passEncrypted) throw new Error('IMAP 未配置')
+    return await email.markRead(imap, Array.isArray(msgIds) ? msgIds : [msgIds])
+  })
+  ipcMain.handle('mail-archive', async (_e, msgIds) => {
+    const imap = S.settings.imap
+    if (!imap || !imap.host || !imap.user || !imap.passEncrypted) throw new Error('IMAP 未配置')
+    return await email.archiveMessages(imap, Array.isArray(msgIds) ? msgIds : [msgIds], imap.archiveFolder || 'Archive')
+  })
   // 邮件中心收件箱列表：复用 fetchUnread，只回摘要字段（不带正文/附件二进制）
   ipcMain.handle('mail-list', async (_e, opts) => {
     const imap = S.settings.imap
@@ -708,13 +718,14 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
 
   // 邮件中心：收件箱 + 设置一体（邮件模块的设置归口在此）
   function createMailCenter(tab) {
-    const { width } = screen.getPrimaryDisplay().workAreaSize
-    const mx = Math.round(width / 2 - 360), my = 80
+    const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
+    const W = Math.min(1120, sw - 80), Hh = Math.min(780, sh - 80)
+    const mx = Math.round((sw - W) / 2), my = Math.round((sh - Hh) / 2)
     if (!(S.mailCenterWin && !S.mailCenterWin.isDestroyed())) {
-      S.mailCenterWin = new BrowserWindow(baseOpts({ width: 720, height: 660, x: mx, y: my, skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 480, minHeight: 420 }))
+      S.mailCenterWin = new BrowserWindow(baseOpts({ width: W, height: Hh, x: mx, y: my, skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 720, minHeight: 520 }))
       S.mailCenterWin.on('closed', () => { S.mailCenterWin = null })
     } else { S.mailCenterWin.show(); S.mailCenterWin.focus() }
-    const query = { ...orbAnchorFor(mx, my, 720, 660) }
+    const query = { ...orbAnchorFor(mx, my, W, Hh) }
     if (tab) query.tab = tab
     S.mailCenterWin.loadFile(path.join(__dirname, '..', 'ui', 'mailcenter.html'), { query })
   }
@@ -1213,8 +1224,16 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     activateTab(id)
     const u = normalizeUrl(url)
     const doLoad = () => { if (view.webContents.isDestroyed()) return; if (u) view.webContents.loadURL(u); else view.webContents.loadFile(path.join(__dirname, '..', 'ui', 'newtab.html')) }
-    // 等 Network/Page 域就绪再加载，确保首个文档请求也进网络面板
-    if (tab._dbgReady) tab._dbgReady.then(doLoad, doLoad); else doLoad()
+    // 本地新标签页(newtab.html)无需等调试器网络域就绪 → 立即加载，避免 _dbgReady 卡住白屏。
+    // 真实 URL 才等 Network/Page 域就绪(让首个文档请求进网络面板)，并加超时兜底，防调试器附加挂死导致白屏。
+    if (u && tab._dbgReady) {
+      let fired = false
+      const go = () => { if (fired) return; fired = true; doLoad() }
+      tab._dbgReady.then(go, go)
+      setTimeout(go, 1200)
+    } else {
+      doLoad()
+    }
     // 空白新标签：键盘焦点交给外壳地址栏(而非 newtab 页里的搜索框)，否则用户敲完第一次回车会落到页面空框里 → 看着像"跳回首页"
     if (!u) setTimeout(() => { if (b.win && !b.win.isDestroyed() && b.activeId === id) b.win.webContents.send('browser-focus-url') }, 60)
     return tab
@@ -1265,20 +1284,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const tab = brActive(); if (!tab) return
     const dev = BR_DEVICES[key] || BR_DEVICES.desktop
     tab.device = key === 'desktop' ? null : dev
-    const wc = tab.view.webContents
-    try {
-      if (tab.device && tab.device.w) {
-        wc.enableDeviceEmulation({
-          screenPosition: 'mobile',
-          screenSize: { width: tab.device.w, height: tab.device.h },
-          viewSize: { width: tab.device.w, height: tab.device.h },
-          deviceScaleFactor: tab.device.dpr || 0,
-          viewPosition: { x: 0, y: 0 }, scale: 1,
-        })
-      } else {
-        wc.disableDeviceEmulation()
-      }
-    } catch {}
+    // 仅靠视图边界模拟设备宽度（brLayout 居中成 dev.w 宽的框 → 页面响应式重排）。
+    // 不调用 wc.enableDeviceEmulation：该原生调用在 WebContentsView 上（尤其分屏 +
+    // 高 dpr 的 backing store，如手机 390×844@3x）会触发 GPU 原生崩溃，整窗/进程直接退出。
     brLayout()
     brSendNav(tab)
   }
@@ -1947,8 +1955,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       { label: S.settings.orbHidden ? '显示桌面悬浮球' : '隐藏桌面悬浮球', click: () => setOrbHidden(!S.settings.orbHidden) },
       { type: 'separator' },
       { label: '🌐 调试工作台（Agent + 浏览器）', accelerator: 'Ctrl+Shift+B', click: () => createWorkspace() },
-      { label: '📧 邮件中心（收件箱 + 设置）', accelerator: 'Ctrl+Shift+M', click: () => createMailCenter() },
-      { label: '📧 邮件摘要', click: () => spawnEmailCard().catch((e) => log('email card err: ' + e.message)) },
+      { label: '📧 邮件（收件箱 · 摘要 · 设置）', accelerator: 'Ctrl+Shift+M', click: () => createMailCenter() },
       { label: '📄 需求分析（Word）', click: () => spawnReqAnalysis('') },
       { label: '📤 发件箱', click: openOutbox },
       { label: '📋 待办事项', click: openTodos },

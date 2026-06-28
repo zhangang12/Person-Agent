@@ -103,6 +103,8 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   smtpTest:  () => ipcRenderer.invoke('smtp-test'),
   openMailCenter: (tab) => ipcRenderer.invoke('open-mail-center', tab),
   mailList: (opts) => ipcRenderer.invoke('mail-list', opts),
+  mailMarkRead: (ids) => ipcRenderer.invoke('mail-mark-read', ids),
+  mailArchive: (ids) => ipcRenderer.invoke('mail-archive', ids),
   openTodos: () => ipcRenderer.invoke('open-todos'),
   // 发件箱(发信安全闸门)
   openOutbox:    () => ipcRenderer.invoke('open-outbox'),
