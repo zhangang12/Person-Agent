@@ -537,11 +537,11 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const col = (id - 1) % 4, row = Math.floor((id - 1) / 4) % 4
     const wx = 160 + col * 56, wy = 90 + row * 50 + col * 18
     const win = new BrowserWindow(baseOpts({
-      width: 480, height: 600, minWidth: 360, minHeight: 320, resizable: true,
+      width: 600, height: 760, minWidth: 440, minHeight: 420, resizable: true,
       alwaysOnTop: false, skipTaskbar: false, x: wx, y: wy,
     }))
     const wcId = win.webContents.id
-    const query = { title: title || '未命名任务', id: String(id), ...orbAnchorFor(wx, wy, 480, 600) }
+    const query = { title: title || '未命名任务', id: String(id), ...orbAnchorFor(wx, wy, 600, 760) }
     if (sid) query.sid = sid
     if (msg) query.msg = msg
     if (disp) query.disp = disp

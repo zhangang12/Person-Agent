@@ -335,11 +335,15 @@
   async function pickModel(m) {
     curModelKey = m ? (m.providerID + '/' + m.modelID) : ''
     setModelLabel(m ? m.name : '')
-    try { await window.BocomHermes.cardSetModel(m) } catch (e) {}
     menuEl.hidden = true
+    let ok = false
+    try { const r = await window.BocomHermes.cardSetModel(m); ok = !!(r && r.ok) } catch (e) {}
+    addNote(ok ? ('已切换模型：' + (m ? m.name : 'serve 默认') + '（仅本卡，下一条起生效）') : '切换模型失败', 'muted')
   }
   modelEl.addEventListener('click', (e) => { e.stopPropagation(); if (menuEl.hidden) openModelMenu(); else menuEl.hidden = true })
   document.addEventListener('click', (e) => { if (!menuEl.hidden && !menuEl.contains(e.target) && e.target !== modelEl) menuEl.hidden = true })
+  // 进卡时 chip 显示当前生效模型(全局默认),不再永远"默认模型"
+  try { const gm = (window.BocomHermes.getSettings && window.BocomHermes.getSettings().model) || null; if (gm && gm.modelID) { curModelKey = gm.providerID + '/' + gm.modelID; setModelLabel(gm.name || gm.modelID) } } catch (e) {}
 
   // 点 文件:行 链接 → 在编辑器打开
   feed.addEventListener('click', (e) => {
