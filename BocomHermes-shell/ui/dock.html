@@ -1,66 +1,79 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh">
 <head>
 <meta charset="utf-8" />
-<title>卡坞 · BocomHermes</title>
+<title>对话 · BocomHermes</title>
 <script>try { document.documentElement.dataset.theme = window.BocomHermes.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
 <script>(function(){try{var p=new URLSearchParams(location.search),d=document.documentElement.style;['gox','goy','gfx','gfy'].forEach(function(k){var v=p.get(k);if(v)d.setProperty('--'+k,v)})}catch(e){}})()</script>
 <link rel="stylesheet" href="glass.css" />
 <style>
-  .dock { display: flex; flex-direction: column; height: 100%; padding: 13px 14px 12px; gap: 11px; }
-  .hd { display: flex; align-items: center; gap: 8px; flex: none; }
-  .hd .ttl { flex: 1; font-size: 14px; font-weight: 600; }
-  .hd .sub { font-size: 11px; color: var(--txt3); font-family: var(--mono); }
+  /* 整张卡 JS 拖动:关掉 app-region,靠鼠标事件移动窗口(同需求分析卡) */
+  .glass, .card { -webkit-app-region: no-drag; }
+  .card { display: flex; flex-direction: column; height: 100%; padding: 12px 14px 14px; gap: 11px; }
+  .hd { display: flex; align-items: center; gap: 8px; flex: none; cursor: grab; }
+  .hd:active { cursor: grabbing; }
+  .orb { width: 11px; height: 11px; border-radius: 50%; background: var(--brand); flex: none; }
+  .ttl { flex: 1; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ttl .sub { font-size: 11px; font-weight: 400; color: var(--txt3); margin-left: 6px; font-family: var(--mono); }
   .hbtn { border: none; background: transparent; color: var(--txt3); cursor: pointer; padding: 4px; border-radius: 7px; display: flex; }
   .hbtn:hover { color: var(--txt); background: var(--composer-bg); }
-  .list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; padding-right: 2px; }
-  .list::-webkit-scrollbar { width: 6px; } .list::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
-  .item { text-align: left; background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 11px; padding: 9px 11px; cursor: pointer; display: flex; flex-direction: column; gap: 5px; }
-  .item:hover { border-color: var(--accent); }
-  .item .t { font-size: 12.5px; color: var(--txt); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .item .meta { display: flex; align-items: center; gap: 7px; font-size: 10.5px; color: var(--txt3); }
-  .item .proj { font-family: var(--mono); background: var(--orb-bg); border: .5px solid var(--orb-border); border-radius: 999px; padding: 1px 7px; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--txt3); font-size: 12.5px; text-align: center; padding: 0 20px; line-height: 1.6; }
-  .ft { flex: none; display: flex; align-items: center; gap: 9px; }
-  .ft .msg { flex: 1; font-size: 11px; color: var(--txt3); }
-  .btn-ghost { font-size: 12px; color: var(--txt2); background: transparent; border: 1px solid var(--composer-border); border-radius: 9px; padding: 6px 13px; cursor: pointer; }
-  .btn-ghost:hover { color: var(--txt); }
-  .btn-ghost.danger:hover { color: var(--diff-del); border-color: var(--diff-del); }
-  /* 开新会话(原"新对话"并入) */
-  .newrow { display: flex; gap: 7px; align-items: flex-end; flex: none; }
-  .newrow textarea { flex: 1; resize: none; background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 10px; padding: 8px 11px; color: var(--txt); font-family: var(--font); font-size: 12.5px; line-height: 1.4; outline: none; max-height: 96px; }
+
+  /* 开新会话 */
+  .newrow { display: flex; gap: 8px; align-items: flex-end; flex: none; }
+  .newrow textarea { flex: 1; resize: none; background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 12px; padding: 10px 12px; color: var(--txt); font-family: var(--font); font-size: 13px; line-height: 1.5; outline: none; min-height: 62px; max-height: 168px; }
   .newrow textarea:focus { border-color: var(--accent); }
-  .newrow .go { flex: none; border: none; background: var(--brand); color: var(--send-fg); border-radius: 9px; padding: 0 13px; height: 36px; cursor: pointer; display: flex; align-items: center; }
+  .newrow textarea::placeholder { color: var(--txt3); }
+  .newrow .go { flex: none; border: none; background: var(--brand); color: var(--send-fg); border-radius: 11px; width: 44px; height: 44px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: opacity .15s; }
   .newrow .go:hover { opacity: .88; }
-  .newrow .go svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
-  .seclbl { flex: none; font-size: 10.5px; color: var(--txt3); letter-spacing: .04em; padding: 2px 2px 0; }
+  .newrow .go svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+  .hint2 { flex: none; font-size: 11px; color: var(--txt3); line-height: 1.4; display: flex; align-items: center; gap: 5px; margin-top: -4px; }
+  .hint2 svg { flex: none; opacity: .8; }
+
+  .seclbl { flex: none; font-size: 11px; font-weight: 600; color: var(--txt3); letter-spacing: .03em; padding: 4px 2px 0; display: flex; align-items: center; }
+  .seclbl .sp { flex: 1; }
+  .seclbl .clr { font-size: 11px; font-weight: 400; color: var(--txt3); background: none; border: none; cursor: pointer; padding: 2px 4px; border-radius: 5px; }
+  .seclbl .clr:hover { color: var(--diff-del); }
+
+  .list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; padding-right: 2px; }
+  .list::-webkit-scrollbar { width: 7px; } .list::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  .item { text-align: left; background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 12px; padding: 10px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 5px; transition: border-color .15s; }
+  .item:hover { border-color: var(--accent); }
+  .item .t { font-size: 13px; color: var(--txt); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .meta { display: flex; align-items: center; gap: 7px; font-size: 10.5px; color: var(--txt3); }
+  .item .proj { font-family: var(--mono); background: var(--orb-bg); border: .5px solid var(--orb-border); border-radius: 999px; padding: 1px 8px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--txt3); font-size: 12.5px; text-align: center; padding: 0 24px; line-height: 1.7; gap: 6px; }
+  .empty .big { font-size: 28px; opacity: .45; }
 </style>
 </head>
 <body>
 <div class="glass">
   <span class="hl"></span>
-  <div class="dock">
-    <div class="hd">
-      <span class="ttl">对话</span>
-      <span id="count" class="sub"></span>
+  <div class="card">
+    <div class="hd" id="hd">
+      <span class="orb"></span>
+      <span class="ttl">对话 <span id="count" class="sub"></span></span>
+      <button id="min" class="hbtn nodrag" title="最小化" aria-label="最小化"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+      <button id="max" class="hbtn nodrag" title="最大化 / 还原" aria-label="最大化"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></button>
       <button id="x" class="hbtn nodrag" title="关闭" aria-label="关闭"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
+
     <div class="newrow nodrag">
-      <textarea id="goal" rows="1" placeholder="想让 Agent 做什么？复杂任务它会自主拉起动态工作流" spellcheck="false"></textarea>
+      <textarea id="goal" rows="2" placeholder="想让 Agent 做什么？" spellcheck="false"></textarea>
       <button id="go" class="go" title="开始（Enter）" aria-label="开始"><svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg></button>
     </div>
-    <div class="seclbl">最近会话 · 点一条续接</div>
+    <div class="hint2"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>复杂任务它会自主拉起动态工作流</div>
+
+    <div class="seclbl">最近会话 · 点一条续接 <span class="sp"></span><button id="clear" class="clr nodrag">清空</button></div>
     <div id="list" class="list nodrag"></div>
-    <div class="ft nodrag">
-      <span id="msg" class="msg">点一条续接对话；引擎重启后旧会话可能已不在，会自动为你新开一段。</span>
-      <button id="clear" class="btn-ghost danger">清空</button>
-    </div>
   </div>
 </div>
 <script>
+  const H = window.BocomHermes
   const $ = (id) => document.getElementById(id)
   const list = $('list')
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  H.onTheme && H.onTheme((t) => { document.documentElement.dataset.theme = t })
+
   function rel(ts) {
     const d = Date.now() - ts, m = 60000, h = 3600000, day = 86400000
     if (d < m) return '刚刚'
@@ -71,11 +84,11 @@
   }
   function render() {
     let items = []
-    try { items = (window.BocomHermes.getHistory() || []).slice() } catch (e) {}
+    try { items = (H.getHistory() || []).slice() } catch (e) {}
     items.sort((a, b) => (b.ts || 0) - (a.ts || 0))
-    $('count').textContent = items.length ? items.length + ' 段' : ''
+    $('count').textContent = items.length ? items.length + ' 段历史' : ''
     if (!items.length) {
-      list.innerHTML = '<div class="empty">还没有对话历史。<br>从输入框开一张卡，关闭后会留在这里，随时续接。</div>'
+      list.innerHTML = '<div class="empty"><span class="big">💬</span>还没有历史会话<br>上面输入开一张新卡，关掉后会留在这儿续接</div>'
       return
     }
     list.innerHTML = ''
@@ -84,25 +97,39 @@
       el.innerHTML = '<span class="t">' + esc(it.title || '对话') + '</span>'
         + '<span class="meta"><span class="proj">' + esc(it.project || '未选目录') + '</span><span>' + rel(it.ts || it.created || Date.now()) + '</span></span>'
       el.title = '续接：' + (it.title || '') + (it.dir ? '\n' + it.dir : '')
-      el.addEventListener('click', async () => { try { await window.BocomHermes.openHistory(it.id, it.title || '续接对话') } catch (e) {} window.BocomHermes.closeSelf() })
+      el.addEventListener('click', async () => { try { await H.openHistory(it.id, it.title || '续接对话') } catch (e) {} H.closeSelf() })
       list.appendChild(el)
     }
   }
   render()
-  try { window.BocomHermes.onTheme((t) => { document.documentElement.dataset.theme = t }) } catch (e) {}
-  $('x').addEventListener('click', () => window.BocomHermes.closeSelf())
-  $('clear').addEventListener('click', async () => { try { await window.BocomHermes.clearHistory() } catch (e) {} render() })
-  // 开新会话:并入原"新对话"——开一张对话卡(卡里 Agent 可自主升格为动态工作流)
+
+  // 开新会话:开一张对话卡(卡里 Agent 可自主升格为动态工作流)
   const goalEl = $('goal')
-  function go() {
-    const v = goalEl.value.trim(); if (!v) return
-    try { window.BocomHermes.spawnCard(v) } catch (e) {}
-    window.BocomHermes.closeSelf()
-  }
+  function go() { const v = goalEl.value.trim(); if (!v) return; try { H.spawnCard(v) } catch (e) {} H.closeSelf() }
   $('go').addEventListener('click', go)
   goalEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go() } })
   setTimeout(() => { try { goalEl.focus() } catch (e) {} }, 60)
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.BocomHermes.closeSelf() })
+
+  // 窗口控制
+  $('x').addEventListener('click', () => H.closeSelf())
+  $('min').addEventListener('click', () => H.minimizeSelf())
+  $('max').addEventListener('click', () => H.toggleMaximize())
+  $('clear').addEventListener('click', async () => { try { await H.clearHistory() } catch (e) {} render() })
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') H.closeSelf() })
+
+  // 整张卡 JS 拖动(同需求分析卡):抓取时读一次尺寸,移动时写回锁定尺寸 + 新坐标
+  let _drag = false, _b = null, _mx = 0, _my = 0
+  document.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return
+    if (e.target.closest('button, input, a, textarea, select')) return
+    _b = H.getSelfBounds(); if (!_b) return
+    _drag = true; _mx = e.screenX; _my = e.screenY; e.preventDefault()
+  })
+  window.addEventListener('mousemove', (e) => {
+    if (!_drag || !_b) return
+    H.setSelfBounds({ x: _b.x + (e.screenX - _mx), y: _b.y + (e.screenY - _my), width: _b.width, height: _b.height })
+  })
+  window.addEventListener('mouseup', () => { _drag = false; _b = null })
 </script>
 </body>
 </html>

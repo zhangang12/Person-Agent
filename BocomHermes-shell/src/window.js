@@ -747,9 +747,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   function openDock() {
     if (S.dockWin && !S.dockWin.isDestroyed()) { S.dockWin.show(); S.dockWin.focus(); return }
     const { width } = screen.getPrimaryDisplay().workAreaSize
-    const dx = Math.round(width / 2 - 220), dy = 130
-    S.dockWin = new BrowserWindow(baseOpts({ width: 440, height: 540, x: dx, y: dy, skipTaskbar: false, alwaysOnTop: true, resizable: true, minWidth: 340, minHeight: 300 }))
-    S.dockWin.loadFile(path.join(__dirname, '..', 'ui', 'dock.html'), { query: orbAnchorFor(dx, dy, 440, 540) })
+    const W = 500, Hh = 640
+    const dx = Math.round(width / 2 - W / 2), dy = 110
+    S.dockWin = new BrowserWindow(baseOpts({ width: W, height: Hh, x: dx, y: dy, skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 400, minHeight: 460 }))
+    S.dockWin.loadFile(path.join(__dirname, '..', 'ui', 'dock.html'), { query: orbAnchorFor(dx, dy, W, Hh) })
     S.dockWin.on('closed', () => { S.dockWin = null })
   }
 
