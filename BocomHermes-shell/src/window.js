@@ -2190,13 +2190,21 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     const home = app.getPath('home')
     const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming')
     const explicit = [process.env.OPENCODE_CONFIG, process.env.BOCOMCODE_CONFIG].filter(Boolean)
+    // 注意:opencode/bocomcode 实际常用 opencode.jsonc(带注释),.jsonc 优先于 .json,
+    // 否则"自动注册"会新建一个 serve 根本不读的 .json,等于没注册(两文件打架)。
     return [
       ...explicit,
+      path.join(appData, 'opencode', 'opencode.jsonc'),
       path.join(appData, 'opencode', 'opencode.json'),
+      path.join(appData, 'bocomcode', 'opencode.jsonc'),
       path.join(appData, 'bocomcode', 'opencode.json'),
+      path.join(home, '.config', 'opencode', 'opencode.jsonc'),
       path.join(home, '.config', 'opencode', 'opencode.json'),
+      path.join(home, '.config', 'bocomcode', 'opencode.jsonc'),
       path.join(home, '.config', 'bocomcode', 'opencode.json'),
+      path.join(home, '.opencode.jsonc'),
       path.join(home, '.opencode.json'),
+      path.join(home, '.bocomcode.jsonc'),
       path.join(home, '.bocomcode.json'),
     ]
   }
