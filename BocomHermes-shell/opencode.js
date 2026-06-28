@@ -303,6 +303,14 @@ function dispatch(ev, onPermission, onText) {
         if (sessionId) onText({ sessionId, text, role, partID, kind })
       }
     }
+    else if (part && ptype === 'tool') {
+      // 工具调用:放出来给卡片渲染成 chip(看得见 grounding / 升格)。形状各 serve 略异,逐个兜底。
+      const tnm = (typeof part.tool === 'string' && part.tool) || (part.state && typeof part.state.tool === 'string' && part.state.tool) || (typeof part.name === 'string' && part.name) || ''
+      const sessionId = p.sessionID ?? p.sessionId ?? part.sessionID ?? part.sessionId
+      const status = (part.state && (part.state.status || part.state.state)) || part.status || ''
+      const cid = String(part.callID || part.id || part.partID || tnm || '')
+      if (sessionId && tnm) onText({ sessionId, text: tnm, role: 'assistant', partID: cid + ':tool', kind: 'tool', status: String(status || '') })
+    }
   }
 }
 

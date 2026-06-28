@@ -146,6 +146,14 @@
   /* 分诊 / 进度播报行 */
   .note { align-self: flex-start; max-width: 92%; font-size: 11.5px; color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-left: 2.5px solid var(--accent); border-radius: 0 9px 9px 0; padding: 5px 10px; white-space: pre-wrap; line-height: 1.45; }
   .note.muted { border-left-color: var(--txt3); color: var(--txt3); }
+  /* 工具调用 chip:看得见 Agent 在 grounding / 升格(run_workflow 高亮) */
+  .toolchip { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; max-width: 92%; font-size: 11px; color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 999px; padding: 3px 11px; margin: 1px 0; }
+  .toolchip .tn { font-family: var(--mono); }
+  .toolchip .ts2 { color: var(--txt3); }
+  .toolchip.done .ts2 { color: var(--green); }
+  .toolchip.err .ts2 { color: var(--diff-del); }
+  .toolchip.wf { color: var(--accent); border-color: var(--accent); background: rgba(74,168,255,.08); font-weight: 600; padding: 4px 12px; }
+  .toolchip.wf .tn { font-family: inherit; }
 </style>
 </head>
 <body>
@@ -365,7 +373,25 @@
     return { el: d, body: d.querySelector('.body') }
   }
   const joinParts = (m) => Array.from(m.values()).join('\n')
-  window.BocomHermes.onStream(({ kind, text, partID }) => {
+  // 工具调用 chip:同一 callID 原地更新(运行中→完成),run_workflow 高亮成"升格"
+  const toolEls = new Map()
+  const TOOL_LABEL = { run_workflow: '升格 → 动态工作流' }
+  function renderTool(partID, name, status) {
+    const isWf = name === 'run_workflow'
+    let el = toolEls.get(partID)
+    if (!el) {
+      el = document.createElement('div'); el.className = 'toolchip' + (isWf ? ' wf' : '')
+      if (curAnswer && curAnswer.parentNode === feed) feed.insertBefore(el, curAnswer); else feed.appendChild(el)
+      toolEls.set(partID, el)
+    }
+    const done = /complet|success|done|finish|ok/i.test(status), err = /error|fail|deny|reject/i.test(status)
+    el.classList.toggle('done', done && !err); el.classList.toggle('err', err)
+    const stt = err ? '出错' : done ? '完成' : '运行中…'
+    el.innerHTML = '<span>' + (isWf ? '🚀' : '⚙') + '</span><span class="tn">' + esc(TOOL_LABEL[name] || name) + '</span><span class="ts2">· ' + stt + '</span>'
+    feed.scrollTop = feed.scrollHeight
+  }
+  window.BocomHermes.onStream(({ kind, text, partID, status }) => {
+    if (kind === 'tool') { renderTool(partID || '_', text, status || ''); return }
     const key = partID || '_'
     if (kind === 'reasoning') {
       if (!curReason && curAnswer && curAnswer.parentNode === feed) curReason = makeReason(curAnswer)
