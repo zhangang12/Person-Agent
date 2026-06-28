@@ -119,7 +119,7 @@ module.exports = function initReqAnalysis(S, { ipcMain, app, path, fs, oc, log, 
     // 2) 读者真 run：每读者一个独立会话(裸上下文、互不通气)
     const run = async (prompt, meta) => {
       if (ac.signal.aborted) throw new Error('已中止')
-      const sid = await oc.createSession(serve, '需求分析:' + (meta && (meta.persona || meta.kind) || ''))
+      const sid = await oc.createSession(serve, '需求分析:' + (meta && (meta.persona || meta.kind) || ''), dir)
       if (!sid) throw new Error('createSession 失败')
       S.sessionInfo.set(sid, { wc, serve }); entry.sessions.add(sid)
       try { return await oc.sendMessage(serve, sid, prompt) }
@@ -212,7 +212,7 @@ module.exports = function initReqAnalysis(S, { ipcMain, app, path, fs, oc, log, 
     // 每次调用一个独立会话（裸上下文），跑完即清
     const run = async (prompt, meta) => {
       if (ac.signal.aborted) throw new Error('已中止')
-      const sid = await oc.createSession(serve, '出详设:' + (meta && meta.kind || ''))
+      const sid = await oc.createSession(serve, '出详设:' + (meta && meta.kind || ''), dir)
       if (!sid) throw new Error('createSession 失败')
       S.sessionInfo.set(sid, { wc, serve }); entry.sessions.add(sid)
       try { return await oc.sendMessage(serve, sid, prompt) }

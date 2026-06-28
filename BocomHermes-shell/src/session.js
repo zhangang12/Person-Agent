@@ -153,7 +153,7 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
         let messages = []; try { messages = await oc.getMessages(serve, sid) } catch {}
         return { sessionId: sid, project: proj, reattached: true, messages }
       }
-      const ns = await oc.createSession(serve, wantTitle || (h && h.title) || 'BocomHermes 对话')  // 已不在 → 新开一段
+      const ns = await oc.createSession(serve, wantTitle || (h && h.title) || 'BocomHermes 对话', dir)  // 已不在 → 新开一段(带项目目录)
       if (!ns) throw new Error('create session failed')
       S.sessionByWc.set(e.sender.id, ns)
       S.sessionInfo.set(ns, { wc: e.sender, serve })
@@ -164,7 +164,7 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
     }
     const dir = S.settings.projectDir || ''
     const serve = await oc.ensureServe(dir, S.handlers, log)
-    const sessionId = await oc.createSession(serve, 'BocomHermes 对话')
+    const sessionId = await oc.createSession(serve, 'BocomHermes 对话', dir)
     if (!sessionId) throw new Error('create session failed')
     S.sessionByWc.set(e.sender.id, sessionId)
     S.sessionInfo.set(sessionId, { wc: e.sender, serve })
@@ -186,7 +186,7 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
     S.sessionByWc.delete(e.sender.id)
     const dir = S.settings.projectDir || ''
     const serve = await oc.ensureServe(dir, S.handlers, log)
-    const sessionId = await oc.createSession(serve, 'BocomHermes 对话')
+    const sessionId = await oc.createSession(serve, 'BocomHermes 对话', dir)
     if (!sessionId) throw new Error('create session failed')
     S.sessionByWc.set(e.sender.id, sessionId)
     S.sessionInfo.set(sessionId, { wc: e.sender, serve })

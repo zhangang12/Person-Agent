@@ -195,7 +195,11 @@ async function ensureServe(dir, handlers, log = console.log, opts = {}) {
 }
 
 const sidOf = (s) => s?.id ?? s?.data?.id ?? s?.info?.id
-async function createSession(info, title) { return sidOf(await api(info.base, 'POST', '/session', { title: title || '对话' })) }
+// dir:会话工作目录(本版 serve 支持 ?directory=,与 serve 启动 cwd 无关 → 复用同一 serve 也能跑不同项目)
+async function createSession(info, title, dir) {
+  const q = dir ? ('?directory=' + encodeURIComponent(dir)) : ''
+  return sidOf(await api(info.base, 'POST', '/session' + q, { title: title || '对话' }))
+}
 
 function extractText(msg) {
   const i = msg?.info ?? msg?.data?.info ?? msg

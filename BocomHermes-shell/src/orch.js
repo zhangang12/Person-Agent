@@ -30,7 +30,7 @@ module.exports = function initOrch(S, { ipcMain, oc, orch, log }) {
 
     // 每个子任务 = 一个 opencode 会话；登记到 sessionInfo 让其权限/事件路由到这张工作流卡
     const run = async (prompt, meta) => {
-      const sid = await oc.createSession(serve, '编排:' + (meta && meta.kind || 'task') + (meta && meta.id ? ':' + meta.id : ''))
+      const sid = await oc.createSession(serve, '编排:' + (meta && meta.kind || 'task') + (meta && meta.id ? ':' + meta.id : ''), dir)   // 工作流子任务跑在选定的项目目录
       if (!sid) throw new Error('createSession 失败')
       S.sessionInfo.set(sid, { wc, serve }); entry.sessions.add(sid)
       try { return await oc.sendMessage(serve, sid, prompt, S.settings.model) }   // 工作流子任务用全局默认模型
