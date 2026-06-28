@@ -203,8 +203,29 @@ function extractText(msg) {
   if (Array.isArray(parts)) return parts.filter((p) => p?.type === 'text').map((p) => p.text).join('\n').trim()
   return typeof msg === 'string' ? msg : ''
 }
-async function sendMessage(info, sessionId, text) {
-  return extractText(await api(info.base, 'POST', `/session/${sessionId}/message`, { parts: [{ type: 'text', text }] }))
+async function sendMessage(info, sessionId, text, model) {
+  const body = { parts: [{ type: 'text', text }] }
+  if (model && model.providerID && model.modelID) {        // 按请求指定模型(各版本字段名兼容,多塞几个,认哪个用哪个)
+    body.model = { providerID: model.providerID, modelID: model.modelID }
+    body.providerID = model.providerID; body.modelID = model.modelID
+  }
+  return extractText(await api(info.base, 'POST', `/session/${sessionId}/message`, body))
+}
+// 列可用模型:GET /config/providers → 拍平成 [{providerID, modelID, name, provider}]
+async function listModels(info) {
+  try {
+    const r = await api(info.base, 'GET', '/config/providers')
+    const provs = (r && r.providers) || (r && r.all) || []
+    const out = []
+    for (const p of provs) {
+      const models = (p && p.models) || {}
+      for (const mid of Object.keys(models)) {
+        const m = models[mid] || {}
+        out.push({ providerID: p.id, modelID: mid, name: m.name || mid, provider: p.name || p.id })
+      }
+    }
+    return out
+  } catch { return [] }
 }
 async function abort(info, sessionId) { try { await api(info.base, 'POST', `/session/${sessionId}/abort`) } catch {} }
 
@@ -419,4 +440,4 @@ function killAll() {
   pool.clear(); baseToEntry.clear()
 }
 
-module.exports = { ensureServe, createSession, sendMessage, abort, replyPermission, sessionExists, getMessages, killAll, setServeBin, onKeepAlive, probeOnce, AUTO_ALLOW }
+module.exports = { ensureServe, createSession, sendMessage, listModels, abort, replyPermission, sessionExists, getMessages, killAll, setServeBin, onKeepAlive, probeOnce, AUTO_ALLOW }

@@ -67,6 +67,8 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   onCardNote: (cb) => ipcRenderer.on('card-note', (_e, p) => cb(p)),
   cardSend: (text) => ipcRenderer.invoke('card-send', text),
   cardReinit: () => ipcRenderer.invoke('card-reinit'),
+  listModels: () => ipcRenderer.invoke('list-models'),
+  cardSetModel: (m) => ipcRenderer.invoke('card-set-model', m),
   cardAbort: () => ipcRenderer.send('card-abort'),
   onStream: (cb) => ipcRenderer.on('card-stream', (_e, p) => cb(p)),
   onServeHealth: (cb) => ipcRenderer.on('serve-health', (_e, p) => cb(p)),

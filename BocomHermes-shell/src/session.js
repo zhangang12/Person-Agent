@@ -206,13 +206,25 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
     const msg = ctxPrefix ? ctxPrefix + text : text
     S.sentPrompt.set(sessionId, text); S.streamBuf.delete(sessionId)
     touchHistory(sessionId)
-    try { return await oc.sendMessage(si.serve, sessionId, msg) }
+    try { return await oc.sendMessage(si.serve, sessionId, msg, si.model) }   // si.model 为本卡选定的模型(没选=serve 默认)
     catch (err) {
       const m = String((err && err.message) || err)
       if (/ECONNREFUSED|ECONNRESET|socket hang up|ENOTFOUND|EPIPE|fetch failed/i.test(m))
         throw new Error('引擎连接中断（serve 可能已退出）。关掉这张卡重开即可（已自动准备重启 serve）。')
       throw err
     }
+  })
+
+  // 模型选择:列出可用模型 + 设置本卡模型(每个模块各自选)
+  ipcMain.handle('list-models', async (e) => {
+    const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
+    if (!si || !si.serve) return []
+    try { return await oc.listModels(si.serve) } catch { return [] }
+  })
+  ipcMain.handle('card-set-model', (e, model) => {
+    const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
+    if (si) si.model = (model && model.modelID) ? { providerID: model.providerID, modelID: model.modelID, name: model.name } : null
+    return { ok: true, model: si ? si.model : null }
   })
 
   ipcMain.on('card-abort', (e) => {

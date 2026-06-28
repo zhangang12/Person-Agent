@@ -13,7 +13,7 @@
   --glass-shadow: 0 18px 44px rgba(28,36,86,.20), 0 4px 12px rgba(28,36,86,.10), inset 0 1px 0 rgba(255,255,255,1);
   --hl: linear-gradient(90deg, transparent, rgba(255,255,255,.95), transparent);
   --me-bg: rgba(99,130,246,.20); --me-border: rgba(99,130,246,.32); --me-txt: #1f2b54;
-  --ai-bg: rgba(252,253,255,.72); --ai-border: rgba(28,36,86,.10); --ai-txt: #1b1c33;
+  --ai-bg: rgba(252,253,255,.92); --ai-border: rgba(28,36,86,.14); --ai-txt: #14152b;
   --composer-bg: rgba(28,36,86,.05); --composer-border: rgba(28,36,86,.12);
   --orb-bg: rgba(124,140,255,.16); --orb-border: rgba(124,140,255,.30);
   --kbd-border: rgba(27,28,51,.18);
@@ -33,7 +33,7 @@ html[data-theme="dark"] {
   --glass-shadow: 0 0 30px rgba(90,140,255,.24), 0 20px 48px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.16);
   --hl: linear-gradient(90deg, transparent, rgba(150,200,255,.6), transparent);
   --me-bg: rgba(110,150,255,.26); --me-border: rgba(150,180,255,.34); --me-txt: #eef2ff;
-  --ai-bg: rgba(255,255,255,.07); --ai-border: rgba(255,255,255,.10); --ai-txt: #e9edff;
+  --ai-bg: rgba(32,38,66,.78); --ai-border: rgba(255,255,255,.16); --ai-txt: #f4f6ff;
   --composer-bg: rgba(255,255,255,.06); --composer-border: rgba(255,255,255,.13);
   --orb-bg: rgba(124,140,255,.18); --orb-border: rgba(150,180,255,.25);
   --kbd-border: rgba(255,255,255,.16);
@@ -74,7 +74,7 @@ body { padding: 24px; }
 .glass code, .glass pre, .glass input, .glass textarea, .glass .dl, .glass .kbd, .glass .mono { text-shadow: none; }
 
 /* ===== 消息气泡 ===== */
-.msg { max-width: 86%; font-size: 13px; line-height: 1.5; padding: 8px 11px; border-radius: 13px; word-break: break-word; }
+.msg { max-width: 86%; font-size: 14.5px; line-height: 1.6; padding: 9px 12px; border-radius: 13px; word-break: break-word; }
 .me { align-self: flex-end; background: var(--me-bg); border: .5px solid var(--me-border); border-bottom-right-radius: 5px; color: var(--me-txt); }
 .ai { align-self: flex-start; background: var(--ai-bg); border: .5px solid var(--ai-border); border-bottom-left-radius: 5px; color: var(--ai-txt); }
 

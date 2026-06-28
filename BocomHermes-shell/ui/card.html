@@ -40,6 +40,15 @@
   .proj { font-size: 10.5px; font-family: var(--mono); color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 999px; padding: 2px 8px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; transition: color .12s, border-color .12s, background .12s; }
   .proj:hover { color: var(--txt); border-color: var(--accent); }
   .proj.empty { color: var(--accent); border-color: var(--accent); background: rgba(74,168,255,.08); }
+  /* 模型选择 */
+  .modelchip { display: inline-flex; align-items: center; gap: 4px; max-width: 134px; }
+  .model-menu { position: fixed; z-index: 100; min-width: 210px; max-width: 290px; max-height: 340px; overflow-y: auto; background: var(--glass-bg); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border: 1px solid var(--composer-border); border-radius: 12px; padding: 5px; box-shadow: 0 10px 34px rgba(0,0,0,.28); }
+  .model-menu::-webkit-scrollbar { width: 6px; } .model-menu::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  .model-menu .mi { padding: 7px 10px; border-radius: 8px; cursor: pointer; display: flex; flex-direction: column; gap: 1px; }
+  .model-menu .mi:hover, .model-menu .mi.on { background: var(--composer-bg); }
+  .model-menu .mi .mn { font-size: 13px; color: var(--txt); }
+  .model-menu .mi .mp { font-size: 10.5px; color: var(--txt3); }
+  .model-menu .mhint { padding: 8px 10px; font-size: 12px; color: var(--txt3); }
   .hb { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-family: var(--mono); color: var(--txt2); padding: 1px 6px 1px 5px; border-radius: 999px; border: .5px solid var(--composer-border); background: var(--composer-bg); user-select: none; cursor: default; }
   .hb .hb-dot { width: 7px; height: 7px; border-radius: 50%; background: #9aa0a6; box-shadow: 0 0 0 0 rgba(0,0,0,0); transition: background .2s, box-shadow .2s; }
   .hb.ok  .hb-dot { background: #2bb673; box-shadow: 0 0 6px rgba(43,182,115,.7); }
@@ -60,27 +69,27 @@
 
   /* 思考链折叠块 */
   .reason { align-self: flex-start; max-width: 92%; background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 11px; }
-  .reason > summary { cursor: pointer; padding: 7px 12px; color: var(--txt2); font-size: 12px; list-style: none; display: flex; align-items: center; gap: 7px; user-select: none; }
+  .reason > summary { cursor: pointer; padding: 8px 12px; color: var(--txt2); font-size: 13px; font-weight: 500; list-style: none; display: flex; align-items: center; gap: 7px; user-select: none; }
   .reason > summary::-webkit-details-marker { display: none; }
   .reason > summary .chev { transition: transform .15s; }
   .reason[open] > summary .chev { transform: rotate(90deg); }
-  .reason .body { padding: 0 12px 9px; color: var(--txt2); white-space: pre-wrap; line-height: 1.5; font-size: 12px; max-height: 200px; overflow-y: auto; }
+  .reason .body { padding: 0 12px 9px; color: var(--txt); white-space: pre-wrap; line-height: 1.6; font-size: 13.5px; max-height: 280px; overflow-y: auto; }
   .reason .body::-webkit-scrollbar { width: 5px; } .reason .body::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
 
   /* Markdown */
   #feed { overflow-x: hidden; }
   .ai { overflow-wrap: anywhere; line-height: 1.55; }
-  .ai h1, .ai h2, .ai h3, .ai h4 { font-size: 13px; font-weight: 600; margin: 9px 0 4px; }
+  .ai h1, .ai h2, .ai h3, .ai h4 { font-size: 15px; font-weight: 600; margin: 10px 0 5px; }
   .ai p { margin: 5px 0; } .ai p:first-child { margin-top: 0; }
   .ai ul, .ai ol { margin: 5px 0; padding-left: 18px; } .ai li { margin: 2px 0; }
-  .ai code { font-family: var(--mono); font-size: 12px; background: var(--composer-bg); padding: 1px 5px; border-radius: 4px; }
+  .ai code { font-family: var(--mono); font-size: 13px; background: var(--composer-bg); padding: 1px 5px; border-radius: 4px; }
   .ai pre.code { background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 8px; padding: 9px 11px; overflow-x: auto; margin: 7px 0; }
   .ai pre.code code { background: none; padding: 0; white-space: pre; }
   .ai hr { border: none; border-top: .5px solid var(--composer-border); margin: 9px 0; }
   .ai blockquote { margin: 6px 0; padding: 3px 11px; border-left: 2.5px solid var(--accent); color: var(--txt2); background: var(--composer-bg); border-radius: 0 7px 7px 0; }
   .floc { color: var(--accent); cursor: pointer; text-decoration: none; border-bottom: 1px dotted var(--accent); }
   .floc:hover { opacity: .75; }
-  .ai table { border-collapse: collapse; margin: 7px 0; font-size: 12px; display: block; max-width: 100%; overflow-x: auto; }
+  .ai table { border-collapse: collapse; margin: 7px 0; font-size: 13px; display: block; max-width: 100%; overflow-x: auto; }
   .ai th, .ai td { border: .5px solid var(--composer-border); padding: 4px 8px; text-align: left; vertical-align: top; }
   .ai th { font-weight: 600; background: var(--composer-bg); white-space: nowrap; }
   .ai pre.code::-webkit-scrollbar, .ai table::-webkit-scrollbar { height: 6px; }
@@ -164,6 +173,7 @@
       <span id="st" class="icn"></span>
       <span id="ttl" class="ttl">对话</span>
       <span id="proj" class="proj"></span>
+      <span id="model" class="proj modelchip nodrag" title="选择模型（仅影响本卡）">默认模型</span>
       <span id="hb" class="hb" title="引擎保活心跳检测中…"><i class="hb-dot"></i><span class="hb-txt">保活</span></span>
       <button id="bprobe" class="hbtn nodrag" title="保活心跳日志（看 POST /heartbeat 的报文）" aria-label="保活日志"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5 7 5-14 2.5 7H21"/></svg></button>
       <button id="pin" class="hbtn nodrag" title="置顶" aria-label="置顶"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l-1.2 5.2L17 12v2H7v-2l3.2-2.8z"/><path d="M12 14v6"/></svg></button>
@@ -171,6 +181,7 @@
       <button id="min" class="hbtn nodrag" title="最小化" aria-label="最小化"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
       <button id="x" class="hbtn nodrag" title="关闭" aria-label="关闭"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
+    <div id="modelMenu" class="model-menu nodrag" hidden></div>
     <div id="feed" class="feed nodrag"></div>
     <div id="quick" class="quick nodrag"></div>
     <div class="composer nodrag">
@@ -304,6 +315,30 @@
   const pinBtn = document.getElementById('pin')
   pinBtn.addEventListener('click', async () => { const on = await window.BocomHermes.togglePin(); pinBtn.classList.toggle('on', on); pinBtn.title = on ? '已置顶（点击取消）' : '置顶' })
 
+  // 模型选择(仅影响本卡):点 chip → 列模型 → 选 → cardSetModel
+  const modelEl = document.getElementById('model'), menuEl = document.getElementById('modelMenu')
+  let modelsCache = null, curModelKey = ''
+  function setModelLabel(name) { modelEl.textContent = name || '默认模型'; modelEl.title = '当前模型：' + (name || 'serve 默认') + '\n点击切换（仅影响本卡）' }
+  async function openModelMenu() {
+    const r = modelEl.getBoundingClientRect()
+    menuEl.style.top = (r.bottom + 6) + 'px'; menuEl.style.right = (window.innerWidth - r.right) + 'px'; menuEl.style.left = 'auto'
+    menuEl.hidden = false; menuEl.innerHTML = '<div class="mhint">加载模型…</div>'
+    if (!modelsCache) { try { modelsCache = await window.BocomHermes.listModels() } catch (e) { modelsCache = [] } }
+    if (!modelsCache || !modelsCache.length) { menuEl.innerHTML = '<div class="mhint">没拿到模型列表（serve 未就绪或无权限）</div>'; return }
+    menuEl.innerHTML = ''
+    const mk = (cls, name, sub, on, fn) => { const d = document.createElement('div'); d.className = 'mi' + (on ? ' on' : ''); d.innerHTML = '<span class="mn">' + esc(name) + '</span><span class="mp">' + esc(sub) + '</span>'; d.addEventListener('click', fn); menuEl.appendChild(d) }
+    mk('', 'serve 默认', '不指定，用 serve 配置的默认模型', !curModelKey, () => pickModel(null))
+    for (const m of modelsCache) mk('', m.name, m.provider || m.providerID, curModelKey === m.providerID + '/' + m.modelID, () => pickModel(m))
+  }
+  async function pickModel(m) {
+    curModelKey = m ? (m.providerID + '/' + m.modelID) : ''
+    setModelLabel(m ? m.name : '')
+    try { await window.BocomHermes.cardSetModel(m) } catch (e) {}
+    menuEl.hidden = true
+  }
+  modelEl.addEventListener('click', (e) => { e.stopPropagation(); if (menuEl.hidden) openModelMenu(); else menuEl.hidden = true })
+  document.addEventListener('click', (e) => { if (!menuEl.hidden && !menuEl.contains(e.target) && e.target !== modelEl) menuEl.hidden = true })
+
   // 点 文件:行 链接 → 在编辑器打开
   feed.addEventListener('click', (e) => {
     const a = e.target.closest('a.floc'); if (!a) return
@@ -418,7 +453,7 @@
       const reply = await window.BocomHermes.cardSend(text)
       if (reply) ai.innerHTML = renderMarkdown(reply)
       else if (!ai.textContent.trim() || ai.textContent === PH) ai.textContent = '（无文本输出）'
-      if (curReason) curReason.el.open = false   // 答完自动折叠思考
+      // 思考过程答完保持展开(用户要看得见过程);可手动点标题折叠
     } catch (e) {
       ok = false
       if (!target) ai.className = 'msg ai err'
