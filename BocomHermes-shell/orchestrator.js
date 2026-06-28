@@ -20,6 +20,7 @@ function extractJson(text) {
 }
 
 const clip = (s, n = 600) => { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n) + '…' : s }
+const arr = (x) => Array.isArray(x) ? x.map((v) => String(v)).filter(Boolean) : []
 const summarize = (results) => {
   const arr = [...results.values()]
   if (!arr.length) return '（暂无）'
@@ -65,7 +66,7 @@ function sanitizePlan(tasks, knownIds) {
   return out
 }
 
-// ---- 角色专属引导语 ----
+// ---- 角色引导语：仅作兜底种子；规划器会为每个子任务"现编"一句话人设，未命中下表时直接用现编的 ----
 const ROLE_PROMPTS = {
   analyst:   '你是一名需求分析师。职责：梳理业务逻辑、识别边界条件与潜在歧义、澄清需求意图。',
   architect: '你是一名软件架构师。职责：设计模块边界与交互方式、选择技术方案、确保可扩展性与可维护性。',
@@ -77,39 +78,63 @@ const ROLE_PROMPTS = {
 }
 
 // ---- 提示词 ----
-function buildPlanPrompt(goal, doneSummary, maxBatch) {
+function ledgerText(ledger) {
+  if (!ledger || !(arr(ledger.facts).length || arr(ledger.open).length || arr(ledger.assumptions).length)) return '任务账本(Task Ledger)：（空，这是第一轮）'
   return [
-    '你是一个任务规划器。请把大目标拆解成可并行/可依赖的子任务。',
+    '任务账本(Task Ledger，按真实发现累积，规划时据此判断)：',
+    '· 已确认事实：' + (arr(ledger.facts).join('；') || '（暂无）'),
+    '· 待查 / 未决：' + (arr(ledger.open).join('；') || '（暂无）'),
+    '· 假设(未证实)：' + (arr(ledger.assumptions).join('；') || '（暂无）'),
+  ].join('\n')
+}
+function buildPlanPrompt(goal, doneSummary, ledger, maxBatch) {
+  return [
+    '你是一个动态工作流规划器。把"还需要做的下一批子任务"拆出来——但只拆该拆的。',
     '总目标：' + goal,
+    ledgerText(ledger),
     '已完成子任务及结果摘要：\n' + doneSummary,
     '',
-    `请只输出"还需要做的下一批子任务"(<=${maxBatch} 个)。严格只输出 JSON，不要解释、不要 markdown、不要 <think>：`,
-    '{"tasks":[{"id":"短id","role":"角色如 analyst/architect/coder/tester/reviewer/writer","goal":"具体做什么","deps":["同批依赖id，可空"]}],"done":false}',
-    '若目标已可收尾、无需更多子任务，请输出：{"tasks":[],"done":true}',
+    '规划原则(务必遵守)：',
+    '1. 按复杂度伸缩：简单目标不要拆，给 1 个任务、甚至直接 done；只有复杂且可分解的才多拆。',
+    '2. 拆解必须"划算"——每个子任务要么换来真并行(彼此独立、能同时跑)，要么换来独立视角(如实现方 vs 挑刺评审)；否则合并成一个，别为拆而拆。',
+    '3. role 为这个子任务"现编"一句话人设(贴着任务本身，不要套通用头衔)。',
+    '4. 看账本与上轮结果、按真实发现规划下一批，不要一次排满；够了就 done:true。',
+    '5. 子任务都能用工具读代码/查库——让它们去核实，别靠猜。',
+    '',
+    `只输出 JSON(下一批 <=${maxBatch} 个任务)，不要解释 / markdown / <think>：`,
+    '{"ledger":{"facts":["据已完成结果更新的已确认事实"],"open":["仍未决的问题"],"assumptions":["未证实的假设"]},"tasks":[{"id":"短id","role":"现编的一句话人设","goal":"具体做什么","deps":["同批依赖id，可空"]}],"done":false}',
+    '若目标已可收尾、无需更多子任务，输出：{"ledger":{...},"tasks":[],"done":true}',
   ].join('\n')
 }
 function buildWorkPrompt(task, ctx, goal) {
-  const roleHint = ROLE_PROMPTS[task.role] || ROLE_PROMPTS.worker
+  const known = ROLE_PROMPTS[task.role]
+  const roleHint = known || ('你现在的角色：' + task.role + '。请完全代入这个角色的视角与职责。')
   return [
     roleHint,
     '总目标：' + goal,
     '你的子任务：' + task.goal,
     ctx ? '可参考的上游结果：\n' + ctx : '',
-    '请完成这个子任务并直接给出结果（可用你的工具读代码/查文件）。',
+    '请完成这个子任务并直接给出结果。务必用你的工具读代码 / 查库去核实，不要凭空猜测。',
   ].filter(Boolean).join('\n')
 }
-function buildReducePrompt(goal, results) {
+function buildReducePrompt(goal, results, ledger) {
   const parts = [...results.values()].map((r) => `## [${r.task.id}] ${r.task.goal}\n${r.output}`).join('\n\n')
-  return ['总目标：' + goal, '以下是各子任务产出，请汇总成一份连贯、完整、去重的最终成果：', parts].join('\n\n')
+  const open = ledger && arr(ledger.open).length ? '\n\n仍未决 / 待澄清(请在结尾单列，不要藏掉)：\n- ' + arr(ledger.open).join('\n- ') : ''
+  return ['总目标：' + goal, '以下是各子任务产出，请汇总成一份连贯、完整、去重的最终成果(有冲突要点明，不要简单拼接)：', parts + open].join('\n\n')
 }
 
 // ---- 规划一轮（容错解析 + 重试 + 净化）----
-async function planOnce(run, goal, doneSummary, knownIds, opts) {
-  const base = buildPlanPrompt(goal, doneSummary, opts.maxBatch)
+async function planOnce(run, goal, doneSummary, ledger, knownIds, opts) {
+  const base = buildPlanPrompt(goal, doneSummary, ledger, opts.maxBatch)
   for (let i = 0; i <= opts.parseRetries; i++) {
     const text = await runGuarded(run, i === 0 ? base : base + '\n\n（上次未输出合法 JSON，请严格只输出 JSON 对象）', { kind: 'plan', round: opts._round }, opts, 0)
     const j = extractJson(text)
-    if (j && Array.isArray(j.tasks)) return { tasks: sanitizePlan(j.tasks, knownIds), done: !!j.done }
+    if (j && Array.isArray(j.tasks)) {
+      const nextLedger = (j.ledger && typeof j.ledger === 'object')
+        ? { facts: arr(j.ledger.facts), open: arr(j.ledger.open), assumptions: arr(j.ledger.assumptions) }
+        : ledger
+      return { tasks: sanitizePlan(j.tasks, knownIds), done: !!j.done, ledger: nextLedger }
+    }
   }
   throw new Error('Planner 未产出合法任务图(JSON)')
 }
@@ -152,19 +177,21 @@ function runDag(run, batch, results, opts) {
 async function orchestrate(goal, options) {
   const opts = {
     maxConcurrency: 3, maxRounds: 4, maxTasks: 20, maxBatch: 6, parseRetries: 2,
-    taskTimeoutMs: 180000, taskRetries: 1, maxElapsedMs: 0, signal: null,
+    taskTimeoutMs: 180000, taskRetries: 1, maxElapsedMs: 0, stallBudget: 2, signal: null,
     onPlan: null, onTaskStart: null, onTaskDone: null, onTaskError: null, onRound: null,
     ...options, goal,
   }
   if (typeof opts.run !== 'function') throw new Error('orchestrate 需要 opts.run(prompt, meta)')
   const results = new Map()
   const t0 = Date.now()
-  let round = 0, total = 0, done = false, unmet = [], stopped = null
+  let round = 0, total = 0, done = false, unmet = [], stopped = null, stall = 0
+  let ledger = { facts: [], open: [], assumptions: [] }       // 任务账本：跨轮累积，replan 据此(Magentic-One 思路)
   while (round < opts.maxRounds) {
     if (aborted(opts)) { stopped = 'aborted'; break }
     if (opts.maxElapsedMs && Date.now() - t0 > opts.maxElapsedMs) { stopped = 'time-budget'; break }
     round++; opts._round = round
-    const plan = await planOnce(opts.run, goal, summarize(results), [...results.keys()], opts)
+    const plan = await planOnce(opts.run, goal, summarize(results), ledger, [...results.keys()], opts)
+    ledger = plan.ledger || ledger
     opts.onPlan && opts.onPlan(round, plan)
     if (plan.done || plan.tasks.length === 0) { done = true; break }
     const room = Math.max(0, opts.maxTasks - total)
@@ -181,11 +208,15 @@ async function orchestrate(goal, options) {
     unmet = r.unmet || []
     opts.onRound && opts.onRound(round, { batch, unmet, aborted: !!r.aborted })
     if (r.aborted) { stopped = 'aborted'; break }
+    // 停滞计数(Magentic-One)：本轮一个都没成功 → 累计；连续卡住到预算就收手，避免空转死板
+    const okThisRound = batch.filter((t) => { const x = results.get(t.id); return x && x.status === 'ok' }).length
+    stall = okThisRound > 0 ? 0 : stall + 1
+    if (stall >= opts.stallBudget) { stopped = 'stalled'; break }
     if (total >= opts.maxTasks) { stopped = 'task-budget'; break }
   }
   let final = ''
-  if (!aborted(opts)) { try { final = await runGuarded(opts.run, buildReducePrompt(goal, results), { kind: 'reduce' }, opts, 0) } catch (e) { final = '(汇总失败：' + (e && e.message || e) + ')' } }
-  return { goal, rounds: round, done, stopped, tasks: [...results.values()], unmet, final, elapsedMs: Date.now() - t0 }
+  if (!aborted(opts)) { try { final = await runGuarded(opts.run, buildReducePrompt(goal, results, ledger), { kind: 'reduce' }, opts, 0) } catch (e) { final = '(汇总失败：' + (e && e.message || e) + ')' } }
+  return { goal, rounds: round, done, stopped, tasks: [...results.values()], unmet, ledger, final, elapsedMs: Date.now() - t0 }
 }
 
 // ---- 生产适配：一次 run = 一个 opencode 会话发一条消息取回文本 ----

@@ -69,5 +69,57 @@ ok(asked >= 1 && rApprove.tasks.find((t) => t.task.id === 'p1')?.output === 'out
 const rReject = await orchestrate('审批拒绝', { run: apRun, maxRounds: 2, onBeforeBatch: async () => ({ abort: true }) })
 ok(rReject.stopped === 'aborted' && rReject.tasks.length === 0, '拒绝则中止、不执行')
 
+console.log('动态人设(现编 role 进 work 提示 + grounding):')
+let workPrompt = ''
+const personaRun = async (p, m) => {
+  if (m.kind === 'plan') return m.round === 1
+    ? '{"tasks":[{"id":"x","role":"专盯账务一致性的挑刺审计员","goal":"查账"}],"done":false}'
+    : '{"tasks":[],"done":true}'
+  if (m.kind === 'reduce') return 'R'
+  workPrompt = p; return 'out'
+}
+await orchestrate('人设', { run: personaRun, maxRounds: 2 })
+ok(workPrompt.includes('专盯账务一致性的挑刺审计员'), '现编人设进入子任务提示词(非固定角色)')
+ok(/读代码|查库|核实/.test(workPrompt), '子任务被要求用工具核实(grounding，不靠猜)')
+
+console.log('任务账本跨轮累积:')
+let plan2Prompt = ''
+const ledgerRun = async (p, m) => {
+  if (m.kind === 'plan') {
+    if (m.round === 1) return '{"ledger":{"facts":["loan_limit.status 是枚举"],"open":["宽限期口径未定"]},"tasks":[{"id":"a","role":"勘察","goal":"A"}],"done":false}'
+    plan2Prompt = p; return '{"tasks":[],"done":true}'
+  }
+  if (m.kind === 'reduce') return 'R'
+  return 'out'
+}
+await orchestrate('账本', { run: ledgerRun, maxRounds: 3 })
+ok(plan2Prompt.includes('loan_limit.status 是枚举'), '第2轮规划看到上轮账本的已确认事实')
+ok(plan2Prompt.includes('宽限期口径未定'), '第2轮规划看到上轮账本的未决项')
+
+console.log('账本未决项进入汇总:')
+let reducePrompt = ''
+const redRun = async (p, m) => {
+  if (m.kind === 'plan') return m.round === 1 ? '{"ledger":{"open":["谁来定计息口径"]},"tasks":[{"id":"a","role":"r","goal":"A"}],"done":false}' : '{"tasks":[],"done":true}'
+  if (m.kind === 'reduce') { reducePrompt = p; return 'R' }
+  return 'out'
+}
+await orchestrate('汇总未决', { run: redRun, maxRounds: 2 })
+ok(reducePrompt.includes('谁来定计息口径'), '账本未决项被带进 reduce(不藏掉)')
+
+console.log('停滞计数(连续无进展即收手，不空转):')
+const stallRun = async (p, m) => {
+  if (m.kind === 'plan') return '{"tasks":[{"id":"z","role":"r","goal":"Z"}],"done":false}'   // 永远还想拆
+  if (m.kind === 'reduce') return 'R'
+  throw new Error('永远失败')                                                                  // 任务永远错
+}
+const rs = await orchestrate('停滞', { run: stallRun, maxRounds: 6, taskRetries: 0, taskTimeoutMs: 0, stallBudget: 2 })
+ok(rs.stopped === 'stalled', '连续 2 轮无进展 → 停滞收手')
+ok(rs.rounds === 2, '停滞在第 2 轮收手(不耗满 maxRounds=6)')
+
+console.log('简单目标直接收尾(scale-to-complexity):')
+const trivialRun = async (p, m) => m.kind === 'plan' ? '{"tasks":[],"done":true}' : (m.kind === 'reduce' ? 'ANSWER' : 'x')
+const rtv = await orchestrate('几点了', { run: trivialRun })
+ok(rtv.done && rtv.tasks.length === 0 && rtv.rounds === 1, '简单目标第1轮即 done、不拆任务')
+
 console.log(`\n小结：${pass} 通过 / ${fail} 失败`)
 process.exit(fail ? 1 : 0)

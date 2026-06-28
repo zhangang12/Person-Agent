@@ -62,7 +62,6 @@ body{padding:0;height:56px}
 const H = window.BocomHermes
 const q = document.getElementById('q')
 const params = new URLSearchParams(location.search)
-const mode = params.get('mode') || ''
 
 // 从智能体「长出来」的方向与锚点：dir=up 输入框在球上方→从底边长出；down→从顶边；ax=球心相对输入框的 x
 const dir = params.get('dir') || 'up'
@@ -73,14 +72,11 @@ glass.style.setProperty('--oy', dir === 'down' ? '0%' : '100%')
 glass.style.setProperty('--fy', dir === 'down' ? '-14px' : '14px')
 requestAnimationFrame(() => glass.classList.add('in'))
 
-if (mode === 'fanout') document.getElementById('badge').style.display = 'block'
-
 function submit() {
   const v = q.value.trim()
   if (!v) { H.closeOrbInput(); return }
   q.value = ''
-  if (mode === 'fanout') H.spawnFanout(v)
-  else H.spawnCard(v)
+  H.spawnCard(v)            // 单一入口:开一张对话卡;复杂任务由卡内 Agent 自主升格为动态工作流
   H.closeOrbInput()
 }
 
