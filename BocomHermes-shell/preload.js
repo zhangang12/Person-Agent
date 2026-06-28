@@ -3,6 +3,8 @@
 contextBridge.exposeInMainWorld('BocomHermes', {
   // 窗口
   spawnCard: (title) => ipcRenderer.invoke('spawn-card', title),
+  startConversation: (payload) => ipcRenderer.invoke('start-conversation', payload),
+  getCardFiles: (id) => ipcRenderer.invoke('get-card-files', id),
   spawnFanout: (goal) => ipcRenderer.invoke('spawn-fanout', goal),
   spawnFanoutRoles: (goal, roles) => ipcRenderer.invoke('spawn-fanout-roles', { goal, roles }),
   getFanoutRoles: () => ipcRenderer.invoke('get-fanout-roles'),

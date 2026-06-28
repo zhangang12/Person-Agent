@@ -643,7 +643,9 @@
         setBusy(false)
         addMsg('我是你的调试助手。在右侧浏览器复现问题后点「发给 Agent」，我会拿到控制台报错、网络异常和页面结构来定位；也可以直接在下面提问。', 'ai')
       } else {
-        await turn(initMsg)
+        let initFiles = []
+        try { const cid = params.get('id'); if (cid) initFiles = await window.BocomHermes.getCardFiles(cid) } catch (e) {}   // 对话坞拖进来的附件(图片)
+        await turn(initMsg, null, initFiles)
       }
       maybeDrain()
     } catch (e) {

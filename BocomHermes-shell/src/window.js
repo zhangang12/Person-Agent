@@ -747,9 +747,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   function openDock() {
     if (S.dockWin && !S.dockWin.isDestroyed()) { S.dockWin.show(); S.dockWin.focus(); return }
     const { width } = screen.getPrimaryDisplay().workAreaSize
-    const W = 500, Hh = 640
-    const dx = Math.round(width / 2 - W / 2), dy = 110
-    S.dockWin = new BrowserWindow(baseOpts({ width: W, height: Hh, x: dx, y: dy, skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 400, minHeight: 460 }))
+    const W = 600, Hh = 780
+    const dx = Math.round(width / 2 - W / 2), dy = 90
+    S.dockWin = new BrowserWindow(baseOpts({ width: W, height: Hh, x: dx, y: dy, skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 440, minHeight: 480 }))
     S.dockWin.loadFile(path.join(__dirname, '..', 'ui', 'dock.html'), { query: orbAnchorFor(dx, dy, W, Hh) })
     S.dockWin.on('closed', () => { S.dockWin = null })
   }
@@ -2063,6 +2063,18 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     }
   })
   ipcMain.handle('spawn-card', (_e, title) => spawnCard(title))
+  // 对话坞带附件开会话:文档文本内联进 msg,图片(大 data URL)暂存,新卡 init 时取回随首条消息发
+  ipcMain.handle('start-conversation', (_e, payload) => {
+    const { title, msg, disp, files, mode } = payload || {}
+    if (mode === 'wf') return { id: spawnWorkflow(msg || title || '') }   // 工作流走文本(含已内联文档);图片暂不支持
+    const id = spawnCard(title || (msg || '').slice(0, 24) || '新对话', null, msg, disp, { flash: true })
+    if (Array.isArray(files) && files.length) { S.cardFiles = S.cardFiles || new Map(); S.cardFiles.set(String(id), files) }
+    return { id }
+  })
+  ipcMain.handle('get-card-files', (_e, id) => {
+    const m = S.cardFiles; if (!m) return []
+    const f = m.get(String(id)); if (f) m.delete(String(id)); return f || []
+  })
   ipcMain.handle('spawn-fanout', (_e, goal, roles) => spawnFanout(goal, roles))
   ipcMain.handle('spawn-fanout-roles', (_e, { goal, roles }) => spawnFanout(goal, roles))
   ipcMain.handle('get-fanout-roles', () => Object.entries(ROLES).map(([k, [label]]) => ({ key: k, label })))
