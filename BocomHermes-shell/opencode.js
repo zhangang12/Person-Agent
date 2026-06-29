@@ -197,7 +197,9 @@ async function ensureServe(dir, handlers, log = console.log, opts = {}) {
 const sidOf = (s) => s?.id ?? s?.data?.id ?? s?.info?.id
 // dir:会话工作目录(本版 serve 支持 ?directory=,与 serve 启动 cwd 无关 → 复用同一 serve 也能跑不同项目)
 async function createSession(info, title, dir) {
-  const q = dir ? ('?directory=' + encodeURIComponent(dir)) : ''
+  // serve 的 ?directory= 不认 Windows 反斜杠(会剥掉盘符、删掉 \ 再当相对路径拼到自己 cwd 上 → 落到错的项目)；
+  // 统一转正斜杠，serve 才能解析成正确的绝对路径。这是"项目路径生效"的关键。
+  const q = dir ? ('?directory=' + encodeURIComponent(String(dir).replace(/\\/g, '/'))) : ''
   return sidOf(await api(info.base, 'POST', '/session' + q, { title: title || '对话' }))
 }
 

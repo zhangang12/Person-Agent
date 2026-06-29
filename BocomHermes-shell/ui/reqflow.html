@@ -229,21 +229,10 @@
     })
   }
 
-  // 整张卡 JS 拖动：抓取时读一次尺寸，移动时写回锁定尺寸 + 新坐标 → 绝不缩放
-  let _drag = false, _b = null, _mx = 0, _my = 0
-  document.addEventListener('mousedown', (e) => {
-    if (e.button !== 0) return
-    if (e.target.closest('button, input, a, textarea, select')) return
-    _b = H.getSelfBounds(); if (!_b) return
-    _drag = true; _mx = e.screenX; _my = e.screenY; e.preventDefault()
-  })
-  window.addEventListener('mousemove', (e) => {
-    if (!_drag || !_b) return
-    H.setSelfBounds({ x: _b.x + (e.screenX - _mx), y: _b.y + (e.screenY - _my), width: _b.width, height: _b.height })
-  })
-  window.addEventListener('mouseup', () => { _drag = false; _b = null })
+  // 整卡拖动统一在 carddrag.js（见 </body> 前引入）
 
   if (docPath0) startAnalysis(docPath0); else renderImport()
 </script>
+  <script src="carddrag.js"></script>
 </body>
 </html>

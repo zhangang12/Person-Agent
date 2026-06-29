@@ -48,6 +48,7 @@
       "orchestrator.js",
       "align.js",
       "reqanalysis.js",
+      "reqplan.js",
       "src/**/*",
       "ui/**/*",
       "assets/**/*",

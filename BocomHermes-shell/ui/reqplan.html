@@ -70,16 +70,7 @@
   let planId = ''
   document.getElementById('x').addEventListener('click', () => H.closeSelf())
   document.getElementById('min').addEventListener('click', () => H.minimizeSelf())
-  // 整卡 JS 拖动（锁尺寸；列表区留给滚动）
-  let _drag = false, _b = null, _mx = 0, _my = 0
-  document.addEventListener('mousedown', (e) => {
-    if (e.button !== 0) return
-    if (e.target.closest('button, input, a, textarea, select, label, .list')) return
-    _b = H.getSelfBounds(); if (!_b) return
-    _drag = true; _mx = e.screenX; _my = e.screenY; e.preventDefault()
-  })
-  window.addEventListener('mousemove', (e) => { if (_drag && _b) H.setSelfBounds({ x: _b.x + (e.screenX - _mx), y: _b.y + (e.screenY - _my), width: _b.width, height: _b.height }) })
-  window.addEventListener('mouseup', () => { _drag = false; _b = null })
+  // 整卡拖动统一在 carddrag.js（见 </body> 前引入）
 
   const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const base = (p) => String(p || '').replace(/^.*[\\\/]/, '')
@@ -170,5 +161,6 @@
   renderProgress()
   H.reqPlan(reportId).catch((e) => showErr(e && e.message || e))
 </script>
+  <script src="carddrag.js"></script>
 </body>
 </html>

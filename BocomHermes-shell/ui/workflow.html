@@ -199,5 +199,6 @@
   document.getElementById('stop').addEventListener('click', () => { window.BocomHermes.abortWorkflow(); banner('err', '已请求停止…') })
   ;(async () => { try { await window.BocomHermes.runWorkflow(goal) } catch (e) { banner('err', '⚠ ' + (e.message || e)) } })()
 </script>
+  <script src="carddrag.js"></script>
 </body>
 </html>

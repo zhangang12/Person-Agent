@@ -62,19 +62,7 @@
   const reportId = new URLSearchParams(location.search).get('reportId') || ''
   document.getElementById('x').addEventListener('click', () => window.BocomHermes.closeSelf())
   document.getElementById('min').addEventListener('click', () => window.BocomHermes.minimizeSelf())
-  // 整张卡 JS 拖动（锁定尺寸，绝不缩放；列表区不参与，留给滚动/点选）
-  let _drag = false, _b = null, _mx = 0, _my = 0
-  document.addEventListener('mousedown', (e) => {
-    if (e.button !== 0) return
-    if (e.target.closest('button, input, a, textarea, select, label, .list')) return
-    _b = window.BocomHermes.getSelfBounds(); if (!_b) return
-    _drag = true; _mx = e.screenX; _my = e.screenY; e.preventDefault()
-  })
-  window.addEventListener('mousemove', (e) => {
-    if (!_drag || !_b) return
-    window.BocomHermes.setSelfBounds({ x: _b.x + (e.screenX - _mx), y: _b.y + (e.screenY - _my), width: _b.width, height: _b.height })
-  })
-  window.addEventListener('mouseup', () => { _drag = false; _b = null })
+  // 整卡拖动统一在 carddrag.js（见 </body> 前引入）
   const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const listEl = document.getElementById('list'), fltEl = document.getElementById('flt')
   const PILL = { clear: 'pg', split: 'pa', conflict: 'pr', hidden: 'pb' }
@@ -184,5 +172,6 @@
     catch (e) { b.textContent = '失败：' + (e && e.message || e); b.disabled = false }
   })
 </script>
+  <script src="carddrag.js"></script>
 </body>
 </html>
