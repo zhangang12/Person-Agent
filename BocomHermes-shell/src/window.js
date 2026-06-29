@@ -545,11 +545,11 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const col = (id - 1) % 4, row = Math.floor((id - 1) / 4) % 4
     const wx = 160 + col * 56, wy = 90 + row * 50 + col * 18
     const win = new BrowserWindow(baseOpts({
-      width: 600, height: 760, minWidth: 440, minHeight: 420, resizable: true,
+      width: 680, height: 860, minWidth: 480, minHeight: 460, resizable: true,
       alwaysOnTop: false, skipTaskbar: false, x: wx, y: wy,
     }))
     const wcId = win.webContents.id
-    const query = { title: title || '未命名任务', id: String(id), ...orbAnchorFor(wx, wy, 600, 760) }
+    const query = { title: title || '未命名任务', id: String(id), ...orbAnchorFor(wx, wy, 680, 860) }
     if (sid) query.sid = sid
     if (msg) query.msg = msg
     if (disp) query.disp = disp
@@ -600,11 +600,11 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const col = (id - 1) % 4, row = Math.floor((id - 1) / 4) % 4
     const wx = 180 + col * 56, wy = 80 + row * 50 + col * 18
     const win = new BrowserWindow(baseOpts({
-      width: 560, height: 680, minWidth: 420, minHeight: 380, resizable: true,
+      width: 680, height: 820, minWidth: 460, minHeight: 420, resizable: true,
       alwaysOnTop: false, skipTaskbar: false, x: wx, y: wy,
     }))
     const wcId = win.webContents.id
-    win.loadFile(path.join(__dirname, '..', 'ui', 'workflow.html'), { query: { goal: goal || '未命名工作流', id: String(id), ...orbAnchorFor(wx, wy, 560, 680) } })
+    win.loadFile(path.join(__dirname, '..', 'ui', 'workflow.html'), { query: { goal: goal || '未命名工作流', id: String(id), ...orbAnchorFor(wx, wy, 680, 820) } })
     win.on('closed', () => {
       const w = S.workflows.get(wcId)
       if (w) { try { w.ac.abort() } catch {}; for (const s of w.sessions) { try { oc.abort(w.serve, s) } catch {}; S.sessionInfo.delete(s) }; S.workflows.delete(wcId) }
@@ -618,11 +618,11 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const col = (id - 1) % 4, row = Math.floor((id - 1) / 4) % 4
     const wx = 200 + col * 56, wy = 70 + row * 50 + col * 18
     const win = new BrowserWindow(baseOpts({
-      width: 560, height: 700, resizable: false,
+      width: 700, height: 840, minWidth: 480, minHeight: 460, resizable: true,
       alwaysOnTop: false, skipTaskbar: false, x: wx, y: wy,
     }))
     const wcId = win.webContents.id
-    win.loadFile(path.join(__dirname, '..', 'ui', 'reqflow.html'), { query: { docPath: docPath || '', id: String(id), ...orbAnchorFor(wx, wy, 560, 700) } })
+    win.loadFile(path.join(__dirname, '..', 'ui', 'reqflow.html'), { query: { docPath: docPath || '', id: String(id), ...orbAnchorFor(wx, wy, 700, 840) } })
     win.on('closed', () => {
       const r = S.reqRuns && S.reqRuns.get(wcId)
       if (r) { try { r.ac.abort() } catch {}; for (const s of r.sessions) { try { oc.abort(r.serve, s) } catch {}; S.sessionInfo.delete(s) }; S.reqRuns.delete(wcId) }
@@ -632,18 +632,18 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   function spawnReqConfirm(reportId) {
     const id = ++S.cardSeq
     const win = new BrowserWindow(baseOpts({
-      width: 600, height: 700, resizable: false,
+      width: 720, height: 840, minWidth: 480, minHeight: 460, resizable: true,
       alwaysOnTop: false, skipTaskbar: false, x: 270, y: 96,
     }))
-    win.loadFile(path.join(__dirname, '..', 'ui', 'reqconfirm.html'), { query: { reportId: reportId || '', ...orbAnchorFor(270, 96, 600, 700) } })
+    win.loadFile(path.join(__dirname, '..', 'ui', 'reqconfirm.html'), { query: { reportId: reportId || '', ...orbAnchorFor(270, 96, 720, 840) } })
     return win.webContents.id
   }
   function spawnReqPlan(reportId) {
     const win = new BrowserWindow(baseOpts({
-      width: 620, height: 720, resizable: false,
+      width: 740, height: 860, minWidth: 480, minHeight: 460, resizable: true,
       alwaysOnTop: false, skipTaskbar: false, x: 320, y: 80,
     }))
-    win.loadFile(path.join(__dirname, '..', 'ui', 'reqplan.html'), { query: { reportId: reportId || '', ...orbAnchorFor(320, 80, 620, 720) } })
+    win.loadFile(path.join(__dirname, '..', 'ui', 'reqplan.html'), { query: { reportId: reportId || '', ...orbAnchorFor(320, 80, 740, 860) } })
     return win.webContents.id
   }
   // 卡内"选择文件"用：只返回路径，不另开卡（在当前需求分析卡里就地开跑）
@@ -704,27 +704,27 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   function openOutbox() {
     if (S.outboxWin && !S.outboxWin.isDestroyed()) { S.outboxWin.show(); S.outboxWin.focus(); S.outboxWin.webContents.send('outbox-updated'); return }
     const { width } = screen.getPrimaryDisplay().workAreaSize
-    const ox = Math.round(width / 2 - 215), oy = 130
-    S.outboxWin = new BrowserWindow(baseOpts({ width: 430, height: 500, x: ox, y: oy, skipTaskbar: false, alwaysOnTop: true, resizable: true, minWidth: 340, minHeight: 280 }))
-    S.outboxWin.loadFile(path.join(__dirname, '..', 'ui', 'outbox.html'), { query: orbAnchorFor(ox, oy, 430, 500) })
+    const ox = Math.round(width / 2 - 270), oy = 120
+    S.outboxWin = new BrowserWindow(baseOpts({ width: 540, height: 640, x: ox, y: oy, skipTaskbar: false, alwaysOnTop: true, resizable: true, minWidth: 420, minHeight: 360 }))
+    S.outboxWin.loadFile(path.join(__dirname, '..', 'ui', 'outbox.html'), { query: orbAnchorFor(ox, oy, 540, 640) })
     S.outboxWin.on('closed', () => { S.outboxWin = null })
   }
 
   function openMailView(msgId) {
     const id = String(msgId || '').replace(/^<|>$/g, ''); if (!id) return
     const { width } = screen.getPrimaryDisplay().workAreaSize
-    const mx = Math.round(width / 2 - 320), my = 90
+    const mx = Math.round(width / 2 - 380), my = 80
     if (!(S.mailViewWin && !S.mailViewWin.isDestroyed())) {
-      S.mailViewWin = new BrowserWindow(baseOpts({ width: 640, height: 640, x: mx, y: my, skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 420, minHeight: 340 }))
+      S.mailViewWin = new BrowserWindow(baseOpts({ width: 760, height: 800, x: mx, y: my, skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 480, minHeight: 400 }))
       S.mailViewWin.on('closed', () => { S.mailViewWin = null })
     } else { S.mailViewWin.show(); S.mailViewWin.focus() }
-    S.mailViewWin.loadFile(path.join(__dirname, '..', 'ui', 'mailview.html'), { query: { msgId: id, ...orbAnchorFor(mx, my, 640, 640) } })
+    S.mailViewWin.loadFile(path.join(__dirname, '..', 'ui', 'mailview.html'), { query: { msgId: id, ...orbAnchorFor(mx, my, 760, 800) } })
   }
 
   // 邮件中心：收件箱 + 设置一体（邮件模块的设置归口在此）
   function createMailCenter(tab) {
     const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
-    const W = Math.min(1120, sw - 80), Hh = Math.min(780, sh - 80)
+    const W = Math.min(1280, sw - 60), Hh = Math.min(900, sh - 60)
     const mx = Math.round((sw - W) / 2), my = Math.round((sh - Hh) / 2)
     if (!(S.mailCenterWin && !S.mailCenterWin.isDestroyed())) {
       S.mailCenterWin = new BrowserWindow(baseOpts({ width: W, height: Hh, x: mx, y: my, skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 720, minHeight: 520 }))
@@ -746,18 +746,18 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   function openSettings() {
     if (S.settingsWin && !S.settingsWin.isDestroyed()) { S.settingsWin.show(); S.settingsWin.focus(); return }
     const { width } = screen.getPrimaryDisplay().workAreaSize
-    const sx = Math.round(width / 2 - 230), sy = 140
-    S.settingsWin = new BrowserWindow(baseOpts({ width: 460, height: 500, x: sx, y: sy, skipTaskbar: false, alwaysOnTop: true, resizable: false }))
-    S.settingsWin.loadFile(path.join(__dirname, '..', 'ui', 'settings.html'), { query: orbAnchorFor(sx, sy, 460, 500) })
+    const sx = Math.round(width / 2 - 280), sy = 120
+    S.settingsWin = new BrowserWindow(baseOpts({ width: 560, height: 640, x: sx, y: sy, skipTaskbar: false, alwaysOnTop: true, resizable: true, minWidth: 460, minHeight: 460 }))
+    S.settingsWin.loadFile(path.join(__dirname, '..', 'ui', 'settings.html'), { query: orbAnchorFor(sx, sy, 560, 640) })
     S.settingsWin.on('closed', () => { S.settingsWin = null })
   }
 
   function openDock() {
     if (S.dockWin && !S.dockWin.isDestroyed()) { S.dockWin.show(); S.dockWin.focus(); return }
     const { width } = screen.getPrimaryDisplay().workAreaSize
-    const W = 600, Hh = 780
-    const dx = Math.round(width / 2 - W / 2), dy = 90
-    S.dockWin = new BrowserWindow(baseOpts({ width: W, height: Hh, x: dx, y: dy, skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 440, minHeight: 480 }))
+    const W = 700, Hh = 880
+    const dx = Math.round(width / 2 - W / 2), dy = 70
+    S.dockWin = new BrowserWindow(baseOpts({ width: W, height: Hh, x: dx, y: dy, skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 480, minHeight: 520 }))
     S.dockWin.loadFile(path.join(__dirname, '..', 'ui', 'dock.html'), { query: orbAnchorFor(dx, dy, W, Hh) })
     S.dockWin.on('closed', () => { S.dockWin = null })
   }

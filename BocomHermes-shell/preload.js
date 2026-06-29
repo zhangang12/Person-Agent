@@ -1,4 +1,4 @@
-﻿const { contextBridge, ipcRenderer } = require('electron')
+﻿const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
 contextBridge.exposeInMainWorld('BocomHermes', {
   // 窗口
@@ -70,6 +70,8 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   cardSend: (text, files) => ipcRenderer.invoke('card-send', (files && files.length) ? { text, files } : text),
   cardReinit: () => ipcRenderer.invoke('card-reinit'),
   parseDoc: (path) => ipcRenderer.invoke('parse-doc', path),
+  // 取拖入文件的本地路径:Electron 34 已移除 File.path,改用 webUtils.getPathForFile
+  getDropPath: (file) => { try { return webUtils.getPathForFile(file) } catch (e) { return (file && file.path) || '' } },
   listModels: () => ipcRenderer.invoke('list-models'),
   cardSetModel: (m) => ipcRenderer.invoke('card-set-model', m),
   cardAbort: () => ipcRenderer.send('card-abort'),

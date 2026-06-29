@@ -212,7 +212,10 @@
   async function addFile(file) {
     const mime = file.type || ''
     if (/^image\//.test(mime)) { try { const dataUrl = await fileToDataUrl(file); pendingAtts.push({ kind: 'image', name: file.name || '截图.png', mime, dataUrl }); renderAtts() } catch (e) {} }
-    else if (file.path) { pendingAtts.push({ kind: 'doc', name: file.name || '文档', path: file.path }); renderAtts() }   // 文档只记路径,opencode 用 read_document 按需读
+    else {                                                    // 文档只记路径,opencode 用 read_document 按需读(Electron 34 用 webUtils 取路径)
+      const fpath = (H.getDropPath && H.getDropPath(file)) || file.path || ''
+      if (fpath) { pendingAtts.push({ kind: 'doc', name: file.name || '文档', path: fpath }); renderAtts() }
+    }
   }
   ;['dragenter', 'dragover'].forEach((ev) => document.addEventListener(ev, (e) => { if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) { e.preventDefault(); dropHint.classList.add('show') } }))
   document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) dropHint.classList.remove('show') })
