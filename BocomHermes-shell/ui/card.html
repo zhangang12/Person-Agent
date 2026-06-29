@@ -438,21 +438,33 @@
     el.innerHTML = '<span>' + (isWf ? '🚀' : '⚙') + '</span><span class="tn">' + esc(TOOL_LABEL[name] || name) + '</span><span class="ts2">· ' + stt + '</span>'
     feed.scrollTop = feed.scrollHeight
   }
+  // 流式渲染按帧合并：高频 token 事件下，一帧内多次事件只跑一次 renderMarkdown + innerHTML，
+  // 消除"回答越长越卡"的 O(n²) 抖动（每帧最多渲一次，视觉无差）。
+  // 思考过程 = opencode 原生 reasoning part；不自己解析 <think>/<ask>，按 opencode 原生来。
+  let _flushQueued = false, _needAnswer = false, _needReason = false
+  function flushStream() {
+    _flushQueued = false
+    if (_needReason && curReason) {
+      curReason.body.textContent = reasonParts ? joinParts(reasonParts) : ''
+      curReason.body.scrollTop = curReason.body.scrollHeight
+      _needReason = false
+    }
+    if (_needAnswer && curAnswer) {
+      curAnswer.innerHTML = renderMarkdown(answerParts ? joinParts(answerParts) : '')
+      _needAnswer = false
+    }
+    feed.scrollTop = feed.scrollHeight
+  }
+  function scheduleFlush() { if (!_flushQueued) { _flushQueued = true; requestAnimationFrame(flushStream) } }
   window.BocomHermes.onStream(({ kind, text, partID, status }) => {
     if (kind === 'tool') { renderTool(partID || '_', text, status || ''); return }
     const key = partID || '_'
     if (kind === 'reasoning') {
       if (!curReason && curAnswer && curAnswer.parentNode === feed) curReason = makeReason(curAnswer)
-      if (curReason) {
-        if (reasonParts) reasonParts.set(key, text)
-        curReason.body.textContent = reasonParts ? joinParts(reasonParts) : text
-        curReason.body.scrollTop = curReason.body.scrollHeight
-      }
-    } else if (curAnswer) {
-      if (answerParts) answerParts.set(key, text)
-      curAnswer.innerHTML = renderMarkdown(answerParts ? joinParts(answerParts) : text)
+      if (curReason && reasonParts) { reasonParts.set(key, text); _needReason = true; scheduleFlush() }
+    } else if (curAnswer && answerParts) {
+      answerParts.set(key, text); _needAnswer = true; scheduleFlush()
     }
-    feed.scrollTop = feed.scrollHeight
   })
 
   // 返回 true=本轮顺利完成（传输层无异常），false=出错。富结果动作据此落状态。

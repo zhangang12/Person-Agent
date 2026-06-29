@@ -15,6 +15,7 @@ const pool = new Map()      // dirKey -> info { dir, base, port, proc, permStyle
 const baseToEntry = new Map()   // base URL -> info;防止同一 serve 启多个事件流
 let sampleLogged = false
 const seenPartTypes = new Set()   // 每种 part 类型打印一次（确认 reasoning/text 等）
+const partKind = new Map()        // partID -> 'reasoning'|'text'：从 message.part.updated 学到，供 message.part.delta 路由
 
 // 用 Node http 而非 fetch：智能体一轮可能跑几分钟，POST /message 在结束前一直挂着，
 // 而 fetch(undici) 默认 5 分钟 headersTimeout 会把它判超时抛 "fetch failed"。http 无此超时。
@@ -322,14 +323,32 @@ function dispatch(ev, onPermission, onText) {
     if (requestId && onPermission) onPermission({ sessionId, requestId, tool, detail: String(detail).slice(0, 200) })
     return
   }
+  // 流式增量（本版 bocomcode 实测主路径）：message.part.delta { partID, field:'text', delta }
+  // field 恒为 part 的字段名（'text'），不代表 kind；真正 reasoning/text 看该 partID 在 part.updated 声明的 type。
+  // 不认 delta = 思考过程整段丢失（reasoning 只走 delta）、答案也不实时流（只靠 POST 返回兜底）。
+  if (onText && type === 'message.part.delta') {
+    const delta = typeof p.delta === 'string' ? p.delta : ''
+    const partID = p.partID ?? p.id
+    const sessionId = p.sessionID ?? p.sessionId
+    if (delta && partID && sessionId) {
+      const kind = partKind.get(partID) === 'reasoning' ? 'reasoning' : 'text'
+      onText({ sessionId, text: delta, role: 'assistant', partID, kind, delta: true })
+    }
+    return
+  }
   if (onText && type.includes('part')) {
     const part = p.part ?? p
     const ptype = part && part.type
+    // 记下 partID → kind，供后续 delta 路由（reasoning 的快照 text 常为空，kind 只能从这里学）
+    if (part && part.id && (ptype === 'reasoning' || ptype === 'thinking' || ptype === 'text')) {
+      if (partKind.size > 2000) partKind.clear()
+      partKind.set(part.id, ptype === 'text' ? 'text' : 'reasoning')
+    }
     if (part && (ptype === 'text' || ptype === 'reasoning' || ptype === 'thinking')) {
       const text = typeof part.text === 'string' ? part.text
         : typeof part.reasoning === 'string' ? part.reasoning
         : typeof part.content === 'string' ? part.content : null
-      if (text != null) {
+      if (text) {   // 跳过空快照（announce）——别用空串覆盖已累积的 delta
         const sessionId = p.sessionID ?? p.sessionId ?? part.sessionID ?? part.sessionId
         const role = part.role ?? p.role ?? (p.message && p.message.role)
         const partID = part.id ?? part.partID ?? p.partID

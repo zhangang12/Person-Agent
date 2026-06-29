@@ -36,14 +36,15 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
     S.pendingPerm.set(requestId, sessionId)
     si.wc.send('permission-request', { requestId, tool, detail: detail || '' })   // detail=要改的文件/要跑的命令，便于知情审批
   }
-  function onText({ sessionId, text, role, partID, kind, status }) {
+  function onText({ sessionId, text, role, partID, kind, status, delta }) {
     const si = S.sessionInfo.get(sessionId); if (!si || !si.wc || si.wc.isDestroyed()) return
     if (role && role !== 'assistant') return
     if (kind === 'tool') { si.wc.send('card-stream', { kind: 'tool', text, partID, status: status || '' }); return }   // 工具调用不进文本缓冲,原样转发给卡片
     if (!role && kind !== 'reasoning' && text === S.sentPrompt.get(sessionId)) return
     let buf = S.streamBuf.get(sessionId); if (!buf) { buf = {}; S.streamBuf.set(sessionId, buf) }
     const prev = buf[partID] || ''
-    const full = prev && !text.startsWith(prev) ? prev + text : text   // 兼容累积/增量
+    // delta=true（message.part.delta）始终追加；快照按"是否累积前缀"判断累积/增量
+    const full = delta ? (prev + text) : (prev && !text.startsWith(prev) ? prev + text : text)
     buf[partID] = full
     si.wc.send('card-stream', { kind: kind || 'text', text: full, partID })
   }
