@@ -96,24 +96,34 @@ function withTimeout(promise, ms, onTimeoutValue) {
   return Promise.race([Promise.resolve(promise).finally(() => clearTimeout(to)), timer])
 }
 
-// 多视角对抗阅读：5 persona 并行、各自独立 run（生产里=各自 opencode 会话/裸上下文），收集 findings。
-// 每个 reader 独立超时 —— 某个卡死（如"历史·跨页"那轮模型不返回）就当它空、继续走，绝不让 Promise.all 永久挂起。
+// 多视角对抗阅读：5 persona 各自独立 run（独立会话/裸上下文/互不通气）收集 findings。
+// 根因修复：不再 5 路齐发——内网模型网关常只有单/少并发槽，5 路一起冲会让排最后的 reader（如"历史·跨页"）
+//   长时间拿不到槽 → 配合 sendMessage 的"等完成"轮询 → 表现为卡死。改成【有界并发池(默认2)】按网关节奏喂；
+//   每个 reader 仍带独立超时兜底。独立性不受影响（"并行"指互不通气，不要求同时发起）。
 async function readDocument(sourceText, opts = {}) {
   const run = opts.run
   const personas = opts.personas || PERSONAS
   const onReader = opts.onReader
   const perReaderMs = opts.perReaderMs != null ? opts.perReaderMs : 120000
+  const concurrency = Math.max(1, opts.concurrency || 2)
   if (!run) return []
-  const out = await Promise.all(personas.map(async (p) => {
-    let fs = []
-    try {
-      const raw = await withTimeout(run(buildReaderPrompt(p, sourceText), { kind: 'read', persona: p.name, signal: opts.signal }), perReaderMs)
-      fs = parseFindings(raw, sourceText, p.name)
-    } catch { fs = [] }
-    if (onReader) { try { onReader(p.name, fs.length) } catch {} }
-    return fs
-  }))
-  return out.flat()
+  const results = new Array(personas.length)
+  let next = 0
+  async function worker() {
+    while (next < personas.length) {
+      if (opts.signal && opts.signal.aborted) return
+      const i = next++; const p = personas[i]
+      let fs = []
+      try {
+        const raw = await withTimeout(run(buildReaderPrompt(p, sourceText), { kind: 'read', persona: p.name, signal: opts.signal }), perReaderMs)
+        fs = parseFindings(raw, sourceText, p.name)
+      } catch { fs = [] }
+      if (onReader) { try { onReader(p.name, fs.length) } catch {} }
+      results[i] = fs
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, personas.length) }, worker))
+  return results.flat()
 }
 
 // ---------------- 裁判封装（包注入 run） ----------------
