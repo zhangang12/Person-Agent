@@ -17,6 +17,7 @@
     "align:test": "node scripts/align-selftest.mjs",
     "req:test": "node scripts/reqanalysis-selftest.mjs",
     "plan:test": "node scripts/reqplan-selftest.mjs",
+    "mail:test": "node scripts/mail-parse-selftest.mjs",
     "modelroute": "node scripts/model-route-probe.mjs",
     "mcp:browser": "node mcp/browser-mcp.mjs",
     "mcp:browser:test": "node mcp/selftest.mjs",

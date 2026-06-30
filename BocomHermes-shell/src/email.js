@@ -48,8 +48,14 @@ function decodeBytes(bytes, charset) {
 // 主题/From 里的编码字。原实现 toString('binary') 把 GB 字节当 latin1 → 乱码
 function decodeWords(s) {
   if (!s) return ''
+  s = String(s)
+  // 整条 header 没有 RFC2047 编码字,却含高位字节 → 国内部分邮局/网关直接塞裸 GB/UTF-8 字节。
+  // 此时 s 是 latin1(每字节一字符),还原成 bytes 走 charset 嗅探(decodeBytes 对纯 ASCII 无副作用)。
+  if (!/=\?[^?]+\?[BbQq]\?/.test(s) && /[\x80-\xff]/.test(s)) {
+    return decodeBytes(Buffer.from(s, 'latin1'), '')
+  }
   // 同 charset 的相邻 encoded-word 之间的空白要折叠
-  return String(s)
+  return s
     .replace(/(=\?[^?]+\?[BbQq]\?[^?]*\?=)\s+(?==\?)/g, '$1')
     .replace(/=\?([^?]+)\?([BbQq])\?([^?]*)\?=/g, (_, charset, enc, data) => {
       try {
@@ -307,7 +313,9 @@ class ImapClient {
       const litM = line.match(/\{(\d+)\}$/)
       if (litM) {
         this._inLiteral = parseInt(litM[1])
-        this._respStr += line.slice(0, -litM[0].length) + '\n'
+        // 必须保留行尾 {LEN} 标记:extractMessages 靠它定位 literal 起点与长度。
+        // (曾误删 {LEN} → UID FETCH 报文永远匹配不到 → 收件箱一直空)
+        this._respStr += line + '\n'
         continue
       }
       this._respStr += line + '\n'
@@ -962,4 +970,6 @@ module.exports = {
   parseRfc822, decodeBytes, decodeWords, stripHtml,
   // SMTP/MIME 辅助:A5-c 回复时拼 HTML quote、A5-d APPEND 到 Sent 文件夹用
   buildMime, textToHtml,
+  // 内部件,仅供回归测试(mail-parse-selftest)钉住 _drain↔extractMessages 的 literal 契约
+  __test: { ImapClient, extractMessages, parseRfc822 },
 }
