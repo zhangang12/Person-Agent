@@ -476,7 +476,9 @@
     let ok = true
     try {
       const reply = await window.BocomHermes.cardSend(text, files)
-      if (reply) ai.innerHTML = renderMarkdown(reply)
+      // POST 空 body 的 serve（内网 bocomcode）：reply 可能为空，用流式累积的文本兜底，绝不丢已收到的答案
+      const finalText = reply || (answerParts ? joinParts(answerParts) : '')
+      if (finalText) ai.innerHTML = renderMarkdown(finalText)
       else if (!ai.textContent.trim() || ai.textContent === PH) ai.textContent = '（无文本输出）'
       // 思考过程答完保持展开(用户要看得见过程);可手动点标题折叠
     } catch (e) {
