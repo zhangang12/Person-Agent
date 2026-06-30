@@ -210,6 +210,24 @@ function extractText(msg) {
   if (Array.isArray(parts)) return parts.filter((p) => p?.type === 'text').map((p) => p.text).join('\n').trim()
   return typeof msg === 'string' ? msg : ''
 }
+// 有的 serve（实测内网 bocomcode）POST /session/:id/message 返回 200 但 body 为空——
+// 它不把组装好的助手消息塞进 POST 响应，只通过 /event 流发。POST 还可能非阻塞立即返回。
+// 这时只靠 POST body 会得到空文本（→"无文本输出"），且 turn() 会过早收尾把流式 delta 丢掉。
+// 兜底：POST body 没文本就轮询 GET /message 等最后一条 assistant 真正完成，返回组装文本。
+async function waitAssistantText(info, sessionId, maxMs = 180000) {
+  const t0 = Date.now(); let last = '', stable = 0
+  while (Date.now() - t0 < maxMs) {
+    await sleep(700)
+    let raw; try { raw = await api(info.base, 'GET', `/session/${sessionId}/message`) } catch { continue }
+    const list = Array.isArray(raw) ? raw : (raw && raw.data) || []
+    let la = null; for (const m of list) { const r = m?.info?.role ?? m?.role; if (r === 'assistant') la = m }
+    if (!la) continue
+    const txt = extractText(la)
+    if (la?.info?.time?.completed || la?.info?.finish) return txt || last     // 完成标记 → 收
+    if (txt && txt === last) { if (++stable >= 3) return txt } else { stable = 0; if (txt) last = txt }  // 无完成标记的 serve：文本稳定 ~2s 视为完成
+  }
+  return last
+}
 async function sendMessage(info, sessionId, text, model, files) {
   const parts = []
   if (text != null && text !== '') parts.push({ type: 'text', text })
@@ -222,7 +240,8 @@ async function sendMessage(info, sessionId, text, model, files) {
     body.model = { providerID: model.providerID, modelID: model.modelID }
     body.providerID = model.providerID; body.modelID = model.modelID
   }
-  return extractText(await api(info.base, 'POST', `/session/${sessionId}/message`, body))
+  const direct = extractText(await api(info.base, 'POST', `/session/${sessionId}/message`, body))
+  return direct || await waitAssistantText(info, sessionId)   // 空 body（流式版 serve）→ 轮询等完成
 }
 // 列可用模型:GET /config/providers → 拍平成 [{providerID, modelID, name, provider}]
 async function listModels(info) {
