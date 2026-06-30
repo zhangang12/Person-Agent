@@ -399,9 +399,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (!imap || !imap.host || !imap.user || !imap.passEncrypted) throw new Error('IMAP 未配置（去「设置」填写收件服务器）')
     const o = opts || {}
     const r = await email.fetchUnread(imap, {
-      onlyUnseen: o.onlyUnseen !== false,
-      days: Math.max(1, +o.days || 3),
-      limit: Math.max(1, Math.min(+o.limit || 30, 30)),
+      onlyUnseen: o.onlyUnseen === true,                 // 默认拉全部(不限未读)；只有显式要未读才加 UNSEEN
+      days: Math.max(1, Math.min(+o.days || 30, 90)),    // 默认近 30 天，上限 90
+      limit: Math.max(1, Math.min(+o.limit || 50, 100)), // 默认 50，上限 100
       folder: o.folder || 'INBOX',
     })
     return {
@@ -410,7 +410,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       emails: (r.emails || []).filter((e) => !e.error).map((e) => ({
         from: e.from || '', subject: e.subject || '', date: e.date || '',
         messageId: e.messageId || '', attachments: (e.attachments || []).length,
-        preview: (e.bodySummary || e.body || '').replace(/\s+/g, ' ').slice(0, 120),
+        preview: (e.bodySummary || e.body || '').replace(/\s+/g, ' ').slice(0, 300),
       })),
     }
   })

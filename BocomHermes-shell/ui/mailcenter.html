@@ -33,9 +33,15 @@
   .lbar .ic:hover { color: var(--txt); }
   #mlist { flex: 1; overflow-y: auto; }
   #mlist::-webkit-scrollbar { width: 6px; } #mlist::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
-  .mrow { padding: 8px 10px; border-bottom: .5px solid var(--composer-border); cursor: pointer; border-left: 2px solid transparent; }
+  .mrow { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-bottom: .5px solid var(--composer-border); cursor: pointer; border-left: 2px solid transparent; }
   .mrow:hover { background: var(--composer-bg); }
   .mrow.on { background: var(--composer-bg); border-left-color: var(--accent); }
+  .mrow.sel { background: var(--me-bg); }
+  .mrow .msel { margin-top: 2px; flex: none; accent-color: var(--brand); cursor: pointer; width: 14px; height: 14px; }
+  .mrow .mbody { flex: 1; min-width: 0; }
+  .selbar { display: none; align-items: center; gap: 8px; padding: 6px 9px; border-bottom: .5px solid var(--composer-border); background: var(--me-bg); font-size: 11.5px; color: var(--me-txt); }
+  .selbar.on { display: flex; }
+  .selbar .lnk { color: var(--accent); cursor: pointer; }
   .mrow .r1 { display: flex; align-items: baseline; gap: 8px; }
   .mrow .from { flex: 1; min-width: 0; font-size: 12px; font-weight: 600; color: var(--txt); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mrow .date { flex: none; font-size: 10px; color: var(--txt3); }
@@ -137,8 +143,14 @@
         <div class="lbar">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--txt3);flex:none"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
           <input id="search" placeholder="搜索发件人/主题" spellcheck="false" />
-          <button id="chipUnread" class="chip on">未读</button>
+          <button id="chipUnread" class="chip">仅未读</button>
           <button id="btnRefresh" class="ic" title="刷新"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.5 15a9 9 0 1 1-2.4-9.2L23 10"/></svg></button>
+        </div>
+        <div id="selbar" class="selbar">
+          <span id="selCount">已选 0</span>
+          <span class="sp" style="flex:1"></span>
+          <span id="selAll" class="lnk">全选</span>
+          <span id="selClear" class="lnk">清空</span>
         </div>
         <div id="mlist"><div class="empty">加载中… <span class="spin"></span></div></div>
       </div>
@@ -221,34 +233,60 @@
   $('tabTodos').addEventListener('click', () => showTab('todos'))
   $('tabSettings').addEventListener('click', () => showTab('settings'))
 
-  // ── 收件箱列表 ──
-  let inboxLoaded = false, onlyUnread = true, loading = false, emails = [], curMsgId = null
+  // ── 收件箱列表（默认拉最近 30 天全部邮件，支持多选后批量 AI 摘要）──
+  let inboxLoaded = false, onlyUnread = false, loading = false, emails = [], curMsgId = null
+  const selected = new Set()   // 多选的 messageId
   async function loadInbox() {
     if (loading) return
     loading = true; inboxLoaded = true
     $('mlist').innerHTML = '<div class="empty">加载中… <span class="spin"></span></div>'
     try {
-      const r = await H.mailList({ onlyUnseen: onlyUnread, days: onlyUnread ? 3 : 7, limit: 30 })
+      const r = await H.mailList({ onlyUnseen: onlyUnread, days: onlyUnread ? 7 : 30, limit: 60 })
       if (!r || r.ok === false) throw new Error((r && r.error) || '拉取失败')
       emails = r.emails || []
-      renderList()
+      renderList(); updateSelBar()
     } catch (err) {
       $('mlist').innerHTML = '<div class="empty">✗ ' + esc((err && err.message) || '拉取失败') + '<br><a id="goCfg" style="color:var(--accent);cursor:pointer">去设置检查 IMAP</a></div>'
       const g = $('goCfg'); if (g) g.addEventListener('click', () => showTab('settings'))
     } finally { loading = false }
   }
-  function renderList() {
+  function visibleEmails() {
     const q = $('search').value.trim().toLowerCase()
-    const list = emails.filter((e) => !q || (e.from + ' ' + e.subject).toLowerCase().includes(q))
-    if (!list.length) { $('mlist').innerHTML = '<div class="empty">' + (onlyUnread ? '没有未读邮件 📭' : '收件箱为空') + '</div>'; return }
+    return emails.filter((e) => !q || (e.from + ' ' + e.subject).toLowerCase().includes(q))
+  }
+  function renderList() {
+    const list = visibleEmails()
+    if (!list.length) { $('mlist').innerHTML = '<div class="empty">' + (onlyUnread ? '没有未读邮件 📭' : '近 30 天没有邮件 📭') + '</div>'; return }
     $('mlist').innerHTML = list.map((e) => {
       const att = (e.attachments || 0) > 0 ? ' <span class="att">📎' + e.attachments + '</span>' : ''
-      return '<div class="mrow' + (e.messageId === curMsgId ? ' on' : '') + '" data-mid="' + esc(e.messageId) + '">'
-        + '<div class="r1"><span class="from">' + esc(fromName(e.from)) + '</span><span class="date">' + esc(fmtDate(e.date)) + '</span></div>'
-        + '<div class="subj">' + esc(e.subject || '(无主题)') + att + '</div></div>'
+      const mid = esc(e.messageId)
+      const on = selected.has(e.messageId)
+      return '<div class="mrow' + (e.messageId === curMsgId ? ' on' : '') + (on ? ' sel' : '') + '" data-mid="' + mid + '">'
+        + '<input type="checkbox" class="msel" data-mid="' + mid + '"' + (on ? ' checked' : '') + ' title="选中用于批量摘要">'
+        + '<div class="mbody"><div class="r1"><span class="from">' + esc(fromName(e.from)) + '</span><span class="date">' + esc(fmtDate(e.date)) + '</span></div>'
+        + '<div class="subj">' + esc(e.subject || '(无主题)') + att + '</div></div></div>'
     }).join('')
   }
-  $('mlist').addEventListener('click', (e) => { const row = e.target.closest('.mrow'); if (row) openEmail(row.dataset.mid) })
+  function updateSelBar() {
+    const n = selected.size
+    $('selbar').classList.toggle('on', n > 0)
+    $('selCount').textContent = '已选 ' + n
+    const b = $('btnSummary')
+    if (n > 0) { b.textContent = '✨ 摘要选中 (' + n + ')'; b.title = '对选中的 ' + n + ' 封邮件做 AI 摘要分析' }
+    else { b.textContent = '✨ 今日摘要'; b.title = '让 AI 整理最近的邮件' }
+  }
+  $('mlist').addEventListener('click', (e) => {
+    const cb = e.target.closest('.msel')
+    if (cb) {   // 勾选用于批量摘要，不打开邮件
+      const mid = cb.dataset.mid
+      if (cb.checked) selected.add(mid); else selected.delete(mid)
+      const row = cb.closest('.mrow'); if (row) row.classList.toggle('sel', cb.checked)
+      updateSelBar(); return
+    }
+    const row = e.target.closest('.mrow'); if (row) openEmail(row.dataset.mid)
+  })
+  $('selAll').addEventListener('click', () => { visibleEmails().forEach((e) => selected.add(e.messageId)); renderList(); updateSelBar() })
+  $('selClear').addEventListener('click', () => { selected.clear(); renderList(); updateSelBar() })
   $('btnRefresh').addEventListener('click', () => loadInbox())
   $('search').addEventListener('input', renderList)
   $('chipUnread').addEventListener('click', () => { onlyUnread = !onlyUnread; $('chipUnread').classList.toggle('on', onlyUnread); loadInbox() })
@@ -363,7 +401,19 @@
     const prompt = '下面是我最近的邮件列表(共 ' + list.length + ' 封)。请用中文：\n1. 整体摘要今天的邮件重点；\n2. 逐条用一句话点出每封的核心；\n3. 提取需要我跟进的事项，每条用 `TODO: [高/中/低] 具体事项` 格式输出。\n\n' + lines
     runAI(prompt, '✨ 今日摘要', 'aiSlot')
   }
-  $('btnSummary').addEventListener('click', () => { showTab('inbox'); runDailySummary() })
+  // ── 摘要"选中的"邮件(人工多选 → AI 批量摘要分析) ──
+  function summarizeSelected() {
+    if (aiBusy) return
+    const picked = emails.filter((e) => selected.has(e.messageId))
+    if (!picked.length) return runDailySummary()
+    curMsgId = null; renderList()
+    const reader = $('reader')
+    reader.innerHTML = '<div class="rhead"><div class="rsubj">✨ 选中邮件摘要（' + picked.length + ' 封）</div><div class="rmeta">' + new Date().toLocaleString('zh-CN') + '</div></div><div class="rscroll"><div id="aiSlot"></div></div>'
+    const lines = picked.map((e, i) => (i + 1) + '. ' + fromName(e.from) + ' · ' + (e.subject || '(无主题)') + ' · ' + fmtDate(e.date) + '\n   ' + (e.preview || '')).join('\n')
+    const prompt = '下面是我挑选的 ' + picked.length + ' 封邮件。请用中文：\n1. 先做整体摘要，点出这批邮件的共同主题/重点；\n2. 逐封用一句话点出核心；\n3. 提取需要我跟进的事项，每条用 `TODO: [高/中/低] 具体事项` 格式输出。\n\n' + lines
+    runAI(prompt, '✨ 选中邮件摘要', 'aiSlot')
+  }
+  $('btnSummary').addEventListener('click', () => { showTab('inbox'); if (selected.size > 0) summarizeSelected(); else runDailySummary() })
 
   // ── 发件箱 ──
   async function loadOutbox() {
