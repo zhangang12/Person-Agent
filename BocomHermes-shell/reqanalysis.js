@@ -85,16 +85,29 @@ function parseFindings(raw, sourceText, persona) {
   return res
 }
 
+// 单个调用加超时：任一 reader/判读卡住（模型那轮不返回/不给完成信号）不能冻住整条并行管线。
+// 超时即按"该路返回空"处理，带 clearTimeout，绝不留悬挂定时器（自测里的瞬时 fakeRun 也不会被拖住）。
+function withTimeout(promise, ms, onTimeoutValue) {
+  if (!ms || ms <= 0) return promise
+  let to
+  const timer = new Promise((resolve, reject) => {
+    to = setTimeout(() => (onTimeoutValue !== undefined ? resolve(onTimeoutValue) : reject(new Error('timeout ' + ms + 'ms'))), ms)
+  })
+  return Promise.race([Promise.resolve(promise).finally(() => clearTimeout(to)), timer])
+}
+
 // 多视角对抗阅读：5 persona 并行、各自独立 run（生产里=各自 opencode 会话/裸上下文），收集 findings。
+// 每个 reader 独立超时 —— 某个卡死（如"历史·跨页"那轮模型不返回）就当它空、继续走，绝不让 Promise.all 永久挂起。
 async function readDocument(sourceText, opts = {}) {
   const run = opts.run
   const personas = opts.personas || PERSONAS
   const onReader = opts.onReader
+  const perReaderMs = opts.perReaderMs != null ? opts.perReaderMs : 120000
   if (!run) return []
   const out = await Promise.all(personas.map(async (p) => {
     let fs = []
     try {
-      const raw = await run(buildReaderPrompt(p, sourceText), { kind: 'read', persona: p.name, signal: opts.signal })
+      const raw = await withTimeout(run(buildReaderPrompt(p, sourceText), { kind: 'read', persona: p.name, signal: opts.signal }), perReaderMs)
       fs = parseFindings(raw, sourceText, p.name)
     } catch { fs = [] }
     if (onReader) { try { onReader(p.name, fs.length) } catch {} }
@@ -116,7 +129,7 @@ function makeTopicJudge(run) {
   return async (a, b) => {
     const p = '判断下面两条读者结论是不是在说【同一件事】(同一个诉求/对象/改动点)。只回一个词：same 或 different。\n' +
       'A：' + briefF(a) + '\nB：' + briefF(b)
-    try { return pickVerdict(await run(p, { kind: 'judge-topic' }), false) } catch { return 'different' }
+    try { return pickVerdict(await withTimeout(run(p, { kind: 'judge-topic' }), 60000), false) } catch { return 'different' }
   }
 }
 function makeReadingJudge(run) {
@@ -124,7 +137,7 @@ function makeReadingJudge(run) {
     const p = '同一处需求，两位读者给出的读法，关系是哪种？只回一个词：\n' +
       'same(同一种意思) / different(不同但能并存) / contradict(互相矛盾、不能同时成立)。\n' +
       'A：' + briefF(a) + '\nB：' + briefF(b)
-    try { return pickVerdict(await run(p, { kind: 'judge-reading' }), true) } catch { return 'different' }
+    try { return pickVerdict(await withTimeout(run(p, { kind: 'judge-reading' }), 60000), true) } catch { return 'different' }
   }
 }
 
