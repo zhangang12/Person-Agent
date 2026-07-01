@@ -214,19 +214,36 @@ function extractText(msg) {
 // 它不把组装好的助手消息塞进 POST 响应，只通过 /event 流发。POST 还可能非阻塞立即返回。
 // 这时只靠 POST body 会得到空文本（→"无文本输出"），且 turn() 会过早收尾把流式 delta 丢掉。
 // 兜底：POST body 没文本就轮询 GET /message 等最后一条 assistant 真正完成，返回组装文本。
-async function waitAssistantText(info, sessionId, maxMs = 180000) {
-  const t0 = Date.now(); let last = '', stable = 0
+// 一个回合可能被 opencode 拆成【多条 assistant 消息】:先一条只含工具调用(如 task 子agent),
+// 完成后再起一条含最终答案的 text 消息。老逻辑"最后一条 assistant 有 completed 标记就返回"会在
+// 那条【已完成但无 text 的工具调用消息】上过早返回空串 → 拿不到后面那条答案(表现为卡住/无文本输出)。
+// 修:取最后一个 user 之后的所有 assistant 拼接;仅当【最后一条已完成且带文本】才收尾(答案总以 text 收尾)。
+// 纯逻辑(可单测):给定 GET /message 的消息数组,取最后一个 user 之后的所有 assistant 消息,
+// 拼它们的 text,并判断本回合是否已收尾。laDone/laText 供轮询做"完成但无文本→继续等续写"的兜底。
+function pickTurnText(list) {
+  let lastUserIdx = -1
+  ;(list || []).forEach((m, i) => { const r = m?.info?.role ?? m?.role; if (r === 'user') lastUserIdx = i })
+  const asst = (list || []).slice(lastUserIdx + 1).filter((m) => (m?.info?.role ?? m?.role) === 'assistant')
+  if (!asst.length) return { done: false, text: '', laDone: false, laText: '' }
+  const text = asst.map(extractText).filter(Boolean).join('\n').trim()
+  const la = asst[asst.length - 1]
+  const laText = extractText(la)
+  const laDone = !!(la?.info?.time?.completed || la?.info?.finish)
+  return { done: laDone && !!laText, text, laDone, laText }   // 收尾 = 最后一条 assistant 已完成【且带文本】
+}
+async function waitAssistantText(info, sessionId, maxMs = 600000) {
+  const t0 = Date.now()
+  let prev = '', stable = 0, doneNoTextTicks = 0
   while (Date.now() - t0 < maxMs) {
     await sleep(700)
     let raw; try { raw = await api(info.base, 'GET', `/session/${sessionId}/message`) } catch { continue }
     const list = Array.isArray(raw) ? raw : (raw && raw.data) || []
-    let la = null; for (const m of list) { const r = m?.info?.role ?? m?.role; if (r === 'assistant') la = m }
-    if (!la) continue
-    const txt = extractText(la)
-    if (la?.info?.time?.completed || la?.info?.finish) return txt || last     // 完成标记 → 收
-    if (txt && txt === last) { if (++stable >= 3) return txt } else { stable = 0; if (txt) last = txt }  // 无完成标记的 serve：文本稳定 ~2s 视为完成
+    const r = pickTurnText(list)
+    if (r.done) return r.text                                              // 最后一条已完成且带文本 → 收
+    if (r.text && r.text === prev) { if (++stable >= 3) return r.text } else { stable = 0; prev = r.text }   // 无完成标记的 serve:文本稳定 ~2s
+    if (r.laDone && !r.laText) { if (++doneNoTextTicks >= 42) return r.text } else { doneNoTextTicks = 0 }   // 兜底:真以无文本工具收尾(罕见),~30s 无续写才放弃
   }
-  return last
+  return prev
 }
 async function sendMessage(info, sessionId, text, model, files) {
   const parts = []
@@ -499,4 +516,4 @@ function killAll() {
 }
 
 module.exports = { ensureServe, createSession, sendMessage, listModels, abort, replyPermission, sessionExists, getMessages, killAll, setServeBin, onKeepAlive, probeOnce, AUTO_ALLOW,
-  __test: { dispatch } }
+  __test: { dispatch, waitAssistantText, extractText, pickTurnText } }
