@@ -167,13 +167,22 @@
   .note { align-self: flex-start; max-width: 92%; font-size: 11.5px; color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-left: 2.5px solid var(--accent); border-radius: 0 9px 9px 0; padding: 5px 10px; white-space: pre-wrap; line-height: 1.45; }
   .note.muted { border-left-color: var(--txt3); color: var(--txt3); }
   /* 工具调用 chip:看得见 Agent 在 grounding / 升格(run_workflow 高亮) */
-  .toolchip { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; max-width: 92%; font-size: 11px; color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 999px; padding: 3px 11px; margin: 1px 0; }
-  .toolchip .tn { font-family: var(--mono); }
-  .toolchip .ts2 { color: var(--txt3); }
-  .toolchip.done .ts2 { color: var(--green); }
-  .toolchip.err .ts2 { color: var(--diff-del); }
-  .toolchip.wf { color: var(--accent); border-color: var(--accent); background: rgba(74,168,255,.08); font-weight: 600; padding: 4px 12px; }
-  .toolchip.wf .tn { font-family: inherit; }
+  /* 工具日志块：可展开，显示 工具名/标题 + 入参 + 结果（对齐 opencode TUI 的 tool call 视图） */
+  .toolbox { align-self: flex-start; max-width: 92%; font-size: 11px; color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 9px; margin: 2px 0; overflow: hidden; }
+  .toolbox > summary { cursor: pointer; padding: 5px 11px; display: flex; align-items: center; gap: 6px; list-style: none; user-select: none; }
+  .toolbox > summary::-webkit-details-marker { display: none; }
+  .toolbox .ti { flex: none; }
+  .toolbox .tn { font-family: var(--mono); font-weight: 600; color: var(--txt); flex: none; }
+  .toolbox .tt { font-family: var(--mono); color: var(--txt3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .toolbox .ts2 { color: var(--txt3); margin-left: auto; flex: none; }
+  .toolbox.done .ts2 { color: var(--green); }
+  .toolbox.err .ts2 { color: var(--diff-del); }
+  .toolbox .tsec { border-top: .5px solid var(--composer-border); padding: 5px 11px; }
+  .toolbox .tsl { display: block; font-size: 9.5px; color: var(--txt3); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 3px; }
+  .toolbox .tsec pre { margin: 0; font-family: var(--mono); font-size: 11px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto; color: var(--txt); }
+  .toolbox .tsec.e pre { color: var(--diff-del); }
+  .toolbox.wf { border-color: var(--accent); background: rgba(74,168,255,.08); }
+  .toolbox.wf .tn { color: var(--accent); font-family: inherit; }
 </style>
 </head>
 <body>
@@ -421,21 +430,32 @@
     return { el: d, body: d.querySelector('.body') }
   }
   const joinParts = (m) => Array.from(m.values()).join('\n')
-  // 工具调用 chip:同一 callID 原地更新(运行中→完成),run_workflow 高亮成"升格"
+  // 工具日志块:同一 callID 原地更新(运行中→完成),展开可见 入参 + 结果。run_workflow 高亮成"升格"。
   const toolEls = new Map()
   const TOOL_LABEL = { run_workflow: '升格 → 动态工作流' }
-  function renderTool(partID, name, status) {
+  const TOOL_ICON = { run_workflow: '🚀', bash: '▶', shell: '▶', read: '📖', write: '✍', edit: '✏', patch: '✏', grep: '🔎', glob: '🔎', list: '📁', ls: '📁', webfetch: '🌐', fetch: '🌐', task: '🤖', todowrite: '☑', todoread: '☑' }
+  const fmtInput = (v) => { if (v == null) return ''; if (typeof v === 'string') return v; try { return JSON.stringify(v, null, 2) } catch { return String(v) } }
+  function renderTool(partID, name, status, data) {
+    data = data || {}
     const isWf = name === 'run_workflow'
     let el = toolEls.get(partID)
     if (!el) {
-      el = document.createElement('div'); el.className = 'toolchip' + (isWf ? ' wf' : '')
+      el = document.createElement('details'); el.className = 'toolbox' + (isWf ? ' wf' : ''); el.open = true
       if (curAnswer && curAnswer.parentNode === feed) feed.insertBefore(el, curAnswer); else feed.appendChild(el)
       toolEls.set(partID, el)
     }
     const done = /complet|success|done|finish|ok/i.test(status), err = /error|fail|deny|reject/i.test(status)
     el.classList.toggle('done', done && !err); el.classList.toggle('err', err)
     const stt = err ? '出错' : done ? '完成' : '运行中…'
-    el.innerHTML = '<span>' + (isWf ? '🚀' : '⚙') + '</span><span class="tn">' + esc(TOOL_LABEL[name] || name) + '</span><span class="ts2">· ' + stt + '</span>'
+    const icon = isWf ? '🚀' : (TOOL_ICON[String(name).toLowerCase()] || '⚙')
+    const inStr = fmtInput(data.input)
+    const outStr = data.error ? String(data.error) : (data.output != null ? String(data.output) : '')
+    el.innerHTML =
+      '<summary><span class="ti">' + icon + '</span><span class="tn">' + esc(TOOL_LABEL[name] || name) + '</span>'
+      + (data.title ? '<span class="tt">' + esc(String(data.title).slice(0, 200)) + '</span>' : '')
+      + '<span class="ts2">· ' + stt + '</span></summary>'
+      + (inStr ? '<div class="tsec"><span class="tsl">入参</span><pre>' + esc(inStr.slice(0, 4000)) + '</pre></div>' : '')
+      + (outStr ? '<div class="tsec' + (data.error ? ' e' : '') + '"><span class="tsl">' + (data.error ? '错误' : '结果') + '</span><pre>' + esc(outStr.slice(0, 20000)) + '</pre></div>' : '')
     feed.scrollTop = feed.scrollHeight
   }
   // 流式渲染按帧合并：高频 token 事件下，一帧内多次事件只跑一次 renderMarkdown + innerHTML，
@@ -456,8 +476,8 @@
     feed.scrollTop = feed.scrollHeight
   }
   function scheduleFlush() { if (!_flushQueued) { _flushQueued = true; requestAnimationFrame(flushStream) } }
-  window.BocomHermes.onStream(({ kind, text, partID, status }) => {
-    if (kind === 'tool') { renderTool(partID || '_', text, status || ''); return }
+  window.BocomHermes.onStream(({ kind, text, partID, status, input, output, title, error }) => {
+    if (kind === 'tool') { renderTool(partID || '_', text, status || '', { input, output, title, error }); return }
     const key = partID || '_'
     if (kind === 'reasoning') {
       if (!curReason && curAnswer && curAnswer.parentNode === feed) curReason = makeReason(curAnswer)

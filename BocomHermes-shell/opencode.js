@@ -376,12 +376,19 @@ function dispatch(ev, onPermission, onText) {
       }
     }
     else if (part && ptype === 'tool') {
-      // 工具调用:放出来给卡片渲染成 chip(看得见 grounding / 升格)。形状各 serve 略异,逐个兜底。
-      const tnm = (typeof part.tool === 'string' && part.tool) || (part.state && typeof part.state.tool === 'string' && part.state.tool) || (typeof part.name === 'string' && part.name) || ''
+      // 工具调用:把 名称/入参/结果/标题/错误 全放出来,卡片渲染成可展开的工具日志块(对齐 opencode TUI)。
+      // 形状各 serve 略异:opencode 原生放 part.state.{input,output,title,error,status};逐个兜底。
+      const st = (part.state && typeof part.state === 'object') ? part.state : {}
+      const tnm = (typeof part.tool === 'string' && part.tool) || (typeof st.tool === 'string' && st.tool) || (typeof part.name === 'string' && part.name) || ''
       const sessionId = p.sessionID ?? p.sessionId ?? part.sessionID ?? part.sessionId
-      const status = (part.state && (part.state.status || part.state.state)) || part.status || ''
+      const status = st.status || st.state || part.status || ''
       const cid = String(part.callID || part.id || part.partID || tnm || '')
-      if (sessionId && tnm) onText({ sessionId, text: tnm, role: 'assistant', partID: cid + ':tool', kind: 'tool', status: String(status || '') })
+      const toolInput = st.input ?? part.input ?? part.args ?? part.arguments ?? part.params ?? null
+      let toolOutput = null
+      for (const c of [st.output, part.output, st.result, part.result, st.metadata && st.metadata.output]) { if (typeof c === 'string' && c) { toolOutput = c; break } }
+      const toolTitle = (typeof st.title === 'string' && st.title) || (typeof part.title === 'string' && part.title) || ''
+      const toolError = (typeof st.error === 'string' && st.error) || (st.error && typeof st.error.message === 'string' && st.error.message) || ''
+      if (sessionId && tnm) onText({ sessionId, text: tnm, role: 'assistant', partID: cid + ':tool', kind: 'tool', status: String(status || ''), toolInput, toolOutput, toolTitle, toolError })
     }
   }
 }
@@ -491,4 +498,5 @@ function killAll() {
   pool.clear(); baseToEntry.clear()
 }
 
-module.exports = { ensureServe, createSession, sendMessage, listModels, abort, replyPermission, sessionExists, getMessages, killAll, setServeBin, onKeepAlive, probeOnce, AUTO_ALLOW }
+module.exports = { ensureServe, createSession, sendMessage, listModels, abort, replyPermission, sessionExists, getMessages, killAll, setServeBin, onKeepAlive, probeOnce, AUTO_ALLOW,
+  __test: { dispatch } }

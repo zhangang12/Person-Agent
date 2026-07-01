@@ -18,6 +18,7 @@
     "req:test": "node scripts/reqanalysis-selftest.mjs",
     "plan:test": "node scripts/reqplan-selftest.mjs",
     "mail:test": "node scripts/mail-parse-selftest.mjs",
+    "tool:test": "node scripts/tool-part-selftest.mjs",
     "modelroute": "node scripts/model-route-probe.mjs",
     "mcp:browser": "node mcp/browser-mcp.mjs",
     "mcp:browser:test": "node mcp/selftest.mjs",
@@ -62,7 +63,8 @@
         { "target": "nsis", "arch": ["x64"] },
         { "target": "portable", "arch": ["x64"] }
       ],
-      "icon": "build/icon.ico"
+      "icon": "build/icon.ico",
+      "sign": null
     },
     "nsis": {
       "oneClick": false,
