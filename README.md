@@ -43,3 +43,6 @@ npm run dist         # 打包出 exe（dist/）
 3. **能力即扩展**：新功能在外层加（技能/触发/集成），引擎不动。
 
 仓库：https://github.com/zhangang12/Person-Agent （私有）
+
+<!-- 测试改动:验证工作分支 → PR → 合并 main 流程(2026-07-02) -->
+
