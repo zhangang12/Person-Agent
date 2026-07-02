@@ -374,7 +374,7 @@ async function runEventLoop(info, handlers, log) {
           // 诊断:每种事件类型首次出现打一次;带 parentID 的会话事件(子agent映射来源)特别标注,便于确认子agent路由是否可行
           { const et = (ev && ev.type) || ''; if (et && !seenEvTypes.has(et)) { seenEvTypes.add(et); log('event type: ' + et) }
             const si2 = ev && ev.properties && ev.properties.info
-            if (si2 && si2.parentID && si2.id && !loggedChildren.has(si2.id)) { loggedChildren.add(si2.id); log('子会话映射 ' + si2.id + ' → parent ' + si2.parentID + ' (' + (si2.title || '') + ')') } }
+            if (si2 && si2.parentID && si2.id && String(si2.id).startsWith('ses_') && String(si2.parentID).startsWith('ses_') && !loggedChildren.has(si2.id)) { loggedChildren.add(si2.id); log('子会话映射 ' + si2.id + ' → parent ' + si2.parentID + ' (' + (si2.title || '') + ')') } }
           // 见到没分类过的会话 → 懒加载会话树建 子→父 映射(保证子agent事件能路由回父卡片)
           { const evp = ev && ev.properties; const evSid = evp && (evp.sessionID || evp.sessionId || (evp.info && (evp.info.sessionID || evp.info.id)))
             if (evSid && !classifiedSessions.has(evSid) && !childToParent.has(evSid)) refreshSessionTree(info.base) }
@@ -387,9 +387,11 @@ async function runEventLoop(info, handlers, log) {
 function dispatch(ev, onPermission, onText) {
   const type = ev?.type ?? ''
   const p = ev.properties ?? ev.data ?? ev
-  // 学习 子会话→父会话 映射:带 parentID 的会话事件(task 子agent 创建的子会话)。据此把子agent事件路由回父卡片。
+  // 学习 子会话→父会话 映射:带 parentID 的【会话】事件(task 子agent 创建的子会话)。据此把子agent事件路由回父卡片。
+  // 只认 ses_ 开头的会话ID —— message.updated 的 info.parentID 是"父消息"(msg_),别当成会话映射(否则污染 childToParent)。
   const sinfo = (p.info && typeof p.info === 'object') ? p.info : null
-  if (sinfo && sinfo.parentID && sinfo.id && sinfo.id !== sinfo.parentID) {
+  if (sinfo && sinfo.parentID && sinfo.id && sinfo.id !== sinfo.parentID
+      && String(sinfo.id).startsWith('ses_') && String(sinfo.parentID).startsWith('ses_')) {
     childToParent.set(sinfo.id, sinfo.parentID)
     if (typeof sinfo.title === 'string' && sinfo.title) childTitle.set(sinfo.id, sinfo.title)
   }
