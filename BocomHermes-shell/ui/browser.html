@@ -353,7 +353,7 @@ body.wsdrag{cursor:col-resize}
       <button class="mitem" id="bnet"><svg viewBox="0 0 24 24"><path d="M3 12h4l2.5 7 5-14 2.5 7H21"/></svg><span>网络请求</span><span class="bdg i" id="nbb"></span></button>
       <div class="msep"></div>
       <button class="mitem" id="brec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/></svg><span id="brecdot" style="display:none">●</span><span id="brectxt">录制</span></button>
-      <button class="mitem" id="brecmgr"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="3" rx="1"/><rect x="3" y="10.5" width="18" height="3" rx="1"/><rect x="3" y="17" width="18" height="3" rx="1"/></svg><span>录制管理</span></button>
+      <button class="mitem" id="brecmgr"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="3" rx="1"/><rect x="3" y="10.5" width="18" height="3" rx="1"/><rect x="3" y="17" width="18" height="3" rx="1"/></svg><span>技能库</span></button>
       <button class="mitem" id="bverify" style="display:none"><svg viewBox="0 0 24 24"><path d="M20.5 15a9 9 0 1 1-2.4-9.2L23 10"/><polyline points="23 4 23 10 17 10"/><polyline points="8.5 12.5 11 15 15.5 10"/></svg><span>验证修复</span></button>
       <div class="msep"></div>
       <button class="mitem" id="bsettings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span>代理 / 启动参数…</span></button>
@@ -816,7 +816,8 @@ $('bnc').addEventListener('click', async () => {
   if (on) showToast('<span class="ok">✓</span> 已开启「禁用缓存」'); else showToast('已关闭「禁用缓存」')
 })
 
-// 录制管理面板:抽屉式,从右滑入,列出所有录制 + 操作
+// 技能库面板:抽屉式,从右滑入。一条录制即一个技能 —— 存了名字+参数的排前面,
+// 原始录制也在列表里,点「⚙ 存为技能」就地晋升。
 async function openRecMgr() {
   const prev = document.getElementById('recmgr'); if (prev) { prev.remove(); return }
   const items = await H.browserRecList()
@@ -824,7 +825,7 @@ async function openRecMgr() {
   panel.style.cssText = 'position:fixed;top:0;right:0;bottom:0;width:480px;z-index:10000;background:rgba(13,15,28,.97);border-left:1px solid var(--accent);display:flex;flex-direction:column;box-shadow:-10px 0 40px rgba(0,0,0,.55);font-family:inherit'
   panel.innerHTML = `
     <div style="padding:12px 14px 9px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line)">
-      <span style="font-weight:700;color:var(--txt);font-size:13.5px">📼 录制管理</span>
+      <span style="font-weight:700;color:var(--txt);font-size:13.5px">🧰 技能库</span>
       <span style="flex:1;color:var(--txt3);font-size:11px">${items.length} 条;⭐ 收藏置顶</span>
       <button id="rm-folder" title="打开录制文件夹" style="background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:6px;padding:3px 9px;cursor:pointer;font-size:11px">系统</button>
       <button id="rm-x" style="background:transparent;border:none;color:var(--txt3);cursor:pointer;font-size:18px;line-height:1">×</button>
@@ -834,25 +835,28 @@ async function openRecMgr() {
   panel.querySelector('#rm-x').addEventListener('click', () => panel.remove())
   panel.querySelector('#rm-folder').addEventListener('click', () => H.browserOpenRecDir())
   const list = panel.querySelector('#rm-list')
-  if (!items.length) { list.innerHTML = '<div style="color:var(--txt3);font-size:12px;padding:20px;text-align:center">还没有录制 — 在浏览器里点 ● 开始录制吧</div>'; return }
+  if (!items.length) { list.innerHTML = '<div style="color:var(--txt3);font-size:12px;padding:20px;text-align:center">还没有技能 — 点 ● 录制,把操作跑一遍,停止后保存为技能</div>'; return }
   const fmtMs = (ms) => ms < 60000 ? Math.round(ms / 1000) + 's' : Math.round(ms / 60000) + 'min'
   const fmtTime = (ts) => { const d = new Date(ts); return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }
   const esc2 = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   for (const it of items) {
     const row = document.createElement('div')
-    row.style.cssText = 'background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:9px;padding:9px 11px;margin-bottom:8px;display:flex;flex-direction:column;gap:5px'
+    row.style.cssText = 'background:rgba(255,255,255,.03);border:1px solid ' + (it.skill ? 'rgba(74,168,255,.35)' : 'var(--line)') + ';border-radius:9px;padding:9px 11px;margin-bottom:8px;display:flex;flex-direction:column;gap:5px'
     row.innerHTML = `
       <div style="display:flex;align-items:center;gap:6px">
         <button data-act="star" style="background:transparent;border:none;color:${it.starred ? '#ffd55a' : 'var(--txt3)'};cursor:pointer;font-size:14px;padding:0">${it.starred ? '⭐' : '☆'}</button>
         <input data-act="title" value="${esc2(it.title || it.id)}" style="flex:1;background:transparent;border:none;outline:none;color:var(--txt);font-size:12.5px;font-weight:600;font-family:inherit;padding:1px 0" />
+        ${it.skill ? `<span style="color:var(--accent);font-size:10px;border:1px solid rgba(74,168,255,.4);border-radius:5px;padding:1px 6px;white-space:nowrap">⚡ 技能${it.paramCount ? ' · 参数×' + it.paramCount : ''}</span>` : ''}
         <span style="color:var(--txt3);font-size:10.5px;font-family:ui-monospace,Consolas,monospace">${fmtTime(it.mtime)}</span>
       </div>
       <div style="color:var(--txt3);font-size:10.5px;font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc2(it.startUrl) || '(无 URL)'}</div>
-      ${it.expectation ? `<div style="color:var(--txt2);font-size:11px;background:rgba(74,168,255,.07);border-left:2px solid var(--accent);padding:4px 8px;border-radius:0 6px 6px 0">📝 ${esc2(it.expectation)}</div>` : ''}
+      ${it.description ? `<div style="color:var(--txt2);font-size:11px">${esc2(it.description)}</div>` : ''}
+      ${it.expectation && it.expectation !== it.description ? `<div style="color:var(--txt2);font-size:11px;background:rgba(74,168,255,.07);border-left:2px solid var(--accent);padding:4px 8px;border-radius:0 6px 6px 0">📝 ${esc2(it.expectation)}</div>` : ''}
       <div style="display:flex;align-items:center;gap:7px">
         <span style="color:var(--txt3);font-size:10.5px">${it.eventCount} 步 · ${fmtMs(it.durationMs)}</span>
         <span style="flex:1"></span>
-        <button data-act="replay" style="background:rgba(26,168,110,.15);border:1px solid #1aa86e;color:#5dcf95;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px">▶ 回放</button>
+        ${!it.skill ? `<button data-act="mkskill" style="background:transparent;border:1px solid rgba(74,168,255,.4);color:var(--accent);border-radius:6px;padding:3px 9px;cursor:pointer;font-size:11px">⚙ 存为技能</button>` : ''}
+        <button data-act="replay" style="background:rgba(26,168,110,.15);border:1px solid #1aa86e;color:#5dcf95;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px">▶ 运行</button>
         <button data-act="del" style="background:transparent;border:1px solid var(--line);color:var(--txt3);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">删除</button>
       </div>`
     list.appendChild(row)
@@ -866,18 +870,67 @@ async function openRecMgr() {
     row.querySelector('[data-act="title"]').addEventListener('blur', async (e) => {
       const nv = e.target.value.trim(); if (nv && nv !== (it.title || it.id)) { await H.browserRecUpdate(it.id, { title: nv }); it.title = nv; showToast('<span class="ok">✓</span> 已重命名') }
     })
-    // 回放
-    row.querySelector('[data-act="replay"]').addEventListener('click', async () => {
+    // 存为技能(原始录制就地晋升:取整条录制 → 弹保存卡)
+    const mk = row.querySelector('[data-act="mkskill"]')
+    if (mk) mk.addEventListener('click', async () => {
+      const rec = await H.browserRecGet(it.id)
+      if (!rec) { showToast('<span class="err">⚠</span> 读取录制失败'); return }
       panel.remove()
-      showToast('<span class="ok">▶</span> 回放中…')
-      try { const r = await H.browserRecReplayStored(it.id); showToast(r && r.ok ? '<span class="ok">✓</span> 回放完成,共 ' + r.stepReport.length + ' 步' : '<span class="err">⚠</span> 回放失败') } catch (e) { showToast('<span class="err">⚠</span> ' + e.message) }
+      saveAsSkill(rec)
+    })
+    // 运行:有参数先弹填参 popover,值按 stepIndex 注入后回放
+    row.querySelector('[data-act="replay"]').addEventListener('click', async () => {
+      let values = null
+      if (it.paramCount > 0) {
+        const rec = await H.browserRecGet(it.id)
+        values = rec && rec.params ? await askParams(it.title || it.id, rec.params) : null
+        if (values === undefined) return   // 用户取消
+      }
+      panel.remove()
+      showToast('<span class="ok">▶</span> 运行中…')
+      try { const r = await H.browserRecReplayStored(it.id, values || undefined); showToast(r && r.ok ? '<span class="ok">✓</span> 运行完成,共 ' + r.stepReport.length + ' 步' + (r.stepReport.some((s) => !s.ok) ? '(有失败步,见控制台)' : '') : '<span class="err">⚠</span> 运行失败: ' + ((r && r.error) || '')) } catch (e) { showToast('<span class="err">⚠</span> ' + e.message) }
     })
     // 删除
     row.querySelector('[data-act="del"]').addEventListener('click', async () => {
-      if (!confirm('删除录制 "' + (it.title || it.id) + '"?')) return
+      if (!confirm('删除 "' + (it.title || it.id) + '"?')) return
       if (await H.browserRecDelete(it.id)) { row.remove(); showToast('已删除') }
     })
   }
+}
+
+// 运行前填参数:一个极简 popover,每个参数一行(预填录制时默认值)。
+// resolve(值对象) = 运行;resolve(undefined) = 取消。
+function askParams(name, params) {
+  return new Promise((resolve) => {
+    const prev = document.getElementById('sk-params'); if (prev) prev.remove()
+    const esc2 = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+    const ov = document.createElement('div'); ov.id = 'sk-params'
+    ov.style.cssText = 'position:fixed;top:48px;left:50%;transform:translateX(-50%);z-index:10001;background:rgba(15,17,32,.97);border:1px solid var(--accent);border-radius:11px;padding:13px 15px;box-shadow:0 10px 40px rgba(0,0,0,.45);min-width:400px;max-width:520px;color:var(--txt);font-size:13px'
+    ov.innerHTML = `
+      <div style="font-weight:600;margin-bottom:9px">▶ 运行「${esc2(name)}」— 填参数</div>
+      ${params.map((p, i) => `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+          <span style="width:110px;color:var(--txt2);font-size:12px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc2(p.label || p.key)}</span>
+          <input data-pk="${esc2(p.key)}" value="${esc2(p.default != null ? p.default : '')}" style="flex:1;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:7px;padding:6px 9px;color:var(--txt);font-size:12.5px;font-family:inherit;outline:none" ${i === 0 ? 'autofocus' : ''} />
+        </div>`).join('')}
+      <div style="display:flex;gap:7px;justify-content:flex-end;margin-top:10px">
+        <button id="skp-cancel" style="background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:7px;padding:5px 12px;cursor:pointer;font-size:12px">取消</button>
+        <button id="skp-run" style="background:var(--accent);border:none;color:#fff;border-radius:7px;padding:5px 14px;cursor:pointer;font-size:12px;font-weight:600">▶ 运行</button>
+      </div>`
+    document.body.appendChild(ov)
+    const first = ov.querySelector('input'); if (first) first.focus()
+    const done = (v) => { ov.remove(); resolve(v) }
+    ov.querySelector('#skp-cancel').addEventListener('click', () => done(undefined))
+    ov.querySelector('#skp-run').addEventListener('click', () => {
+      const values = {}
+      ov.querySelectorAll('input[data-pk]').forEach((inp) => { values[inp.dataset.pk] = inp.value })
+      done(values)
+    })
+    ov.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') ov.querySelector('#skp-run').click()
+      else if (e.key === 'Escape') done(undefined)
+    })
+  })
 }
 $('brecmgr').addEventListener('click', openRecMgr)
 
@@ -893,8 +946,8 @@ $('brec').addEventListener('click', async () => {
     const r = await H.browserRecStop()
     $('brec').classList.remove('on'); $('brectxt').textContent = '录制'
     const n = (r && r.events && r.events.length) || 0
-    showToast('<span class="ok">✓</span> 已停止 · 共 ' + n + ' 个动作 · 复现包就绪')
-    if (r && r.ok && r.id) askExpectation(r.id)   // 弹"一句话期望"输入,让 agent 知道用户想要什么
+    showToast('<span class="ok">✓</span> 已停止 · 共 ' + n + ' 个动作')
+    if (r && r.ok && r.id) saveAsSkill(r)   // 弹"保存为技能"卡:命名 + 说明 + 勾选参数,录一次终身复用
   }
 })
 
@@ -941,30 +994,55 @@ H.onBrowserVerifyResult && H.onBrowserVerifyResult(({ kind, verdict, summary, fu
   c.addEventListener('mouseenter', () => c.style.opacity = '1')
 })
 
-// 录制结束 → 让用户一句话说清"应该发生什么"。这是 agent 修对方向的关键信号。
-function askExpectation(recId) {
-  if (document.getElementById('exp-overlay')) return
-  const ov = document.createElement('div'); ov.id = 'exp-overlay'
-  ov.style.cssText = 'position:fixed;top:48px;left:50%;transform:translateX(-50%);z-index:9999;background:rgba(15,17,32,.96);border:1px solid var(--accent);border-radius:11px;padding:13px 15px;box-shadow:0 10px 40px rgba(0,0,0,.45);min-width:460px;max-width:560px;color:var(--txt);font-size:13px;line-height:1.55'
+// 录制结束/晋升入口 → "保存为技能"卡:起名 + 一句话说明 + 勾选哪些输入框每次可改(参数化)。
+// 保存后这条录制就是一个可复用技能:技能库一键运行,或对 Agent 说"用XX技能跑一下"。
+// 说明同时写进 expectation(给 agent 修复验证当成功判据)——一个输入两用,不给用户加负担。
+function saveAsSkill(rec) {
+  if (document.getElementById('sk-save')) return
+  const esc2 = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  // 录制里的输入步 = 参数候选(带原始下标 stepIndex,回放时按它注入)
+  const inputSteps = (rec.events || []).map((ev, i) => ({ ev, i })).filter((x) => x.ev.act === 'input')
+  const ov = document.createElement('div'); ov.id = 'sk-save'
+  ov.style.cssText = 'position:fixed;top:48px;left:50%;transform:translateX(-50%);z-index:9999;background:rgba(15,17,32,.97);border:1px solid var(--accent);border-radius:11px;padding:13px 15px;box-shadow:0 10px 40px rgba(0,0,0,.45);min-width:480px;max-width:580px;color:var(--txt);font-size:13px;line-height:1.55'
   ov.innerHTML = `
-    <div style="font-weight:600;margin-bottom:7px">📝 一句话说清"应该发生什么"</div>
-    <div style="font-size:11.5px;color:var(--txt2);margin-bottom:9px">告诉 Agent 你期望的正确结果 — 它会优先围绕这个目标修。可跳过,但有期望修复正确率高很多。</div>
-    <textarea id="exp-input" rows="2" placeholder="例:点提交后应跳到结果页;额度计算应返回有效值;.error-banner 不应出现…" style="width:100%;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--txt);font-size:12.5px;font-family:inherit;outline:none;resize:vertical"></textarea>
+    <div style="font-weight:600;margin-bottom:7px">⚡ 保存为技能 — 录一次,之后一键复用</div>
+    <input id="sk-name" value="${esc2(rec.title || '')}" placeholder="技能名(例:导出月度报表 / 查客户额度)" style="width:100%;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--txt);font-size:12.5px;font-family:inherit;outline:none;margin-bottom:7px" />
+    <textarea id="sk-desc" rows="2" placeholder="一句话:这条技能做什么 / 应该发生什么(例:点提交后应跳到结果页)" style="width:100%;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--txt);font-size:12.5px;font-family:inherit;outline:none;resize:vertical">${esc2(rec.description || rec.expectation || '')}</textarea>
+    ${inputSteps.length ? `
+      <div style="font-size:11.5px;color:var(--txt2);margin:8px 0 5px">录到 ${inputSteps.length} 个输入 — 勾选"每次运行时要改的"设为参数:</div>
+      <div id="sk-plist" style="max-height:180px;overflow:auto">
+        ${inputSteps.map((x) => `
+          <div style="display:flex;align-items:center;gap:7px;margin-bottom:5px">
+            <input type="checkbox" data-step="${x.i}" style="cursor:pointer" />
+            <input data-label="${x.i}" placeholder="参数名(例:客户号)" style="width:130px;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:6px;padding:4px 7px;color:var(--txt);font-size:11.5px;font-family:inherit;outline:none" />
+            <span style="flex:1;color:var(--txt3);font-size:11px;font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc2(x.ev.sel)}">录制值: ${esc2(x.ev.value || '(空)')}</span>
+          </div>`).join('')}
+      </div>` : ''}
     <div style="display:flex;gap:7px;justify-content:flex-end;margin-top:9px">
-      <button id="exp-skip" style="background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:7px;padding:5px 12px;cursor:pointer;font-size:12px">跳过</button>
-      <button id="exp-save" style="background:var(--accent);border:none;color:#fff;border-radius:7px;padding:5px 13px;cursor:pointer;font-size:12px;font-weight:600">保存</button>
+      <button id="sk-skip" style="background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:7px;padding:5px 12px;cursor:pointer;font-size:12px">仅存录制</button>
+      <button id="sk-save-btn" style="background:var(--accent);border:none;color:#fff;border-radius:7px;padding:5px 13px;cursor:pointer;font-size:12px;font-weight:600">⚡ 保存技能</button>
     </div>`
   document.body.appendChild(ov)
-  const input = ov.querySelector('#exp-input'); input.focus()
+  const nameInput = ov.querySelector('#sk-name'); nameInput.focus()
   const close = () => ov.remove()
-  ov.querySelector('#exp-skip').addEventListener('click', close)
-  ov.querySelector('#exp-save').addEventListener('click', async () => {
-    const txt = input.value.trim()
-    if (txt) { try { await H.browserRecSetExpectation(recId, txt) } catch {} ; showToast('<span class="ok">✓</span> 已记录期望') }
+  ov.querySelector('#sk-skip').addEventListener('click', close)
+  ov.querySelector('#sk-save-btn').addEventListener('click', async () => {
+    const name = nameInput.value.trim()
+    if (!name) { nameInput.style.borderColor = '#e2424a'; nameInput.focus(); return }
+    const desc = ov.querySelector('#sk-desc').value.trim()
+    // 勾选的输入步 → params:{key,label,stepIndex,default};key 用 p1/p2… 稳定短名
+    const params = []
+    ov.querySelectorAll('input[type="checkbox"][data-step]:checked').forEach((cb) => {
+      const i = +cb.dataset.step
+      const label = (ov.querySelector(`input[data-label="${i}"]`).value || '').trim() || ('参数' + (params.length + 1))
+      params.push({ key: 'p' + (params.length + 1), label, stepIndex: i, default: (rec.events[i] && rec.events[i].value) || '' })
+    })
+    const okSave = await H.browserRecUpdate(rec.id, { title: name, description: desc, expectation: desc, skill: true, params })
+    showToast(okSave ? '<span class="ok">⚡</span> 技能「' + name + '」已保存 — 技能库可一键运行,也可以让 Agent 按名字调用' : '<span class="err">⚠</span> 保存失败')
     close()
   })
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) ov.querySelector('#exp-save').click()
+  ov.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) ov.querySelector('#sk-save-btn').click()
     else if (e.key === 'Escape') close()
   })
 }

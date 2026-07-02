@@ -299,6 +299,13 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
             try { const id = spawnWorkflow(goal); return reply({ ok: true, id }) }
             catch (e) { return reply({ error: e.message }) }
           }
+          // ── 浏览器技能(SKILL):录制一次 → 存成命名技能 → agent 按名字带参回放 ──
+          // 执行统一走 GUI 主进程的强回放引擎(selAlt fallback + 登录态恢复 + 红框可视化),
+          // browser-mcp 只是发现+调度面 —— 不在它自己的 headless 浏览器里重造弱引擎。
+          if (req.url === '/skill/list') return reply({ ok: true, skills: skillList() })
+          if (req.url === '/skill/run') {
+            try { return reply(await skillRun(a)) } catch (e) { return reply({ error: e.message }) }
+          }
           return reply({ error: 'unknown ' + req.url })
         } catch (e) { reply({ error: e.message }) }
       })
@@ -3089,9 +3096,67 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     }
     return { ok: true, dryRun, result }
   })
+  // ── 浏览器技能(SKILL):一条录制即一个技能 ─────────────────────────────────
+  // 不新建第二套子系统:录制 JSON 就地扩展 skill/description/params 三个字段。
+  // params[].stepIndex 指向 events 里某个 input 步;回放前把运行时值写进【深拷贝】的
+  // events[i].value,再喂给完全没动过的 replayRec —— 引擎零改动,参数化在门口完成。
+  function applyParams(rec, values) {
+    if (!Array.isArray(rec.params) || !rec.params.length) return rec
+    const clone = JSON.parse(JSON.stringify(rec))
+    for (const p of clone.params) {
+      const ev = clone.events[p.stepIndex]
+      if (!ev || ev.act !== 'input') continue   // 只允许参数落在输入步,拒绝替 selector(防注入)
+      const v = values && values[p.key] != null ? values[p.key] : p.default
+      ev.value = String(v == null ? '' : v).slice(0, 200)
+    }
+    return clone
+  }
+  function recDir() { return path.join(app.getPath('userData'), 'recordings') }
+  function readRec(id) { return JSON.parse(fs.readFileSync(path.join(recDir(), String(id).replace(/[^\w.-]/g, '') + '.json'), 'utf8')) }
+  // 技能清单 = recordings 里标了 skill:true 的那些(name 复用 title)
+  function skillList() {
+    let files = []; try { files = fs.readdirSync(recDir()).filter((f) => f.endsWith('.json')) } catch { return [] }
+    const out = []
+    for (const f of files) {
+      try {
+        const j = JSON.parse(fs.readFileSync(path.join(recDir(), f), 'utf8'))
+        if (!j.skill) continue
+        out.push({ id: j.id || f.replace(/\.json$/, ''), name: j.title || j.id, description: j.description || '', startUrl: j.startUrl || '',
+          steps: (j.events || []).length,
+          params: (j.params || []).map((p) => ({ key: p.key, label: p.label || p.key, default: p.default != null ? p.default : '' })) })
+      } catch {}
+    }
+    return out
+  }
+  // 按名字跑技能(relay /skill/run 与 agent 共用):浏览器没开就自动拉起,回完给文字结论
+  async function skillRun(a) {
+    const want = String((a && (a.name || a.id)) || '').trim()
+    if (!want) return { error: '缺少 name(技能名)' }
+    const all = skillList()
+    const hit = all.find((s) => s.name === want || s.id === want) || all.find((s) => s.name.includes(want))
+    if (!hit) return { error: '没有叫「' + want + '」的技能。现有: ' + (all.map((s) => s.name).join('、') || '(空 — 让用户在内嵌浏览器录一条并保存为技能)') }
+    let rec; try { rec = readRec(hit.id) } catch (e) { return { error: '读取技能失败: ' + e.message } }
+    if (!brActive()) {   // 窗口没开 → 自动拉起并等首个标签就绪(chrome 加载完才建 tab)
+      createBrowser(rec.startUrl)
+      for (let i = 0; i < 100 && !brActive(); i++) await sleep(150)
+      if (!brActive()) return { error: '内嵌浏览器未能就绪(15s 超时)' }
+      await sleep(1200)   // 让首页先加载;回放的首个 navigate 步会再校准 URL
+    }
+    S.browser.lastRec = rec
+    const replay = await replayRec(applyParams(rec, (a && a.params) || {}))
+    if (!replay.ok) return { error: replay.error || '回放失败' }
+    const fails = replay.stepReport.filter((s) => !s.ok)
+    const ok = fails.length === 0
+    const lines = ['技能「' + hit.name + '」回放 ' + replay.stepReport.length + '/' + replay.totalSteps + ' 步 · ' + (ok ? '✅ 全部成功' : '❌ ' + fails.length + ' 步失败')]
+    for (const f of fails.slice(0, 8)) lines.push('  · 步 ' + f.i + ' ' + f.act + ' "' + String(f.sel).slice(0, 60) + '" — ' + f.err)
+    if (replay.after.errs.length) lines.push('回放后控制台报错 ' + replay.after.errs.length + ' 条: ' + replay.after.errs.slice(0, 3).map((x) => x.msg).join(' | '))
+    if (replay.after.bad.length) lines.push('网络/业务异常 ' + replay.after.bad.length + ' 条: ' + replay.after.bad.slice(0, 3).map((b) => (b.biz ? '200·' + b.biz : (b.status || b.state)) + ' ' + b.url).join(' | '))
+    lines.push('结束页面: ' + (replay.after.url || '?'))
+    return { ok, pass: ok, report: lines.join('\n'), stepReport: replay.stepReport }
+  }
   // 录制管理面板:list / star / rename / delete / replay-stored
   ipcMain.handle('browser-rec-list', () => {
-    const dir = path.join(app.getPath('userData'), 'recordings')
+    const dir = recDir()
     try { fs.mkdirSync(dir, { recursive: true }) } catch {}
     let files = []; try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')) } catch { return [] }
     const items = []
@@ -3102,6 +3167,9 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
           id: j.id || f.replace(/\.json$/, ''),
           title: j.title || '',
           starred: !!j.starred,
+          skill: !!j.skill,
+          description: j.description || '',
+          paramCount: (j.params || []).length,
           startUrl: j.startUrl || '',
           expectation: j.expectation || '',
           eventCount: (j.events || []).length,
@@ -3112,26 +3180,30 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     }
     return items.sort((a, b) => (b.starred ? 1 : 0) - (a.starred ? 1 : 0) || b.mtime - a.mtime)
   })
+  // 取整条录制(技能编辑器要列 input 步做参数勾选)
+  ipcMain.handle('browser-rec-get', (_e, id) => { try { return readRec(id) } catch { return null } })
   ipcMain.handle('browser-rec-update', (_e, { id, patch }) => {
     if (!id || !patch || typeof patch !== 'object') return false
-    const fp = path.join(app.getPath('userData'), 'recordings', id + '.json')
+    const fp = path.join(recDir(), id + '.json')
     try {
       const j = JSON.parse(fs.readFileSync(fp, 'utf8'))
-      const allowed = ['title', 'starred', 'expectation']
+      const allowed = ['title', 'starred', 'expectation', 'description', 'params', 'skill']   // events 不进白名单,保持只读
       for (const k of allowed) if (k in patch) j[k] = patch[k]
       fs.writeFileSync(fp, JSON.stringify(j, null, 2))
       return true
     } catch (e) { log('rec update err: ' + e.message); return false }
   })
   ipcMain.handle('browser-rec-delete', (_e, id) => {
-    const fp = path.join(app.getPath('userData'), 'recordings', id + '.json')
+    const fp = path.join(recDir(), id + '.json')
     try { fs.unlinkSync(fp); log('rec deleted: ' + id); return true } catch (e) { log('rec del err: ' + e.message); return false }
   })
-  ipcMain.handle('browser-rec-replay-stored', async (_e, id) => {
-    const fp = path.join(app.getPath('userData'), 'recordings', id + '.json')
-    let rec; try { rec = JSON.parse(fs.readFileSync(fp, 'utf8')) } catch (e) { return { ok: false, error: '读取失败: ' + e.message } }
+  // 入参兼容两种形态:'rec_xx'(旧)或 { id, params }(带运行时参数)
+  ipcMain.handle('browser-rec-replay-stored', async (_e, arg) => {
+    const id = arg && typeof arg === 'object' ? arg.id : arg
+    const values = (arg && typeof arg === 'object' && arg.params) || null
+    let rec; try { rec = readRec(id) } catch (e) { return { ok: false, error: '读取失败: ' + e.message } }
     S.browser.lastRec = rec   // 让 verify 用这条
-    const replay = await replayRec(rec)
+    const replay = await replayRec(values ? applyParams(rec, values) : rec)
     return replay
   })
   ipcMain.on('browser-open-rec-dir', () => {

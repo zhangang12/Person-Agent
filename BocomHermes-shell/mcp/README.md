@@ -38,6 +38,8 @@ npm run mcp:config
 **浏览器（BocomHermes-browser）** — 需 Node 22+ 与本机 Edge/Chrome
 | 工具 | 作用 |
 |---|---|
+| `skill_list {}` | 列出用户录制并保存的浏览器自动化技能(名称/说明/参数) |
+| `skill_run {name,params?}` | 按名字运行技能:relay 回主进程,在**用户可见的内嵌浏览器**里逐步回放(强引擎:selAlt fallback + 登录态恢复 + 红框可视化),返回每步结果与成败结论 |
 | `browser_navigate {url}` | 打开网址，返回标题与最终 URL |
 | `browser_get_text {}` | 当前页可见正文(innerText) |
 | `browser_get_html {selector?}` | 整页或某选择器的 HTML |
@@ -57,6 +59,16 @@ npm run mcp:config
 
 > 用法：`httpcap_start` 后，把被测程序/浏览器的 **HTTP 代理**指向返回的地址
 > （如 Java：`-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=<端口>`），即可捕获其 HTTP 调用。
+
+## 技能(Record & Replay → SKILL)
+「录一次 → 生成技能 → 复用自动化」的完整链路:
+1. 用户在**内嵌浏览器**工具条点「● 录制」,把操作(点/填/回车/跳转)跑一遍,点「停止」;
+2. 自动弹「⚡ 保存为技能」卡:起名 + 一句话说明 + 勾选哪些输入框是**每次运行可改的参数**;
+3. 之后两条复用通路,同一套回放内核:
+   - **用户**:工具条「技能库」→ ▶ 运行(带参先弹填参框),红框逐步回放;
+   - **Agent**:`skill_list` 发现 → `skill_run {name, params}` 按名字带参运行。
+存储即 `userData/recordings/<id>.json` 就地扩展 `skill/description/params` 三字段,无第二套子系统。
+`skill_run` 经 `mail-relay.json` 本地中继(127.0.0.1 + token)调 GUI 主进程,数据不出网。
 
 ## 自测 / 调试
 ```

@@ -94,8 +94,45 @@ async function navigate(url) {
   return { title, url: href }
 }
 
+// ---------- 技能(录制回放)——经本地中继调 GUI 主进程的强回放引擎 ----------
+// 用户在内嵌浏览器里"录制一次→保存为技能",agent 在这里按名字复用。
+// 执行不在本文件的 headless 浏览器里(那套是裸 querySelector 弱引擎),而是 relay 回
+// GUI 主进程跑 replayRec(selAlt fallback + 登录态恢复 + 红框可视化,用户看得见)。
+import http from 'node:http'
+function userData() {
+  const env = process.env.BOCOMHERMES_USERDATA
+  if (env) return env
+  const home = os.homedir()
+  if (process.platform === 'win32') return path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'BocomHermes-shell')
+  if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'BocomHermes-shell')
+  return path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'BocomHermes-shell')
+}
+function relayCfg() { try { return JSON.parse(fs.readFileSync(path.join(userData(), 'mail-relay.json'), 'utf8')) } catch { return null } }
+function relayPost(urlPath, body) {
+  return new Promise((resolve, reject) => {
+    const cfg = relayCfg(); if (!cfg) return reject(new Error('找不到 mail-relay.json — 桌面智能体没在跑,先启动它'))
+    const data = JSON.stringify(body || {})
+    const req = http.request({ hostname: '127.0.0.1', port: cfg.port, path: urlPath, method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data), 'x-bocom-tok': cfg.token } }, (res) => {
+      let buf = ''; res.setEncoding('utf8'); res.on('data', (c) => buf += c)
+      res.on('end', () => { try { const j = JSON.parse(buf || '{}'); j.error ? reject(new Error(j.error)) : resolve(j) } catch (e) { reject(new Error('relay 响应非 JSON: ' + buf.slice(0, 200))) } })
+    })
+    req.on('error', (e) => reject(new Error('relay 连不上(' + cfg.port + '): ' + e.message)))
+    req.write(data); req.end()
+  })
+}
+
 // ---------- 工具表 ----------
 const TOOLS = [
+  {
+    name: 'skill_list',
+    description: '列出用户录制并保存的浏览器自动化技能(名称/说明/参数)。用户提到"用XX技能/按我录的流程跑一遍"或你想复用一条已录好的页面操作时,先调这个看有哪些。',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'skill_run',
+    description: '按名字运行一条已保存的浏览器技能:在用户可见的内嵌浏览器里逐步自动回放(窗口没开会自动打开),跑完返回每步结果与成败结论。params 按 skill_list 给的参数键传值,不传就用录制时的默认值。',
+    inputSchema: { type: 'object', properties: { name: { type: 'string', description: '技能名(skill_list 返回的 name)' }, params: { type: 'object', description: '运行时参数,如 {"p1":"6222..."}' } }, required: ['name'] },
+  },
   { name: 'browser_navigate', description: '打开一个网址（在内置无头浏览器里），返回页面标题与最终URL', inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } },
   { name: 'browser_get_text', description: '获取当前页面可见正文文本(innerText)', inputSchema: { type: 'object', properties: {} } },
   { name: 'browser_get_html', description: '获取当前页面或某选择器的 HTML', inputSchema: { type: 'object', properties: { selector: { type: 'string', description: 'CSS 选择器，可空=整页' } } } },
@@ -108,6 +145,17 @@ const TOOLS = [
 
 async function callTool(name, args) {
   args = args || {}
+  if (name === 'skill_list') {
+    const r = await relayPost('/skill/list', {})
+    const list = r.skills || []
+    if (!list.length) return '还没有已保存的技能。让用户在内嵌浏览器工具条点「● 录制」把操作跑一遍,停止后「保存为技能」即可复用。'
+    return list.map((s) => `· ${s.name} — ${s.description || '(无说明)'} · ${s.steps} 步 · 起始 ${s.startUrl}` +
+      (s.params.length ? '\n  参数: ' + s.params.map((p) => `${p.key}=${p.label}(默认 ${p.default === '' ? '空' : p.default})`).join(', ') : '')).join('\n')
+  }
+  if (name === 'skill_run') {
+    const r = await relayPost('/skill/run', { name: String(args.name || ''), params: args.params || {} })
+    return r.report || JSON.stringify(r)
+  }
   if (name === 'browser_navigate') { const r = await navigate(String(args.url || '')); return `已打开：${r.title}\n${r.url}` }
   if (name === 'browser_get_text') { return String(await evalJs('document.body ? document.body.innerText : document.documentElement.innerText') || '').slice(0, 20000) }
   if (name === 'browser_get_html') { const sel = args.selector ? JSON.stringify(args.selector) : null; const expr = sel ? `(document.querySelector(${sel})||{}).outerHTML||''` : 'document.documentElement.outerHTML'; return String(await evalJs(expr) || '').slice(0, 40000) }
