@@ -44,19 +44,19 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
     S.pendingPerm.set(requestId, sessionId)
     si.wc.send('permission-request', { requestId, tool, detail: detail || '' })   // detail=要改的文件/要跑的命令，便于知情审批
   }
-  function onText({ sessionId, text, role, partID, kind, status, delta, toolInput, toolOutput, toolTitle, toolError, subagent, agentName }) {
+  function onText({ sessionId, text, role, partID, kind, status, delta, toolInput, toolOutput, toolTitle, toolError, subagent, agentId, agentName, taskChild, taskDesc }) {
     const si = S.sessionInfo.get(sessionId); if (!si || !si.wc || si.wc.isDestroyed()) return
     if (role && role !== 'assistant') return
     if (subagent && !si._subLogged) { si._subLogged = true; log('子agent活动已路由到父卡片: ' + (agentName || '子agent')) }   // 诊断:确认子会话事件被接住
     // 工具调用不进文本缓冲,连同 入参/结果/标题/错误 一起原样转发给卡片(渲染成可展开工具日志块)。sub=子agent的工具。
-    if (kind === 'tool') { si.wc.send('card-stream', { kind: 'tool', text, partID, status: status || '', input: toolInput, output: toolOutput, title: toolTitle, error: toolError, sub: !!subagent, agentName: agentName || '' }); return }
+    if (kind === 'tool') { si.wc.send('card-stream', { kind: 'tool', text, partID, status: status || '', input: toolInput, output: toolOutput, title: toolTitle, error: toolError, sub: !!subagent, agentId: agentId || '', agentName: agentName || '', taskChild: taskChild || '', taskDesc: taskDesc || '' }); return }
     if (!subagent && !role && kind !== 'reasoning' && text === S.sentPrompt.get(sessionId)) return   // "回显自己prompt"过滤只对父会话
     let buf = S.streamBuf.get(sessionId); if (!buf) { buf = {}; S.streamBuf.set(sessionId, buf) }
     const prev = buf[partID] || ''
     // delta=true（message.part.delta）始终追加；快照按"是否累积前缀"判断累积/增量
     const full = delta ? (prev + text) : (prev && !text.startsWith(prev) ? prev + text : text)
     buf[partID] = full
-    si.wc.send('card-stream', { kind: kind || 'text', text: full, partID, sub: !!subagent, agentName: agentName || '' })
+    si.wc.send('card-stream', { kind: kind || 'text', text: full, partID, sub: !!subagent, agentId: agentId || '', agentName: agentName || '' })
   }
   S.handlers = { onPermission, onText }
 

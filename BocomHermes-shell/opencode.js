@@ -35,6 +35,28 @@ function extractChildSessionId(st) {
   if (typeof st.output === 'string') { const m = st.output.match(/task_id:\s*(ses_[A-Za-z0-9]+)/); if (m) return m[1] }
   return ''
 }
+// 懒加载会话树:见到没见过的 sessionID 就 GET /session 拉全量,给所有带 parentID 的会话建 子→父 映射。
+// 保证子agent路由不依赖 session 事件是否早发(节流 1.5s,只在出现新会话时触发)。
+const classifiedSessions = new Set()   // 已分类(已知是根 or 已建映射)的会话,避免重复刷
+let _lastTreeRefresh = 0, _treeRefreshing = false
+async function refreshSessionTree(base) {
+  if (_treeRefreshing || Date.now() - _lastTreeRefresh < 1500) return
+  _treeRefreshing = true
+  try {
+    const list = await api(base, 'GET', '/session')
+    const arr = Array.isArray(list) ? list : (list && list.data) || []
+    for (const s of arr) {
+      const info = (s && s.info) ? s.info : s
+      if (!info || !info.id) continue
+      classifiedSessions.add(info.id)
+      if (info.parentID && info.id !== info.parentID) {
+        childToParent.set(info.id, info.parentID)
+        if (typeof info.title === 'string' && info.title) childTitle.set(info.id, info.title)
+      }
+    }
+    _lastTreeRefresh = Date.now()
+  } catch {} finally { _treeRefreshing = false }
+}
 
 // 用 Node http 而非 fetch：智能体一轮可能跑几分钟，POST /message 在结束前一直挂着，
 // 而 fetch(undici) 默认 5 分钟 headersTimeout 会把它判超时抛 "fetch failed"。http 无此超时。
@@ -353,6 +375,9 @@ async function runEventLoop(info, handlers, log) {
           { const et = (ev && ev.type) || ''; if (et && !seenEvTypes.has(et)) { seenEvTypes.add(et); log('event type: ' + et) }
             const si2 = ev && ev.properties && ev.properties.info
             if (si2 && si2.parentID && si2.id && !loggedChildren.has(si2.id)) { loggedChildren.add(si2.id); log('子会话映射 ' + si2.id + ' → parent ' + si2.parentID + ' (' + (si2.title || '') + ')') } }
+          // 见到没分类过的会话 → 懒加载会话树建 子→父 映射(保证子agent事件能路由回父卡片)
+          { const evp = ev && ev.properties; const evSid = evp && (evp.sessionID || evp.sessionId || (evp.info && (evp.info.sessionID || evp.info.id)))
+            if (evSid && !classifiedSessions.has(evSid) && !childToParent.has(evSid)) refreshSessionTree(info.base) }
           dispatch(ev, onPermission, onText)
         }
       }
@@ -371,8 +396,8 @@ function dispatch(ev, onPermission, onText) {
   // 原始 sessionId → 根(卡片)会话 + 是否子agent + 子agent名。子会话事件据此重定向到父卡片。
   const route = (sid) => {
     const root = rootSession(sid)
-    return (root && root !== sid) ? { sessionId: root, subagent: true, agentName: childTitle.get(sid) || '子agent' }
-                                  : { sessionId: sid, subagent: false, agentName: '' }
+    return (root && root !== sid) ? { sessionId: root, subagent: true, agentId: sid, agentName: childTitle.get(sid) || '子agent' }
+                                  : { sessionId: sid, subagent: false, agentId: '', agentName: '' }
   }
   if (type.includes('permission') && !type.includes('replied') && !type.includes('response')) {
     const { sessionId } = route(p.sessionID ?? p.sessionId ?? p.session_id)   // 子agent的审批请求也送到父卡片
@@ -403,7 +428,7 @@ function dispatch(ev, onPermission, onText) {
     const r = route(p.sessionID ?? p.sessionId)
     if (delta && partID && r.sessionId) {
       const kind = partKind.get(partID) === 'reasoning' ? 'reasoning' : 'text'
-      onText({ sessionId: r.sessionId, text: delta, role: 'assistant', partID, kind, delta: true, subagent: r.subagent, agentName: r.agentName })
+      onText({ sessionId: r.sessionId, text: delta, role: 'assistant', partID, kind, delta: true, subagent: r.subagent, agentId: r.agentId, agentName: r.agentName })
     }
     return
   }
@@ -424,7 +449,7 @@ function dispatch(ev, onPermission, onText) {
         const role = part.role ?? p.role ?? (p.message && p.message.role)
         const partID = part.id ?? part.partID ?? p.partID
         const kind = ptype === 'text' ? 'text' : 'reasoning'
-        if (r.sessionId) onText({ sessionId: r.sessionId, text, role, partID, kind, subagent: r.subagent, agentName: r.agentName })
+        if (r.sessionId) onText({ sessionId: r.sessionId, text, role, partID, kind, subagent: r.subagent, agentId: r.agentId, agentName: r.agentName })
       }
     }
     else if (part && ptype === 'tool') {
@@ -446,7 +471,8 @@ function dispatch(ev, onPermission, onText) {
         if (childId && childId !== rawSid) { childToParent.set(childId, rawSid); if (toolTitle) childTitle.set(childId, toolTitle) }
       }
       const r = route(rawSid)
-      if (r.sessionId && tnm) onText({ sessionId: r.sessionId, text: tnm, role: 'assistant', partID: cid + ':tool', kind: 'tool', status: String(status || ''), toolInput, toolOutput, toolTitle, toolError, subagent: r.subagent, agentName: r.agentName })
+      const taskChild = (tnm === 'task') ? extractChildSessionId(st) : ''   // 父会话的 task 工具:关联到哪个子会话(收尾时标该子agent组完成)
+      if (r.sessionId && tnm) onText({ sessionId: r.sessionId, text: tnm, role: 'assistant', partID: cid + ':tool', kind: 'tool', status: String(status || ''), toolInput, toolOutput, toolTitle, toolError, subagent: r.subagent, agentId: r.agentId, agentName: r.agentName, taskChild, taskDesc: (toolInput && typeof toolInput === 'object' && (toolInput.description || toolInput.prompt)) ? String(toolInput.description || '').slice(0, 80) : '' })
     }
   }
 }
