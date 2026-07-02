@@ -15,17 +15,25 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
     if (!dir) return ''
     const candidates = ['CLAUDE.md', 'claude.md', 'README.md', 'readme.md', 'README']
     const parts = []
+    const seen = new Set()
     for (const name of candidates) {
       try {
         const p = path.join(dir, name)
+        const key = p.toLowerCase()   // Windows 大小写不敏感:README.md 与 readme.md 命中同一文件 → 去重,别注入两遍
+        if (seen.has(key)) continue
+        seen.add(key)
         if (!fs.existsSync(p)) continue
         const content = fs.readFileSync(p, 'utf8').slice(0, 4000)
         parts.push(`## ${name}\n${content.trim()}`)
         if (parts.join('').length > 5500) break
       } catch {}
     }
-    if (!parts.length) return ''
-    return `<项目背景>\n以下是当前项目的背景信息，请在后续回答中参考：\n\n${parts.join('\n\n---\n\n')}\n</项目背景>\n\n`
+    // 显式锚定工作目录(唯一真相源):外部/global 模式的 serve 常忽略会话级 ?directory=,模型会漂到
+    // 其它项目路径(如桌面同级目录)。用强指令把它钉在当前项目 —— 也会传导到它派生的 task 子agent的探索路径。
+    const anchor = `当前项目工作目录（唯一真相源）：${dir}\n`
+      + `分析、探索、读写代码时一律在此目录内进行;不要访问或分析其它路径下的项目/目录。\n`
+    const body = parts.length ? ('\n以下是本项目的说明文档,供参考:\n\n' + parts.join('\n\n---\n\n')) : ''
+    return `<项目背景>\n${anchor}${body}</项目背景>\n\n`
   }
 
   // ── 事件路由（所有 serve 共用，按 sessionId 路由到对应卡）─────────────────
@@ -36,18 +44,19 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
     S.pendingPerm.set(requestId, sessionId)
     si.wc.send('permission-request', { requestId, tool, detail: detail || '' })   // detail=要改的文件/要跑的命令，便于知情审批
   }
-  function onText({ sessionId, text, role, partID, kind, status, delta, toolInput, toolOutput, toolTitle, toolError }) {
+  function onText({ sessionId, text, role, partID, kind, status, delta, toolInput, toolOutput, toolTitle, toolError, subagent, agentName }) {
     const si = S.sessionInfo.get(sessionId); if (!si || !si.wc || si.wc.isDestroyed()) return
     if (role && role !== 'assistant') return
-    // 工具调用不进文本缓冲,连同 入参/结果/标题/错误 一起原样转发给卡片(渲染成可展开工具日志块)
-    if (kind === 'tool') { si.wc.send('card-stream', { kind: 'tool', text, partID, status: status || '', input: toolInput, output: toolOutput, title: toolTitle, error: toolError }); return }
-    if (!role && kind !== 'reasoning' && text === S.sentPrompt.get(sessionId)) return
+    if (subagent && !si._subLogged) { si._subLogged = true; log('子agent活动已路由到父卡片: ' + (agentName || '子agent')) }   // 诊断:确认子会话事件被接住
+    // 工具调用不进文本缓冲,连同 入参/结果/标题/错误 一起原样转发给卡片(渲染成可展开工具日志块)。sub=子agent的工具。
+    if (kind === 'tool') { si.wc.send('card-stream', { kind: 'tool', text, partID, status: status || '', input: toolInput, output: toolOutput, title: toolTitle, error: toolError, sub: !!subagent, agentName: agentName || '' }); return }
+    if (!subagent && !role && kind !== 'reasoning' && text === S.sentPrompt.get(sessionId)) return   // "回显自己prompt"过滤只对父会话
     let buf = S.streamBuf.get(sessionId); if (!buf) { buf = {}; S.streamBuf.set(sessionId, buf) }
     const prev = buf[partID] || ''
     // delta=true（message.part.delta）始终追加；快照按"是否累积前缀"判断累积/增量
     const full = delta ? (prev + text) : (prev && !text.startsWith(prev) ? prev + text : text)
     buf[partID] = full
-    si.wc.send('card-stream', { kind: kind || 'text', text: full, partID })
+    si.wc.send('card-stream', { kind: kind || 'text', text: full, partID, sub: !!subagent, agentName: agentName || '' })
   }
   S.handlers = { onPermission, onText }
 

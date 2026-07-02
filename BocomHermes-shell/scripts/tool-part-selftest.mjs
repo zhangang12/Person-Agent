@@ -144,5 +144,43 @@ const textPart = (t) => ({ type: 'text', text: t })
   ok('文本只含新答案', r.text === '新答案', r.text)
 })()
 
+// ── 子agent(子会话)事件路由:重定向到父卡片 + 打 subagent 标记 ──────────────────
+;(() => {
+  console.log('用例10:session 事件建映射 → 子会话事件路由到父会话')
+  const { onText, calls } = collect()
+  // 子会话创建事件(带 parentID)→ 建立 子→父 映射
+  dispatch({ type: 'session.updated', properties: { info: { id: 'ses_childA', parentID: 'ses_parentA', title: 'Explore (@explore subagent)' } } }, null, onText)
+  // 子会话的一条 text part → 应被路由到父会话且 subagent=true
+  dispatch({ type: 'message.part.updated', properties: { sessionID: 'ses_childA', part: { id: 'pA', type: 'text', text: '子agent的输出', role: 'assistant' } } }, null, onText)
+  const t = calls.find((c) => c.text === '子agent的输出')
+  ok('路由到父会话', t && t.sessionId === 'ses_parentA', t && t.sessionId)
+  ok('标记 subagent=true', t && t.subagent === true, t && t.subagent)
+  ok('带子agent名', t && /subagent/.test(t.agentName || ''), t && t.agentName)
+})()
+
+;(() => {
+  console.log('用例11:无 session 事件时,从 task 工具结果里刨子会话ID兜底建映射')
+  const { onText, calls } = collect()
+  // 父会话里的 task 工具完成,output 开头形如 "task_id: ses_childB ..."
+  dispatch({ type: 'message.part.updated', properties: { sessionID: 'ses_parentB', part: {
+    type: 'tool', tool: 'task', callID: 'cB', state: { status: 'completed', output: 'task_id: ses_childB (for resuming to continue)\n\n<task_result>done</task_result>' } } } }, null, onText)
+  // 该 task 事件本身属于父会话,不该被当子agent
+  const tp = calls.find((c) => c.kind === 'tool' && c.text === 'task')
+  ok('父会话的 task 工具 subagent=false', tp && tp.subagent === false, tp && tp.subagent)
+  // 之后 ses_childB 的事件 → 应路由到父会话
+  dispatch({ type: 'message.part.updated', properties: { sessionID: 'ses_childB', part: { id: 'pB', type: 'tool', tool: 'read', callID: 'rB', state: { status: 'running', input: { filePath: 'x.js' } } } } }, null, onText)
+  const tc = calls.find((c) => c.kind === 'tool' && c.text === 'read')
+  ok('子agent的 read 路由到父会话', tc && tc.sessionId === 'ses_parentB', tc && tc.sessionId)
+  ok('子agent的 read subagent=true', tc && tc.subagent === true, tc && tc.subagent)
+})()
+
+;(() => {
+  console.log('用例12:普通父会话事件不被误判为 subagent')
+  const { onText, calls } = collect()
+  dispatch({ type: 'message.part.updated', properties: { sessionID: 'ses_plain', part: { id: 'pP', type: 'text', text: '正常回答', role: 'assistant' } } }, null, onText)
+  const t = calls.find((c) => c.text === '正常回答')
+  ok('subagent=false', t && t.subagent === false, t && t.subagent)
+})()
+
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

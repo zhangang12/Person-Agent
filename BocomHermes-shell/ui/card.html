@@ -183,6 +183,16 @@
   .toolbox .tsec.e pre { color: var(--diff-del); }
   .toolbox.wf { border-color: var(--accent); background: rgba(74,168,255,.08); }
   .toolbox.wf .tn { color: var(--accent); font-family: inherit; }
+  /* 子agent(task 派生的子会话)活动块:集中显示它的思考/工具/输出,让长任务不再是黑箱 */
+  .subbox { align-self: stretch; max-width: 96%; margin: 3px 0; border: .5px dashed var(--composer-border); border-radius: 10px; background: var(--composer-bg); overflow: hidden; }
+  .subbox > summary { cursor: pointer; padding: 6px 11px; display: flex; align-items: center; gap: 7px; list-style: none; user-select: none; font-size: 12px; font-weight: 600; color: var(--c-think); }
+  .subbox > summary::-webkit-details-marker { display: none; }
+  .subbox .subhint { margin-left: auto; font-weight: 400; color: var(--txt3); font-size: 11px; }
+  .subbox.done .subhint { color: var(--green); }
+  .subbox .subwrap { padding: 4px 8px 8px; display: flex; flex-direction: column; gap: 3px; }
+  .subbox .subtext { font-size: 11px; color: var(--txt2); white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow: auto; font-family: var(--mono); line-height: 1.45; padding: 0 3px; }
+  .subbox .subtext:empty { display: none; }
+  .toolbox.subtool { margin: 2px 0 2px 6px; font-size: 10.5px; }
 </style>
 </head>
 <body>
@@ -435,13 +445,17 @@
   const TOOL_LABEL = { run_workflow: '升格 → 动态工作流' }
   const TOOL_ICON = { run_workflow: '🚀', bash: '▶', shell: '▶', read: '📖', write: '✍', edit: '✏', patch: '✏', grep: '🔎', glob: '🔎', list: '📁', ls: '📁', webfetch: '🌐', fetch: '🌐', task: '🤖', todowrite: '☑', todoread: '☑' }
   const fmtInput = (v) => { if (v == null) return ''; if (typeof v === 'string') return v; try { return JSON.stringify(v, null, 2) } catch { return String(v) } }
-  function renderTool(partID, name, status, data) {
-    data = data || {}
+  function renderTool(partID, name, status, data, opts) {
+    data = data || {}; opts = opts || {}
     const isWf = name === 'run_workflow'
     let el = toolEls.get(partID)
     if (!el) {
-      el = document.createElement('details'); el.className = 'toolbox' + (isWf ? ' wf' : ''); el.open = true
-      if (curAnswer && curAnswer.parentNode === feed) feed.insertBefore(el, curAnswer); else feed.appendChild(el)
+      el = document.createElement('details'); el.className = 'toolbox' + (isWf ? ' wf' : '') + (opts.sub ? ' subtool' : '')
+      el.open = !opts.sub                                   // 子agent的工具默认折叠,免刷屏;父会话工具默认展开
+      const host = opts.container || feed
+      if (opts.container) host.appendChild(el)
+      else if (curAnswer && curAnswer.parentNode === feed) feed.insertBefore(el, curAnswer)
+      else feed.appendChild(el)
       toolEls.set(partID, el)
     }
     const done = /complet|success|done|finish|ok/i.test(status), err = /error|fail|deny|reject/i.test(status)
@@ -476,8 +490,46 @@
     feed.scrollTop = feed.scrollHeight
   }
   function scheduleFlush() { if (!_flushQueued) { _flushQueued = true; requestAnimationFrame(flushStream) } }
-  window.BocomHermes.onStream(({ kind, text, partID, status, input, output, title, error }) => {
-    if (kind === 'tool') { renderTool(partID || '_', text, status || '', { input, output, title, error }); return }
+
+  // ── 子agent(task 派生的子会话)活动块 ──────────────────────────────────────
+  // opencode 用 task 工具起子agent 探索/干活,主进程把子会话事件重定向到本卡并打 sub 标记。
+  // 集中显示子agent的 思考/工具/输出,让长任务过程可见(不再"1 running task"黑箱)。
+  let subBox = null, subParts = null
+  function ensureSubBox(name) {
+    if (subBox && subBox.parentNode === feed) {
+      if (name) { const h = subBox.querySelector('.subname'); if (h && h.textContent !== name) h.textContent = name }
+      return
+    }
+    subBox = document.createElement('details'); subBox.className = 'subbox'; subBox.open = true
+    subBox.innerHTML = '<summary><span>🤖</span><span class="subname">' + esc(name || '子agent') + '</span><span class="subhint">· 探索中…</span></summary>'
+      + '<div class="subwrap"><div class="subtext"></div></div>'
+    subParts = new Map()
+    if (curAnswer && curAnswer.parentNode === feed) feed.insertBefore(subBox, curAnswer); else feed.appendChild(subBox)
+  }
+  function renderSubText() {
+    if (!subBox) return
+    const el = subBox.querySelector('.subtext'); if (el) el.textContent = subParts ? Array.from(subParts.values()).join('\n') : ''
+  }
+  function subDone(status) {
+    if (!subBox) return
+    const done = /complet|success|done|finish|ok/i.test(status), err = /error|fail|deny|reject/i.test(status)
+    if (!done && !err) return
+    subBox.classList.toggle('done', done && !err)
+    const h = subBox.querySelector('.subhint'); if (h) h.textContent = err ? '· 出错' : '· 完成'
+    subBox.open = false                                   // 子agent结束自动收起,腾地方给最终答案
+  }
+
+  window.BocomHermes.onStream(({ kind, text, partID, status, input, output, title, error, sub, agentName }) => {
+    if (sub) {                                            // 子agent活动:全部进子agent块
+      ensureSubBox(agentName)
+      if (kind === 'tool') { renderTool(partID || '_', text, status || '', { input, output, title, error }, { sub: true, container: subBox.querySelector('.subwrap') }); return }
+      subParts.set(partID || '_', text); renderSubText(); feed.scrollTop = feed.scrollHeight; return   // reasoning/text 累积
+    }
+    if (kind === 'tool') {
+      renderTool(partID || '_', text, status || '', { input, output, title, error })
+      if (text === 'task') subDone(status || '')          // 父会话的 task 工具收尾 → 子agent块标完成
+      return
+    }
     const key = partID || '_'
     if (kind === 'reasoning') {
       if (!curReason && curAnswer && curAnswer.parentNode === feed) curReason = makeReason(curAnswer)
@@ -492,7 +544,7 @@
   async function turn(text, target, files) {
     const ai = target || addMsg('', 'ai')
     const PH = target ? '运行中…' : '思考中…'; ai.textContent = PH
-    curAnswer = ai; curReason = null; answerParts = new Map(); reasonParts = new Map(); setBusy(true)
+    curAnswer = ai; curReason = null; answerParts = new Map(); reasonParts = new Map(); subBox = null; subParts = null; setBusy(true)
     let ok = true
     try {
       const reply = await window.BocomHermes.cardSend(text, files)

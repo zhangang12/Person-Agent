@@ -15,7 +15,26 @@ const pool = new Map()      // dirKey -> info { dir, base, port, proc, permStyle
 const baseToEntry = new Map()   // base URL -> info;防止同一 serve 启多个事件流
 let sampleLogged = false
 const seenPartTypes = new Set()   // 每种 part 类型打印一次（确认 reasoning/text 等）
+const seenEvTypes = new Set()     // 每种事件类型打印一次（诊断子agent映射来源等）
+const loggedChildren = new Set()  // 每个子会话映射只打一次日志
 const partKind = new Map()        // partID -> 'reasoning'|'text'：从 message.part.updated 学到，供 message.part.delta 路由
+const childToParent = new Map()   // 子会话ID -> 父会话ID：task 子agent 会创建带 parentID 的子会话,据此把子agent事件路由回父卡片
+const childTitle = new Map()      // 子会话ID -> 标题(如 "Explore codebase (@explore subagent)"),给卡片显示子agent名
+// 顺着 parentID 链找到根(卡片对应的)会话。子agent可嵌套,最多向上走几层。
+function rootSession(sid) {
+  let cur = sid, guard = 0
+  while (childToParent.has(cur) && guard++ < 8) cur = childToParent.get(cur)
+  return cur
+}
+// 从 task 工具的 state 里刨出子会话ID(session事件缺失时兜底建映射)。opencode 结果开头形如 "task_id: ses_XXX"。
+function extractChildSessionId(st) {
+  if (!st || typeof st !== 'object') return ''
+  for (const c of [st.sessionID, st.sessionId, st.metadata && (st.metadata.sessionID || st.metadata.sessionId)]) {
+    if (typeof c === 'string' && c.startsWith('ses_')) return c
+  }
+  if (typeof st.output === 'string') { const m = st.output.match(/task_id:\s*(ses_[A-Za-z0-9]+)/); if (m) return m[1] }
+  return ''
+}
 
 // 用 Node http 而非 fetch：智能体一轮可能跑几分钟，POST /message 在结束前一直挂着，
 // 而 fetch(undici) 默认 5 分钟 headersTimeout 会把它判超时抛 "fetch failed"。http 无此超时。
@@ -330,6 +349,10 @@ async function runEventLoop(info, handlers, log) {
           let ev; try { ev = JSON.parse(data) } catch { continue }
           if (!sampleLogged && /part|message/.test(ev && ev.type || '')) { sampleLogged = true; log('SAMPLE event: ' + JSON.stringify(ev).slice(0, 700)) }
           if ((ev && ev.type || '').includes('part')) { const pt = ev.properties && ev.properties.part && ev.properties.part.type; if (pt && !seenPartTypes.has(pt)) { seenPartTypes.add(pt); log('part type: ' + pt) } }
+          // 诊断:每种事件类型首次出现打一次;带 parentID 的会话事件(子agent映射来源)特别标注,便于确认子agent路由是否可行
+          { const et = (ev && ev.type) || ''; if (et && !seenEvTypes.has(et)) { seenEvTypes.add(et); log('event type: ' + et) }
+            const si2 = ev && ev.properties && ev.properties.info
+            if (si2 && si2.parentID && si2.id && !loggedChildren.has(si2.id)) { loggedChildren.add(si2.id); log('子会话映射 ' + si2.id + ' → parent ' + si2.parentID + ' (' + (si2.title || '') + ')') } }
           dispatch(ev, onPermission, onText)
         }
       }
@@ -339,8 +362,20 @@ async function runEventLoop(info, handlers, log) {
 function dispatch(ev, onPermission, onText) {
   const type = ev?.type ?? ''
   const p = ev.properties ?? ev.data ?? ev
+  // 学习 子会话→父会话 映射:带 parentID 的会话事件(task 子agent 创建的子会话)。据此把子agent事件路由回父卡片。
+  const sinfo = (p.info && typeof p.info === 'object') ? p.info : null
+  if (sinfo && sinfo.parentID && sinfo.id && sinfo.id !== sinfo.parentID) {
+    childToParent.set(sinfo.id, sinfo.parentID)
+    if (typeof sinfo.title === 'string' && sinfo.title) childTitle.set(sinfo.id, sinfo.title)
+  }
+  // 原始 sessionId → 根(卡片)会话 + 是否子agent + 子agent名。子会话事件据此重定向到父卡片。
+  const route = (sid) => {
+    const root = rootSession(sid)
+    return (root && root !== sid) ? { sessionId: root, subagent: true, agentName: childTitle.get(sid) || '子agent' }
+                                  : { sessionId: sid, subagent: false, agentName: '' }
+  }
   if (type.includes('permission') && !type.includes('replied') && !type.includes('response')) {
-    const sessionId = p.sessionID ?? p.sessionId ?? p.session_id
+    const { sessionId } = route(p.sessionID ?? p.sessionId ?? p.session_id)   // 子agent的审批请求也送到父卡片
     const requestId = p.requestID ?? p.id ?? p.permissionID ?? p.permissionId
     // 工具名：bocomcode 放在 permission(字符串)、tool 是对象；公网 opencode 放在 tool(字符串)。两者兼容。
     const tn = (s) => (typeof s === 'string' && s) ? s : null
@@ -365,10 +400,10 @@ function dispatch(ev, onPermission, onText) {
   if (onText && type === 'message.part.delta') {
     const delta = typeof p.delta === 'string' ? p.delta : ''
     const partID = p.partID ?? p.id
-    const sessionId = p.sessionID ?? p.sessionId
-    if (delta && partID && sessionId) {
+    const r = route(p.sessionID ?? p.sessionId)
+    if (delta && partID && r.sessionId) {
       const kind = partKind.get(partID) === 'reasoning' ? 'reasoning' : 'text'
-      onText({ sessionId, text: delta, role: 'assistant', partID, kind, delta: true })
+      onText({ sessionId: r.sessionId, text: delta, role: 'assistant', partID, kind, delta: true, subagent: r.subagent, agentName: r.agentName })
     }
     return
   }
@@ -385,11 +420,11 @@ function dispatch(ev, onPermission, onText) {
         : typeof part.reasoning === 'string' ? part.reasoning
         : typeof part.content === 'string' ? part.content : null
       if (text) {   // 跳过空快照（announce）——别用空串覆盖已累积的 delta
-        const sessionId = p.sessionID ?? p.sessionId ?? part.sessionID ?? part.sessionId
+        const r = route(p.sessionID ?? p.sessionId ?? part.sessionID ?? part.sessionId)
         const role = part.role ?? p.role ?? (p.message && p.message.role)
         const partID = part.id ?? part.partID ?? p.partID
         const kind = ptype === 'text' ? 'text' : 'reasoning'
-        if (sessionId) onText({ sessionId, text, role, partID, kind })
+        if (r.sessionId) onText({ sessionId: r.sessionId, text, role, partID, kind, subagent: r.subagent, agentName: r.agentName })
       }
     }
     else if (part && ptype === 'tool') {
@@ -397,7 +432,7 @@ function dispatch(ev, onPermission, onText) {
       // 形状各 serve 略异:opencode 原生放 part.state.{input,output,title,error,status};逐个兜底。
       const st = (part.state && typeof part.state === 'object') ? part.state : {}
       const tnm = (typeof part.tool === 'string' && part.tool) || (typeof st.tool === 'string' && st.tool) || (typeof part.name === 'string' && part.name) || ''
-      const sessionId = p.sessionID ?? p.sessionId ?? part.sessionID ?? part.sessionId
+      const rawSid = p.sessionID ?? p.sessionId ?? part.sessionID ?? part.sessionId
       const status = st.status || st.state || part.status || ''
       const cid = String(part.callID || part.id || part.partID || tnm || '')
       const toolInput = st.input ?? part.input ?? part.args ?? part.arguments ?? part.params ?? null
@@ -405,7 +440,13 @@ function dispatch(ev, onPermission, onText) {
       for (const c of [st.output, part.output, st.result, part.result, st.metadata && st.metadata.output]) { if (typeof c === 'string' && c) { toolOutput = c; break } }
       const toolTitle = (typeof st.title === 'string' && st.title) || (typeof part.title === 'string' && part.title) || ''
       const toolError = (typeof st.error === 'string' && st.error) || (st.error && typeof st.error.message === 'string' && st.error.message) || ''
-      if (sessionId && tnm) onText({ sessionId, text: tnm, role: 'assistant', partID: cid + ':tool', kind: 'tool', status: String(status || ''), toolInput, toolOutput, toolTitle, toolError })
+      // task 子agent:从结果里刨出子会话ID,登记 子→父 映射(session事件缺失时兜底,让子agent后续事件也能路由回父卡片)
+      if (tnm === 'task' && rawSid) {
+        const childId = extractChildSessionId(st)
+        if (childId && childId !== rawSid) { childToParent.set(childId, rawSid); if (toolTitle) childTitle.set(childId, toolTitle) }
+      }
+      const r = route(rawSid)
+      if (r.sessionId && tnm) onText({ sessionId: r.sessionId, text: tnm, role: 'assistant', partID: cid + ':tool', kind: 'tool', status: String(status || ''), toolInput, toolOutput, toolTitle, toolError, subagent: r.subagent, agentName: r.agentName })
     }
   }
 }
