@@ -1127,7 +1127,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         const ev = JSON.parse(m.slice(6))
         // 健康自检 ping:只置连通标志,不进事件队列
         if (ev.act === '__ping__') { if (S.browser.rec) S.browser.rec._pingOk = true; return }
-        if (S.browser.rec && S.browser.rec.active && S.browser.rec.tabId === tab.id) {
+        if (S.browser.rec && S.browser.rec.active && S.browser.rec.tabIds && S.browser.rec.tabIds.has(tab.id)) {   // 放行本次录制纳入的所有 tab(含新开的)
           // 用主进程时间戳代替页面时钟,避免页面 Date.now 被 mock 时漂移
           ev.t = Date.now() - S.browser.rec.startedAt
           S.browser.rec.events.push(ev)
@@ -1309,6 +1309,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     brWireTab(tab)
     attachDbg(tab)
     activateTab(id)
+    if (S.browser.rec && S.browser.rec.active) wireRecToTab(tab, { crossTab: true })   // 录制中新开的标签也纳入,不丢后续操作
     const u = normalizeUrl(url)
     const doLoad = () => { if (view.webContents.isDestroyed()) return; if (u) view.webContents.loadURL(u); else view.webContents.loadFile(path.join(__dirname, '..', 'ui', 'newtab.html')) }
     // 本地新标签页(newtab.html)无需等调试器网络域就绪 → 立即加载，避免 _dbgReady 卡住白屏。
@@ -2645,7 +2646,11 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     if (el.tagName === 'INPUT') { t = (el.type === 'button' || el.type === 'submit' || el.type === 'reset') ? (el.value || '') : ''; }
     else if (el.tagName !== 'TEXTAREA') { t = el.innerText || ''; }
     var c = selBuild(el);
-    emit({ act:'click', sel:c[0], selAlt:c.slice(1), text:String(t).slice(0,40) });
+    var evc = { act:'click', sel:c[0], selAlt:c.slice(1), text:String(t).slice(0,40) };
+    // 日历/日期弹层里的格子点击:选择器只能落到 nth-of-type,换月换天必失效 → 标 transient,
+    // 回放时这类步失败不计入级联早停(日期终值由下面 change 补录的 input 步直接写)
+    if (el.closest && el.closest('.layui-laydate,.el-picker-panel,.el-date-picker,.el-picker__popper,.ant-picker-dropdown,.ant-calendar')) evc.transient = true;
+    emit(evc);
   }, true);
   document.addEventListener('input', function(e){
     if (!window.__bocom_rec_on) return;
@@ -2679,6 +2684,15 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       var c = selBuild(el);
       var t = (el.selectedIndex >= 0 && el.options[el.selectedIndex]) ? (el.options[el.selectedIndex].text||'').trim().slice(0,60) : '';
       emit({ act:'select', sel:c[0], selAlt:c.slice(1), value:String(el.value == null ? '' : el.value).slice(0,200), text:t });   // text=跨环境字典码不同时的回退键
+      return;
+    }
+    // 日期/日历:选定后组件程序化写 input.value,多数在终值敲定时 fire 一次 change → 补录 act:'input' 存终值,
+    // 回放据此用原生 setter 直接写值,绕开脆弱的点格子路径。终值步走 selBuild 的 id/name 稳定选择器
+    if (el.tagName === 'INPUT' && !isCheckable(el) && el.type !== 'file' && (el.readOnly || (el.closest && el.closest('.el-date-editor,.el-range-editor,.ant-picker,.ant-calendar-picker,.layui-input-inline')))) {
+      flushInput();
+      var cD = selBuild(el);
+      var dv = String(el.value || '').slice(0,200);
+      if (dv) emit({ act:'input', sel:cD[0], selAlt:cD.slice(1), value:dv });
       return;
     }
     if (isCheckable(el)) {
@@ -2732,6 +2746,36 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     b.win.webContents.send('browser-rec-count', { n: b.rec.events.length })
   }
 
+  // 把某个 tab 接入当前录制(原始 tab 与录制期间新开的 tab 共用):幂等挂钩 did-frame-finish-load,
+  // 页面加载完重注入录制脚本 + URL 变化补 navigate 事件。opts.crossTab=新开标签,第一条 navigate 打 newTab 标记。
+  // 事件通道 __bocom_rec_emit 已由 attachDbg 逐 tab 装好,这里只补脚本注入 + 放行(pushConsole 认 tabIds)。
+  function wireRecToTab(tab, opts) {
+    const rec = S.browser.rec
+    if (!rec || !tab || tab._recWired) return
+    rec.tabIds.add(tab.id)
+    tab._recWired = true
+    const wc = tab.view.webContents
+    let firstNav = !!(opts && opts.crossTab)
+    const handler = () => {
+      const r = S.browser.rec
+      if (!r || !r.active) return
+      injectRecorder(wc).then(() => {
+        const r2 = S.browser.rec
+        if (!r2 || !r2.active) return
+        const u = wc.getURL()
+        if (!/^https?:\/\//i.test(u)) return   // 空白新标签(newtab.html=file://)不补 navigate,回放只认 http(s)
+        const last = r2.events[r2.events.length - 1]
+        if (!last || last.url !== u) {
+          const nav = { t: Date.now() - r2.startedAt, act: 'navigate', url: u }
+          if (firstNav) { nav.newTab = true; firstNav = false }   // 供回放/报告降级标注
+          r2.events.push(nav); brSendRecCount()
+        }
+      })
+    }
+    wc.on('did-frame-finish-load', handler)
+    rec.cleanups.push(() => { try { wc.off('did-frame-finish-load', handler) } catch {} ; tab._recWired = false })   // 复位 _recWired:否则下次录制同一 tab 被幂等拦住不再挂钩
+  }
+
   ipcMain.handle('browser-rec-start', async () => {
     const tab = brActive()
     if (!tab) return { ok: false, error: '没有活跃标签' }
@@ -2749,19 +2793,12 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       preState.session = JSON.stringify(ps.s || {})
       log('rec preState: ' + preState.cookies.length + ' cookies, localStorage ' + Object.keys(ps.l || {}).length + ' keys')
     } catch (e) { log('preState dump err: ' + e.message) }
-    S.browser.rec = { active: true, tabId: tab.id, startedAt: Date.now(), startUrl: wc.getURL(), preState, events: [] }
+    // tabId=起始/归属 tab(存档与 lastRec 匹配依赖它);tabIds=本次录制放行的 tab 集(含录制期间新开的);cleanups=各 tab 摘钩
+    S.browser.rec = { active: true, tabId: tab.id, tabIds: new Set([tab.id]), startedAt: Date.now(), startUrl: wc.getURL(), preState, events: [], cleanups: [] }
     S.browser.rec.events.push({ t: 0, act: 'navigate', url: wc.getURL() })
     const injected = await injectRecorder(wc)
-    // 录制中导航 → 新页面/子框架要再注入(__bocom_rec_init 防重,__bocom_rec_on 重置);
-    // 挂 did-frame-finish-load:iframe 导航后也重注入。cleanup 必须先于任何早退路径挂好
-    const handler = () => { if (S.browser.rec && S.browser.rec.active) injectRecorder(wc).then(() => {
-      if (!S.browser.rec || !S.browser.rec.active) return
-      const u = wc.getURL()
-      const last = S.browser.rec.events[S.browser.rec.events.length - 1]
-      if (!last || last.url !== u) { S.browser.rec.events.push({ t: Date.now() - S.browser.rec.startedAt, act: 'navigate', url: u }); brSendRecCount() }
-    }) }
-    wc.on('did-frame-finish-load', handler)
-    S.browser.rec.cleanup = () => { try { wc.off('did-frame-finish-load', handler) } catch {} }
+    // 录制中导航/新开标签 → 重注入 + 补 navigate:抽成 wireRecToTab(原始 tab 与新 tab 共用)
+    wireRecToTab(tab)
     // 健康自检:①注入是否真落地 ②事件通道(binding→console 回退)是否连通 ③CDP attach 状态,失败立刻告知原因
     const health = { injected: false, channel: false, dbg: !!tab.dbg }
     health.injected = injected && await wc.executeJavaScript('!!window.__bocom_rec_init && !!window.__bocom_rec_on', true).catch(() => false)
@@ -2774,8 +2811,9 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       health.channel = !!(S.browser.rec && S.browser.rec._pingOk)
     }
     if (!health.injected || !health.channel) {
-      try { wc.off('did-frame-finish-load', handler) } catch {}   // 早退前先摘 did-frame-finish-load handler(不依赖 rec 仍存活)
+      const cs = (S.browser.rec && S.browser.rec.cleanups) || []   // 早退前按 cleanups 数组摘所有钩子
       S.browser.rec = null
+      for (const fn of cs) { try { fn() } catch {} }
       const error = !health.injected
         ? '录制脚本注入失败:页面还在加载或是受限页,等加载完再试'
         : (health.dbg ? '事件通道不通:页面可能覆写了 console.log(生产静音),可稍后重试' : '事件通道不通:CDP 调试器未附加(可能被 DevTools/外部工具占用),关掉 DevTools 后重试')
@@ -2792,10 +2830,11 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     if (!r || !r.active) return { ok: false, error: '没有进行中的录制' }
     r.active = false
     if (S.browser.win && !S.browser.win.isDestroyed()) S.browser.win.webContents.send('browser-rec-count', { n: r.events.length, done: true })   // 收徽标
-    if (r.cleanup) r.cleanup()
+    if (r.cleanups) for (const fn of r.cleanups) { try { fn() } catch {} }
     // 把页面里的 flag 关掉(监听仍在,只是不再 emit);顺手收掉防抖里还没吐出来的最后一个输入。
-    // 必须走返回值通道:此刻 r.active 已 false,console 通道的 __BR__ 会被 pushConsole 丢弃且有异步竞态
-    const tab = (S.browser.tabs || []).find((t) => t.id === r.tabId)
+    // 必须走返回值通道:此刻 r.active 已 false,console 通道的 __BR__ 会被 pushConsole 丢弃且有异步竞态。
+    // 停录时用户多半停在最后操作的 tab(可能是新开的)→ 用 brActive() 兜底取快照/flush
+    const tab = brActive() || (S.browser.tabs || []).find((t) => t.id === r.tabId)
     if (tab) {
       try {
         const pend = await tab.view.webContents.executeJavaScript(
@@ -3181,12 +3220,13 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       lastT = ev.t || 0
       await highlightTarget(frameFor(wc, ev), ev, i + 1)   // 红框打在事件所属 frame(含 iframe)
       await sleep(fast ? 60 : 180)
-      // 级联收缩:已有连续失败时缩短 waitForEl,防「等5s×重试」把 3 连败早停拖到 30s+;成功即复原
-      const stepOpts = { waitMs: consecutiveFails >= 1 ? Math.min(waitMsBase, 1500) : waitMsBase }
+      // 级联收缩:已有连续失败时缩短 waitForEl,防「等5s×重试」把 3 连败早停拖到 30s+;成功即复原。
+      // transient 步(日历格子点击,换月后已消失)预期找不到 → 短等 800ms,不傻等 5s
+      const stepOpts = { waitMs: ev.transient ? 800 : (consecutiveFails >= 1 ? Math.min(waitMsBase, 1500) : waitMsBase) }
       let r = await execStep(wc, ev, tab, stepOpts)
       // 只对「元素未找到」重试一次:executeJavaScript 异常多为页面跳转中上下文销毁,
-      // click/submit 是否已生效不可知,盲目重试有真实双提交风险
-      if (!r.ok && ev.act !== 'navigate' && String(r.err || '').startsWith('selector(+alt) not found')) {
+      // click/submit 是否已生效不可知,盲目重试有真实双提交风险。transient 步不重试(终值另由 input 步写)
+      if (!r.ok && ev.act !== 'navigate' && !ev.transient && String(r.err || '').startsWith('selector(+alt) not found')) {
         await sleep(400)
         r = await execStep(wc, ev, tab, { waitMs: 1500 })
         r.retried = true
@@ -3194,6 +3234,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       const entry = { i: i + 1, act: ev.act, sel: ev.sel || ev.url || '', ok: r.ok, err: r.err || '' }
       if (r.retried) entry.retried = true
       if (r.secret) entry.secret = true
+      if (ev.transient) entry.transient = true
       stepReport.push(entry)
       sendProg({ i: i + 1, total: rec.events.length, act: ev.act, ok: r.ok, err: (r.err || '').slice(0, 80) })
       if (!r.ok && ev.act === 'navigate') break
@@ -3201,7 +3242,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       // 级联失败检测:连续 3 个非 navigate 步失败 → 后续大概率都依赖前面失败步,提前 break 不无谓继续。
       // 密码步的显式失败不计入(登录态靠 preState 恢复兜底,不该拖垮整场验证)
       if (!r.ok && ev.act !== 'navigate') {
-        if (!r.secret) {
+        if (!r.secret && !ev.transient) {   // 密码步、日历格子(transient)的失败一并豁免,不拖垮整场回放
           consecutiveFails++
           if (consecutiveFails >= 3) {
             if (cascadeFrom < 0) cascadeFrom = i + 1 - (consecutiveFails - 1)   // 第一个连续 fail 步号
@@ -3247,7 +3288,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     const after = replay.after
     const lines = []
     lines.push(`回放 ${replay.stepReport.length}/${rec.events.length} 步,起始 URL: ${rec.startUrl}`)
-    const fails = replay.stepReport.filter((s) => !s.ok)
+    const fails = replay.stepReport.filter((s) => !s.ok && !s.transient)   // transient=日历格子预期失败,不算回归
     if (fails.length) {
       lines.push(`\n步骤失败 ${fails.length} 处(可能是修复后页面结构变了,部分元素找不到):`)
       for (const f of fails.slice(0, 10)) lines.push(`  · 步 ${f.i} ${f.act} "${String(f.sel).slice(0, 60)}" — ${f.err}`)
@@ -3468,13 +3509,37 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   }
   function recDir() { return path.join(app.getPath('userData'), 'recordings') }
   function readRec(id) { return JSON.parse(fs.readFileSync(path.join(recDir(), String(id).replace(/[^\w.-]/g, '') + '.json'), 'utf8')) }
+  // 单个录制事件的白名单净化(导入/步骤编辑共用):返回净化后的事件或 null(丢弃)。
+  // 只放行已知 act,字段类型强转+截断,navigate/fu 强制 http/https —— 挡 loadURL/executeJavaScript 注入。
+  const _ACTS = new Set(['navigate', 'click', 'input', 'key', 'submit', 'scroll', 'select', 'check'])
+  const _KEYS = new Set(['Enter', 'Escape', 'Tab'])
+  function sanitizeEvent(ev) {
+    if (!ev || !_ACTS.has(ev.act)) return null
+    const e2 = { act: ev.act }
+    if (ev.act === 'navigate') {
+      if (!safeOrigin(ev.url)) return null
+      e2.url = String(ev.url).slice(0, 2000); if (ev.spa) e2.spa = true
+    } else {
+      if (ev.sel != null) e2.sel = String(ev.sel).slice(0, 1000)
+      if (Array.isArray(ev.selAlt)) e2.selAlt = ev.selAlt.slice(0, 8).map((s) => String(s).slice(0, 1000))
+      if (ev.act === 'input') { e2.value = String(ev.value == null ? '' : ev.value).slice(0, 200); if (ev.secret) { e2.secret = true; e2.value = '' } }
+      if (ev.act === 'select') { e2.value = String(ev.value == null ? '' : ev.value).slice(0, 200); if (ev.text) e2.text = String(ev.text).slice(0, 60) }
+      if (ev.act === 'check') e2.checked = !!ev.checked
+      if (ev.act === 'key') { if (!_KEYS.has(ev.key)) return null; e2.key = ev.key }
+      if (ev.act === 'scroll') { e2.x = Number(ev.x) || 0; e2.y = Number(ev.y) || 0 }
+      if (ev.act === 'click' && ev.text) e2.text = String(ev.text).slice(0, 40)
+      if (ev.fu && /^https?:\/\//i.test(String(ev.fu))) e2.fu = String(ev.fu).slice(0, 2000)
+    }
+    e2.t = Number(ev.t) || 0
+    return e2
+  }
   // 运行历史:重读磁盘 read-modify-write,只改 lastRun 一个键。
   // 严禁序列化内存里的 rec/clone —— replayRec 会把 preState(cookie)塞进 events[i]._restorePreState,直接 stringify 会持久化敏感态
   function writeLastRun(id, replay) {
     try {
       const fp = path.join(recDir(), String(id).replace(/[^\w.-]/g, '') + '.json')
       const j = JSON.parse(fs.readFileSync(fp, 'utf8'))
-      const fails = replay.stepReport.filter((s) => !s.ok).length
+      const fails = replay.stepReport.filter((s) => !s.ok && !s.transient).length
       j.lastRun = { at: Date.now(), ok: fails === 0 && (!replay.success || replay.success.pass), steps: replay.stepReport.length, fails }
       fs.writeFileSync(fp, JSON.stringify(j, null, 2))
     } catch {}
@@ -3527,7 +3592,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     const replay = await replayRec(applyParams(rec, (a && a.params) || {}), { fast: true })
     if (!replay.ok) return { error: replay.error || '回放失败' }
     writeLastRun(hit.id, replay)
-    const fails = replay.stepReport.filter((s) => !s.ok)
+    const fails = replay.stepReport.filter((s) => !s.ok && !s.transient)
     const retried = replay.stepReport.filter((s) => s.retried && s.ok).length
     const ok = fails.length === 0 && (!replay.success || replay.success.pass)
     const lines = ['技能「' + hit.name + '」回放 ' + replay.stepReport.length + '/' + replay.totalSteps + ' 步 · ' + (fails.length === 0 ? '✅ 步骤全部成功' : '❌ ' + fails.length + ' 步失败') + (retried ? '(' + retried + ' 步重试后成功)' : '')]
@@ -3636,28 +3701,11 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       if (fs.statSync(fpIn).size > 2 * 1024 * 1024) return { ok: false, error: '文件超过 2MB,拒绝导入' }
       const src = JSON.parse(fs.readFileSync(fpIn, 'utf8'))
       if (!safeOrigin(src.startUrl)) return { ok: false, error: 'startUrl 必须是 http/https,拒绝导入' }
-      const ACTS = new Set(['navigate', 'click', 'input', 'key', 'submit', 'scroll', 'select', 'check'])
-      const KEYS = new Set(['Enter', 'Escape', 'Tab'])
       const evsIn = Array.isArray(src.events) ? src.events.slice(0, 5000) : []
       const events = []; const idxMap = new Map()
       evsIn.forEach((ev, oldIdx) => {
-        if (!ev || !ACTS.has(ev.act)) return
-        const e2 = { act: ev.act }
-        if (ev.act === 'navigate') {
-          if (!safeOrigin(ev.url)) return   // 挡 file://、javascript: 等被 loadURL 执行
-          e2.url = String(ev.url).slice(0, 2000); if (ev.spa) e2.spa = true
-        } else {
-          if (ev.sel != null) e2.sel = String(ev.sel).slice(0, 1000)
-          if (Array.isArray(ev.selAlt)) e2.selAlt = ev.selAlt.slice(0, 8).map((s) => String(s).slice(0, 1000))
-          if (ev.act === 'input') { e2.value = String(ev.value == null ? '' : ev.value).slice(0, 200); if (ev.secret) { e2.secret = true; e2.value = '' } }
-          if (ev.act === 'select') { e2.value = String(ev.value == null ? '' : ev.value).slice(0, 200); if (ev.text) e2.text = String(ev.text).slice(0, 60) }
-          if (ev.act === 'check') e2.checked = !!ev.checked
-          if (ev.act === 'key') { if (!KEYS.has(ev.key)) return; e2.key = ev.key }
-          if (ev.act === 'scroll') { e2.x = Number(ev.x) || 0; e2.y = Number(ev.y) || 0 }
-          if (ev.act === 'click' && ev.text) e2.text = String(ev.text).slice(0, 40)
-          if (ev.fu && /^https?:\/\//i.test(String(ev.fu))) e2.fu = String(ev.fu).slice(0, 2000)   // iframe 定位键(仅 http/https)
-        }
-        e2.t = Number(ev.t) || 0
+        const e2 = sanitizeEvent(ev)   // 白名单净化(与步骤编辑器共用)
+        if (!e2) return
         idxMap.set(oldIdx, events.length)
         events.push(e2)
       })
@@ -3681,6 +3729,42 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       fs.writeFileSync(path.join(dir, id + '.json'), JSON.stringify(rec2, null, 2))
       return { ok: true, id, title: rec2.title, steps: events.length }
     } catch (e) { return { ok: false, error: e.message } }
+  })
+  // 技能步骤编辑器:改 events(删步/重排/改 input/select 值),同步重映射 params.stepIndex 与 skipSteps。
+  // keep = 新顺序的步骤列表,每项 { srcIndex(指向原 events 下标), value?(编辑后的 input/select 值) };
+  // 不在 keep 里的原步骤 = 删除。events 只读约束在此处松绑,但一律走 sanitizeEvent 净化,不接受任意新事件。
+  ipcMain.handle('browser-rec-edit-steps', (_e, { id, keep }) => {
+    if (!id || !Array.isArray(keep)) return { ok: false, error: '参数错误' }
+    const fp = path.join(recDir(), String(id).replace(/[^\w.-]/g, '') + '.json')
+    let j; try { j = JSON.parse(fs.readFileSync(fp, 'utf8')) } catch (e) { return { ok: false, error: '读取失败: ' + e.message } }
+    const src = Array.isArray(j.events) ? j.events : []
+    const events = []; const idxMap = new Map()   // 原下标 → 新下标
+    for (const k of keep.slice(0, 5000)) {
+      const si = k && Number(k.srcIndex)
+      if (!Number.isInteger(si) || si < 0 || si >= src.length || idxMap.has(si)) continue   // 越界/重复引用跳过
+      const base = { ...src[si] }
+      if (k.value !== undefined && (base.act === 'input' || base.act === 'select') && !base.secret) base.value = String(k.value)
+      const e2 = sanitizeEvent(base)   // 净化(保留 _ 前缀键之外的合法字段;secret 步 value 仍被清空)
+      if (!e2) continue
+      idxMap.set(si, events.length)
+      events.push(e2)
+    }
+    if (!events.length) return { ok: false, error: '至少保留一步' }
+    j.events = events
+    // 重映射 params:stepIndex 落在保留步且仍是 input/select 才留;
+    // 编辑过值的参数步,default 跟着走(否则回放用旧 default 覆盖,编辑白改)
+    if (Array.isArray(j.params)) {
+      j.params = j.params
+        .filter((p) => p && idxMap.has(p.stepIndex))
+        .map((p) => { const ni = idxMap.get(p.stepIndex); const ev = events[ni]; return { ...p, stepIndex: ni, ...(ev && !p.secret ? { default: String(ev.value == null ? '' : ev.value).slice(0, 200) } : {}) } })
+        .filter((p) => { const ev = events[p.stepIndex]; return ev && (ev.act === 'input' || ev.act === 'select') })
+    }
+    // 重映射 skipSteps
+    if (Array.isArray(j.skipSteps)) j.skipSteps = j.skipSteps.filter((x) => idxMap.has(x)).map((x) => idxMap.get(x))
+    delete j.lastRun   // 步骤变了,上次运行结果作废
+    try { fs.writeFileSync(fp, JSON.stringify(j, null, 2)); log('rec edit-steps: ' + id + ' → ' + events.length + ' 步') }
+    catch (e) { return { ok: false, error: e.message } }
+    return { ok: true, steps: events.length, params: (j.params || []).length }
   })
   ipcMain.on('browser-open-rec-dir', () => {
     const d = path.join(app.getPath('userData'), 'recordings')

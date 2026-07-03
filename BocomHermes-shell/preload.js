@@ -171,6 +171,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   browserRecReplayStored:(id, params, baseUrl) => ipcRenderer.invoke('browser-rec-replay-stored', (params || baseUrl) ? { id, params, baseUrl } : id),
   browserRecExport:     (id)  => ipcRenderer.invoke('browser-rec-export', id),
   browserRecImport:     ()    => ipcRenderer.invoke('browser-rec-import'),
+  browserRecEditSteps:  (id, keep) => ipcRenderer.invoke('browser-rec-edit-steps', { id, keep }),
   onBrowserVerifyResult:(cb)  => ipcRenderer.on('wf-verify-result', (_e, p) => cb(p)),
   browserHistory:       ()    => ipcRenderer.sendSync('get-browser-history'),
   browserReorderTabs:   (ids) => ipcRenderer.send('browser-reorder-tabs', ids),

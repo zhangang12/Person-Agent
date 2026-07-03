@@ -891,6 +891,7 @@ async function openRecMgr() {
         ${it.lastRun ? `<span style="font-size:10px;color:${it.lastRun.ok ? '#5dcf95' : '#ff8b8b'};border:1px solid ${it.lastRun.ok ? 'rgba(26,168,110,.4)' : 'rgba(226,66,74,.4)'};border-radius:5px;padding:0 5px" title="上次运行 ${fmtTime(it.lastRun.at)}">${it.lastRun.ok ? '✓ 上次成功' : '✗ 上次 ' + it.lastRun.fails + ' 步失败'}</span>` : ''}
         <span style="flex:1"></span>
         ${!it.skill ? `<button data-act="mkskill" style="background:transparent;border:1px solid rgba(74,168,255,.4);color:var(--accent);border-radius:6px;padding:3px 9px;cursor:pointer;font-size:11px">⚙ 存为技能</button>` : ''}
+        <button data-act="edit" title="编辑步骤(删步/重排/改输入值)" style="background:transparent;border:1px solid var(--line);color:var(--txt3);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">✎ 步骤</button>
         ${it.skill ? `<button data-act="export" title="导出技能 JSON(已剥离登录态,可分享)" style="background:transparent;border:1px solid var(--line);color:var(--txt3);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">导出</button>` : ''}
         <button data-act="replay" style="background:rgba(26,168,110,.15);border:1px solid #1aa86e;color:#5dcf95;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px">▶ 运行</button>
         <button data-act="del" style="background:transparent;border:1px solid var(--line);color:var(--txt3);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">删除</button>
@@ -913,6 +914,12 @@ async function openRecMgr() {
       if (!rec) { showToast('<span class="err">⚠</span> 读取录制失败'); return }
       closePanel()
       saveAsSkill(rec)
+    })
+    // 编辑步骤(删步/重排/改 input 值)
+    row.querySelector('[data-act="edit"]').addEventListener('click', async () => {
+      const rec = await H.browserRecGet(it.id)
+      if (!rec) { showToast('<span class="err">⚠</span> 读取失败'); return }
+      editSteps(rec, () => { closePanel(); openRecMgr() })
     })
     // 导出(剥离登录态/快照的可分享 JSON,写到「下载」)
     const ex = row.querySelector('[data-act="export"]')
@@ -1154,6 +1161,69 @@ function saveAsSkill(rec) {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) ov.querySelector('#sk-save-btn').click()
     else if (e.key === 'Escape') close()
   })
+}
+
+// 步骤编辑器:列出全部步骤,可删除/上移/下移/改 input·select 值。
+// 前端只维护一个 rows 数组(每行记 srcIndex=原下标 + 可选 value 编辑),保存时把顺序交给主进程,
+// 由主进程按 srcIndex 重映射 params.stepIndex / skipSteps —— 下标同步在后端一处做,前端不碰。
+function editSteps(rec, onSaved) {
+  if (document.getElementById('sk-edit')) return
+  const esc2 = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  const evs = rec.events || []
+  // 参数步/跳过步用角标提示,让用户知道删了会连带影响
+  const paramAt = {}; (rec.params || []).forEach((p) => { paramAt[p.stepIndex] = p.label || p.key })
+  const skipSet = new Set(Array.isArray(rec.skipSteps) ? rec.skipSteps : [])
+  let rows = evs.map((ev, i) => ({ srcIndex: i, ev, value: (ev.act === 'input' || ev.act === 'select') && !ev.secret ? (ev.value || '') : undefined }))
+  const ov = document.createElement('div'); ov.id = 'sk-edit'
+  ov.style.cssText = 'position:fixed;top:44px;left:50%;transform:translateX(-50%);z-index:10002;background:rgba(15,17,32,.98);border:1px solid var(--accent);border-radius:12px;padding:13px 15px;box-shadow:0 12px 44px rgba(0,0,0,.5);width:560px;max-width:94vw;max-height:82vh;display:flex;flex-direction:column;color:var(--txt);font-size:13px'
+  ov.innerHTML = `
+    <div style="font-weight:600;margin-bottom:4px">✎ 编辑步骤 · ${esc2(rec.title || rec.id)}</div>
+    <div style="font-size:11px;color:var(--txt3);margin-bottom:8px">删除噪声步、调顺序、改输入值。改动会同步到参数与跳过设置;密码步的值不可见不可改。</div>
+    <div id="se-list" style="flex:1;overflow:auto;display:flex;flex-direction:column;gap:5px;padding-right:2px"></div>
+    <div style="display:flex;gap:7px;justify-content:flex-end;margin-top:10px">
+      <button id="se-cancel" style="background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:7px;padding:5px 12px;cursor:pointer;font-size:12px">取消</button>
+      <button id="se-save" style="background:var(--accent);border:none;color:#fff;border-radius:7px;padding:5px 14px;cursor:pointer;font-size:12px;font-weight:600">保存步骤</button>
+    </div>`
+  document.body.appendChild(ov)
+  modalOverlay(true)   // 页面视图让位(高度压 0),否则原生层盖死编辑器左半
+  const listEl = ov.querySelector('#se-list')
+  const actLabel = { navigate: '🌐 跳转', click: '👆 点击', input: '⌨ 输入', select: '▾ 下拉', check: '☑ 勾选', key: '⏎ 按键', submit: '📨 提交', scroll: '↕ 滚动' }
+  function render() {
+    listEl.innerHTML = ''
+    if (!rows.length) { listEl.innerHTML = '<div style="color:var(--txt3);text-align:center;padding:16px">已无步骤 — 至少保留一步</div>'; return }
+    rows.forEach((r, idx) => {
+      const ev = r.ev
+      const d = document.createElement('div')
+      d.style.cssText = 'display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:8px;padding:5px 8px'
+      const tags = (paramAt[r.srcIndex] ? '<span style="color:var(--accent);font-size:10px">参数:' + esc2(paramAt[r.srcIndex]) + '</span>' : '') + (skipSet.has(r.srcIndex) ? '<span style="color:var(--txt3);font-size:10px">·跳过</span>' : '')
+      const target = ev.act === 'navigate' ? esc2(ev.url) : (ev.fu ? '[iframe] ' : '') + esc2(ev.sel || '')
+      const editable = (ev.act === 'input' || ev.act === 'select') && !ev.secret
+      d.innerHTML = `
+        <span style="width:20px;color:var(--txt3);font-size:11px;text-align:right">${idx + 1}</span>
+        <span style="width:52px;font-size:11px;white-space:nowrap">${actLabel[ev.act] || ev.act}</span>
+        <span style="flex:1;min-width:0;font-size:11px;color:var(--txt2);font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${target}">${target}${tags ? ' ' + tags : ''}</span>
+        ${editable ? `<input data-v="${idx}" value="${esc2(ev.secret ? '' : r.value)}" placeholder="${ev.secret ? '密码(不可改)' : '值'}" style="width:110px;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:6px;padding:3px 6px;color:var(--txt);font-size:11px;font-family:inherit;outline:none" />` : (ev.secret ? '<span style="width:110px;font-size:10px;color:var(--txt3);text-align:center">密码·脱敏</span>' : '<span style="width:110px"></span>')}
+        <button data-up="${idx}" title="上移" ${idx === 0 ? 'disabled' : ''} style="background:transparent;border:none;color:var(--txt3);cursor:pointer;font-size:13px;padding:0 3px;${idx === 0 ? 'opacity:.3' : ''}">↑</button>
+        <button data-down="${idx}" title="下移" ${idx === rows.length - 1 ? 'disabled' : ''} style="background:transparent;border:none;color:var(--txt3);cursor:pointer;font-size:13px;padding:0 3px;${idx === rows.length - 1 ? 'opacity:.3' : ''}">↓</button>
+        <button data-del="${idx}" title="删除此步" style="background:transparent;border:none;color:#e2626a;cursor:pointer;font-size:13px;padding:0 3px">✕</button>`
+      listEl.appendChild(d)
+    })
+    listEl.querySelectorAll('input[data-v]').forEach((inp) => inp.addEventListener('input', () => { rows[+inp.dataset.v].value = inp.value }))
+    listEl.querySelectorAll('[data-up]').forEach((b) => b.addEventListener('click', () => { const i = +b.dataset.up; if (i > 0) { [rows[i - 1], rows[i]] = [rows[i], rows[i - 1]]; render() } }))
+    listEl.querySelectorAll('[data-down]').forEach((b) => b.addEventListener('click', () => { const i = +b.dataset.down; if (i < rows.length - 1) { [rows[i + 1], rows[i]] = [rows[i], rows[i + 1]]; render() } }))
+    listEl.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => { rows.splice(+b.dataset.del, 1); render() }))
+  }
+  render()
+  const close = () => { ov.remove(); modalOverlay(false) }   // 取消/保存/Escape 全走这里,漏一处页面视图永久 height:0
+  ov.querySelector('#se-cancel').addEventListener('click', close)
+  ov.querySelector('#se-save').addEventListener('click', async () => {
+    if (!rows.length) { showToast('<span class="err">⚠</span> 至少保留一步'); return }
+    const keep = rows.map((r) => ({ srcIndex: r.srcIndex, ...(r.value !== undefined ? { value: r.value } : {}) }))
+    const res = await H.browserRecEditSteps(rec.id, keep)
+    if (res && res.ok) { showToast('<span class="ok">✓</span> 已保存 ' + res.steps + ' 步' + (res.params ? ' · 参数×' + res.params : '')); close(); if (onSaved) onSaved() }
+    else showToast('<span class="err">⚠</span> 保存失败: ' + ((res && res.error) || ''))
+  })
+  ov.addEventListener('keydown', (e) => { if (e.key === 'Escape') close() })
 }
 
 /* ── 设备模拟 ── */
