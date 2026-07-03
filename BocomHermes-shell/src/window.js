@@ -806,7 +806,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   function toggleInput() { toggleOrbInput() }
 
   function toggleTheme() {
-    S.settings.theme = S.settings.theme === 'dark' ? 'light' : 'dark'; saveSettings()
+    // 托盘快捷循环:浅磨砂 → 墨玻璃 → 曜黑 → 纸白 → …(设置页可直选)
+    const order = ['light', 'dark', 'onyx', 'paper']
+    const i = order.indexOf(S.settings.theme)
+    S.settings.theme = order[(i + 1) % order.length] || 'light'; saveSettings()
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send('theme-changed', S.settings.theme)
   }
 
@@ -1481,14 +1484,14 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   const DBG_TAG = { frontend: '前端', backend: '后端', contract: '接口契约' }
 
   // 分诊：先验来自启发式，这里让模型确认是否真的值得上多 agent（超时/失败回退启发式）
-  async function dbgTriage(serve, summary, heur) {
+  async function dbgTriage(serve, summary, heur, model) {
     const p = `你是调试分诊器。根据复现信号，判断是否值得启动"多 agent 对抗分析"（多个 agent 各持一个假设并行查证，再交叉反驳）。\n` +
       `启发式先验：难度 ${heur.difficulty}/5，疑似层面 [${heur.layers.join(', ') || '未知'}]。\n\n复现信号摘要：\n${summary}\n\n` +
       `判断规则：跨前后端 / 根因不明确 / 多条相互矛盾线索 → multi；单一明确报错或单层小问题 → single（更快）。\n` +
       `只输出 JSON、不要调用任何工具、不要解释：{"difficulty":1-5,"layers":["frontend"|"backend"|"contract"...],"strategy":"single"|"multi","reason":"一句中文理由"}`
     try {
       const sid = await oc.createSession(serve, '分诊')
-      const txt = await Promise.race([oc.sendMessage(serve, sid, p), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 45000))])
+      const txt = await Promise.race([oc.sendMessage(serve, sid, p, model || null), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 45000))])
       const j = tinyJson(txt)
       if (j && (j.strategy === 'single' || j.strategy === 'multi')) {
         return { difficulty: +j.difficulty || heur.difficulty, layers: (Array.isArray(j.layers) && j.layers.length) ? j.layers : heur.layers, strategy: j.strategy, reason: j.reason || '' }
@@ -1500,6 +1503,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // 整个流程是后台异步（不阻塞「发给 Agent」按钮）：分诊 → 单 agent 直注 / 多 agent 并行调查 + 汇总回灌会话
   async function runDebugFlow({ cardWc, serve, bundlePrompt, disp, heur, summary }) {
     const inj = (text) => { if (cardWc && !cardWc.isDestroyed()) cardWc.send('card-inject', { text, disp: '' }) }
+    // 子会话(分诊/lens/后端修复)跟随宿主调试卡当前所选模型;卡没选就用全局默认
+    const hostSid = S.sessionByWc.get(cardWc && cardWc.id)
+    const hostSi = hostSid && S.sessionInfo.get(hostSid)
+    const hostModel = (hostSi && hostSi.model) || (S.modelByWc && cardWc && S.modelByWc.get(cardWc.id)) || S.settings.model || null
     try {
       dbgNote(cardWc, disp, 'user')
       // 信号简单 → 直接单 agent，省掉一次分诊调用
@@ -1508,7 +1515,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         inj(bundlePrompt); return
       }
       dbgNote(cardWc, '🧭 正在评估是否需要多 agent 对抗分析…', 'info')
-      const v = await dbgTriage(serve, summary, heur)
+      const v = await dbgTriage(serve, summary, heur, hostModel)
       dbgNote(cardWc, `🧭 分诊：难度 ${v.difficulty}/5 · 层面 [${(v.layers || []).map(k => DBG_TAG[k] || k).join('、') || '未定'}] · ${v.strategy === 'multi' ? '启动多 agent 对抗分析' : '单 agent 直接定位'}${v.reason ? '\n' + v.reason : ''}`, 'info')
       if (v.strategy !== 'multi') { inj(bundlePrompt); return }
       // 选 2~3 个假设角度（不足两个时补 frontend/contract 形成对抗）
@@ -1530,7 +1537,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
           S.sessionInfo.set(sid, { wc: cardWc, serve })
           const out = await oc.sendMessage(serve, sid, `根据下面这个复现包,**枚举 3 个最可能的根因假设**(每条 1 句话,按可能性排序),并对每条简述一句怎么验证。\n\n` +
             `不限于前端/后端/接口契约这 3 类,可以是状态机/并发竞态/缓存/CSS 布局/权限/边界条件/数据格式等任何角度。\n` +
-            `**只输出假设清单,不要读代码、不要修改文件。**\n\n## 复现上下文\n` + bundlePrompt)
+            `**只输出假设清单,不要读代码、不要修改文件。**\n\n## 复现上下文\n` + bundlePrompt, hostModel)
           return { k: 'open_hypotheses', out, repo: '前端仓库(开放式)' }
         } catch (e) { return { k: 'open_hypotheses', out: '(假设生成失败:' + e.message + ')', repo: '前端仓库' } }
         finally { if (sid) { S.sessionInfo.delete(sid); S.streamBuf.delete(sid) } }
@@ -1547,7 +1554,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
           const notesHint = `\n\n# 团队共享便签(其它 agent/lens 已登记的假设状态)\n` +
             `请用 mcp 'BocomHermes-repro' 的 **read_notes{bundleId:"${bundleId || S.browser.lastBundleId || ''}"}** 工具先读现有便签 — excluded 的假设跳过,confirmed 的当前提条件用,maybe 的可作辅证。\n` +
             `你**调查结束时**(无论假设成立与否),都要用 **bundle_note{bundleId, key:"${k}_${Date.now().toString(36).slice(-4)}", status, evidence}** 把你的结论登记进去,让后续 lens 节省 token、避免重复劳动。`
-          const out = await oc.sendMessage(useServe, sid, DBG_LENS[k] + `\n（你正在【${repo}】里，只能读到这个仓库的源码）\n\n## 复现上下文\n` + bundlePrompt + notesHint + '\n\n只聚焦你这个假设，简洁给出证据（文件:行）与判断，不要修改任何文件。')
+          const out = await oc.sendMessage(useServe, sid, DBG_LENS[k] + `\n（你正在【${repo}】里，只能读到这个仓库的源码）\n\n## 复现上下文\n` + bundlePrompt + notesHint + '\n\n只聚焦你这个假设，简洁给出证据（文件:行）与判断，不要修改任何文件。', hostModel)
           dbgNote(cardWc, `✓ 假设·${DBG_TAG[k]} 完成`, 'muted')
           return { k, out, repo }
         } catch (e) { dbgNote(cardWc, `✗ 假设·${DBG_TAG[k]} 失败：${e.message}`, 'muted'); return { k, out: '(调查失败：' + e.message + ')', repo } }
@@ -1567,7 +1574,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
           bsid = await oc.createSession(backendServe, '后端修复')
           S.sessionInfo.set(bsid, { wc: cardWc, serve: backendServe })
           const bout = await oc.sendMessage(backendServe, bsid,
-            `你在【后端仓库】里。下面是一个从前端复现的问题 + 多路调查结论。如果根因/修复在后端，请直接用编辑工具修改后端源码完成修复（我会逐次确认写入），改完用一两句话说明改了哪些文件、为什么；如果与后端无关，只回复"后端无需改动"。\n\n## 复现上下文\n${bundlePrompt}\n\n## 各路调查结论\n${merged}`)
+            `你在【后端仓库】里。下面是一个从前端复现的问题 + 多路调查结论。如果根因/修复在后端，请直接用编辑工具修改后端源码完成修复（我会逐次确认写入），改完用一两句话说明改了哪些文件、为什么；如果与后端无关，只回复"后端无需改动"。\n\n## 复现上下文\n${bundlePrompt}\n\n## 各路调查结论\n${merged}`, hostModel)
           dbgNote(cardWc, '🔧 后端 agent：' + String(bout || '').replace(/\s+/g, ' ').slice(0, 500), 'muted')
           findings.push({ k: 'backend-fix', out: bout, repo: '后端仓库' })
         } catch (e) { dbgNote(cardWc, `后端修复失败：${e.message}`, 'muted') }
@@ -2097,8 +2104,9 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
 
   // ── IPC ─────────────────────────────────────────────────────────────────────
   ipcMain.on('get-theme', (e) => { e.returnValue = S.settings.theme })
+  const THEMES = ['light', 'dark', 'onyx', 'paper']   // 浅磨砂 / 墨玻璃 / 曜黑(实底) / 纸白(实底)
   ipcMain.on('set-theme', (_e, t) => {
-    S.settings.theme = t === 'dark' ? 'dark' : 'light'; saveSettings()
+    S.settings.theme = THEMES.includes(t) ? t : 'light'; saveSettings()
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send('theme-changed', S.settings.theme)
   })
 
@@ -2558,8 +2566,9 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   const RECORDER_JS = `
 ;(function(){
   if (window.__bocom_rec_init) return; window.__bocom_rec_init = true;
-  // 双通道单发:优先 CDP binding(页面覆写 console.log 也打不死);binding 命中即 return,不会双通道重复入队
-  var emit = function(e){ var s = '__BR__' + JSON.stringify(e); try { if (typeof window.__bocom_rec_emit === 'function') return window.__bocom_rec_emit(s); } catch(_){} try { console.log(s); } catch(_){} };
+  // 双通道单发:优先 CDP binding(页面覆写 console.log 也打不死);binding 命中即 return,不会双通道重复入队。
+  // 子框架(iframe)里发的事件带 fu=本框架 URL,回放时据此定位到对应 frame(银行老系统业务表单常在 iframe)
+  var emit = function(e){ try { if (window.top !== window && !e.fu) e.fu = location.href; } catch(_){ } var s = '__BR__' + JSON.stringify(e); try { if (typeof window.__bocom_rec_emit === 'function') return window.__bocom_rec_emit(s); } catch(_){} try { console.log(s); } catch(_){} };
   // 记多个选择器候选:回放时按优先级 fallback,DOM 结构小幅变动也能命中
   var selBuild = function(el){
     if (!el || el === document || el === document.body) return ['body'];
@@ -2846,12 +2855,25 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   // (Element-UI/antd 的原生 checkbox 0×0 隐藏、程序化 click 本就打得动),所以:
   // 存在但 900ms 内没显形 → 按存在放行,绝不把老引擎能成功的步变成超时失败。
   // requireVisible=false(check 步)则元素一存在就放行。
-  async function waitForEl(wc, elExpr, maxMs = 5000, requireVisible = true, step = 150) {
+  // 定位事件该在哪个 frame 上执行:ev.fu=录制时子框架(iframe)URL → 找同 URL 的 frame;
+  // 无 fu=主框架;找不到匹配 frame(iframe 已卸载/换页)则退回主框架,至少不崩。
+  // 返回值有统一的 .executeJavaScript(code, userGesture) —— wc 与 WebFrameMain 同签名。
+  function frameFor(wc, ev) {
+    if (!ev || !ev.fu) return wc
+    try {
+      const frames = wc.mainFrame.framesInSubtree
+      for (const f of frames) if (f !== wc.mainFrame && f.url === ev.fu) return f
+      const want = String(ev.fu).split('#')[0]   // 宽松:query/hash 可能变,按 origin+path 再找一次
+      for (const f of frames) if (f !== wc.mainFrame && String(f.url).split('#')[0] === want) return f
+    } catch {}
+    return wc
+  }
+  async function waitForEl(fr, elExpr, maxMs = 5000, requireVisible = true, step = 150) {
     const t0 = Date.now()
     let existsAt = 0
     while (Date.now() - t0 < maxMs) {
       try {
-        const st = await wc.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 0;var rc=__el.getBoundingClientRect?__el.getBoundingClientRect():{width:1};return (!!(rc.width||rc.height)&&!__el.disabled)?2:1})()`, true)
+        const st = await fr.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 0;var rc=__el.getBoundingClientRect?__el.getBoundingClientRect():{width:1};return (!!(rc.width||rc.height)&&!__el.disabled)?2:1})()`, true)
         if (st === 2 || (st === 1 && !requireVisible)) return true
         if (st === 1) {
           if (!existsAt) existsAt = Date.now()
@@ -2863,12 +2885,12 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     return false
   }
   // 回放可视化:每个 click/input/submit 前在页面里给目标元素打个红框 + 浮标"步 N",看得见在跑什么
-  async function highlightTarget(wc, ev, idx) {
+  async function highlightTarget(fr, ev, idx) {
     if (!ev.sel || ev.act === 'navigate' || ev.act === 'scroll') return
     const elExpr = findElExpr(ev.sel, ev.selAlt)
     const label = JSON.stringify(`步 ${idx} · ${ev.act}`)
     try {
-      await wc.executeJavaScript(`(()=>{
+      await fr.executeJavaScript(`(()=>{
         var __el=null; if(!(${elExpr})) return;
         var rect=__el.getBoundingClientRect();
         var box=document.createElement('div'); box.id='__bocom_hi__';
@@ -2913,16 +2935,17 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       return { ok: true }
     }
     const elExpr = findElExpr(ev.sel, ev.selAlt)
+    const fr = frameFor(wc, ev)   // iframe 里录的步骤定位到对应子框架;主框架步骤 fr===wc
     // Codex 级健壮:元素类步骤先等目标出现,再动手(key 保持宽容:本就允许目标缺席)。
     // check 步不要求可见:样式化 checkbox 的原生 input 普遍隐藏,存在即可操作
     if (ev.act === 'click' || ev.act === 'input' || ev.act === 'select' || ev.act === 'check' || ev.act === 'submit') {
       const wms = (opts && opts.waitMs) || 5000
-      const found = await waitForEl(wc, elExpr, wms, ev.act !== 'check')
+      const found = await waitForEl(fr, elExpr, wms, ev.act !== 'check')
       if (!found) return { ok: false, err: 'selector(+alt) not found (waited ' + wms + 'ms)' }
     }
     if (ev.act === 'click') {
       try {
-        const r = await wc.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';__el.scrollIntoView({block:'center'});__el.click();return 'OK';})()`, true)
+        const r = await fr.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';__el.scrollIntoView({block:'center'});__el.click();return 'OK';})()`, true)
         return r === 'OK' ? { ok: true } : { ok: false, err: 'selector(+alt) not found' }
       } catch (e) { return { ok: false, err: e.message } }
     }
@@ -2930,7 +2953,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       // 密码步录制时不存明文:没带运行参数就显式失败(优于静默清空密码框);登录态靠 preState 恢复兜底
       if (ev.secret && !ev.value) return { ok: false, err: 'password 步未提供运行参数(录制未存明文,请把该步设为参数或先在浏览器登录)', secret: true }
       try {
-        const r = await wc.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';
+        const r = await fr.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';
           var v=${JSON.stringify(String(ev.value == null ? '' : ev.value))};
           if (__el.isContentEditable){__el.focus();__el.innerText=v}
           else{var p=Object.getOwnPropertyDescriptor(__el.__proto__,'value');p&&p.set?p.set.call(__el,v):(__el.value=v);}
@@ -2940,7 +2963,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     }
     if (ev.act === 'select') {
       try {
-        const r = await wc.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';
+        const r = await fr.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';
           var v=${JSON.stringify(String(ev.value == null ? '' : ev.value))};
           var p=Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value');
           p&&p.set?p.set.call(__el,v):(__el.value=v);
@@ -2956,7 +2979,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     }
     if (ev.act === 'check') {
       try {
-        const r = await wc.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';
+        const r = await fr.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';
           var want=${ev.checked ? 'true' : 'false'};
           if(__el.checked!==want){__el.click();}
           if(__el.checked!==want){
@@ -2970,18 +2993,19 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     }
     if (ev.act === 'key') {
       try {
-        await wc.executeJavaScript(`(()=>{var __el=null;if(${elExpr})__el.focus();})()`, true)
+        // 先在目标 frame 里 focus 元素,再由 webContents 发键(sendInputEvent 打到当前聚焦 frame)
+        await fr.executeJavaScript(`(()=>{var __el=null;if(${elExpr})__el.focus();})()`, true)
         wc.sendInputEvent({ type: 'keyDown', keyCode: ev.key })
         wc.sendInputEvent({ type: 'keyUp', keyCode: ev.key })
         if (ev.key === 'Enter') {
-          try { await wc.executeJavaScript(`(()=>{var __el=null;if((${elExpr})&&__el.form){__el.form.requestSubmit?__el.form.requestSubmit():__el.form.submit()}})()`, true) } catch {}
+          try { await fr.executeJavaScript(`(()=>{var __el=null;if((${elExpr})&&__el.form){__el.form.requestSubmit?__el.form.requestSubmit():__el.form.submit()}})()`, true) } catch {}
         }
         return { ok: true }
       } catch (e) { return { ok: false, err: e.message } }
     }
     if (ev.act === 'submit') {
       try {
-        const r = await wc.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';if(__el.tagName==='FORM'){__el.requestSubmit?__el.requestSubmit():__el.submit()}else{__el.click()}return 'OK';})()`, true)
+        const r = await fr.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';if(__el.tagName==='FORM'){__el.requestSubmit?__el.requestSubmit():__el.submit()}else{__el.click()}return 'OK';})()`, true)
         return r === 'OK' ? { ok: true } : { ok: false, err: 'selector(+alt) not found' }
       } catch (e) { return { ok: false, err: e.message } }
     }
@@ -3155,7 +3179,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       const gap = Math.min(Math.max(0, (ev.t || 0) - lastT), gapCap)   // 步间 sleep 封顶(fast 模式 400ms)
       if (gap > 50) await sleep(gap)
       lastT = ev.t || 0
-      await highlightTarget(wc, ev, i + 1)   // 先标红框让用户看到下一步要点哪
+      await highlightTarget(frameFor(wc, ev), ev, i + 1)   // 红框打在事件所属 frame(含 iframe)
       await sleep(fast ? 60 : 180)
       // 级联收缩:已有连续失败时缩短 waitForEl,防「等5s×重试」把 3 连败早停拖到 30s+;成功即复原
       const stepOpts = { waitMs: consecutiveFails >= 1 ? Math.min(waitMsBase, 1500) : waitMsBase }
@@ -3631,6 +3655,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
           if (ev.act === 'key') { if (!KEYS.has(ev.key)) return; e2.key = ev.key }
           if (ev.act === 'scroll') { e2.x = Number(ev.x) || 0; e2.y = Number(ev.y) || 0 }
           if (ev.act === 'click' && ev.text) e2.text = String(ev.text).slice(0, 40)
+          if (ev.fu && /^https?:\/\//i.test(String(ev.fu))) e2.fu = String(ev.fu).slice(0, 2000)   // iframe 定位键(仅 http/https)
         }
         e2.t = Number(ev.t) || 0
         idxMap.set(oldIdx, events.length)

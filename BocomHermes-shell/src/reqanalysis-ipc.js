@@ -123,7 +123,7 @@ module.exports = function initReqAnalysis(S, { ipcMain, app, path, fs, oc, log, 
       if (!sid) throw new Error('createSession 失败')
       // tag=任务身份 → session.js 随 card-stream 下发,reqflow 窗按读者 persona / 裁判分组(tag.id 与 stage reader-done 的 ev.persona 同源)
       S.sessionInfo.set(sid, { wc, serve, tag: { scope: 'req', kind: (meta && meta.kind) || '', id: (meta && (meta.persona || meta.kind)) || '' } }); entry.sessions.add(sid)
-      try { return await oc.sendMessage(serve, sid, prompt) }
+      try { return await oc.sendMessage(serve, sid, prompt, S.settings.model || null) }   // 跟随全局默认模型(与对话坞一致)
       finally { S.sessionInfo.delete(sid); entry.sessions.delete(sid); S.streamBuf.delete(sid) }
     }
 
@@ -217,7 +217,7 @@ module.exports = function initReqAnalysis(S, { ipcMain, app, path, fs, oc, log, 
       if (!sid) throw new Error('createSession 失败')
       // tag=任务身份 → session.js 随 card-stream 下发,reqplan 窗按需求点分组(meta.point=point.reqPoint)
       S.sessionInfo.set(sid, { wc, serve, tag: { scope: 'reqplan', kind: (meta && meta.kind) || '', id: (meta && (meta.point || meta.kind)) || '' } }); entry.sessions.add(sid)
-      try { return await oc.sendMessage(serve, sid, prompt) }
+      try { return await oc.sendMessage(serve, sid, prompt, S.settings.model || null) }   // 跟随全局默认模型(与对话坞一致)
       finally { S.sessionInfo.delete(sid); entry.sessions.delete(sid); S.streamBuf.delete(sid) }
     }
 

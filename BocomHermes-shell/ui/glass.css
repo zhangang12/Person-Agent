@@ -24,6 +24,50 @@
   --warn-bg: rgba(245,158,11,.13); --warn-border: rgba(245,158,11,.34); --warn-txt: #7c4a06; --warn-btn: #2563eb; --warn-btn-fg: #fff;
   --diff-add: #0a7d57; --diff-add-bg: rgba(10,157,110,.13); --diff-del: #b3204a; --diff-del-bg: rgba(225,29,72,.12);
 }
+/* 曜黑:实底近黑。层次靠面板深浅+1px 边线,不透桌面、无光晕 —— 长时间盯代码/日志 */
+html[data-theme="onyx"] {
+  --txt: #f2f4f8; --txt2: #aab1bf; --txt3: #767e8d;
+  --halo: none;   /* 实底不需要文字光晕 */
+  --accent: #4d9fff; --green: #3dcc8e;
+  --brand: linear-gradient(135deg, #7c8cff, #4d9fff);
+  --send-fg: #0a1018;
+  --glass-bg: #161a21;
+  --glass-border: #272d38;
+  --glass-shadow: 0 14px 34px rgba(0,0,0,.5);
+  --hl: linear-gradient(90deg, transparent, rgba(77,159,255,.35), transparent);
+  --me-bg: #24303f; --me-border: #33445a; --me-txt: #eef2f8;
+  --ai-bg: #1c212b; --ai-border: #272d38; --ai-txt: #f2f4f8;
+  --c-heading: #7bb7ff; --c-code: #ffb088; --c-codebg: rgba(255,176,136,.12);
+  --c-think: #c9b8ff; --c-think-bg: rgba(150,130,255,.10); --c-quote: #7dd3fc; --c-strong: #ff9ed8;
+  --composer-bg: #10141a; --composer-border: #272d38;
+  --orb-bg: #1d2735; --orb-border: #33445a;
+  --kbd-border: #323947;
+  --scroll: rgba(255,255,255,.16);
+  --warn-bg: rgba(232,180,76,.12); --warn-border: rgba(232,180,76,.35); --warn-txt: #eddfbe; --warn-btn: #4d9fff; --warn-btn-fg: #0a1018;
+  --diff-add: #3dcc8e; --diff-add-bg: rgba(61,204,142,.12); --diff-del: #f06a6a; --diff-del-bg: rgba(240,106,106,.12);
+}
+/* 纸白:纯白实底。边线分层、重点靠色不靠影 —— 办公环境/投屏 */
+html[data-theme="paper"] {
+  --txt: #171a20; --txt2: #575e6c; --txt3: #8a9099;
+  --halo: none;
+  --accent: #1d5ee0; --green: #0e9a6c;
+  --brand: linear-gradient(135deg, #5b6cf0, #1d5ee0);
+  --send-fg: #ffffff;
+  --glass-bg: #ffffff;
+  --glass-border: #e2e5ec;
+  --glass-shadow: 0 10px 26px rgba(23,32,64,.13);
+  --hl: linear-gradient(90deg, transparent, rgba(29,94,224,.18), transparent);
+  --me-bg: #e7eefc; --me-border: #cfdcf6; --me-txt: #1c2b52;
+  --ai-bg: #f5f6f9; --ai-border: #e2e5ec; --ai-txt: #171a20;
+  --c-heading: #0b63c4; --c-code: #b4480c; --c-codebg: rgba(180,72,12,.08);
+  --c-think: #6d28d9; --c-think-bg: rgba(109,40,217,.06); --c-quote: #0e7490; --c-strong: #b1238e;
+  --composer-bg: #eef0f4; --composer-border: #dfe3ea;
+  --orb-bg: #e7ecfb; --orb-border: #cfdcf6;
+  --kbd-border: #d0d5de;
+  --scroll: rgba(23,26,32,.2);
+  --warn-bg: rgba(181,122,16,.10); --warn-border: rgba(181,122,16,.3); --warn-txt: #7c5406; --warn-btn: #1d5ee0; --warn-btn-fg: #fff;
+  --diff-add: #0e9a6c; --diff-add-bg: rgba(14,154,108,.10); --diff-del: #cf3f4e; --diff-del-bg: rgba(207,63,78,.09);
+}
 html[data-theme="dark"] {
   /* 墨玻璃 */
   --txt: #ffffff; --txt2: rgba(242,245,255,.82); --txt3: rgba(242,245,255,.58);
