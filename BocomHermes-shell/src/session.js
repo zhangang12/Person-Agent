@@ -42,6 +42,7 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
     if (oc.AUTO_ALLOW.has(tool)) { oc.replyPermission(si.serve, sessionId, requestId, 'once'); return }
     if (!si.wc || si.wc.isDestroyed()) { oc.replyPermission(si.serve, sessionId, requestId, 'reject'); return }
     S.pendingPerm.set(requestId, sessionId)
+    S.pendingPerm.set(requestId + ':meta', { tool, detail: detail || '' })   // 供审计留痕(批准/拒绝了什么)
     si.wc.send('permission-request', { requestId, tool, detail: detail || '' })   // detail=要改的文件/要跑的命令，便于知情审批
   }
   function onText({ sessionId, text, role, partID, kind, status, delta, toolInput, toolOutput, toolTitle, toolError, subagent, agentId, agentName, taskChild, taskDesc }) {
@@ -296,9 +297,12 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
   })
 
   ipcMain.on('permission-reply', (_e, { requestId, decision }) => {
-    const sessionId = S.pendingPerm.get(requestId); S.pendingPerm.delete(requestId)
+    const sessionId = S.pendingPerm.get(requestId); const meta = S.pendingPerm.get(requestId + ':meta'); S.pendingPerm.delete(requestId); S.pendingPerm.delete(requestId + ':meta')
     const si = sessionId && S.sessionInfo.get(sessionId)
-    if (si) oc.replyPermission(si.serve, sessionId, requestId, decision === 'always' ? 'always' : decision === 'once' ? 'once' : 'reject')
+    const d = decision === 'always' ? 'always' : decision === 'once' ? 'once' : 'reject'
+    if (si) oc.replyPermission(si.serve, sessionId, requestId, d)
+    // 审计:写/执行类操作的人工批准(工具+目标),reject 也记(留痕拒绝)
+    try { S.audit && S.audit('permission', (d === 'reject' ? '拒绝' : '批准' + (d === 'always' ? '(总是)' : '')) + '权限:' + ((meta && meta.tool) || '?'), { decision: d, tool: meta && meta.tool, detail: (meta && meta.detail || '').slice(0, 300), sessionId }) } catch {}
   })
 
   ipcMain.handle('open-loc', (e, { file, line }) => {
@@ -312,6 +316,9 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
   ipcMain.handle('apply-diff', (e, diffText) => {
     const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
     const baseDir = (si && si.serve && si.serve.dir) || S.settings.projectDir || ''
-    return applyDiffToDisk(baseDir, String(diffText || ''))
+    const res = applyDiffToDisk(baseDir, String(diffText || ''))
+    // 审计:写文件(diff 应用),记文件清单与成败,不记文件内容
+    try { const okN = res.filter((r) => r.ok).length; S.audit && S.audit('edit', '应用 diff 到 ' + okN + '/' + res.length + ' 文件', { dir: baseDir ? require('path').basename(baseDir) : '', files: res.map((r) => ({ f: r.file, ok: r.ok, warn: r.warn || r.error || '' })).slice(0, 50), sessionId }) } catch {}
+    return res
   })
 }

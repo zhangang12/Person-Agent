@@ -55,6 +55,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   async function sendQueued(it) {
     const cfg = S.effectiveSmtp(); if (!cfg) throw new Error('SMTP 未配置')
     const res = await email.sendMail(cfg, it.msg)
+    // 审计:发信(收件人/主题,不记正文/附件内容)
+    try { const m = it.msg || {}; S.audit && S.audit('mail', '发送邮件', { to: Array.isArray(m.to) ? m.to.join(', ') : m.to, subject: m.subject || '', kind: it.kind, att: (m.attachments || []).length }) } catch {}
     const imap = S.settings.imap
     if (imap && imap.host && res.mime) {
       email.appendToSent(imap, imap.sentFolder || 'Sent', res.mime).catch((e) => log('APPEND Sent err: ' + e.message))
@@ -768,6 +770,15 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     S.outboxWin = new BrowserWindow(baseOpts({ width: 540, height: 640, x: ox, y: oy, skipTaskbar: false, alwaysOnTop: true, resizable: true, minWidth: 420, minHeight: 360 }))
     S.outboxWin.loadFile(path.join(__dirname, '..', 'ui', 'outbox.html'), { query: orbAnchorFor(ox, oy, 540, 640) })
     S.outboxWin.on('closed', () => { S.outboxWin = null })
+  }
+
+  function openAudit() {
+    if (S.auditWin && !S.auditWin.isDestroyed()) { S.auditWin.show(); S.auditWin.focus(); return }
+    const { width } = screen.getPrimaryDisplay().workAreaSize
+    const ax = Math.round(width / 2 - 320), ay = 100
+    S.auditWin = new BrowserWindow(baseOpts({ width: 640, height: 720, x: ax, y: ay, skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 460, minHeight: 400 }))
+    S.auditWin.loadFile(path.join(__dirname, '..', 'ui', 'audit.html'), { query: orbAnchorFor(ax, ay, 640, 720) })
+    S.auditWin.on('closed', () => { S.auditWin = null })
   }
 
   function openMailView(msgId) {
@@ -2052,6 +2063,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       { label: '📄 需求分析（Word）', click: () => spawnReqAnalysis('') },
       { label: '📤 发件箱', click: openOutbox },
       { label: '📋 待办事项', click: () => createMailCenter('todos') },
+      { label: '🛡 审计流水', click: openAudit },
       { label: '卡坞 · 历史对话', click: openDock },
       { label: '切换深 / 浅主题', click: toggleTheme },
       { label: '设置…', click: openSettings },
@@ -3464,6 +3476,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       for (const f of tracked) { try { require('child_process').execSync(`git checkout HEAD -- "${f.replace(/"/g, '\\"')}"`, { cwd, timeout: 3000 }) } catch {} }
       for (const f of untracked) { try { fs.unlinkSync(path.join(cwd, f)) } catch {} }
     }
+    if (!dryRun) { try { const n = result.reduce((a, r) => a + r.tracked.length + r.untracked.length, 0); S.audit && S.audit('rollback', '回滚改动 ' + n + ' 个文件', { dirs: result.map((r) => path.basename(r.dir)), files: result.flatMap((r) => [...r.tracked, ...r.untracked]).slice(0, 50) }) } catch {} }
     return { ok: true, dryRun, result }
   })
   // ── 浏览器技能(SKILL):一条录制即一个技能 ─────────────────────────────────
@@ -3595,6 +3608,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     const fails = replay.stepReport.filter((s) => !s.ok && !s.transient)
     const retried = replay.stepReport.filter((s) => s.retried && s.ok).length
     const ok = fails.length === 0 && (!replay.success || replay.success.pass)
+    try { S.audit && S.audit('skill', 'Agent 运行技能「' + hit.name + '」', { by: 'agent', steps: replay.stepReport.length, result: ok ? 'PASS' : (fails.length + ' 步失败'), baseUrl: (a && a.baseUrl) || '' }) } catch {}
     const lines = ['技能「' + hit.name + '」回放 ' + replay.stepReport.length + '/' + replay.totalSteps + ' 步 · ' + (fails.length === 0 ? '✅ 步骤全部成功' : '❌ ' + fails.length + ' 步失败') + (retried ? '(' + retried + ' 步重试后成功)' : '')]
     for (const f of fails.slice(0, 8)) lines.push('  · 步 ' + f.i + ' ' + f.act + ' "' + String(f.sel).slice(0, 60) + '" — ' + f.err)
     if (replay.success) lines.push('成功断言: ' + (replay.success.pass ? '✓ 达成' : '✗ 未达成') + ' [' + replay.success.kind + '] "' + replay.success.value + '"' + (replay.success.err ? '(检查出错: ' + replay.success.err + ')' : ''))
@@ -3673,6 +3687,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     // fast 只给技能:普通复现录制保持录制节奏,时序敏感的 bug 才复现得出来
     const replay = await replayRec(values ? applyParams(rec, values) : rec, { fast: !!rec.skill })
     if (replay.ok) writeLastRun(id, replay)
+    try { if (rec.skill) { const nf = replay.ok ? replay.stepReport.filter((s) => !s.ok && !s.transient).length : -1; S.audit && S.audit('skill', '运行技能「' + (rec.title || id) + '」', { steps: replay.stepReport ? replay.stepReport.length : 0, result: !replay.ok ? '回放失败' : (nf === 0 ? 'PASS' : nf + ' 步失败') }) } } catch {}
     return replay
   })
   // 技能导出:剥离 preState/snapshot(cookie/报错快照不外泄)与 _ 前缀运行时键,写到「下载」目录

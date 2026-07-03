@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>审计流水 · BocomHermes</title>
+<script>try { document.documentElement.dataset.theme = window.BocomHermes.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
+<script>(function(){try{var p=new URLSearchParams(location.search),d=document.documentElement.style;['gox','goy','gfx','gfy'].forEach(function(k){var v=p.get(k);if(v)d.setProperty('--'+k,v)})}catch(e){}})()</script>
+<link rel="stylesheet" href="glass.css" />
+<style>
+  .wrap { display: flex; flex-direction: column; height: 100%; padding: 12px 14px 12px; gap: 10px; }
+  .hd { display: flex; align-items: center; gap: 8px; flex: none; }
+  .hd .ttl { flex: 1; font-size: 14px; font-weight: 700; }
+  .hbtn { border: none; background: transparent; color: var(--txt3); cursor: pointer; padding: 4px; border-radius: 7px; display: flex; }
+  .hbtn:hover { color: var(--txt); background: var(--composer-bg); }
+  .bar { flex: none; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .bar input { flex: 1; min-width: 120px; background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 8px; padding: 6px 10px; color: var(--txt); font-size: 12.5px; font-family: var(--font); outline: none; }
+  .bar input:focus { border-color: var(--accent); }
+  .kinds { display: flex; gap: 4px; flex-wrap: wrap; }
+  .kchip { font-size: 11px; color: var(--txt2); background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 999px; padding: 3px 10px; cursor: pointer; font-family: var(--font); }
+  .kchip.on { color: var(--send-fg); background: var(--brand); border-color: transparent; }
+  .list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding-right: 2px; }
+  .list::-webkit-scrollbar { width: 6px; } .list::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  .row { background: var(--ai-bg); border: 1px solid var(--ai-border); border-left: 3px solid var(--k, var(--accent)); border-radius: 9px; padding: 8px 11px; }
+  .r1 { display: flex; align-items: center; gap: 8px; }
+  .kb { font-size: 10px; font-weight: 700; letter-spacing: .04em; color: var(--k, var(--accent)); text-transform: uppercase; }
+  .sm { flex: 1; font-size: 12.5px; color: var(--txt); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ts { font-size: 10.5px; color: var(--txt3); font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .pj { font-size: 10px; color: var(--txt3); }
+  .dt { margin-top: 5px; font-size: 11px; color: var(--txt2); font-family: var(--mono); white-space: pre-wrap; word-break: break-all; max-height: 150px; overflow-y: auto; background: rgba(127,127,127,.06); border-radius: 6px; padding: 5px 8px; display: none; }
+  .row.open .dt { display: block; }
+  .row[data-has] { cursor: pointer; }
+  .empty { color: var(--txt3); font-size: 12.5px; text-align: center; padding: 26px 12px; line-height: 1.7; }
+  .foot { flex: none; font-size: 10.5px; color: var(--txt3); text-align: center; }
+</style>
+</head>
+<body>
+<div class="glass">
+  <span class="hl"></span>
+  <div class="wrap">
+    <div class="hd">
+      <span class="ttl">🛡 审计流水</span>
+      <button id="refresh" class="hbtn nodrag" title="刷新"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6M3 22v-6h6"/><path d="M21 12a9 9 0 0 0-15-6.7L3 8M3 12a9 9 0 0 0 15 6.7l3-2.7"/></svg></button>
+      <button id="x" class="hbtn nodrag" title="关闭"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="bar nodrag">
+      <input id="q" placeholder="搜索(收件人 / 文件 / 工具 / 技能名…)" spellcheck="false" />
+    </div>
+    <div class="kinds nodrag" id="kinds"></div>
+    <div class="list nodrag" id="list"><div class="empty">加载中…</div></div>
+    <div class="foot">本机审计流水 · 数据不出网 · 密码/令牌不入流水</div>
+  </div>
+</div>
+<script>
+  const H = window.BocomHermes
+  const $ = (id) => document.getElementById(id)
+  H.onTheme && H.onTheme((t) => { document.documentElement.dataset.theme = t })
+  $('x').addEventListener('click', () => H.closeSelf())
+
+  const KINDS = [
+    { k: '', label: '全部', c: 'var(--accent)' },
+    { k: 'mail', label: '📧 发信', c: '#4d9fff' },
+    { k: 'edit', label: '✎ 改文件', c: '#3dcc8e' },
+    { k: 'rollback', label: '↩ 回滚', c: '#e8b44c' },
+    { k: 'permission', label: '🔑 权限', c: '#c9a0ff' },
+    { k: 'skill', label: '⚡ 技能', c: '#5dcf95' },
+  ]
+  let curKind = '', curQ = ''
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const kindColor = (k) => (KINDS.find((x) => x.k === k) || {}).c || 'var(--accent)'
+  const fmtTs = (ts) => { const d = new Date(ts); const p = (n) => String(n).padStart(2, '0'); return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) }
+
+  function renderKinds() {
+    $('kinds').innerHTML = ''
+    KINDS.forEach((x) => {
+      const b = document.createElement('button'); b.className = 'kchip' + (x.k === curKind ? ' on' : ''); b.textContent = x.label
+      b.addEventListener('click', () => { curKind = x.k; renderKinds(); load() })
+      $('kinds').appendChild(b)
+    })
+  }
+
+  async function load() {
+    let rows = []
+    try { rows = await H.auditList({ kind: curKind || undefined, q: curQ || undefined, limit: 500 }) } catch (e) { rows = [] }
+    const list = $('list')
+    if (!rows.length) { list.innerHTML = '<div class="empty">暂无审计记录' + (curKind || curQ ? '(当前筛选下)' : ' — 发信 / 改文件 / 回滚 / 批准权限 / 运行技能后会在这里留痕') + '</div>'; return }
+    list.innerHTML = ''
+    for (const e of rows) {
+      const row = document.createElement('div'); row.className = 'row'
+      row.style.setProperty('--k', kindColor(e.kind))
+      const hasDetail = e.detail != null
+      if (hasDetail) row.setAttribute('data-has', '1')
+      row.innerHTML = '<div class="r1"><span class="kb">' + esc(e.kind) + '</span><span class="sm">' + esc(e.summary) + '</span><span class="ts">' + fmtTs(e.ts) + '</span></div>'
+        + (e.project ? '<div class="pj">项目:' + esc(e.project) + '</div>' : '')
+        + (hasDetail ? '<div class="dt">' + esc(typeof e.detail === 'string' ? e.detail : JSON.stringify(e.detail, null, 2)) + '</div>' : '')
+      if (hasDetail) row.addEventListener('click', () => row.classList.toggle('open'))
+      list.appendChild(row)
+    }
+  }
+
+  let qT = null
+  $('q').addEventListener('input', () => { clearTimeout(qT); qT = setTimeout(() => { curQ = $('q').value.trim(); load() }, 220) })
+  $('refresh').addEventListener('click', load)
+  renderKinds(); load()
+</script>
+</body>
+</html>

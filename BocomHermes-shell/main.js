@@ -10,6 +10,7 @@ const initOrch    = require('./src/orch')
 const initTrigger = require('./src/trigger')
 const initTodos   = require('./src/todos')
 const initReqAnalysis = require('./src/reqanalysis-ipc')
+const initAudit   = require('./src/audit')
 
 // 日志：打包后没有终端，console 看不到 → 同时写到 userData/BocomHermes.log
 let logFile = null, logBytes = 0
@@ -115,6 +116,7 @@ app.whenReady().then(() => {
     item.once('done', (_x, state) => send(state === 'completed' ? 'done' : 'fail', { state }))
   })
 
+  initAudit(S, { app, path, fs, ipcMain, log })   // 先于 initWindow:S.audit 供各埋点处调用
   const deps = { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }
   const { createOrb, createBrowser, createWorkspace, createMailCenter, openMailView, toggleOrbInput, buildTray, spawnEmailCard, recordHistory, touchHistory, spawnReqConfirm, spawnReqPlan } = initWindow(S, deps)
   S.createOrb = createOrb   // 留给 window-all-closed 兜底拉起球

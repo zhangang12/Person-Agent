@@ -90,6 +90,8 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   // 个人记忆库
   memoryRead: () => ipcRenderer.invoke('memory-read'),
   memoryWrite: (text) => ipcRenderer.invoke('memory-write', text),
+  // 审计流水
+  auditList: (opts) => ipcRenderer.invoke('audit-list', opts || {}),
   // 剪贴板
   readClipboard: () => ipcRenderer.invoke('read-clipboard'),
   onFillInput: (cb) => ipcRenderer.on('fill-input', (_e, text) => cb(text)),
