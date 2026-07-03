@@ -7,6 +7,7 @@ const mailCache = require('./mail-cache')
 const emailSummarySeen = require('./email-summary-seen')
 const initOutbox = require('./outbox')
 const db = require('./db')
+const { extractMeeting } = require('./meeting-extract')
 
 module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }) {
   // 额外窗口引用
@@ -359,6 +360,23 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // 启动时 prune "已整理"集合 30 天前的条目
   try { emailSummarySeen.prune(app.getPath('userData'), null, log) } catch (e) { log('email-seen prune err: ' + e.message) }
 
+  // cid: 内联图片 → data:URI(Foxmail 式内嵌图还原):用 _rawAttachments 里带 Content-ID 的图替换 html 引用
+  function inlineCids(html, rawAtts) {
+    if (!html || !/cid:/i.test(html) || !Array.isArray(rawAtts) || !rawAtts.length) return html
+    const map = new Map(); let budget = 8 * 1024 * 1024   // 总量 8MB 上限,防 srcdoc 爆炸
+    for (const a of rawAtts) {
+      if (!a || !a.contentId || !a.bytes || !/^image\//i.test(a.mime || '')) continue
+      if (a.bytes.length > budget) continue
+      budget -= a.bytes.length
+      map.set(a.contentId, 'data:' + a.mime + ';base64,' + a.bytes.toString('base64'))
+    }
+    if (!map.size) return html
+    const dec = (s) => { try { return decodeURIComponent(s) } catch { return s } }
+    return html.replace(/(["'(])cid:([^"')\s>]+)/gi, (m, pre, id) => {
+      const uri = map.get(id) || map.get(dec(id))
+      return uri ? pre + uri : m
+    })
+  }
   // 待办 → 邮件闭环：按 msgId 取原邮件（先内存批次，再 IMAP 兜底搜）
   async function loadMailByMsgId(msgId) {
     const imap = S.settings.imap
@@ -367,9 +385,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     let mail = (S.mailLastBatch && Array.isArray(S.mailLastBatch.emails) ? S.mailLastBatch.emails : []).find((e) => e.messageId === id) || null
     if (!mail) { const cached = S.mailCache && S.mailCache.get(id); try { mail = await email.fetchByMessageId(imap, id, cached && cached.folder) } catch (e) { return { error: e.message } } }
     if (!mail) return { error: '找不到原邮件（可能已归档或不在收件箱）' }
+    const rawHtml = String(mail.html || '').slice(0, 400000)   // 截断必须在 cid 替换之前,否则会切断 base64
     return { ok: true, id, from: mail.from, subject: mail.subject, date: mail.date,
       text: mail.text || email.stripHtml(mail.html || ''),
-      html: mail.html || '', hasHtml: !!(mail.html && mail.html.length) }
+      html: inlineCids(rawHtml, mail._rawAttachments || []), hasHtml: !!(mail.html && mail.html.length) }
   }
   ipcMain.handle('mail-get-full', async (_e, msgId) => {
     const r = await loadMailByMsgId(msgId)
@@ -386,7 +405,14 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   ipcMain.handle('mail-view-data', async (_e, msgId) => {
     const r = await loadMailByMsgId(msgId)
     return r.error ? r : { ok: true, from: r.from, subject: r.subject, date: r.date,
-      text: String(r.text || '').slice(0, 50000), html: String(r.html || '').slice(0, 400000), hasHtml: r.hasHtml }
+      text: String(r.text || '').slice(0, 50000), html: String(r.html || ''), hasHtml: r.hasHtml }   // html 已在 loadMailByMsgId 里先截断再 cid 内联,这里不能再切(会切断 base64)
+  })
+  // 邮件正文里的链接 → 系统默认浏览器;协议白名单,禁 file:/javascript: 等
+  ipcMain.handle('open-external-url', (_e, url) => {
+    const u = String(url || '')
+    if (!/^(https?:|mailto:)/i.test(u)) return { ok: false, error: '非法协议' }
+    shell.openExternal(u).catch(() => {})
+    return { ok: true }
   })
   ipcMain.handle('open-mail-view', (_e, msgId) => openMailView(msgId))
   ipcMain.handle('open-mail-center', (_e, tab) => createMailCenter(tab))
@@ -411,6 +437,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       limit: Math.max(1, Math.min(+o.limit || 50, 100)), // 默认 50，上限 100
       folder: o.folder || 'INBOX',
     })
+    // 轻量会议识别(仅 subject+摘要,召回率低于整理卡路径;去重靠 msgId,重复调用无害)
+    for (const e of (r.emails || [])) { if (!e.error) maybeSuggestMeeting(e) }
     return {
       ok: true,
       totalMatched: r.totalMatched || 0,
@@ -662,6 +690,22 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     return (!r.canceled && r.filePaths[0]) ? r.filePaths[0] : null
   }
 
+  // 规则法识别邮件里的会议 → 产出"建议待办"(pending 态,人工确认后才进正式待办);
+  // 抽取器保守(解析不出可信时间只给建议不给提醒),误报靠确认区兜底。产出即广播 UI 刷新
+  function maybeSuggestMeeting(em) {
+    try {
+      if (!em || !em.messageId || !S.todosApi) return
+      const mt = extractMeeting(em)
+      if (!mt) return
+      const sug = S.todosApi.addSuggestion({
+        msgId: em.messageId, from: em.from || '', subject: em.subject || '', date: em.date || '',
+        text: (em.subject || '会议').slice(0, 80) + (mt.snippet ? ' · ' + mt.snippet : ''),
+        meetingAt: mt.meetingAt, link: mt.link,
+      })
+      if (sug) { for (const w of BrowserWindow.getAllWindows()) { try { w.webContents.send('todo-suggest-updated') } catch {} } }
+    } catch (e) { log('suggest meeting err: ' + e.message) }
+  }
+
   // ── 邮件整理卡 ─────────────────────────────────────────────────────────────
   // 行为:拉今天+昨天的邮件(不限未读)→ 过滤掉之前 📧 按钮已整理过的 → 喂 agent 摘要
   //       已整理过的 messageId 持久化在 userData/email-summary-seen.json
@@ -688,6 +732,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         if (!em.messageId) continue
         mailCache.put(app.getPath('userData'), em)
         S.mailCache.set(em.messageId, { messageId: em.messageId, uid: em.uid, folder: em.folder || 'INBOX', from: em.from, subject: em.subject, date: em.date, attCount: (em.attachments || []).length, savedAt: Date.now() })
+        maybeSuggestMeeting(em)   // 规则法识别会议 → 建议待办(人工确认后才进正式待办)
       }
       // 内存缓存这次结果,UI 加待办时能回填邮件正文
       S.mailLastBatch = { ts: Date.now(), emails: fresh }
@@ -724,6 +769,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (!(S.mailViewWin && !S.mailViewWin.isDestroyed())) {
       S.mailViewWin = new BrowserWindow(baseOpts({ width: 760, height: 800, x: mx, y: my, skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 480, minHeight: 400 }))
       S.mailViewWin.on('closed', () => { S.mailViewWin = null })
+      // 兜底:邮件窗口内任何弹窗/跳转一律转系统浏览器(防未来 sandbox 配置回归)
+      const wc = S.mailViewWin.webContents
+      wc.setWindowOpenHandler(({ url }) => { if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => {}); return { action: 'deny' } })
+      wc.on('will-navigate', (e, url) => { if (!url.startsWith('file:')) { e.preventDefault(); if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => {}) } })
     } else { S.mailViewWin.show(); S.mailViewWin.focus() }
     S.mailViewWin.loadFile(path.join(__dirname, '..', 'ui', 'mailview.html'), { query: { msgId: id, ...orbAnchorFor(mx, my, 760, 800) } })
   }
@@ -736,6 +785,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (!(S.mailCenterWin && !S.mailCenterWin.isDestroyed())) {
       S.mailCenterWin = new BrowserWindow(baseOpts({ width: W, height: Hh, x: mx, y: my, skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 720, minHeight: 520 }))
       S.mailCenterWin.on('closed', () => { S.mailCenterWin = null })
+      // 兜底:邮件中心内任何弹窗/跳转一律转系统浏览器(防未来 sandbox 配置回归)
+      const wc = S.mailCenterWin.webContents
+      wc.setWindowOpenHandler(({ url }) => { if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => {}); return { action: 'deny' } })
+      wc.on('will-navigate', (e, url) => { if (!url.startsWith('file:')) { e.preventDefault(); if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => {}) } })
     } else { S.mailCenterWin.show(); S.mailCenterWin.focus() }
     const query = { ...orbAnchorFor(mx, my, W, Hh) }
     if (tab) query.tab = tab
@@ -801,10 +854,12 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const tab = brActive(); if (!tab) return
     if (b._dragging) return                     // 拖动分隔条时内容视图临时分离，跳过布局
     const rx = leftW + G                         // 右侧浏览器内容区左边界
-    // ⋯ 更多菜单 / 设置抽屉打开 → 网页层从右让出一条,否则原生层会盖住 HTML 浮层（设置抽屉更宽）
-    const menuW = b.settingsOpen ? 360 : (b.menuOpen ? 248 : 0)
+    // ⋯ 更多菜单 / 设置抽屉 / 通用 chrome 浮层(技能库/验证卡)打开 → 网页层从右让出一条,否则原生层会盖住 HTML 浮层
+    const menuW = Math.max(b.settingsOpen ? 360 : 0, b.menuOpen ? 248 : 0, b.chromeOverlayW | 0)
     const rw = Math.max(0, cw - rx - menuW)
     const areaH = Math.max(0, ch - BR_TOP_H - b.consoleH)
+    // 模态卡(保存技能/填参数)打开 → 页面视图高度压 0 整体让位(页面 JS 仍在跑),关闭时恢复
+    if (b.modalOpen) { tab.view.setBounds({ x: rx, y: BR_TOP_H, width: rw, height: 0 }); return }
     const d = tab.device
     if (d && d.w) {
       const dw = Math.min(d.w, rw)
@@ -1059,10 +1114,13 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (m.startsWith('__BR__')) {
       try {
         const ev = JSON.parse(m.slice(6))
+        // 健康自检 ping:只置连通标志,不进事件队列
+        if (ev.act === '__ping__') { if (S.browser.rec) S.browser.rec._pingOk = true; return }
         if (S.browser.rec && S.browser.rec.active && S.browser.rec.tabId === tab.id) {
           // 用主进程时间戳代替页面时钟,避免页面 Date.now 被 mock 时漂移
           ev.t = Date.now() - S.browser.rec.startedAt
           S.browser.rec.events.push(ev)
+          brSendRecCount()   // 「● 已录 N 步」实时徽标
         }
       } catch {}
       return
@@ -1120,6 +1178,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       const frames = ((d.stackTrace && d.stackTrace.callFrames) || []).map((c) => ({ url: c.url, line: c.lineNumber, col: c.columnNumber, fn: c.functionName }))
       const f = frames[0]
       pushConsole(tab, { level: 3, message: fmtException(d), source: f ? f.url : (d.url || ''), line: f ? (f.line + 1) : ((d.lineNumber || 0) + 1), frames })
+    } else if (method === 'Runtime.bindingCalled') {
+      // 录制事件主通道:页面覆写 console.log 也打不死 binding;payload 即 '__BR__...',复用 pushConsole 截留
+      if (p.name === '__bocom_rec_emit') pushConsole(tab, { level: 1, message: String(p.payload || '') })
     }
   }
   function attachDbg(tab) {
@@ -1131,7 +1192,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     tab._dbgReady = Promise.all([
       dbg.sendCommand('Network.enable', { maxTotalBufferSize: 64 * 1024 * 1024, maxResourceBufferSize: 16 * 1024 * 1024 }).catch(() => {}),
       dbg.sendCommand('Page.enable').catch(() => {}),
-      dbg.sendCommand('Runtime.enable').catch(() => {}),   // 富控制台 + 未捕获异常堆栈 + REPL 求值
+      // Runtime.enable 失败 → 富路径死;必须把 dbg 标回 false,让 console-message 降级路径接管(消灭双死区)
+      dbg.sendCommand('Runtime.enable').catch(() => { tab.dbg = false }),   // 富控制台 + 未捕获异常堆栈 + REPL 求值
+      dbg.sendCommand('Runtime.addBinding', { name: '__bocom_rec_emit' }).catch(() => {}),   // 录制事件主通道(防页面覆写 console)
     ])
   }
   function detachDbg(tab) { try { tab.view.webContents.debugger.detach() } catch {} tab.dbg = false }
@@ -2454,6 +2517,10 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   // ⋯ 更多菜单开/合 → 网页层从右让出/收回一条(否则原生层盖住 HTML 菜单)
   ipcMain.on('browser-menu-overlay', (_e, on) => { const b = S.browser; if (!b || !b.win || b.win.isDestroyed()) return; b.menuOpen = !!on; brLayout() })
   ipcMain.on('browser-settings-overlay', (_e, on) => { const b = S.browser; if (!b || !b.win || b.win.isDestroyed()) return; b.settingsOpen = !!on; brLayout() })
+  // 通用 chrome 浮层让位:HTML 浮层(技能库 480px / 验证卡等)打开时,页面视图从右让出 w 像素
+  ipcMain.on('browser-chrome-overlay', (_e, w) => { const b = S.browser; if (!b || !b.win || b.win.isDestroyed()) return; b.chromeOverlayW = Math.max(0, w | 0); brLayout() })
+  // 模态浮层让位:模态卡(保存技能/填参数)打开时,页面视图高度压 0,关闭恢复
+  ipcMain.on('browser-modal-overlay', (_e, on) => { const b = S.browser; if (!b || !b.win || b.win.isDestroyed()) return; b.modalOpen = !!on; brLayout() })
   ipcMain.on('browser-back',    () => { const wc = brWC(); if (wc && wc.canGoBack()) wc.goBack() })
   ipcMain.on('browser-forward', () => { const wc = brWC(); if (wc && wc.canGoForward()) wc.goForward() })
   ipcMain.on('browser-reload',  () => { const wc = brWC(); if (wc) wc.isLoading() ? wc.stop() : wc.reload() })
@@ -2471,7 +2538,8 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   const RECORDER_JS = `
 ;(function(){
   if (window.__bocom_rec_init) return; window.__bocom_rec_init = true;
-  var emit = function(e){ try { console.log('__BR__' + JSON.stringify(e)); } catch(_){} };
+  // 双通道单发:优先 CDP binding(页面覆写 console.log 也打不死);binding 命中即 return,不会双通道重复入队
+  var emit = function(e){ var s = '__BR__' + JSON.stringify(e); try { if (typeof window.__bocom_rec_emit === 'function') return window.__bocom_rec_emit(s); } catch(_){} try { console.log(s); } catch(_){} };
   // 记多个选择器候选:回放时按优先级 fallback,DOM 结构小幅变动也能命中
   var selBuild = function(el){
     if (!el || el === document || el === document.body) return ['body'];
@@ -2612,9 +2680,27 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   }, { capture:true, passive:true });
 })();`
 
+  // 注入全部框架(主框架 + iframe 子树):交行内网/柜面系统普遍把业务表单放 iframe 里。
+  // 返回布尔 = 主框架是否注入成功(子框架跨域受限失败静默容忍,不影响 injected 判定)
   async function injectRecorder(wc) {
-    try { await wc.executeJavaScript(RECORDER_JS + '\n;window.__bocom_rec_on=true;', true) }
-    catch (e) { log('injectRecorder err: ' + e.message) }
+    let okMain = false
+    try {
+      const main = wc.mainFrame
+      for (const f of main.framesInSubtree) {
+        try {
+          await f.executeJavaScript(RECORDER_JS + '\n;window.__bocom_rec_on=true;', true)
+          if (f === main) okMain = true
+        } catch (e) { if (f === main) log('injectRecorder err: ' + e.message) }
+      }
+    } catch (e) { log('injectRecorder err: ' + e.message) }
+    return okMain
+  }
+
+  // 「● 已录 N 步」实时徽标:每入队一个事件就推一次计数到 chrome
+  function brSendRecCount() {
+    const b = S.browser
+    if (!b.rec || !b.win || b.win.isDestroyed()) return
+    b.win.webContents.send('browser-rec-count', { n: b.rec.events.length })
   }
 
   ipcMain.handle('browser-rec-start', async () => {
@@ -2636,23 +2722,47 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     } catch (e) { log('preState dump err: ' + e.message) }
     S.browser.rec = { active: true, tabId: tab.id, startedAt: Date.now(), startUrl: wc.getURL(), preState, events: [] }
     S.browser.rec.events.push({ t: 0, act: 'navigate', url: wc.getURL() })
-    await injectRecorder(wc)
-    // 录制中导航 → 新页面要再注入(__bocom_rec_init 防重,__bocom_rec_on 重置)
+    const injected = await injectRecorder(wc)
+    // 录制中导航 → 新页面/子框架要再注入(__bocom_rec_init 防重,__bocom_rec_on 重置);
+    // 挂 did-frame-finish-load:iframe 导航后也重注入。cleanup 必须先于任何早退路径挂好
     const handler = () => { if (S.browser.rec && S.browser.rec.active) injectRecorder(wc).then(() => {
+      if (!S.browser.rec || !S.browser.rec.active) return
       const u = wc.getURL()
       const last = S.browser.rec.events[S.browser.rec.events.length - 1]
-      if (!last || last.url !== u) S.browser.rec.events.push({ t: Date.now() - S.browser.rec.startedAt, act: 'navigate', url: u })
+      if (!last || last.url !== u) { S.browser.rec.events.push({ t: Date.now() - S.browser.rec.startedAt, act: 'navigate', url: u }); brSendRecCount() }
     }) }
-    wc.on('did-finish-load', handler)
-    S.browser.rec.cleanup = () => { try { wc.off('did-finish-load', handler) } catch {} }
+    wc.on('did-frame-finish-load', handler)
+    S.browser.rec.cleanup = () => { try { wc.off('did-frame-finish-load', handler) } catch {} }
+    // 健康自检:①注入是否真落地 ②事件通道(binding→console 回退)是否连通 ③CDP attach 状态,失败立刻告知原因
+    const health = { injected: false, channel: false, dbg: !!tab.dbg }
+    health.injected = injected && await wc.executeJavaScript('!!window.__bocom_rec_init && !!window.__bocom_rec_on', true).catch(() => false)
+    if (health.injected) {
+      S.browser.rec._pingOk = false
+      // ping 走与 emit 相同的双通道:binding 命中即 return,否则回退 console.log
+      const PING_JS = "(function(){var s='__BR__'+JSON.stringify({act:'__ping__'});try{if(typeof window.__bocom_rec_emit==='function')return window.__bocom_rec_emit(s)}catch(e){}try{console.log(s)}catch(e){}})()"
+      try { await wc.executeJavaScript(PING_JS, true) } catch {}
+      for (let k = 0; k < 3 && !(S.browser.rec && S.browser.rec._pingOk); k++) await sleep(200)
+      health.channel = !!(S.browser.rec && S.browser.rec._pingOk)
+    }
+    if (!health.injected || !health.channel) {
+      try { wc.off('did-frame-finish-load', handler) } catch {}   // 早退前先摘 did-frame-finish-load handler(不依赖 rec 仍存活)
+      S.browser.rec = null
+      const error = !health.injected
+        ? '录制脚本注入失败:页面还在加载或是受限页,等加载完再试'
+        : (health.dbg ? '事件通道不通:页面可能覆写了 console.log(生产静音),可稍后重试' : '事件通道不通:CDP 调试器未附加(可能被 DevTools/外部工具占用),关掉 DevTools 后重试')
+      log('rec start health fail: injected=' + health.injected + ' channel=' + health.channel + ' dbg=' + health.dbg)
+      return { ok: false, error }
+    }
     log('rec start: tab ' + tab.id + ' @ ' + S.browser.rec.startUrl)
-    return { ok: true }
+    brSendRecCount()   // 初始 navigate 已入队 → 徽标从 1 起跳
+    return { ok: true, health }
   })
 
   ipcMain.handle('browser-rec-stop', async () => {
     const r = S.browser.rec
     if (!r || !r.active) return { ok: false, error: '没有进行中的录制' }
     r.active = false
+    if (S.browser.win && !S.browser.win.isDestroyed()) S.browser.win.webContents.send('browser-rec-count', { n: r.events.length, done: true })   // 收徽标
     if (r.cleanup) r.cleanup()
     // 把页面里的 flag 关掉(监听仍在,只是不再 emit);顺手收掉防抖里还没吐出来的最后一个输入。
     // 必须走返回值通道:此刻 r.active 已 false,console 通道的 __BR__ 会被 pushConsole 丢弃且有异步竞态
@@ -3009,13 +3119,16 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     const covOn = await startCoverage(tab)
     const skipSet = new Set(Array.isArray(rec.skipSteps) ? rec.skipSteps : [])
     const stepReport = []
+    // 回放进度浮层:每步推 browser-replay-progress 给 chrome 顶带 HUD(与页内红框互补:红框看"点哪",HUD 看"进到哪/卡在哪")
+    const sendProg = (d) => { const w = S.browser.win; if (w && !w.isDestroyed()) w.webContents.send('browser-replay-progress', d) }
+    sendProg({ start: true, total: rec.events.length, title: rec.title || rec.id || '' })
     let lastT = 0
     let storageRestored = false
     let consecutiveFails = 0; let cascadeFrom = -1
     for (let i = 0; i < rec.events.length; i++) {
       const ev = rec.events[i]
       // 跳过步(如滚动噪声)必须推占位条目并更新 lastT —— diffReport/verifyFix/skillRun 全按 stepReport 长度对齐计数
-      if (skipSet.has(i)) { stepReport.push({ i: i + 1, act: ev.act, sel: '', ok: true, skipped: true }); lastT = ev.t || 0; continue }
+      if (skipSet.has(i)) { stepReport.push({ i: i + 1, act: ev.act, sel: '', ok: true, skipped: true }); lastT = ev.t || 0; sendProg({ i: i + 1, total: rec.events.length, act: ev.act, ok: true }); continue }
       if (!storageRestored && ev.act === 'navigate' && rec.preState && !rec._baseSwapped && (rec.preState.local !== '{}' || rec.preState.session !== '{}')) {
         ev._restorePreState = rec.preState; storageRestored = true
       }
@@ -3038,6 +3151,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       if (r.retried) entry.retried = true
       if (r.secret) entry.secret = true
       stepReport.push(entry)
+      sendProg({ i: i + 1, total: rec.events.length, act: ev.act, ok: r.ok, err: (r.err || '').slice(0, 80) })
       if (!r.ok && ev.act === 'navigate') break
       if (r.ok && ev.act === 'navigate') { try { await wc.executeJavaScript(DLG_STUB, true) } catch {} }   // 整页加载清掉桩 → 重注入
       // 级联失败检测:连续 3 个非 navigate 步失败 → 后续大概率都依赖前面失败步,提前 break 不无谓继续。
@@ -3057,6 +3171,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       if (ev.act === 'click' || ev.act === 'submit' || ev.act === 'key' || ev.act === 'select' || ev.act === 'check' || ev.act === 'navigate') await waitNetIdle(tab, 300, 3000)
       else await sleep(fast ? 50 : 120)
     }
+    sendProg({ done: true, fails: stepReport.filter((s) => !s.ok).length, total: stepReport.length })
     await sleep(fast ? 600 : 1800)    // 播完再等异步报错/请求浮现
     const after = {
       errs: tab.console.filter((c) => c.level >= 2).map((c) => ({ level: c.level, msg: (c.message || '').split('\n')[0].slice(0, 200) })),
@@ -3542,5 +3657,5 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('open-history', (_e, { sid, title }) => spawnCard(title, sid))
   ipcMain.handle('clear-history', () => { S.history = []; saveHistory(); return true })
 
-  return { createOrb, createBrowser, createWorkspace, createMailCenter, spawnCard, spawnFanout, spawnWorkflow, spawnReqAnalysis, spawnReqConfirm, spawnReqPlan, spawnEmailCard, toggleInput, toggleOrbInput, buildTray, openDock, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory }
+  return { createOrb, createBrowser, createWorkspace, createMailCenter, openMailView, spawnCard, spawnFanout, spawnWorkflow, spawnReqAnalysis, spawnReqConfirm, spawnReqPlan, spawnEmailCard, toggleInput, toggleOrbInput, buildTray, openDock, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory }
 }

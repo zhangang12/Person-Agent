@@ -72,10 +72,12 @@
     <div id="goal" class="goal nodrag"></div>
     <div id="graph" class="nodrag"></div>
     <div id="detail" class="detail nodrag"></div>
+    <div id="mon" class="nodrag" style="flex:none;max-height:34%;overflow-y:auto;display:flex;flex-direction:column;gap:3px"></div>
     <div id="feed" class="feed nodrag"></div>
   </div>
 </div>
 <script src="rich.js"></script>
+<script src="agentmon.js"></script>
 <script>
   window.BocomHermes.onTheme((t) => { document.documentElement.dataset.theme = t })
   const params = new URLSearchParams(location.search)
@@ -152,6 +154,15 @@
     box.append(t, ok, al, no); feed.appendChild(box); feed.scrollTop = feed.scrollHeight
   })
 
+  // ── 子任务实时监控（共享组件 agentmon.js）：card-stream 带 tag{scope:'wf',id=DAG节点id,kind,role,round} → 按任务分组列工具调用 ──
+  const mon = AgentMon.create({ host: document.getElementById('mon') })
+  AgentMon.bindStream(mon, (p) => {
+    const t = p.tag || {}; if (t.scope !== 'wf') return null
+    const base = String(t.id || 'task')
+    const label = t.kind === 'plan' ? '🧭 规划器 · 第' + (t.round || '?') + '轮' : t.kind === 'reduce' ? '🧾 汇总' : base + ' · ' + (t.role || 'worker')
+    return p.sub ? { key: base + '/' + (p.agentId || '_'), name: label + ' ▸ ' + (p.agentName || '子agent') } : { key: base, name: label }
+  })
+
   let runningBanner = banner('run', '正在规划…')
   window.BocomHermes.onWorkflowEvent((ev) => {
     if (ev.type === 'plan') {
@@ -183,6 +194,8 @@
       btns.append(go, auto, no); box.append(t, tlist, btns); feed.appendChild(box); feed.scrollTop = feed.scrollHeight
     } else if (ev.type === 'task') {
       const t = tasks.get(ev.id); if (t) { t.status = ev.status; draw() }
+      // 编排事件是权威收尾:会话销毁竞态下迟到的工具事件会被丢,工具清单跟 DAG 节点一起收
+      if (ev.status && ev.status !== 'running') mon.done(ev.id, ev.status === 'ok' ? 'completed' : 'error')
     } else if (ev.type === 'final') {
       if (runningBanner) runningBanner.remove()
       const secs = ev.elapsedMs ? Math.round(ev.elapsedMs / 1000) + 's' : ''

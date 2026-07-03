@@ -97,6 +97,11 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 #brec.on{background:rgba(255,80,80,.2);border-color:rgba(255,80,80,.55);color:#ff8b8b}
 #brec.on #brecdot{display:inline;animation:recpulse 1.1s ease-in-out infinite;color:#ff5555;margin-right:3px}
 @keyframes recpulse{0%,100%{opacity:.35}50%{opacity:1}}
+/* 录制中「● 已录 N 步」常驻徽标:在 y<82 顶带,永不被页面视图遮盖;点击即停止 */
+#brecbadge{background:rgba(255,80,80,.2);border-color:rgba(255,80,80,.55);color:#ff8b8b;font-variant-numeric:tabular-nums;white-space:nowrap}
+#brecbadge[hidden]{display:none}
+#brecbadge .dot{animation:recpulse 1.1s ease-in-out infinite;color:#ff5555;margin-right:2px}
+#brecbadge b{font-weight:700;color:#ffc2c2;margin:0 2px}
 .tb.on{background:var(--accent-dim);border-color:rgba(74,168,255,.3);color:var(--accent)}
 .bdg{position:absolute;top:-5px;right:-5px;display:none;min-width:15px;height:15px;padding:0 4px;border-radius:8px;font-size:10px;font-weight:700;
   line-height:15px;text-align:center}
@@ -192,12 +197,13 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 .pk-box .core{border:1px solid rgba(74,168,255,.5);border-radius:3px;padding:5px;color:var(--accent);margin-top:3px;font-variant-numeric:tabular-nums}
 .pk-act{display:flex;gap:6px;padding:9px 12px;border-top:1px solid var(--line)}
 
-/* toast */
-#toast{position:absolute;bottom:18px;left:50%;transform:translateX(-50%) translateY(20px);z-index:60;
+/* toast:定位在 82px chrome 顶带内(fixed top:50px)—— 页面是原生 WebContentsView,盖不到这条带,toast 永远可见 */
+#toast{position:fixed;top:50px;left:50%;transform:translateX(-50%) translateY(-12px);z-index:70;
   background:#1a1c2e;border:1px solid var(--line);border-radius:10px;padding:9px 16px;font-size:12.5px;color:var(--txt);
   box-shadow:0 8px 28px rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;display:flex;align-items:center;gap:8px}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 #toast .ok{color:var(--ok)}
+#toast .err{color:var(--err)}
 
 /* ── 底部面板（控制台 / 网络）── */
 #console{height:0;flex:none;overflow:hidden;display:flex;flex-direction:column;
@@ -294,6 +300,9 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 :root{--wsleftw:460px}
 body.ws{padding-left:calc(var(--wsleftw) + 6px)}
 body.ws #tabbar{padding-left:8px}
+/* 工作台模式:左侧是全高原生 cardView,fixed 浮层要锚进右侧 chrome 区才不被盖 */
+body.ws #toast{left:calc(var(--wsleftw) + (100vw - var(--wsleftw))/2)}
+body.ws #toaststack{left:calc(var(--wsleftw) + 18px)}
 #wssplit{position:fixed;top:0;bottom:0;left:var(--wsleftw);width:6px;cursor:col-resize;background:var(--line);z-index:200;display:none}
 body.ws #wssplit{display:block}
 #wssplit:hover,body.wsdrag #wssplit{background:var(--accent)}
@@ -319,6 +328,9 @@ body.wsdrag{cursor:col-resize}
 
   <!-- AI 分析:招牌功能常驻 -->
   <button class="tb ai" id="bai" title="把当前页面报错 + DOM 交给 AI 分析"><svg viewBox="0 0 24 24"><path d="M12 2l2.4 5.6L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.6-1.4z"/></svg>AI 分析</button>
+
+  <!-- 录制中「● 已录 N 步」实时徽标:常驻 chrome 顶带(不进折叠菜单),点击停止录制 -->
+  <button class="tb" id="brecbadge" hidden title="录制中 — 点击停止"><span class="dot">●</span> 已录 <b id="brecn">0</b> 步</button>
 
   <!-- 更多工具:折叠菜单(设备/缩放/调试/录制 全收这里,地址栏常驻铺满) -->
   <div class="morewrap">
@@ -403,6 +415,9 @@ body.wsdrag{cursor:col-resize}
 
   <div id="toast"></div>
 </div>
+
+<!-- 下载提示堆:fixed 在 chrome 顶带内(页面视图盖不到),条目自上而下堆叠 -->
+<div id="toaststack" style="position:fixed;top:44px;left:12px;z-index:65;display:flex;flex-direction:column;align-items:flex-start"></div>
 
 <div id="console">
   <div id="chdr">
@@ -816,10 +831,20 @@ $('bnc').addEventListener('click', async () => {
   if (on) showToast('<span class="ok">✓</span> 已开启「禁用缓存」'); else showToast('已关闭「禁用缓存」')
 })
 
+// 网页层让位:网页是原生 WebContentsView,永远盖住 HTML 浮层 → HTML 面板/卡打开时通知主进程让位。
+// chromeOverlay 按 key 记宽度取 max(技能库/验证卡同时开互不清空);modalOverlay 打开时页面高度压 0(模态卡本该独占),关闭恢复
+const _chromeOvl = {}
+function chromeOverlay(key, w) {
+  _chromeOvl[key] = w | 0
+  let m = 0; for (const k in _chromeOvl) if (_chromeOvl[k] > m) m = _chromeOvl[k]
+  try { H.browserChromeOverlay && H.browserChromeOverlay(m) } catch {}
+}
+function modalOverlay(on) { try { H.browserModalOverlay && H.browserModalOverlay(!!on) } catch {} }
+
 // 技能库面板:抽屉式,从右滑入。一条录制即一个技能 —— 存了名字+参数的排前面,
 // 原始录制也在列表里,点「⚙ 存为技能」就地晋升。
 async function openRecMgr() {
-  const prev = document.getElementById('recmgr'); if (prev) { prev.remove(); return }
+  const prev = document.getElementById('recmgr'); if (prev) { prev.remove(); chromeOverlay('recmgr', 0); return }
   const items = await H.browserRecList()
   const panel = document.createElement('div'); panel.id = 'recmgr'
   panel.style.cssText = 'position:fixed;top:0;right:0;bottom:0;width:480px;z-index:10000;background:rgba(13,15,28,.97);border-left:1px solid var(--accent);display:flex;flex-direction:column;box-shadow:-10px 0 40px rgba(0,0,0,.55);font-family:inherit'
@@ -833,16 +858,18 @@ async function openRecMgr() {
     </div>
     <div id="rm-list" style="flex:1;overflow:auto;padding:8px 10px"></div>`
   document.body.appendChild(panel)
-  panel.querySelector('#rm-x').addEventListener('click', () => panel.remove())
+  chromeOverlay('recmgr', 480)   // 面板 480px 宽,页面视图从右让出同宽,否则原生层盖死面板
+  const closePanel = () => { panel.remove(); chromeOverlay('recmgr', 0) }   // 所有关闭路径统一走这里,漏一处页面就永久缩窄
+  panel.querySelector('#rm-x').addEventListener('click', closePanel)
   panel.querySelector('#rm-folder').addEventListener('click', () => H.browserOpenRecDir())
   panel.querySelector('#rm-import').addEventListener('click', async () => {
     const r = await H.browserRecImport()
     if (r && r.canceled) return
     showToast(r && r.ok ? '<span class="ok">✓</span> 已导入「' + r.title + '」(' + r.steps + ' 步)' : '<span class="err">⚠</span> 导入失败: ' + ((r && r.error) || ''))
-    if (r && r.ok) { panel.remove(); openRecMgr() }   // 重开刷新列表
+    if (r && r.ok) { closePanel(); openRecMgr() }   // 重开刷新列表
   })
   const list = panel.querySelector('#rm-list')
-  if (!items.length) { list.innerHTML = '<div style="color:var(--txt3);font-size:12px;padding:20px;text-align:center">还没有技能 — 点 ● 录制,把操作跑一遍,停止后保存为技能</div>'; return }
+  if (!items.length) { list.innerHTML = '<div style="color:var(--txt3);font-size:12px;padding:20px;text-align:center;line-height:1.7">还没有技能 — 点 ⋯ 菜单里的 ● 录制,在页面上把操作跑一遍,点顶部「● 已录 N 步」停止后即可保存为技能</div>'; return }
   const fmtMs = (ms) => ms < 60000 ? Math.round(ms / 1000) + 's' : Math.round(ms / 60000) + 'min'
   const fmtTime = (ts) => { const d = new Date(ts); return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }
   const esc2 = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')   // 引号必转:值要进 value="…" 属性
@@ -884,7 +911,7 @@ async function openRecMgr() {
     if (mk) mk.addEventListener('click', async () => {
       const rec = await H.browserRecGet(it.id)
       if (!rec) { showToast('<span class="err">⚠</span> 读取录制失败'); return }
-      panel.remove()
+      closePanel()
       saveAsSkill(rec)
     })
     // 导出(剥离登录态/快照的可分享 JSON,写到「下载」)
@@ -902,7 +929,7 @@ async function openRecMgr() {
         if (ans === undefined) return   // 用户取消
         if (ans) { values = ans.values; baseUrl = ans.baseUrl }
       }
-      panel.remove()
+      closePanel()
       showToast('<span class="ok">▶</span> 运行中…')
       try {
         const r = await H.browserRecReplayStored(it.id, values || undefined, baseUrl)
@@ -945,8 +972,9 @@ function askParams(name, params) {
         <button id="skp-run" style="background:var(--accent);border:none;color:#fff;border-radius:7px;padding:5px 14px;cursor:pointer;font-size:12px;font-weight:600">▶ 运行</button>
       </div>`
     document.body.appendChild(ov)
+    modalOverlay(true)   // 页面视图让位(高度压 0),否则原生层盖死填参卡
     const first = ov.querySelector('input'); if (first) first.focus()
-    const done = (v) => { ov.remove(); resolve(v) }
+    const done = (v) => { ov.remove(); modalOverlay(false); resolve(v) }   // 取消/运行/Escape 全走这里,保证恢复
     ov.querySelector('#skp-cancel').addEventListener('click', () => done(undefined))
     ov.querySelector('#skp-run').addEventListener('click', () => {
       const values = {}
@@ -961,6 +989,21 @@ function askParams(name, params) {
 }
 $('brecmgr').addEventListener('click', openRecMgr)
 
+// 停止录制:brec 菜单项与顶带「● 已录 N 步」徽标共用。
+// 0 页面动作(只有主进程自加的初始 navigate)→ 警示并跳过保存卡,不产只有一步 navigate 的废技能
+async function stopRec() {
+  const r = await H.browserRecStop()
+  $('brec').classList.remove('on'); $('brectxt').textContent = '录制'
+  $('brecbadge').hidden = true
+  const n = (r && r.events && r.events.length) || 0
+  if (r && r.ok && n <= 1) {
+    showToast('<span class="err">⚠</span> 已停止,但没录到任何页面动作 — 若操作发生在 iframe/新窗口,或页面覆写了 console,请升级后重试')
+    return
+  }
+  showToast('<span class="ok">✓</span> 已停止 · 共 ' + n + ' 个动作')
+  if (r && r.ok && r.id) saveAsSkill(r)   // 弹"保存为技能"卡:命名 + 说明 + 勾选参数,录一次终身复用
+}
+
 // 录制 toggle: 红点闪烁,记录 click/input/key/scroll/nav 时间线
 $('brec').addEventListener('click', async () => {
   const on = !$('brec').classList.contains('on')
@@ -968,14 +1011,40 @@ $('brec').addEventListener('click', async () => {
     const r = await H.browserRecStart()
     if (!r || !r.ok) { showToast('<span class="err">⚠</span> 录制启动失败:' + ((r && r.error) || '未知')); return }
     $('brec').classList.add('on'); $('brectxt').textContent = '停止'
-    showToast('<span class="ok">●</span> 开始录制 — 复现完点"停止"')
+    $('brecbadge').hidden = false; $('brecn').textContent = '1'   // 主进程已入队初始 navigate
+    showToast('<span class="ok">●</span> 开始录制 — 复现完点顶部「● 已录 N 步」或菜单里的"停止"')
   } else {
-    const r = await H.browserRecStop()
-    $('brec').classList.remove('on'); $('brectxt').textContent = '录制'
-    const n = (r && r.events && r.events.length) || 0
-    showToast('<span class="ok">✓</span> 已停止 · 共 ' + n + ' 个动作')
-    if (r && r.ok && r.id) saveAsSkill(r)   // 弹"保存为技能"卡:命名 + 说明 + 勾选参数,录一次终身复用
+    await stopRec()
   }
+})
+$('brecbadge').addEventListener('click', stopRec)
+
+// 「● 已录 N 步」实时计数:主进程每入队一个事件推一次
+H.onBrowserRecCount && H.onBrowserRecCount(({ n, done }) => {
+  if (done) { $('brecbadge').hidden = true; return }
+  $('brecbadge').hidden = false
+  $('brecn').textContent = n
+})
+
+// 回放进度 HUD:chrome 顶带(82px 安全区)内显示「▶ 步 i/N · act」,与页内红框互补(红框看"点哪",HUD 看"进到哪/卡在哪")
+function ensureHud() {
+  let p = document.getElementById('replayhud')
+  if (!p) {
+    p = document.createElement('div'); p.id = 'replayhud'
+    p.style.cssText = 'position:fixed;top:46px;right:12px;z-index:9998;background:rgba(15,17,32,.95);border:1px solid var(--line);border-radius:8px;padding:5px 11px;color:var(--txt);font-size:11.5px;font-family:ui-monospace,Consolas,monospace;box-shadow:0 6px 20px rgba(0,0,0,.4);pointer-events:none;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'
+    document.body.appendChild(p)
+  }
+  return p
+}
+let hudHideT = null
+H.onBrowserReplayProgress && H.onBrowserReplayProgress((d) => {
+  const p = ensureHud()
+  clearTimeout(hudHideT)
+  p.hidden = false
+  if (d.start) { p.style.borderColor = 'var(--line)'; p.textContent = '▶ ' + (d.title || '') + ' 0/' + d.total; return }
+  if (d.done) { p.textContent = (d.fails ? '⚠ ' + d.fails + ' 步失败 / ' : '✓ 完成 ') + d.total + ' 步'; hudHideT = setTimeout(() => { p.hidden = true }, 4000); return }
+  p.textContent = '▶ 步 ' + d.i + '/' + d.total + ' · ' + d.act + (d.ok ? '' : ' ✗ ' + (d.err || ''))
+  p.style.borderColor = d.ok ? 'var(--line)' : '#e2424a'
 })
 
 // 验证结果浮卡:点 "验证" 后,除了发给 agent,也在右下角浮一张 PASS/SUSPICIOUS/FAIL 卡,
@@ -1002,7 +1071,8 @@ H.onBrowserVerifyResult && H.onBrowserVerifyResult(({ kind, verdict, summary, fu
     </div>
     <pre id="vfy-fullarea" style="display:none;max-height:360px;overflow:auto;background:rgba(0,0,0,.2);border-radius:6px;padding:8px 10px;margin-top:8px;font-size:11px;line-height:1.45;white-space:pre-wrap;color:var(--txt2);font-family:ui-monospace,Consolas,monospace"></pre>`
   document.body.appendChild(c)
-  c.querySelector('#vfy-close').addEventListener('click', () => c.remove())
+  chromeOverlay('vfy', 500)   // 卡在右下角(原生层覆盖区)→ 页面视图从右让出 500px,卡落在让出的条带里可见
+  c.querySelector('#vfy-close').addEventListener('click', () => { c.remove(); chromeOverlay('vfy', 0) })
   c.querySelector('#vfy-full').addEventListener('click', () => { const a = c.querySelector('#vfy-fullarea'); a.textContent = fullText || ''; a.style.display = a.style.display === 'none' ? 'block' : 'none' })
   c.querySelector('#vfy-copy').addEventListener('click', () => { H.browserCopy(fullText || verdict || ''); showToast('<span class="ok">✓</span> 已复制报告') })
   const rb = c.querySelector('#vfy-rollback')
@@ -1054,8 +1124,9 @@ function saveAsSkill(rec) {
       <button id="sk-save-btn" style="background:var(--accent);border:none;color:#fff;border-radius:7px;padding:5px 13px;cursor:pointer;font-size:12px;font-weight:600">⚡ 保存技能</button>
     </div>`
   document.body.appendChild(ov)
+  modalOverlay(true)   // 页面视图让位(高度压 0),否则原生层盖死保存卡
   const nameInput = ov.querySelector('#sk-name'); nameInput.focus()
-  const close = () => ov.remove()
+  const close = () => { ov.remove(); modalOverlay(false) }   // 仅存录制/保存成功/Escape 全走这里,保证恢复
   ov.querySelector('#sk-skip').addEventListener('click', close)
   ov.querySelector('#sk-save-btn').addEventListener('click', async () => {
     const name = nameInput.value.trim()

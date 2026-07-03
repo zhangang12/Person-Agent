@@ -55,7 +55,9 @@ html, body {
   font-family: var(--font); color: var(--txt);
   -webkit-user-select: none; user-select: none;   /* 默认不可选：拖拽手柄/标签更像原生应用 */
 }
-/* 但消息内容、输入框里的文字要能选中复制 */
+/* 但消息内容、输入框里的文字要能选中复制。
+   页面可在自己的 <style> 里对语义容器局部覆写 user-select:text(如 mailcenter 的
+   .rbody/.aiBody/.mail-full、mailview 的 .txt/.subj/.meta),不必全局加 .selectable。 */
 input, textarea, .selectable { -webkit-user-select: text; user-select: text; }
 body { padding: 24px; }
 

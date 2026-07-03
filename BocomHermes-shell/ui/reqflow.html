@@ -75,6 +75,7 @@
     <div id="body" class="body nodrag"></div>
   </div>
 </div>
+<script src="agentmon.js"></script>
 <script>
   window.BocomHermes.onTheme((t) => { document.documentElement.dataset.theme = t })
   const H = window.BocomHermes
@@ -162,7 +163,7 @@
     body.innerHTML = [
       stageHtml('imp', '① 导入文档', '<div class="li">' + esc(fname) + '</div>', 'ok'),
       stageHtml('parse', '② 解析进度', '<div id="parse-d" class="li">等待…</div>', 'pending'),
-      stageHtml('read', '③ 多Agent 对抗分析', readersHtml() + '<div id="align-d" class="li" style="margin-top:4px"></div><div id="pbar" class="pbar" style="display:none"><div id="pbarf"></div></div>', 'pending'),
+      stageHtml('read', '③ 多Agent 对抗分析', readersHtml() + '<div id="align-d" class="li" style="margin-top:4px"></div><div id="pbar" class="pbar" style="display:none"><div id="pbarf"></div></div><div id="agentmon" style="margin-top:6px;display:flex;flex-direction:column;gap:3px"></div>', 'pending'),
       stageHtml('sum', '④ 汇总结论 · 产物文档', '<div id="sum-d" class="li">等待分析完成…</div>', 'pending', true),
     ].join('')
   }
@@ -183,8 +184,18 @@
     started = true
     const fname = base(path); fnEl.textContent = ' · ' + fname
     renderStages(fname)
+    // 二次分析会整体重写 body.innerHTML,监控容器随之销毁 → 每次重新 create;绑定器经 window.__mon 间接引用,不持旧实例
+    if (window.__mon) window.__mon.clear()
+    window.__mon = AgentMon.create({ host: document.getElementById('agentmon') })
     H.reqAnalyze(path).catch((e) => showErr(e.message || e))
   }
+
+  // ── 读者/裁判实时监控（共享组件 agentmon.js）：card-stream 带 tag{scope:'req',kind,id=persona} → 组=读者/裁判(只绑一次) ──
+  AgentMon.bindStream(() => window.__mon, (p) => {
+    const t = p.tag || {}; if (t.scope !== 'req' || !window.__mon || !started) return null
+    const nm = t.kind === 'read' ? '🔍 读者 · ' + t.id : t.kind === 'judge-topic' ? '⚖ 话题裁判' : t.kind === 'judge-reading' ? '⚖ 读法裁判' : (t.id || '过程')
+    return p.sub ? { key: t.id + '/' + (p.agentId || '_'), name: nm + ' ▸ ' + (p.agentName || '子agent') } : { key: t.id || t.kind, name: nm }
+  })
 
   H.onReqEvent((ev) => {
     if (!started) return
@@ -194,7 +205,7 @@
     } else if (ev.type === 'readers') {
       setDot('read', 'run'); setAlign('5 读者并行阅读中…（各自独立会话、互不通气）')
     } else if (ev.type === 'stage') {
-      if (ev.stage === 'reader-done') markReader(ev.persona, ev.count)
+      if (ev.stage === 'reader-done') { markReader(ev.persona, ev.count); if (window.__mon) window.__mon.done(ev.persona, 'completed') }   // 编排事件权威收尾(迟到工具事件会被丢)
       else if (ev.stage === 'readers-done') { setAlign('收到 findings ' + ev.findings + ' 条，开始对齐…'); showBar(0) }
       else if (ev.stage === 'topic-judge') { setAlign('话题对齐 · 裁判比对 ' + ev.done + ' / ' + ev.total + ' 对'); showBar(ev.total ? ev.done / ev.total : 0) }
       else if (ev.stage === 'clustered') { setAlign('聚成 ' + ev.clusters + ' 个话题簇，开始判读法…'); showBar(0) }

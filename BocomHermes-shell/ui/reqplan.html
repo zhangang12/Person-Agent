@@ -63,6 +63,7 @@
     </div>
   </div>
 </div>
+<script src="agentmon.js"></script>
 <script>
   window.BocomHermes.onTheme((t) => { document.documentElement.dataset.theme = t })
   const H = window.BocomHermes
@@ -81,19 +82,21 @@
     listEl.innerHTML = '<div class="prog"><div class="ic">🛠️</div>'
       + '<div class="t">正在生成详设级实施方案</div>'
       + '<div id="ps" class="s">定位代码 + 起草中…（grep 在模型外、只把命中切片喂给 agent）</div>'
-      + '<div class="pbar"><div id="pf"></div></div></div>'
+      + '<div class="pbar"><div id="pf"></div></div>'
+      + '<div id="agentmon" style="margin-top:12px;text-align:left;display:flex;flex-direction:column;gap:3px"></div></div>'
   }
   const setPS = (t) => { const d = document.getElementById('ps'); if (d) d.textContent = t }
   const setPF = (f) => { const d = document.getElementById('pf'); if (d) d.style.width = Math.round(Math.max(0, Math.min(1, f)) * 100) + '%' }
   function showErr(msg) { listEl.innerHTML = '<div class="err">⚠ ' + esc(msg) + '</div>' }
 
+  let lastReqPoint = ''   // 'planned' 事件不带 reqPoint(管线顺序执行) → 记住 locating/planning 报的当前需求点做收尾 key
   H.onReqPlanEvent((ev) => {
     if (ev.type === 'stage') {
       const s = ev
       if (s.stage === 'plan-start') setPS('共 ' + s.total + ' 个需求点，开始定位…')
-      else if (s.stage === 'locating') { setPS('定位代码 ' + (s.done + 1) + ' / ' + s.total + '：' + (s.reqPoint || '')); setPF(s.total ? s.done / s.total : 0) }
-      else if (s.stage === 'planning') setPS('起草详设 ' + (s.done + 1) + ' / ' + s.total + '（命中 ' + (s.refs || 0) + ' 处）：' + (s.reqPoint || ''))
-      else if (s.stage === 'planned') setPF(s.total ? s.done / s.total : 0)
+      else if (s.stage === 'locating') { lastReqPoint = s.reqPoint || lastReqPoint; setPS('定位代码 ' + (s.done + 1) + ' / ' + s.total + '：' + (s.reqPoint || '')); setPF(s.total ? s.done / s.total : 0) }
+      else if (s.stage === 'planning') { lastReqPoint = s.reqPoint || lastReqPoint; setPS('起草详设 ' + (s.done + 1) + ' / ' + s.total + '（命中 ' + (s.refs || 0) + ' 处）：' + (s.reqPoint || '')) }
+      else if (s.stage === 'planned') { setPF(s.total ? s.done / s.total : 0); mon.done(((s.reqPoint || lastReqPoint) || '') + ':plan', 'completed') }   // 编排事件权威收尾(迟到工具事件会被丢)
       else if (s.stage === 'plan-done') setPS('装配中…')
     } else if (ev.type === 'done') {
       planId = ev.planId; loadAndRender()
@@ -159,6 +162,15 @@
 
   // 进入即开跑（决策已在落档时暂存，req-plan 复用）
   renderProgress()
+  // ── 详设过程实时监控（共享组件 agentmon.js）：card-stream 带 tag{scope:'reqplan',kind,id=需求点} → 组=需求点×阶段 ──
+  // 出结果后 loadAndRender 会覆盖 listEl.innerHTML,组随之消失,无需清理
+  const mon = AgentMon.create({ host: document.getElementById('agentmon') })
+  AgentMon.bindStream(mon, (p) => {
+    const t = p.tag || {}; if (t.scope !== 'reqplan') return null
+    const base = String(t.id || t.kind || '详设')
+    const nm = (t.kind === 'plan-kw' ? '🔎 关键词 · ' : '🛠 详设 · ') + base.slice(0, 30)
+    return p.sub ? { key: base + '/' + (p.agentId || '_'), name: nm + ' ▸ ' + (p.agentName || '子agent') } : { key: base + ':' + t.kind, name: nm }
+  })
   H.reqPlan(reportId).catch((e) => showErr(e && e.message || e))
 </script>
   <script src="carddrag.js"></script>

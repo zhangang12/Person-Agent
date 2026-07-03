@@ -183,25 +183,7 @@
   .toolbox .tsec.e pre { color: var(--diff-del); }
   .toolbox.wf { border-color: var(--accent); background: rgba(74,168,255,.08); }
   .toolbox.wf .tn { color: var(--accent); font-family: inherit; }
-  /* 子agent过程组(对齐 opencode TUI):🔍 描述 · N次调用 · 耗时 · 状态;组内是工具调用实时清单 */
-  .subbox { align-self: stretch; max-width: 96%; margin: 3px 0; border: .5px solid var(--composer-border); border-radius: 10px; background: var(--composer-bg); overflow: hidden; }
-  .subbox > summary { cursor: pointer; padding: 6px 11px; list-style: none; user-select: none; }
-  .subbox > summary::-webkit-details-marker { display: none; }
-  .subbox > summary .ahead { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--c-think); }
-  .subbox .aico { flex: none; }
-  .subbox .subname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .subbox .subhint { margin-left: auto; flex: none; font-weight: 400; color: var(--txt3); font-size: 10.5px; font-family: var(--mono); }
-  .subbox.done .astat { color: var(--green); } .subbox.err .astat { color: var(--diff-del); }
-  .subbox .alatest { font-size: 10.5px; font-family: var(--mono); color: var(--txt3); margin-top: 3px; padding-left: 19px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .subbox .alatest.run { color: var(--accent); } .subbox .alatest.e { color: var(--diff-del); }
-  .subbox[open] .alatest { display: none; }   /* 展开后由下方完整清单接管,隐藏"最新行"避免重复 */
-  .subbox .subwrap { padding: 3px 10px 8px 14px; }
-  .subbox .alist { display: flex; flex-direction: column; gap: 1px; max-height: 240px; overflow: auto; }
-  .subbox .aline { font-size: 11px; font-family: var(--mono); color: var(--txt3); display: flex; gap: 6px; align-items: baseline; line-height: 1.55; }
-  .subbox .aline.run .aln-t { color: var(--accent); } .subbox .aline.ok .aln-t { color: var(--txt2); } .subbox .aline.e .aln-t { color: var(--diff-del); }
-  .subbox .aln-ic { color: var(--txt3); flex: none; }
-  .subbox .aln-t { font-weight: 600; flex: none; }
-  .subbox .aln-g { color: var(--txt3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 子agent过程组(.subbox)样式已抽到共享组件 agentmon.js（首次 create 时注入 <style>），四窗统一 */
 </style>
 </head>
 <body>
@@ -243,6 +225,7 @@
   </div>
 </div>
 <script src="rich.js"></script>
+<script src="agentmon.js"></script>
 <script>
   window.BocomHermes.onTheme((t) => { document.documentElement.dataset.theme = t })
 
@@ -500,74 +483,23 @@
   }
   function scheduleFlush() { if (!_flushQueued) { _flushQueued = true; requestAnimationFrame(flushStream) } }
 
-  // ── 子agent过程视图(对齐 opencode TUI)──────────────────────────────────────
+  // ── 子agent过程视图(对齐 opencode TUI)：共享组件 AgentMon(ui/agentmon.js) ──
   // opencode 用 task 起多个子agent并行干活,主进程把子会话事件路由回本卡(带 agentId=子会话ID)。
-  // 每个子agent一组:🔍 描述 · N 次调用 · 耗时 · 状态;组内实时列出它的工具调用(↳ 工具 目标)。
-  const subAgents = new Map()   // agentId -> { box, list, calls:Map(callId->lineEl), count, t0, done }
-  let _agentTimer = null
-  const fmtElapsed = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? s + 's' : Math.floor(s / 60) + 'm' + String(s % 60).padStart(2, '0') + 's' }
-  function tickAgents() {
-    let running = false
-    for (const a of subAgents.values()) { if (!a.done) { running = true; const e = a.box.querySelector('.aelapsed'); if (e) e.textContent = fmtElapsed(Date.now() - a.t0) } }
-    if (!running && _agentTimer) { clearInterval(_agentTimer); _agentTimer = null }
-  }
-  function ensureAgent(agentId, name) {
-    let a = subAgents.get(agentId)
-    if (a) { if (name && name !== '子agent') { const h = a.box.querySelector('.subname'); if (h) h.textContent = name } return a }
-    const box = document.createElement('details'); box.className = 'subbox'    // 默认收起:表头 + 最新一条(opencode 紧凑视图),点开看全部工具
-    box.innerHTML = '<summary><div class="ahead"><span class="aico">🔍</span><span class="subname">' + esc(name || '子agent') + '</span>'
-      + '<span class="subhint"><span class="acount">0</span> 次调用 · <span class="aelapsed">0s</span><span class="astat"> · 探索中…</span></span></div>'
-      + '<div class="alatest">↳ 准备中…</div></summary>'
-      + '<div class="subwrap"><div class="alist"></div></div>'
-    a = { box, list: box.querySelector('.alist'), latest: box.querySelector('.alatest'), calls: new Map(), count: 0, t0: Date.now(), done: false }
-    subAgents.set(agentId, a)
-    if (curAnswer && curAnswer.parentNode === feed) feed.insertBefore(box, curAnswer); else feed.appendChild(box)
-    if (!_agentTimer) _agentTimer = setInterval(tickAgents, 1000)
-    return a
-  }
-  const toolTarget = (input) => {
-    if (input == null) return ''
-    if (typeof input === 'string') return input.slice(0, 120)
-    const v = input.filePath || input.path || input.file || input.pattern || input.command || input.cmd || input.query || input.url || input.description || ''
-    return String(v).slice(0, 120)
-  }
-  function agentTool(agentId, name, toolName, status, input, callId) {
-    const a = ensureAgent(agentId, name)
-    let line = a.calls.get(callId)
-    if (!line) {
-      line = document.createElement('div'); a.list.appendChild(line); a.calls.set(callId, line)
-      a.count++; const c = a.box.querySelector('.acount'); if (c) c.textContent = a.count
-    }
-    const done = /complet|success|done|finish|ok/i.test(status), err = /error|fail|deny|reject/i.test(status)
-    const cls = err ? ' e' : done ? ' ok' : ' run'
-    const html = '<span class="aln-ic">↳</span><span class="aln-t">' + esc(toolName) + '</span><span class="aln-g">' + esc(toolTarget(input)) + '</span>'
-    line.className = 'aline' + cls; line.innerHTML = html
-    if (a.latest) { a.latest.className = 'alatest' + cls; a.latest.innerHTML = html }   // 表头下"最新一条"(收起时可见)
-    const e = a.box.querySelector('.aelapsed'); if (e) e.textContent = fmtElapsed(Date.now() - a.t0)
-    feed.scrollTop = feed.scrollHeight
-  }
-  function agentDone(agentId, status, name) {
-    const a = subAgents.get(agentId); if (!a || a.done) return
-    if (name) { const h = a.box.querySelector('.subname'); if (h) h.textContent = name }
-    const err = /error|fail|deny|reject/i.test(status)
-    a.done = true
-    a.box.classList.toggle('done', !err); a.box.classList.toggle('err', err)
-    const st = a.box.querySelector('.astat'); if (st) st.textContent = err ? ' · 出错' : ' · 完成'
-    const e = a.box.querySelector('.aelapsed'); if (e) e.textContent = fmtElapsed(Date.now() - a.t0)
-    a.box.open = false                                    // 子agent结束自动收起,腾地方给最终答案
-  }
+  // 每个子agent一组(组key=agentId):🔍 描述 · N 次调用 · 耗时 · 状态;组内实时列出它的工具调用(↳ 工具 目标)。
+  // 组插在当前回答气泡之前;before() 返回 null 时组件退回 appendChild(与原 ensureAgent 插入行为一致)。
+  const mon = AgentMon.create({ host: feed, before: () => (curAnswer && curAnswer.parentNode === feed) ? curAnswer : null })
 
   window.BocomHermes.onStream(({ kind, text, partID, status, input, output, title, error, sub, agentId, agentName, taskChild, taskDesc }) => {
     if (sub) {                                            // 子agent活动 → 归到对应子agent组
-      ensureAgent(agentId || '_', agentName)              // 任何活动(含思考)都让组立刻出现,不等首个工具
-      if (kind === 'tool') agentTool(agentId || '_', agentName, text, status || '', input, partID || '_')
+      mon.ensure(agentId || '_', agentName)               // 任何活动(含思考)都让组立刻出现,不等首个工具
+      if (kind === 'tool') mon.tool(agentId || '_', agentName, text, status || '', input, partID || '_')
       return                                              // reasoning/text 只用于建组;紧凑视图不展开全文(父reasoning已单独显示)
     }
     if (kind === 'tool') {
       if (text === 'task') {                              // 父会话的 task 工具 = 一个子agent组的标签/收尾
         const gid = taskChild || ''
         const fin = /complet|success|done|finish|error|fail|deny|reject/i.test(status || '')
-        if (gid && subAgents.has(gid)) { if (fin) agentDone(gid, status || '', taskDesc || '') }
+        if (gid && mon.has(gid)) { if (fin) mon.done(gid, status || '', taskDesc || '') }
         else if (fin) renderTool(partID || '_', 'task', status || '', { input, output, title, error })   // 子路由没拿到 → 退回普通工具块显示结果
         return
       }
@@ -588,7 +520,7 @@
   async function turn(text, target, files) {
     const ai = target || addMsg('', 'ai')
     const PH = target ? '运行中…' : '思考中…'; ai.textContent = PH
-    curAnswer = ai; curReason = null; answerParts = new Map(); reasonParts = new Map(); subAgents.clear(); if (_agentTimer) { clearInterval(_agentTimer); _agentTimer = null }; setBusy(true)
+    curAnswer = ai; curReason = null; answerParts = new Map(); reasonParts = new Map(); mon.clear(); setBusy(true)
     let ok = true
     try {
       const reply = await window.BocomHermes.cardSend(text, files)

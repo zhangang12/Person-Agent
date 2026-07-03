@@ -192,7 +192,10 @@ function parsePart(headers, body) {
   const ct = parseHeaderValue(headers['content-type'] || 'text/plain')
   const cte = (headers['content-transfer-encoding'] || '7bit').toLowerCase().trim()
   const cd = parseHeaderValue(headers['content-disposition'] || '')
-  const isAttachment = cd.value === 'attachment' || !!cd.params.filename || !!cd.params['filename*'] || (!!ct.params.name && !ct.value.startsWith('text/'))
+  // 非 text/非 multipart/非 message 的 part 一律按附件收编:拿住无 filename 的 inline cid 图,也避免二进制被当正文解码
+  const isAttachment = cd.value === 'attachment' || !!cd.params.filename || !!cd.params['filename*']
+    || (!!ct.params.name && !ct.value.startsWith('text/'))
+    || (!ct.value.startsWith('text/') && !ct.value.startsWith('multipart/') && !ct.value.startsWith('message/'))
 
   // multipart/* → 递归
   if (ct.value.startsWith('multipart/')) {

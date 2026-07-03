@@ -32,7 +32,8 @@ module.exports = function initOrch(S, { ipcMain, oc, orch, log }) {
     const run = async (prompt, meta) => {
       const sid = await oc.createSession(serve, '编排:' + (meta && meta.kind || 'task') + (meta && meta.id ? ':' + meta.id : ''), dir)   // 工作流子任务跑在选定的项目目录
       if (!sid) throw new Error('createSession 失败')
-      S.sessionInfo.set(sid, { wc, serve }); entry.sessions.add(sid)
+      // tag=任务身份 → session.js 随 card-stream 下发,workflow 窗按 DAG 节点分组(worker 的 tag.id 即节点 id,与 wf-event 'task' 的 ev.id 对齐)
+      S.sessionInfo.set(sid, { wc, serve, tag: { scope: 'wf', kind: (meta && meta.kind) || 'work', id: (meta && meta.id) || ((meta && meta.kind) || 'task'), role: (meta && meta.role) || '', round: (meta && meta.round) || 0 } }); entry.sessions.add(sid)
       try { return await oc.sendMessage(serve, sid, prompt, S.settings.model) }   // 工作流子任务用全局默认模型
       finally { S.sessionInfo.delete(sid); entry.sessions.delete(sid); S.streamBuf.delete(sid) }
     }

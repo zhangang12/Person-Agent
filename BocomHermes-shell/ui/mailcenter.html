@@ -56,6 +56,9 @@
   .rscroll { flex: 1; overflow-y: auto; padding: 11px 12px; }
   .rscroll::-webkit-scrollbar { width: 6px; } .rscroll::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
   .rbody { font-size: 12.5px; color: var(--txt); line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+  .mail-frame { display: block; width: 100%; border: none; background: #fff; border-radius: 8px; min-height: 120px; }
+  /* 邮件正文/AI 面板/待办原文允许选中复制(glass.css 全局默认 user-select:none) */
+  .rbody, .aiBody, .mail-full { -webkit-user-select: text; user-select: text; cursor: text; }
   .aiPanel { margin-top: 12px; border: .5px solid var(--composer-border); border-radius: 10px; overflow: hidden; }
   .aiHd { display: flex; align-items: center; gap: 7px; padding: 7px 11px; background: var(--composer-bg); font-size: 11.5px; color: var(--txt2); border-bottom: .5px solid var(--composer-border); }
   .aiHd .gp { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
@@ -169,6 +172,12 @@
     <!-- ── 待办 ── -->
     <div id="viewTodos" class="panel nodrag" hidden>
       <div class="todos-hd"><span id="tcount" class="hint"></span><span class="sp"></span><button id="tclr" class="chip2">清除已完成</button></div>
+      <div id="tsuggest"></div>
+      <div class="todo-addbar" style="display:flex;gap:6px;margin:6px 0">
+        <input id="taddText" class="in" placeholder="添加待办…(回车保存)" style="flex:1" />
+        <input id="taddTime" type="datetime-local" class="in" style="flex:none;width:185px" title="提醒时间(可空)" />
+        <button id="taddBtn" class="chip2">＋添加</button>
+      </div>
       <div id="tlist"><div class="empty">加载中… <span class="spin"></span></div></div>
     </div>
 
@@ -202,6 +211,7 @@
   </div>
 </div>
 <script src="rich.js"></script>
+<script src="mailframe.js"></script>
 <script>
   const H = window.BocomHermes
   const $ = (id) => document.getElementById(id)
@@ -226,7 +236,7 @@
     $('tabSettings').classList.toggle('on', which === 'settings')
     if (which === 'inbox' && !inboxLoaded) loadInbox()
     if (which === 'outbox') loadOutbox()
-    if (which === 'todos') loadTodos()
+    if (which === 'todos') { loadTodos(); loadSuggests() }
   }
   $('tabInbox').addEventListener('click', () => showTab('inbox'))
   $('tabOutbox').addEventListener('click', () => showTab('outbox'))
@@ -301,6 +311,11 @@
       const r = await H.mailViewData(mid)
       if (!r || r.ok === false) throw new Error((r && r.error) || '读取失败')
       curEmail = { messageId: mid, from: r.from, subject: r.subject, date: r.date, text: r.text || '' }
+      // 有 HTML 版 → 沙箱 iframe 完整还原(表格/内联样式/cid 图);纯文本仅作兜底
+      // 安全红线:sandbox 只能是 allow-same-origin,绝不可再加 allow-scripts(same-origin+scripts=逃逸沙箱)
+      const bodyHtml = r.hasHtml
+        ? '<button class="tbtn" id="imgBtn" style="display:none">🖼 显示远程图片</button><iframe id="mailFrame" class="mail-frame" sandbox="allow-same-origin" referrerpolicy="no-referrer"></iframe>'
+        : '<div class="rbody">' + esc(r.text || '(无正文)') + '</div>'
       reader.innerHTML =
         '<div class="rhead">'
         + '<div class="rsubj">' + esc(r.subject || '(无主题)') + '</div>'
@@ -311,7 +326,17 @@
         + '<button class="tbtn" id="aArchive">📥 归档</button>'
         + '<button class="tbtn" id="aRead">✓ 标记已读</button>'
         + '</div></div>'
-        + '<div class="rscroll"><div class="rbody">' + esc(r.text || '(无正文)') + '</div><div id="aiSlot"></div></div>'
+        + '<div class="rscroll">' + bodyHtml + '<div id="aiSlot"></div></div>'
+      if (r.hasHtml) {
+        const f = $('mailFrame'); let showRemote = false
+        window.MailFrame.wire(f, { onHeight: (h) => { f.style.height = (h + 4) + 'px' } })   // wire 必须先于 srcdoc
+        const paint = () => { f.srcdoc = window.MailFrame.buildSrcdoc(r.html, { remote: showRemote }) }
+        paint()
+        if (window.MailFrame.hasRemoteImg(r.html)) {
+          $('imgBtn').style.display = 'inline-flex'   // 远程图默认拦截(防追踪),点击才放行
+          $('imgBtn').addEventListener('click', () => { showRemote = true; $('imgBtn').style.display = 'none'; paint() })
+        }
+      }
       $('aReply').addEventListener('click', () => runReply())
       $('aSum').addEventListener('click', () => runSummarizeOne())
       $('aArchive').addEventListener('click', (ev) => doArchive(ev.target))
@@ -348,9 +373,10 @@
   function wireRich(root) {
     window.Rich.wireActions(root, {
       open: (file, line) => H.openLoc(file, line),
-      todo: async ({ urgency, from, text }, btn) => {
+      todo: async ({ urgency, from, text, mailIdx, mailMsgId }, btn) => {
         const o = btn.textContent; btn.disabled = true; btn.textContent = '保存中…'
-        try { const ok = await H.todoAdd({ urgency, from, text, source: 'email' }); btn.textContent = ok ? '已加入 ✓' : '已存在'; btn.classList.add('done'); H.notifyTodosUpdated() }
+        // msgId 透传:AI 摘要标注的优先,单封场景兜底用当前邮件 —— 加进待办后才能定位原文
+        try { const ok = await H.todoAdd({ urgency, from, text, source: 'email', mailIdx: mailIdx || null, mailMsgId: mailMsgId || (curEmail && curEmail.messageId) || null }); btn.textContent = ok ? '已加入 ✓' : '已存在'; btn.classList.add('done'); H.notifyTodosUpdated() }
         catch { btn.textContent = o; btn.disabled = false }
       },
       apply: async ({ raw }, btn) => {
@@ -457,6 +483,14 @@
     const body = document.createElement('div'); body.className = 'todo-body'
     const urg = t.urgency ? `<span class="urg urg-${t.urgency}">${t.urgency}</span>` : ''
     body.innerHTML = `<div class="todo-text">${urg}${esc(t.text)}</div>`
+    // 提醒时间 chip:未提醒且已过期标红;已提醒打勾
+    if (t.remindAt) {
+      const r = document.createElement('span'); r.className = 'urg'
+      const late = !t.done && t.remindAt < Date.now() && !t.remindedAt
+      r.style.color = late ? 'var(--diff-del)' : 'var(--accent)'
+      r.textContent = '⏰ ' + new Date(t.remindAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) + (t.remindedAt ? ' ✓已提醒' : (late ? ' 已过期' : ''))
+      body.querySelector('.todo-text').appendChild(r)
+    }
     if (t.from || t.source) {
       const meta = document.createElement('div'); meta.className = 'todo-meta'
       const parts = []
@@ -495,15 +529,67 @@
         bReply.disabled = false; bReply.textContent = o
         if (!(r && r.ok)) { const e = document.createElement('div'); e.className = 'mail-full'; e.textContent = '✗ ' + ((r && r.error) || '打开失败'); body.appendChild(e) }
       })
-      acts.append(bView, bWeb, bReply); body.appendChild(acts)
+      const bLoc = document.createElement('button'); bLoc.className = 'mail-act'; bLoc.textContent = '📍 定位收件箱'
+      bLoc.addEventListener('click', () => { showTab('inbox'); openEmail(t.mailMsgId) })
+      acts.append(bView, bWeb, bReply, bLoc); body.appendChild(acts)
     }
+    // 设置/修改提醒时间(就地弹 datetime-local)
+    const bTime = document.createElement('button'); bTime.className = 'del-btn'; bTime.textContent = '⏰'
+    bTime.title = t.remindAt ? '修改提醒时间' : '设置提醒'
+    bTime.addEventListener('click', () => {
+      if (body.querySelector('input[type="datetime-local"]')) return
+      const inp = document.createElement('input'); inp.type = 'datetime-local'; inp.className = 'in'; inp.style.marginTop = '5px'
+      if (t.remindAt) inp.value = new Date(t.remindAt - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+      inp.addEventListener('change', async () => { await H.todoUpdate(t.id, { remindAt: inp.value ? new Date(inp.value).getTime() : 0 }); loadTodos(); H.notifyTodosUpdated() })
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Escape') inp.remove() })
+      body.appendChild(inp); inp.focus()
+    })
     const del = document.createElement('button'); del.className = 'del-btn'; del.title = '删除'; del.textContent = '×'
     del.addEventListener('click', async () => { await H.todoDelete(t.id); loadTodos() })
-    d.append(cb, body, del)
+    d.append(cb, body, bTime, del)
     return d
+  }
+  // 手动添加待办(类便签:文本 + 可选提醒时间)
+  async function addManualTodo() {
+    const text = $('taddText').value.trim(); if (!text) return
+    const tv = $('taddTime').value
+    await H.todoAdd({ text, source: 'manual', remindAt: tv ? new Date(tv).getTime() : 0 })
+    $('taddText').value = ''; $('taddTime').value = ''
+    loadTodos(); H.notifyTodosUpdated()
+  }
+  $('taddBtn').addEventListener('click', addManualTodo)
+  $('taddText').addEventListener('keydown', (e) => { if (e.key === 'Enter') addManualTodo() })
+  // 建议待办确认区:从邮件自动识别的会议,人工确认后才进正式待办(提醒默认=会前 15 分钟)
+  async function loadSuggests() {
+    let sugs = []; try { sugs = await H.todoSuggestList() } catch (e) { sugs = [] }
+    const el = $('tsuggest')
+    if (!sugs.length) { el.innerHTML = ''; return }
+    el.innerHTML = '<div class="section-label">📅 从邮件识别的会议(待确认)</div>'
+    sugs.forEach((s) => {
+      const d = document.createElement('div'); d.className = 'todo'
+      const body = document.createElement('div'); body.className = 'todo-body'
+      body.innerHTML = '<div class="todo-text">' + esc(s.text) + '</div>'
+        + '<div class="todo-meta">' + (s.meetingAt ? '🕐 ' + new Date(s.meetingAt).toLocaleString('zh-CN') + ' · ' : '')
+        + (s.from ? '来自:' + esc(s.from) : '') + (s.link ? ' · 🔗 有会议链接' : '') + '</div>'
+      const acts = document.createElement('div'); acts.className = 'mail-acts'
+      const bOk = document.createElement('button'); bOk.className = 'mail-act'; bOk.textContent = '✓ 加入待办'
+      bOk.addEventListener('click', async () => {
+        bOk.disabled = true
+        await H.todoAdd({ text: s.text + (s.link ? ' ' + s.link : ''), source: 'email', mailMsgId: s.msgId,
+          remindAt: s.meetingAt ? Math.max(Date.now() + 60000, s.meetingAt - 15 * 60000) : 0 })
+        await H.todoSuggestAccept(s.id)
+        loadSuggests(); loadTodos(); H.notifyTodosUpdated()
+      })
+      const bNo = document.createElement('button'); bNo.className = 'mail-act'; bNo.textContent = '忽略'
+      bNo.addEventListener('click', async () => { await H.todoSuggestDismiss(s.id); loadSuggests() })
+      const bSrc = document.createElement('button'); bSrc.className = 'mail-act'; bSrc.textContent = '📄 原文'
+      bSrc.addEventListener('click', () => { showTab('inbox'); openEmail(s.msgId) })
+      acts.append(bOk, bNo, bSrc); body.appendChild(acts); d.appendChild(body); el.appendChild(d)
+    })
   }
   $('tclr').addEventListener('click', async () => { await H.todoClearDone(); loadTodos() })
   H.onTodosUpdated && H.onTodosUpdated(() => { if (!$('viewTodos').hidden) loadTodos() })
+  H.onTodoSuggestUpdated && H.onTodoSuggestUpdated(() => { if (!$('viewTodos').hidden) loadSuggests() })
 
   // ── 设置(读写沿用全局口径) ──
   const cur = (function () { try { return H.getSettings() || {} } catch (e) { return {} } })()

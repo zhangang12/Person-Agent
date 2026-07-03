@@ -121,7 +121,8 @@ module.exports = function initReqAnalysis(S, { ipcMain, app, path, fs, oc, log, 
       if (ac.signal.aborted) throw new Error('已中止')
       const sid = await oc.createSession(serve, '需求分析:' + (meta && (meta.persona || meta.kind) || ''), dir)
       if (!sid) throw new Error('createSession 失败')
-      S.sessionInfo.set(sid, { wc, serve }); entry.sessions.add(sid)
+      // tag=任务身份 → session.js 随 card-stream 下发,reqflow 窗按读者 persona / 裁判分组(tag.id 与 stage reader-done 的 ev.persona 同源)
+      S.sessionInfo.set(sid, { wc, serve, tag: { scope: 'req', kind: (meta && meta.kind) || '', id: (meta && (meta.persona || meta.kind)) || '' } }); entry.sessions.add(sid)
       try { return await oc.sendMessage(serve, sid, prompt) }
       finally { S.sessionInfo.delete(sid); entry.sessions.delete(sid); S.streamBuf.delete(sid) }
     }
@@ -214,7 +215,8 @@ module.exports = function initReqAnalysis(S, { ipcMain, app, path, fs, oc, log, 
       if (ac.signal.aborted) throw new Error('已中止')
       const sid = await oc.createSession(serve, '出详设:' + (meta && meta.kind || ''), dir)
       if (!sid) throw new Error('createSession 失败')
-      S.sessionInfo.set(sid, { wc, serve }); entry.sessions.add(sid)
+      // tag=任务身份 → session.js 随 card-stream 下发,reqplan 窗按需求点分组(meta.point=point.reqPoint)
+      S.sessionInfo.set(sid, { wc, serve, tag: { scope: 'reqplan', kind: (meta && meta.kind) || '', id: (meta && (meta.point || meta.kind)) || '' } }); entry.sessions.add(sid)
       try { return await oc.sendMessage(serve, sid, prompt) }
       finally { S.sessionInfo.delete(sid); entry.sessions.delete(sid); S.streamBuf.delete(sid) }
     }
@@ -227,7 +229,7 @@ module.exports = function initReqAnalysis(S, { ipcMain, app, path, fs, oc, log, 
         const kw = await run('下面是一个需求点。列出最多 6 个最可能出现在代码仓库里的检索关键词'
           + '（英文标识符/类名/方法名/表名/字段/接口路径，每行一个，只输出关键词，没有就留空）：\n'
           + '需求点：' + point.reqPoint + '\n意图：' + (point.intent || '') + '\n原文：' + (point.quote || ''),
-          { kind: 'plan-kw' })
+          { kind: 'plan-kw', point: point.reqPoint })
         for (const t of extractAsciiTokens(kw, 8)) terms.push(t)
       } catch {}
       terms = [...new Set(terms)].slice(0, 8)
@@ -245,7 +247,7 @@ module.exports = function initReqAnalysis(S, { ipcMain, app, path, fs, oc, log, 
       for (const h of refs.slice(0, 8)) { const txt = readSlice(h._full, h.line); if (txt) slices.push({ path: h.path, line: h.line, text: txt, system: h.system || '' }) }
       return { refs: refs.map((h) => ({ path: h.path, line: h.line, symbol: '', system: h.system || '' })), slices }
     }
-    const plan = async (point, located) => run(reqplan.buildPlanPrompt(point, located), { kind: 'plan' })
+    const plan = async (point, located) => run(reqplan.buildPlanPrompt(point, located), { kind: 'plan', point: point.reqPoint })
 
     try {
       send('start', {})

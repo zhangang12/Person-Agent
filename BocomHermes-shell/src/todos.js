@@ -48,6 +48,8 @@ module.exports = function initTodos(S, { ipcMain, app, path, fs, log }) {
       done: false,
       createdAt: Date.now(),
       source: item.source || 'manual',
+      remindAt: Number(item.remindAt) || 0,   // 到点提醒时间戳(ms),0=不提醒
+      remindedAt: 0,                          // 已弹提醒时间戳,防重复
       mailMsgId:   resolvedMsgId || (item.mailMsgId ? String(item.mailMsgId).replace(/^<|>$/g, '') : ''),
       mailSubject: mailMeta.mailSubject || (item.mailSubject ? String(item.mailSubject).slice(0, 200) : ''),
       mailDate:    mailMeta.mailDate    || (item.mailDate    ? String(item.mailDate).slice(0, 50) : ''),
@@ -55,7 +57,7 @@ module.exports = function initTodos(S, { ipcMain, app, path, fs, log }) {
     }
     list.unshift(todo)
     save(list)
-    log('todo-add: ' + todo.text.slice(0, 60) + (todo.source === 'email' ? ' [来自邮件' + (todo.mailSubject ? ':' + todo.mailSubject.slice(0,30) : '') + (todo.mailMsgId ? ' msgId=' + todo.mailMsgId.slice(0,30) : '') + ']' : ''))
+    log('todo-add: ' + todo.text.slice(0, 60) + (todo.source === 'email' ? ' [来自邮件' + (todo.mailSubject ? ':' + todo.mailSubject.slice(0,30) : '') + (todo.mailMsgId ? ' msgId=' + todo.mailMsgId.slice(0,30) : '') + ']' : '') + (todo.remindAt ? ' ⏰' + new Date(todo.remindAt).toLocaleString('zh-CN') : ''))
     return todo
   })
 
@@ -65,6 +67,16 @@ module.exports = function initTodos(S, { ipcMain, app, path, fs, log }) {
     return list
   })
 
+  // 改文本/提醒时间;改 remindAt 时清 remindedAt 让提醒重新生效
+  ipcMain.handle('todo-update', (_e, { id, patch }) => {
+    const list = load()
+    const t = list.find(x => x.id === id); if (!t) return null
+    if (patch && patch.remindAt !== undefined) { t.remindAt = Number(patch.remindAt) || 0; t.remindedAt = 0 }
+    if (patch && patch.text !== undefined) t.text = String(patch.text).slice(0, 200)
+    t.updatedAt = Date.now(); save(list)
+    return t
+  })
+
   ipcMain.handle('todo-delete', (_e, id) => {
     const list = load().filter(x => x.id !== id); save(list); return list
   })
@@ -72,4 +84,25 @@ module.exports = function initTodos(S, { ipcMain, app, path, fs, log }) {
   ipcMain.handle('todo-clear-done', () => {
     const list = load().filter(x => !x.done); save(list); return list
   })
+
+  // ── 建议待办(从邮件自动识别的会议,人工确认后才进正式待办)────────────────
+  // 三态:pending(待确认) / accepted / dismissed;按 msgId 去重,一封邮件只建议一次
+  const suggestFile = path.join(app.getPath('userData'), 'todo-suggest.json')
+  function loadSug() { try { const a = JSON.parse(fs.readFileSync(suggestFile, 'utf8')); return Array.isArray(a) ? a : [] } catch { return [] } }
+  function saveSug(l) { try { fs.writeFileSync(suggestFile, JSON.stringify(l, null, 2)) } catch (e) { log('suggest save err: ' + e.message) } }
+  function addSuggestion(s) {   // s:{msgId,from,subject,date,text,meetingAt,link}
+    if (!s || !s.msgId) return null
+    const list = loadSug()
+    if (list.some(x => x.msgId === s.msgId)) return null
+    const sug = { id: genId(), status: 'pending', createdAt: Date.now(), ...s }
+    list.unshift(sug); saveSug(list.slice(0, 100))
+    log('todo-suggest: ' + (sug.text || '').slice(0, 60) + (sug.meetingAt ? ' @' + new Date(sug.meetingAt).toLocaleString('zh-CN') : ''))
+    return sug
+  }
+  ipcMain.handle('todo-suggest-list', () => loadSug().filter(s => s.status === 'pending'))
+  ipcMain.handle('todo-suggest-dismiss', (_e, id) => { const l = loadSug(); const s = l.find(x => x.id === id); if (s) { s.status = 'dismissed'; saveSug(l) } return true })
+  // accept:renderer 先调 todo-add({text,source:'email',mailMsgId,remindAt}) 再调本接口标记
+  ipcMain.handle('todo-suggest-accept', (_e, id) => { const l = loadSug(); const s = l.find(x => x.id === id); if (s) { s.status = 'accepted'; saveSug(l) } return true })
+
+  return { load, save, addSuggestion }
 }
