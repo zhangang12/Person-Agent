@@ -1840,14 +1840,15 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       replay.scans = loadScans(bid)   // {scans:[], scannedFiles:Set}
       replay.review = loadReview(bid)  // 或 null
       const rep = diffReport(rec, replay)
+      const snap = rec.snapshot || { errs: [], bad: [] }   // 导入的技能没有 snapshot
       const hitSummary = replay.hitInfo && replay.hitInfo.length ? `;改动 ${replay.hitInfo.length} 文件,${replay.hitInfo.filter((h) => h.executed > 0).length} 个被执行` : ''
       const statusKind = rep.pass ? 'pass' : (/SUSPICIOUS/.test(rep.verdict) ? 'suspicious' : 'fail')
-      const disp = `🔁 验证完成 · ${rep.pass ? '✅ PASS' : (statusKind === 'suspicious' ? '⚠ SUSPICIOUS' : '❌ FAIL')}\n(回放 ${replay.stepReport.length}/${rec.events.length} 步;修复前 ${rec.snapshot.errs.length}/${rec.snapshot.bad.length} → 修复后 ${replay.after.errs.length}/${replay.after.bad.length}${hitSummary})`
+      const disp = `🔁 验证完成 · ${rep.pass ? '✅ PASS' : (statusKind === 'suspicious' ? '⚠ SUSPICIOUS' : '❌ FAIL')}\n(回放 ${replay.stepReport.length}/${rec.events.length} 步;修复前 ${snap.errs.length}/${snap.bad.length} → 修复后 ${replay.after.errs.length}/${replay.after.bad.length}${hitSummary})`
       // 同步推一份卡片到浏览器壳 UI,用户在右下角一眼看到结论而不用翻 agent 对话流
       if (b.win && !b.win.isDestroyed()) {
         b.win.webContents.send('wf-verify-result', {
           kind: statusKind, verdict: rep.verdict, fullText: rep.text,
-          summary: `回放 ${replay.stepReport.length}/${rec.events.length} 步 · 修复前 ${rec.snapshot.errs.length}报错/${rec.snapshot.bad.length}异常 → 修复后 ${replay.after.errs.length}/${replay.after.bad.length}${hitSummary}`,
+          summary: `回放 ${replay.stepReport.length}/${rec.events.length} 步 · 修复前 ${snap.errs.length}报错/${snap.bad.length}异常 → 修复后 ${replay.after.errs.length}/${replay.after.bad.length}${hitSummary}`,
         })
       }
       const prompt =
@@ -2479,14 +2480,24 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     var attrs = ['data-test','data-testid','data-cy','data-qa','name','aria-label'];
     for (var i=0;i<attrs.length;i++) {
       var v = el.getAttribute && el.getAttribute(attrs[i]);
-      if (v) cands.push(el.tagName.toLowerCase() + '[' + attrs[i] + '="' + v.replace(/"/g,'\\\\"') + '"]');
+      if (!v) continue;
+      // radio/checkbox 的 name 对整组恒命中第一个 → 拼上 value(常带业务主键)才定位得准
+      if (attrs[i] === 'name' && el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio')) {
+        cands.push('input[name="' + v.replace(/"/g,'\\\\"') + '"][value="' + String(el.value||'').replace(/"/g,'\\\\"') + '"]');
+        continue;
+      }
+      cands.push(el.tagName.toLowerCase() + '[' + attrs[i] + '="' + v.replace(/"/g,'\\\\"') + '"]');
     }
     // role + accessible name
     var role = el.getAttribute && el.getAttribute('role');
     var aria = el.getAttribute && el.getAttribute('aria-label');
     if (role && aria) cands.push('[role="'+role+'"][aria-label="'+aria.replace(/"/g,'\\\\"')+'"]');
-    // 文本选择器(短可见文本):标签 + 内含文本
-    var txt = (el.innerText || el.value || '').trim();
+    // 文本选择器(短可见文本):标签 + 内含文本。
+    // 表单控件不取用户输入值(密码/客户号会泄进 selAlt 持久化);按钮型 INPUT 的 value 是标签文字,保留
+    var txt = '';
+    if (el.tagName === 'INPUT') { txt = (el.type === 'button' || el.type === 'submit' || el.type === 'reset') ? (el.value || '') : ''; }
+    else if (el.tagName !== 'TEXTAREA' && el.tagName !== 'SELECT') { txt = el.innerText || ''; }
+    txt = String(txt).trim();
     if (txt && txt.length <= 30 && !txt.includes('\\n')) {
       cands.push('__text__:' + el.tagName.toLowerCase() + '|' + txt.replace(/"/g,'').slice(0,30));
     }
@@ -2509,39 +2520,82 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     return cands;
   };
   window.bocomSel = function(el){ return selBuild(el)[0]; };
+  var isCheckable = function(el){ return !!(el && el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio')); };
+  // 输入防抖:per-element pend+flush —— 换元素/点按钮/回车/提交时先把上一个输入吐出去。
+  // 修两个次序 bug:快速切换输入框丢前一个事件;敲完字 250ms 内提交 → input 排到 click/submit 之后,回放先提交空表单
+  var inputTmr = null, inputPend = null;
+  var flushInput = function(ret){
+    if (!inputPend) return null;
+    clearTimeout(inputTmr);
+    var el = inputPend; inputPend = null;
+    var v = el.isContentEditable ? (el.innerText||'') : (el.value||'');
+    var c = selBuild(el);
+    var ev = { act:'input', sel:c[0], selAlt:c.slice(1), value:String(v).slice(0,200) };
+    if (el.tagName === 'INPUT' && el.type === 'password') { ev.secret = true; ev.value = ''; }   // 密码不存明文(安全键盘控件本就录不到,这里只管普通 password 框)
+    if (ret) return JSON.stringify(ev);
+    emit(ev); return null;
+  };
+  window.__bocom_rec_flush = flushInput;
   document.addEventListener('click', function(e){
     if (!window.__bocom_rec_on) return;
-    var el = e.target; var c = selBuild(el);
-    emit({ act:'click', sel:c[0], selAlt:c.slice(1), text:(el.innerText||el.value||'').toString().slice(0,40) });
+    var el = e.target;
+    flushInput();
+    // select/checkbox/radio(含点 label 联动)由 change 监听录 act:'select'/'check',这里跳过防双发
+    if (el.tagName === 'SELECT' || el.tagName === 'OPTION' || isCheckable(el)) return;
+    var lb = el.closest && el.closest('label');
+    if (lb && isCheckable(lb.control)) return;
+    var t = '';
+    if (el.tagName === 'INPUT') { t = (el.type === 'button' || el.type === 'submit' || el.type === 'reset') ? (el.value || '') : ''; }
+    else if (el.tagName !== 'TEXTAREA') { t = el.innerText || ''; }
+    var c = selBuild(el);
+    emit({ act:'click', sel:c[0], selAlt:c.slice(1), text:String(t).slice(0,40) });
   }, true);
-  var inputTmr = null;
   document.addEventListener('input', function(e){
     if (!window.__bocom_rec_on) return;
     var el = e.target;
     if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA' && !el.isContentEditable)) return;
+    if (isCheckable(el)) return;   // 勾选由 change 录 act:'check',不产 value:'on' 垃圾步
+    if (inputPend && inputPend !== el) flushInput();
+    inputPend = el;
     clearTimeout(inputTmr);
-    inputTmr = setTimeout(function(){
-      var v = el.isContentEditable ? (el.innerText||'') : (el.value||'');
-      var c = selBuild(el);
-      emit({ act:'input', sel:c[0], selAlt:c.slice(1), value:String(v).slice(0,200) });
-    }, 250);   // 防抖,合并连续敲字
+    inputTmr = setTimeout(function(){ flushInput(); }, 250);   // 防抖,合并连续敲字
   }, true);
   document.addEventListener('keydown', function(e){
     if (!window.__bocom_rec_on) return;
+    if (e.isComposing || e.keyCode === 229) return;   // IME 组合态:拼音上屏的 Enter 不是提交
     if (e.key === 'Enter' || e.key === 'Escape' || e.key === 'Tab') {
+      flushInput();
       var c = selBuild(e.target); emit({ act:'key', sel:c[0], selAlt:c.slice(1), key:e.key });
     }
   }, true);
   document.addEventListener('submit', function(e){
     if (!window.__bocom_rec_on) return;
+    flushInput();
     var c = selBuild(e.target); emit({ act:'submit', sel:c[0], selAlt:c.slice(1) });
+  }, true);
+  // select 下拉与 checkbox/radio:change 时点才是「选定」语义(click 已跳过防双发)
+  document.addEventListener('change', function(e){
+    if (!window.__bocom_rec_on) return;
+    var el = e.target; if (!el || !el.tagName) return;
+    if (el.tagName === 'SELECT') {
+      flushInput();
+      var c = selBuild(el);
+      var t = (el.selectedIndex >= 0 && el.options[el.selectedIndex]) ? (el.options[el.selectedIndex].text||'').trim().slice(0,60) : '';
+      emit({ act:'select', sel:c[0], selAlt:c.slice(1), value:String(el.value == null ? '' : el.value).slice(0,200), text:t });   // text=跨环境字典码不同时的回退键
+      return;
+    }
+    if (isCheckable(el)) {
+      flushInput();
+      var c2 = selBuild(el);
+      emit({ act:'check', sel:c2[0], selAlt:c2.slice(1), checked: !!el.checked, value:String(el.value||'').slice(0,80) });
+    }
   }, true);
   // SPA 路由变化:hook history.pushState/replaceState + popstate(Vue/React 用 history mode 必走这条)
   function urlNow(){ return location.pathname + location.search + location.hash; }
   var lastUrl = urlNow();
   var emitNavIfChanged = function(){
     var u = urlNow();
-    if (u !== lastUrl) { lastUrl = u; emit({ act:'navigate', url: location.href, spa: true }); }
+    if (u !== lastUrl) { lastUrl = u; flushInput(); emit({ act:'navigate', url: location.href, spa: true }); }
   };
   var _ps = history.pushState, _rs = history.replaceState;
   history.pushState = function(){ var r = _ps.apply(this, arguments); try { window.__bocom_rec_on && emitNavIfChanged(); } catch(_){} return r; };
@@ -2600,9 +2654,16 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     if (!r || !r.active) return { ok: false, error: '没有进行中的录制' }
     r.active = false
     if (r.cleanup) r.cleanup()
-    // 把页面里的 flag 关掉(监听仍在,只是不再 emit)
+    // 把页面里的 flag 关掉(监听仍在,只是不再 emit);顺手收掉防抖里还没吐出来的最后一个输入。
+    // 必须走返回值通道:此刻 r.active 已 false,console 通道的 __BR__ 会被 pushConsole 丢弃且有异步竞态
     const tab = (S.browser.tabs || []).find((t) => t.id === r.tabId)
-    if (tab) { try { await tab.view.webContents.executeJavaScript(';window.__bocom_rec_on=false;', true) } catch {} }
+    if (tab) {
+      try {
+        const pend = await tab.view.webContents.executeJavaScript(
+          `;(function(){try{var s=window.__bocom_rec_flush?window.__bocom_rec_flush(true):null;window.__bocom_rec_on=false;return s}catch(e){window.__bocom_rec_on=false;return null}})()`, true)
+        if (pend) { const ev = JSON.parse(pend); ev.t = Date.now() - r.startedAt; r.events.push(ev) }
+      } catch {}
+    }
     // 录制结束 = 复现成功瞬间 → 抓快照(报错 + 网络异常【含 200 业务异常】),供 Phase C 验证时 diff
     const snapshot = tab ? {
       errs: tab.console.filter((c) => c.level >= 2).map((c) => ({ level: c.level, msg: (c.message || '').split('\n')[0].slice(0, 200) })),
@@ -2650,6 +2711,27 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       else if (Date.now() - lastSeenAt >= idleMs) return
     }
   }
+  // 等元素出现再操作 —— 取代"找不到立刻失败",慢接口/懒加载的核心解药。
+  // 优先等"可交互"(有尺寸、非 disabled);但元素【存在而不可见】是样式化控件的常态
+  // (Element-UI/antd 的原生 checkbox 0×0 隐藏、程序化 click 本就打得动),所以:
+  // 存在但 900ms 内没显形 → 按存在放行,绝不把老引擎能成功的步变成超时失败。
+  // requireVisible=false(check 步)则元素一存在就放行。
+  async function waitForEl(wc, elExpr, maxMs = 5000, requireVisible = true, step = 150) {
+    const t0 = Date.now()
+    let existsAt = 0
+    while (Date.now() - t0 < maxMs) {
+      try {
+        const st = await wc.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 0;var rc=__el.getBoundingClientRect?__el.getBoundingClientRect():{width:1};return (!!(rc.width||rc.height)&&!__el.disabled)?2:1})()`, true)
+        if (st === 2 || (st === 1 && !requireVisible)) return true
+        if (st === 1) {
+          if (!existsAt) existsAt = Date.now()
+          else if (Date.now() - existsAt >= 900) return true   // 存在但一直隐藏:放行交给程序化操作
+        } else existsAt = 0
+      } catch {}
+      await sleep(step)
+    }
+    return false
+  }
   // 回放可视化:每个 click/input/submit 前在页面里给目标元素打个红框 + 浮标"步 N",看得见在跑什么
   async function highlightTarget(wc, ev, idx) {
     if (!ev.sel || ev.act === 'navigate' || ev.act === 'scroll') return
@@ -2672,8 +2754,10 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       })()`, true)
     } catch {}
   }
-  async function execStep(wc, ev, tab) {
+  async function execStep(wc, ev, tab, opts) {
     if (ev.act === 'navigate') {
+      // 事件来自页面 console 的 __BR__ 通道,被录页面可伪造 navigate 注入 file://、data: 等 —— 回放只认 http/https
+      if (!/^https?:\/\//i.test(String(ev.url || ''))) return { ok: false, err: '非 http/https URL,拒绝导航: ' + String(ev.url || '').slice(0, 80) }
       const cur = wc.getURL()
       if (cur === ev.url && !ev._needRestore && !ev._restorePreState) return { ok: true }
       // SPA 路由变化:用 history.pushState + popstate,避免整页 reload 清空 SPA 状态
@@ -2699,6 +2783,13 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       return { ok: true }
     }
     const elExpr = findElExpr(ev.sel, ev.selAlt)
+    // Codex 级健壮:元素类步骤先等目标出现,再动手(key 保持宽容:本就允许目标缺席)。
+    // check 步不要求可见:样式化 checkbox 的原生 input 普遍隐藏,存在即可操作
+    if (ev.act === 'click' || ev.act === 'input' || ev.act === 'select' || ev.act === 'check' || ev.act === 'submit') {
+      const wms = (opts && opts.waitMs) || 5000
+      const found = await waitForEl(wc, elExpr, wms, ev.act !== 'check')
+      if (!found) return { ok: false, err: 'selector(+alt) not found (waited ' + wms + 'ms)' }
+    }
     if (ev.act === 'click') {
       try {
         const r = await wc.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';__el.scrollIntoView({block:'center'});__el.click();return 'OK';})()`, true)
@@ -2706,12 +2797,44 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       } catch (e) { return { ok: false, err: e.message } }
     }
     if (ev.act === 'input') {
+      // 密码步录制时不存明文:没带运行参数就显式失败(优于静默清空密码框);登录态靠 preState 恢复兜底
+      if (ev.secret && !ev.value) return { ok: false, err: 'password 步未提供运行参数(录制未存明文,请把该步设为参数或先在浏览器登录)', secret: true }
       try {
         const r = await wc.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';
           var v=${JSON.stringify(String(ev.value == null ? '' : ev.value))};
           if (__el.isContentEditable){__el.focus();__el.innerText=v}
           else{var p=Object.getOwnPropertyDescriptor(__el.__proto__,'value');p&&p.set?p.set.call(__el,v):(__el.value=v);}
           __el.dispatchEvent(new Event('input',{bubbles:true}));__el.dispatchEvent(new Event('change',{bubbles:true}));return 'OK';})()`, true)
+        return r === 'OK' ? { ok: true } : { ok: false, err: 'selector(+alt) not found' }
+      } catch (e) { return { ok: false, err: e.message } }
+    }
+    if (ev.act === 'select') {
+      try {
+        const r = await wc.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';
+          var v=${JSON.stringify(String(ev.value == null ? '' : ev.value))};
+          var p=Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value');
+          p&&p.set?p.set.call(__el,v):(__el.value=v);
+          if(__el.value!==v){
+            var t=${JSON.stringify(String(ev.text || ''))};var hit=false;
+            if(t){for(var i=0;i<__el.options.length;i++){if((__el.options[i].text||'').trim()===t){__el.selectedIndex=i;hit=true;break}}}
+            if(!hit)return 'NV';
+          }
+          __el.dispatchEvent(new Event('input',{bubbles:true}));__el.dispatchEvent(new Event('change',{bubbles:true}));return 'OK';})()`, true)
+        if (r === 'OK') return { ok: true }
+        return { ok: false, err: r === 'NV' ? 'option value/text 未命中(参数 value 未命中选项,或环境字典差异)' : 'selector(+alt) not found' }
+      } catch (e) { return { ok: false, err: e.message } }
+    }
+    if (ev.act === 'check') {
+      try {
+        const r = await wc.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';
+          var want=${ev.checked ? 'true' : 'false'};
+          if(__el.checked!==want){__el.click();}
+          if(__el.checked!==want){
+            var p=Object.getOwnPropertyDescriptor(__el.__proto__,'checked');
+            p&&p.set?p.set.call(__el,want):(__el.checked=want);
+            __el.dispatchEvent(new Event('input',{bubbles:true}));__el.dispatchEvent(new Event('change',{bubbles:true}));
+          }
+          return 'OK';})()`, true)
         return r === 'OK' ? { ok: true } : { ok: false, err: 'selector(+alt) not found' }
       } catch (e) { return { ok: false, err: e.message } }
     }
@@ -2733,7 +2856,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       } catch (e) { return { ok: false, err: e.message } }
     }
     if (ev.act === 'scroll') {
-      try { await wc.executeJavaScript(`window.scrollTo(${ev.x || 0}, ${ev.y || 0})`, true); return { ok: true } } catch (e) { return { ok: false, err: e.message } }
+      try { await wc.executeJavaScript(`window.scrollTo(${Number(ev.x) || 0}, ${Number(ev.y) || 0})`, true); return { ok: true } } catch (e) { return { ok: false, err: e.message } }
     }
     return { ok: true }
   }
@@ -2854,12 +2977,18 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     return [...groups.values()]
   }
 
-  async function replayRec(rec) {
+  // opts:{ fast, gapCap, waitMs } —— 默认值 = 原有节奏,verifyFix 无参调用零回归;
+  // 技能运行传 {fast:true}(步间 gap 封顶 400ms、各固定 sleep 缩短),等待策略(waitForEl/waitNetIdle)不缩水
+  async function replayRec(rec, opts = {}) {
+    const fast = !!opts.fast
+    const gapCap = opts.gapCap || (fast ? 400 : 2000)
+    const waitMsBase = opts.waitMs || 5000
     const tab = brActive()
     if (!tab) return { ok: false, error: '没有活跃标签' }
     const wc = tab.view.webContents
     // 前置状态 restore:cookies 在 navigate 前装(请求时随发),localStorage/sessionStorage 在 load 后装 + 必要时 reload
-    if (rec.preState) {
+    // 切过环境(_baseSwapped)则整体跳过:旧环境 cookie/token 灌新环境是错的
+    if (rec.preState && !rec._baseSwapped) {
       try {
         for (const c of (rec.preState.cookies || [])) {
           const url = rec.startUrl
@@ -2868,51 +2997,89 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
         log('replay restored ' + (rec.preState.cookies || []).length + ' cookies')
       } catch (e) { log('cookies restore err: ' + e.message) }
     }
+    // 弹窗自动应答桩:原生 confirm/alert/prompt 会同步阻塞渲染进程,无人值守回放遇「确认提交?」直接挂死。
+    // confirm 恒返回 true(银行提交流程标配),应答记录随报告透出;整页 navigate 会清掉桩,导航成功后重注入
+    const DLG_STUB = `;(function(){try{window.__bocom_dlgs=window.__bocom_dlgs||[];window.alert=function(m){window.__bocom_dlgs.push({k:'alert',m:String(m).slice(0,120)})};window.confirm=function(m){window.__bocom_dlgs.push({k:'confirm',m:String(m).slice(0,120)});return true};window.prompt=function(m,d){window.__bocom_dlgs.push({k:'prompt',m:String(m).slice(0,120)});return d==null?'':String(d)}}catch(e){}})()`
+    try { await wc.executeJavaScript(DLG_STUB, true) } catch {}
     // 抓"修复后"状态:清空之前的报错/网络,重头开始
     tab.console = []; tab.errN = 0; tab.warnN = 0
     tab.net = []; tab.netById = new Map()
     // 启动覆盖率收集(若 CDP 调试器已挂),并收集 agent 改过的文件清单
     const changedFiles = [...new Set([...gitChangedFiles(S.settings.projectDir), ...gitChangedFiles(S.settings.backendDir)])]
     const covOn = await startCoverage(tab)
+    const skipSet = new Set(Array.isArray(rec.skipSteps) ? rec.skipSteps : [])
     const stepReport = []
     let lastT = 0
     let storageRestored = false
     let consecutiveFails = 0; let cascadeFrom = -1
     for (let i = 0; i < rec.events.length; i++) {
       const ev = rec.events[i]
-      if (!storageRestored && ev.act === 'navigate' && rec.preState && (rec.preState.local !== '{}' || rec.preState.session !== '{}')) {
+      // 跳过步(如滚动噪声)必须推占位条目并更新 lastT —— diffReport/verifyFix/skillRun 全按 stepReport 长度对齐计数
+      if (skipSet.has(i)) { stepReport.push({ i: i + 1, act: ev.act, sel: '', ok: true, skipped: true }); lastT = ev.t || 0; continue }
+      if (!storageRestored && ev.act === 'navigate' && rec.preState && !rec._baseSwapped && (rec.preState.local !== '{}' || rec.preState.session !== '{}')) {
         ev._restorePreState = rec.preState; storageRestored = true
       }
-      const gap = Math.min(Math.max(0, (ev.t || 0) - lastT), 2000)   // 步间最长 sleep 2s
+      const gap = Math.min(Math.max(0, (ev.t || 0) - lastT), gapCap)   // 步间 sleep 封顶(fast 模式 400ms)
       if (gap > 50) await sleep(gap)
       lastT = ev.t || 0
       await highlightTarget(wc, ev, i + 1)   // 先标红框让用户看到下一步要点哪
-      await sleep(180)
-      const r = await execStep(wc, ev, tab)
-      stepReport.push({ i: i + 1, act: ev.act, sel: ev.sel || ev.url || '', ok: r.ok, err: r.err || '' })
+      await sleep(fast ? 60 : 180)
+      // 级联收缩:已有连续失败时缩短 waitForEl,防「等5s×重试」把 3 连败早停拖到 30s+;成功即复原
+      const stepOpts = { waitMs: consecutiveFails >= 1 ? Math.min(waitMsBase, 1500) : waitMsBase }
+      let r = await execStep(wc, ev, tab, stepOpts)
+      // 只对「元素未找到」重试一次:executeJavaScript 异常多为页面跳转中上下文销毁,
+      // click/submit 是否已生效不可知,盲目重试有真实双提交风险
+      if (!r.ok && ev.act !== 'navigate' && String(r.err || '').startsWith('selector(+alt) not found')) {
+        await sleep(400)
+        r = await execStep(wc, ev, tab, { waitMs: 1500 })
+        r.retried = true
+      }
+      const entry = { i: i + 1, act: ev.act, sel: ev.sel || ev.url || '', ok: r.ok, err: r.err || '' }
+      if (r.retried) entry.retried = true
+      if (r.secret) entry.secret = true
+      stepReport.push(entry)
       if (!r.ok && ev.act === 'navigate') break
-      // 级联失败检测:连续 3 个非 navigate 步失败 → 后续大概率都依赖前面失败步,提前 break 不无谓继续
+      if (r.ok && ev.act === 'navigate') { try { await wc.executeJavaScript(DLG_STUB, true) } catch {} }   // 整页加载清掉桩 → 重注入
+      // 级联失败检测:连续 3 个非 navigate 步失败 → 后续大概率都依赖前面失败步,提前 break 不无谓继续。
+      // 密码步的显式失败不计入(登录态靠 preState 恢复兜底,不该拖垮整场验证)
       if (!r.ok && ev.act !== 'navigate') {
-        consecutiveFails++
-        if (consecutiveFails >= 3) {
-          if (cascadeFrom < 0) cascadeFrom = i + 1 - (consecutiveFails - 1)   // 第一个连续 fail 步号
-          log('replay early-abort: ' + consecutiveFails + ' consecutive fails from step ' + cascadeFrom)
-          break
+        if (!r.secret) {
+          consecutiveFails++
+          if (consecutiveFails >= 3) {
+            if (cascadeFrom < 0) cascadeFrom = i + 1 - (consecutiveFails - 1)   // 第一个连续 fail 步号
+            log('replay early-abort: ' + consecutiveFails + ' consecutive fails from step ' + cascadeFrom)
+            break
+          }
         }
       } else if (r.ok) consecutiveFails = 0
-      // 等网络静默(取代固定 150ms);click/submit 后常触发 XHR,需要等它打完
-      if (ev.act === 'click' || ev.act === 'submit' || ev.act === 'key') await waitNetIdle(tab, 300, 3000)
-      else await sleep(120)
+      // 等网络静默(取代固定 sleep);click/submit/select/check 常触发 XHR(级联下拉靠它填下级 options),
+      // navigate 后 SPA 首屏 XHR 是最大 flake 源
+      if (ev.act === 'click' || ev.act === 'submit' || ev.act === 'key' || ev.act === 'select' || ev.act === 'check' || ev.act === 'navigate') await waitNetIdle(tab, 300, 3000)
+      else await sleep(fast ? 50 : 120)
     }
-    await sleep(1800)    // 播完再等异步报错/请求浮现
+    await sleep(fast ? 600 : 1800)    // 播完再等异步报错/请求浮现
     const after = {
       errs: tab.console.filter((c) => c.level >= 2).map((c) => ({ level: c.level, msg: (c.message || '').split('\n')[0].slice(0, 200) })),
       bad: await snapshotBad(tab),   // 含 200 业务异常
       url: tab.url || '',
     }
+    // 技能自带成功断言(保存时可选填):跑完检查一次;只写进结果,verify 判定不消费(opt-in 语义)
+    let successRes = null
+    if (rec.success && rec.success.value) {
+      const sv = String(rec.success.value)
+      let pass = false, serr = ''
+      try {
+        pass = rec.success.kind === 'text'
+          ? await wc.executeJavaScript(`((document.body&&document.body.innerText)||'').includes(${JSON.stringify(sv)})`, true)
+          : await wc.executeJavaScript(`!!document.querySelector(${JSON.stringify(sv)})`, true)
+      } catch (e) { serr = e.message }
+      successRes = { pass: !!pass, kind: rec.success.kind, value: sv, err: serr }
+    }
+    let dialogs = []
+    try { dialogs = (await wc.executeJavaScript('window.__bocom_dlgs||[]', true)) || [] } catch {}
     const cov = covOn ? await stopCoverage(tab) : null
     const hitInfo = cov ? coverageHits(cov, changedFiles) : []
-    return { ok: true, stepReport, after, changedFiles, hitInfo, covOn, cascadeFrom, totalSteps: rec.events.length }
+    return { ok: true, stepReport, after, changedFiles, hitInfo, covOn, cascadeFrom, totalSteps: rec.events.length, success: successRes, dialogs, baseSwapped: !!rec._baseSwapped }
   }
 
   // 报告:把 before/after diff 翻译成 PASS/FAIL 文字结论(无视觉依赖)
@@ -2943,6 +3110,9 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       lines.push('  修复后仍有:')
       for (const b of after.bad.slice(0, 8)) lines.push(`    ${b.biz ? '200·业务异常 ' + b.biz : (b.status || b.state)}  ${b.url}`)
     }
+    // 技能成功断言/弹窗应答:仅展示,不并入本判定(修复验证的 PASS/FAIL 语义不受用户随手填的断言影响)
+    if (replay.success) lines.push(`\n技能成功断言(仅参考): ${replay.success.pass ? '✓' : '✗'} [${replay.success.kind}] "${replay.success.value}"${replay.success.err ? '(检查出错: ' + replay.success.err + ')' : ''}`)
+    if (replay.dialogs && replay.dialogs.length) lines.push(`回放中自动应答弹窗 ${replay.dialogs.length} 个(confirm→确定): ` + replay.dialogs.slice(0, 3).map((d) => d.k + '「' + d.m + '」').join(' | '))
     // 断言:agent 明确声明"应让什么消失/出现",这是 PASS 的硬证据(优先于数量对比)
     let assertFail = 0
     if (replay.assertions && replay.assertions.length) {
@@ -3097,22 +3267,59 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     return { ok: true, dryRun, result }
   })
   // ── 浏览器技能(SKILL):一条录制即一个技能 ─────────────────────────────────
-  // 不新建第二套子系统:录制 JSON 就地扩展 skill/description/params 三个字段。
-  // params[].stepIndex 指向 events 里某个 input 步;回放前把运行时值写进【深拷贝】的
-  // events[i].value,再喂给完全没动过的 replayRec —— 引擎零改动,参数化在门口完成。
+  // 不新建第二套子系统:录制 JSON 就地扩展 skill/description/params/skipSteps/success 字段。
+  // params[].stepIndex 指向 events 里某个 input/select 步;回放前把运行时值写进【深拷贝】的
+  // events[i].value,再喂给 replayRec —— 参数化在门口完成,只落输入步、拒绝替 selector(防注入)。
   function applyParams(rec, values) {
     if (!Array.isArray(rec.params) || !rec.params.length) return rec
     const clone = JSON.parse(JSON.stringify(rec))
     for (const p of clone.params) {
       const ev = clone.events[p.stepIndex]
-      if (!ev || ev.act !== 'input') continue   // 只允许参数落在输入步,拒绝替 selector(防注入)
-      const v = values && values[p.key] != null ? values[p.key] : p.default
+      if (!ev || (ev.act !== 'input' && ev.act !== 'select')) continue
+      const explicit = values && values[p.key] != null
+      const v = explicit ? values[p.key] : p.default
+      const prevVal = String(ev.value == null ? '' : ev.value)
       ev.value = String(v == null ? '' : v).slice(0, 200)
+      // select 的 text 回退只在值【真的变了】时才删:新 value 未命中选项不该被 text 拉回旧选项;
+      // 但 UI 填参框会把没动过的预填默认值也传上来,值没变就保留 text —— 跨环境字典差异仍可靠文本命中
+      if (ev.act === 'select' && explicit && ev.value !== prevVal) delete ev.text
     }
+    return clone
+  }
+  // 只认 http/https 的 origin(挡 javascript:/file:/data:);不要用 normalizeUrl(它补协议且放行 file:)
+  function safeOrigin(s) {
+    try {
+      const u = new URL(String(s || '').trim())
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
+      if (u.origin === 'null') return null
+      return u.origin
+    } catch { return null }
+  }
+  // 环境切换(dev/uat/prod):把录制 origin 前缀替换成目标 baseUrl;换了环境就不恢复录制登录态
+  function applyBaseUrl(rec, baseUrl) {
+    const to = safeOrigin(baseUrl); if (!to) return rec
+    let from; try { from = new URL(rec.startUrl).origin } catch { return rec }
+    if (from === to) return rec
+    const clone = JSON.parse(JSON.stringify(rec))
+    const swap = (u) => (u === from || String(u).startsWith(from + '/')) ? to + String(u).slice(from.length) : u
+    clone.startUrl = swap(clone.startUrl)
+    for (const ev of clone.events) if (ev.act === 'navigate' && ev.url) ev.url = swap(ev.url)
+    clone._baseSwapped = true
     return clone
   }
   function recDir() { return path.join(app.getPath('userData'), 'recordings') }
   function readRec(id) { return JSON.parse(fs.readFileSync(path.join(recDir(), String(id).replace(/[^\w.-]/g, '') + '.json'), 'utf8')) }
+  // 运行历史:重读磁盘 read-modify-write,只改 lastRun 一个键。
+  // 严禁序列化内存里的 rec/clone —— replayRec 会把 preState(cookie)塞进 events[i]._restorePreState,直接 stringify 会持久化敏感态
+  function writeLastRun(id, replay) {
+    try {
+      const fp = path.join(recDir(), String(id).replace(/[^\w.-]/g, '') + '.json')
+      const j = JSON.parse(fs.readFileSync(fp, 'utf8'))
+      const fails = replay.stepReport.filter((s) => !s.ok).length
+      j.lastRun = { at: Date.now(), ok: fails === 0 && (!replay.success || replay.success.pass), steps: replay.stepReport.length, fails }
+      fs.writeFileSync(fp, JSON.stringify(j, null, 2))
+    } catch {}
+  }
   // 技能清单 = recordings 里标了 skill:true 的那些(name 复用 title)
   function skillList() {
     let files = []; try { files = fs.readdirSync(recDir()).filter((f) => f.endsWith('.json')) } catch { return [] }
@@ -3123,32 +3330,52 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
         if (!j.skill) continue
         out.push({ id: j.id || f.replace(/\.json$/, ''), name: j.title || j.id, description: j.description || '', startUrl: j.startUrl || '',
           steps: (j.events || []).length,
-          params: (j.params || []).map((p) => ({ key: p.key, label: p.label || p.key, default: p.default != null ? p.default : '' })) })
+          lastRun: j.lastRun || null,
+          hasSuccess: !!(j.success && j.success.value),
+          params: (j.params || []).map((p) => ({ key: p.key, label: p.label || p.key, default: p.default != null ? p.default : '', secret: !!p.secret })) })
       } catch {}
     }
     return out
   }
-  // 按名字跑技能(relay /skill/run 与 agent 共用):浏览器没开就自动拉起,回完给文字结论
+  // 按名字跑技能(relay /skill/run 与 agent 共用):浏览器没开就自动拉起,回完给文字结论 + 写运行历史
   async function skillRun(a) {
     const want = String((a && (a.name || a.id)) || '').trim()
     if (!want) return { error: '缺少 name(技能名)' }
     const all = skillList()
-    const hit = all.find((s) => s.name === want || s.id === want) || all.find((s) => s.name.includes(want))
+    let hit = all.find((s) => s.name === want || s.id === want)
+    if (!hit) {   // 模糊匹配只在无歧义时用:「导出报表」不能悄悄跑成「导出报表-测试」
+      const fuzzy = all.filter((s) => s.name.includes(want))
+      if (fuzzy.length > 1) return { error: '「' + want + '」命中多条技能,请用全名: ' + fuzzy.map((s) => s.name).join('、') }
+      hit = fuzzy[0]
+    }
     if (!hit) return { error: '没有叫「' + want + '」的技能。现有: ' + (all.map((s) => s.name).join('、') || '(空 — 让用户在内嵌浏览器录一条并保存为技能)') }
     let rec; try { rec = readRec(hit.id) } catch (e) { return { error: '读取技能失败: ' + e.message } }
+    if (a && a.baseUrl) {
+      if (!safeOrigin(a.baseUrl)) return { error: 'baseUrl 必须是 http/https origin,如 https://uat.example.com' }
+      rec = applyBaseUrl(rec, a.baseUrl)
+    }
     if (!brActive()) {   // 窗口没开 → 自动拉起并等首个标签就绪(chrome 加载完才建 tab)
       createBrowser(rec.startUrl)
       for (let i = 0; i < 100 && !brActive(); i++) await sleep(150)
+      if (!brActive() && S.browser.win && !S.browser.win.isDestroyed()) {
+        newTab(rec.startUrl)   // 窗口开着但 0 tab(createBrowser 对已开窗只 focus)
+        for (let i = 0; i < 40 && !brActive(); i++) await sleep(150)
+      }
       if (!brActive()) return { error: '内嵌浏览器未能就绪(15s 超时)' }
       await sleep(1200)   // 让首页先加载;回放的首个 navigate 步会再校准 URL
     }
     S.browser.lastRec = rec
-    const replay = await replayRec(applyParams(rec, (a && a.params) || {}))
+    const replay = await replayRec(applyParams(rec, (a && a.params) || {}), { fast: true })
     if (!replay.ok) return { error: replay.error || '回放失败' }
+    writeLastRun(hit.id, replay)
     const fails = replay.stepReport.filter((s) => !s.ok)
-    const ok = fails.length === 0
-    const lines = ['技能「' + hit.name + '」回放 ' + replay.stepReport.length + '/' + replay.totalSteps + ' 步 · ' + (ok ? '✅ 全部成功' : '❌ ' + fails.length + ' 步失败')]
+    const retried = replay.stepReport.filter((s) => s.retried && s.ok).length
+    const ok = fails.length === 0 && (!replay.success || replay.success.pass)
+    const lines = ['技能「' + hit.name + '」回放 ' + replay.stepReport.length + '/' + replay.totalSteps + ' 步 · ' + (fails.length === 0 ? '✅ 步骤全部成功' : '❌ ' + fails.length + ' 步失败') + (retried ? '(' + retried + ' 步重试后成功)' : '')]
     for (const f of fails.slice(0, 8)) lines.push('  · 步 ' + f.i + ' ' + f.act + ' "' + String(f.sel).slice(0, 60) + '" — ' + f.err)
+    if (replay.success) lines.push('成功断言: ' + (replay.success.pass ? '✓ 达成' : '✗ 未达成') + ' [' + replay.success.kind + '] "' + replay.success.value + '"' + (replay.success.err ? '(检查出错: ' + replay.success.err + ')' : ''))
+    if (replay.dialogs && replay.dialogs.length) lines.push('自动应答弹窗 ' + replay.dialogs.length + ' 个(confirm→确定): ' + replay.dialogs.slice(0, 3).map((d) => d.k + '「' + d.m + '」').join(' | '))
+    if (replay.baseSwapped) lines.push('已切环境运行(未恢复录制时的登录态;需要登录的流程请先在浏览器登录目标环境,或把登录步录进技能)')
     if (replay.after.errs.length) lines.push('回放后控制台报错 ' + replay.after.errs.length + ' 条: ' + replay.after.errs.slice(0, 3).map((x) => x.msg).join(' | '))
     if (replay.after.bad.length) lines.push('网络/业务异常 ' + replay.after.bad.length + ' 条: ' + replay.after.bad.slice(0, 3).map((b) => (b.biz ? '200·' + b.biz : (b.status || b.state)) + ' ' + b.url).join(' | '))
     lines.push('结束页面: ' + (replay.after.url || '?'))
@@ -3174,6 +3401,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
           expectation: j.expectation || '',
           eventCount: (j.events || []).length,
           durationMs: j.durationMs || 0,
+          lastRun: j.lastRun || null,
           mtime: fs.statSync(path.join(dir, f)).mtimeMs,
         })
       } catch {}
@@ -3184,27 +3412,115 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('browser-rec-get', (_e, id) => { try { return readRec(id) } catch { return null } })
   ipcMain.handle('browser-rec-update', (_e, { id, patch }) => {
     if (!id || !patch || typeof patch !== 'object') return false
-    const fp = path.join(recDir(), id + '.json')
+    const fp = path.join(recDir(), String(id).replace(/[^\w.-]/g, '') + '.json')
     try {
       const j = JSON.parse(fs.readFileSync(fp, 'utf8'))
       const allowed = ['title', 'starred', 'expectation', 'description', 'params', 'skill']   // events 不进白名单,保持只读
       for (const k of allowed) if (k in patch) j[k] = patch[k]
+      // 形状校验后才放行的字段(坏形状直接丢弃,不落盘)
+      if ('skipSteps' in patch) {
+        const n = (j.events || []).length
+        j.skipSteps = Array.isArray(patch.skipSteps) ? patch.skipSteps.filter((x) => Number.isInteger(x) && x >= 0 && x < n) : []
+      }
+      if ('success' in patch) {
+        const s = patch.success
+        if (s && (s.kind === 'css' || s.kind === 'text') && typeof s.value === 'string' && s.value.length > 0 && s.value.length <= 500) j.success = { kind: s.kind, value: s.value }
+        else delete j.success
+      }
       fs.writeFileSync(fp, JSON.stringify(j, null, 2))
       return true
     } catch (e) { log('rec update err: ' + e.message); return false }
   })
   ipcMain.handle('browser-rec-delete', (_e, id) => {
-    const fp = path.join(recDir(), id + '.json')
+    const fp = path.join(recDir(), String(id).replace(/[^\w.-]/g, '') + '.json')
     try { fs.unlinkSync(fp); log('rec deleted: ' + id); return true } catch (e) { log('rec del err: ' + e.message); return false }
   })
-  // 入参兼容两种形态:'rec_xx'(旧)或 { id, params }(带运行时参数)
+  // 入参兼容两种形态:'rec_xx'(旧)或 { id, params, baseUrl }(带运行时参数/环境切换)
   ipcMain.handle('browser-rec-replay-stored', async (_e, arg) => {
     const id = arg && typeof arg === 'object' ? arg.id : arg
     const values = (arg && typeof arg === 'object' && arg.params) || null
+    const baseUrl = (arg && typeof arg === 'object' && arg.baseUrl) || null
     let rec; try { rec = readRec(id) } catch (e) { return { ok: false, error: '读取失败: ' + e.message } }
+    if (baseUrl) {
+      if (!safeOrigin(baseUrl)) return { ok: false, error: 'baseUrl 必须是 http/https origin,如 https://uat.example.com' }
+      rec = applyBaseUrl(rec, baseUrl)
+    }
     S.browser.lastRec = rec   // 让 verify 用这条
-    const replay = await replayRec(values ? applyParams(rec, values) : rec)
+    // fast 只给技能:普通复现录制保持录制节奏,时序敏感的 bug 才复现得出来
+    const replay = await replayRec(values ? applyParams(rec, values) : rec, { fast: !!rec.skill })
+    if (replay.ok) writeLastRun(id, replay)
     return replay
+  })
+  // 技能导出:剥离 preState/snapshot(cookie/报错快照不外泄)与 _ 前缀运行时键,写到「下载」目录
+  ipcMain.handle('browser-rec-export', (_e, id) => {
+    try {
+      const j = readRec(id)
+      const out = {}
+      for (const k of ['id', 'title', 'description', 'expectation', 'skill', 'params', 'skipSteps', 'success', 'startUrl', 'startedAt', 'durationMs']) if (k in j) out[k] = j[k]
+      out.events = (j.events || []).map((ev) => { const e2 = {}; for (const k of Object.keys(ev)) if (!k.startsWith('_')) e2[k] = ev[k]; return e2 })
+      const safeId = String(j.id || id).replace(/[^\w.-]/g, '')
+      const fp = path.join(app.getPath('downloads'), 'skill-' + safeId + '.json')
+      fs.writeFileSync(fp, JSON.stringify(out, null, 2))
+      try { shell.showItemInFolder(fp) } catch {}
+      // 提醒调用方:事件里仍带录制时的输入明文(密码步除外,录制即脱敏)
+      const inputValues = out.events.filter((e2) => (e2.act === 'input' || e2.act === 'select') && e2.value).length
+      return { ok: true, path: fp, inputValues }
+    } catch (e) { return { ok: false, error: e.message } }
+  })
+  // 技能导入:白名单重建 + 类型强转,绝不整包落盘;preState 一律丢弃;navigate/startUrl 强制 http/https。
+  // 事件被过滤时用 idxMap 重映射 params/skipSteps 的 stepIndex,防错位指到别的步
+  ipcMain.handle('browser-rec-import', async () => {
+    try {
+      const r = await dialog.showOpenDialog({ title: '导入技能 JSON', filters: [{ name: 'Skill JSON', extensions: ['json'] }], properties: ['openFile'] })
+      if (r.canceled || !r.filePaths || !r.filePaths[0]) return { ok: false, canceled: true }
+      const fpIn = r.filePaths[0]
+      if (fs.statSync(fpIn).size > 2 * 1024 * 1024) return { ok: false, error: '文件超过 2MB,拒绝导入' }
+      const src = JSON.parse(fs.readFileSync(fpIn, 'utf8'))
+      if (!safeOrigin(src.startUrl)) return { ok: false, error: 'startUrl 必须是 http/https,拒绝导入' }
+      const ACTS = new Set(['navigate', 'click', 'input', 'key', 'submit', 'scroll', 'select', 'check'])
+      const KEYS = new Set(['Enter', 'Escape', 'Tab'])
+      const evsIn = Array.isArray(src.events) ? src.events.slice(0, 5000) : []
+      const events = []; const idxMap = new Map()
+      evsIn.forEach((ev, oldIdx) => {
+        if (!ev || !ACTS.has(ev.act)) return
+        const e2 = { act: ev.act }
+        if (ev.act === 'navigate') {
+          if (!safeOrigin(ev.url)) return   // 挡 file://、javascript: 等被 loadURL 执行
+          e2.url = String(ev.url).slice(0, 2000); if (ev.spa) e2.spa = true
+        } else {
+          if (ev.sel != null) e2.sel = String(ev.sel).slice(0, 1000)
+          if (Array.isArray(ev.selAlt)) e2.selAlt = ev.selAlt.slice(0, 8).map((s) => String(s).slice(0, 1000))
+          if (ev.act === 'input') { e2.value = String(ev.value == null ? '' : ev.value).slice(0, 200); if (ev.secret) { e2.secret = true; e2.value = '' } }
+          if (ev.act === 'select') { e2.value = String(ev.value == null ? '' : ev.value).slice(0, 200); if (ev.text) e2.text = String(ev.text).slice(0, 60) }
+          if (ev.act === 'check') e2.checked = !!ev.checked
+          if (ev.act === 'key') { if (!KEYS.has(ev.key)) return; e2.key = ev.key }
+          if (ev.act === 'scroll') { e2.x = Number(ev.x) || 0; e2.y = Number(ev.y) || 0 }
+          if (ev.act === 'click' && ev.text) e2.text = String(ev.text).slice(0, 40)
+        }
+        e2.t = Number(ev.t) || 0
+        idxMap.set(oldIdx, events.length)
+        events.push(e2)
+      })
+      if (!events.length) return { ok: false, error: '文件里没有可用的步骤' }
+      const id = 'rec_' + Date.now().toString(36)
+      const rec2 = {
+        id, startUrl: String(src.startUrl).slice(0, 2000), startedAt: Date.now(), durationMs: Number(src.durationMs) || 0,
+        events, snapshot: { errs: [], bad: [], url: '' }, preState: null,
+        title: String(src.title || '导入技能').slice(0, 120), description: String(src.description || '').slice(0, 500),
+        expectation: String(src.expectation || '').slice(0, 2000), skill: true,
+      }
+      const params = (Array.isArray(src.params) ? src.params : [])
+        .filter((p) => p && /^p\d+$/.test(String(p.key)) && Number.isInteger(p.stepIndex) && idxMap.has(p.stepIndex))
+        .map((p) => ({ key: String(p.key), label: String(p.label || p.key).slice(0, 60), stepIndex: idxMap.get(p.stepIndex), default: String(p.default == null ? '' : p.default).slice(0, 200), ...(p.secret ? { secret: true } : {}) }))
+        .filter((p) => { const ev = events[p.stepIndex]; return ev && (ev.act === 'input' || ev.act === 'select') })
+      if (params.length) rec2.params = params
+      const skips = (Array.isArray(src.skipSteps) ? src.skipSteps : []).filter((x) => Number.isInteger(x) && idxMap.has(x)).map((x) => idxMap.get(x))
+      if (skips.length) rec2.skipSteps = skips
+      if (src.success && (src.success.kind === 'css' || src.success.kind === 'text') && typeof src.success.value === 'string' && src.success.value.length <= 500) rec2.success = { kind: src.success.kind, value: src.success.value }
+      const dir = recDir(); try { fs.mkdirSync(dir, { recursive: true }) } catch {}
+      fs.writeFileSync(path.join(dir, id + '.json'), JSON.stringify(rec2, null, 2))
+      return { ok: true, id, title: rec2.title, steps: events.length }
+    } catch (e) { return { ok: false, error: e.message } }
   })
   ipcMain.on('browser-open-rec-dir', () => {
     const d = path.join(app.getPath('userData'), 'recordings')

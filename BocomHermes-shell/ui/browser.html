@@ -827,6 +827,7 @@ async function openRecMgr() {
     <div style="padding:12px 14px 9px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line)">
       <span style="font-weight:700;color:var(--txt);font-size:13.5px">🧰 技能库</span>
       <span style="flex:1;color:var(--txt3);font-size:11px">${items.length} 条;⭐ 收藏置顶</span>
+      <button id="rm-import" title="导入技能 JSON(来自同事分享)" style="background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:6px;padding:3px 9px;cursor:pointer;font-size:11px">导入</button>
       <button id="rm-folder" title="打开录制文件夹" style="background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:6px;padding:3px 9px;cursor:pointer;font-size:11px">系统</button>
       <button id="rm-x" style="background:transparent;border:none;color:var(--txt3);cursor:pointer;font-size:18px;line-height:1">×</button>
     </div>
@@ -834,11 +835,17 @@ async function openRecMgr() {
   document.body.appendChild(panel)
   panel.querySelector('#rm-x').addEventListener('click', () => panel.remove())
   panel.querySelector('#rm-folder').addEventListener('click', () => H.browserOpenRecDir())
+  panel.querySelector('#rm-import').addEventListener('click', async () => {
+    const r = await H.browserRecImport()
+    if (r && r.canceled) return
+    showToast(r && r.ok ? '<span class="ok">✓</span> 已导入「' + r.title + '」(' + r.steps + ' 步)' : '<span class="err">⚠</span> 导入失败: ' + ((r && r.error) || ''))
+    if (r && r.ok) { panel.remove(); openRecMgr() }   // 重开刷新列表
+  })
   const list = panel.querySelector('#rm-list')
   if (!items.length) { list.innerHTML = '<div style="color:var(--txt3);font-size:12px;padding:20px;text-align:center">还没有技能 — 点 ● 录制,把操作跑一遍,停止后保存为技能</div>'; return }
   const fmtMs = (ms) => ms < 60000 ? Math.round(ms / 1000) + 's' : Math.round(ms / 60000) + 'min'
   const fmtTime = (ts) => { const d = new Date(ts); return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }
-  const esc2 = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const esc2 = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')   // 引号必转:值要进 value="…" 属性
   for (const it of items) {
     const row = document.createElement('div')
     row.style.cssText = 'background:rgba(255,255,255,.03);border:1px solid ' + (it.skill ? 'rgba(74,168,255,.35)' : 'var(--line)') + ';border-radius:9px;padding:9px 11px;margin-bottom:8px;display:flex;flex-direction:column;gap:5px'
@@ -854,8 +861,10 @@ async function openRecMgr() {
       ${it.expectation && it.expectation !== it.description ? `<div style="color:var(--txt2);font-size:11px;background:rgba(74,168,255,.07);border-left:2px solid var(--accent);padding:4px 8px;border-radius:0 6px 6px 0">📝 ${esc2(it.expectation)}</div>` : ''}
       <div style="display:flex;align-items:center;gap:7px">
         <span style="color:var(--txt3);font-size:10.5px">${it.eventCount} 步 · ${fmtMs(it.durationMs)}</span>
+        ${it.lastRun ? `<span style="font-size:10px;color:${it.lastRun.ok ? '#5dcf95' : '#ff8b8b'};border:1px solid ${it.lastRun.ok ? 'rgba(26,168,110,.4)' : 'rgba(226,66,74,.4)'};border-radius:5px;padding:0 5px" title="上次运行 ${fmtTime(it.lastRun.at)}">${it.lastRun.ok ? '✓ 上次成功' : '✗ 上次 ' + it.lastRun.fails + ' 步失败'}</span>` : ''}
         <span style="flex:1"></span>
         ${!it.skill ? `<button data-act="mkskill" style="background:transparent;border:1px solid rgba(74,168,255,.4);color:var(--accent);border-radius:6px;padding:3px 9px;cursor:pointer;font-size:11px">⚙ 存为技能</button>` : ''}
+        ${it.skill ? `<button data-act="export" title="导出技能 JSON(已剥离登录态,可分享)" style="background:transparent;border:1px solid var(--line);color:var(--txt3);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">导出</button>` : ''}
         <button data-act="replay" style="background:rgba(26,168,110,.15);border:1px solid #1aa86e;color:#5dcf95;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px">▶ 运行</button>
         <button data-act="del" style="background:transparent;border:1px solid var(--line);color:var(--txt3);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">删除</button>
       </div>`
@@ -878,17 +887,31 @@ async function openRecMgr() {
       panel.remove()
       saveAsSkill(rec)
     })
-    // 运行:有参数先弹填参 popover,值按 stepIndex 注入后回放
+    // 导出(剥离登录态/快照的可分享 JSON,写到「下载」)
+    const ex = row.querySelector('[data-act="export"]')
+    if (ex) ex.addEventListener('click', async () => {
+      const r = await H.browserRecExport(it.id)
+      showToast(r && r.ok ? '<span class="ok">✓</span> 已导出到 下载/' + r.path.split(/[\\/]/).pop() + (r.inputValues ? '(含 ' + r.inputValues + ' 个录制输入值,密码已脱敏)' : '') : '<span class="err">⚠</span> 导出失败: ' + ((r && r.error) || ''))
+    })
+    // 运行:有参数先弹填参 popover,值按 stepIndex 注入后回放(可选环境地址切 dev/uat/prod)
     row.querySelector('[data-act="replay"]').addEventListener('click', async () => {
-      let values = null
+      let values = null, baseUrl
       if (it.paramCount > 0) {
         const rec = await H.browserRecGet(it.id)
-        values = rec && rec.params ? await askParams(it.title || it.id, rec.params) : null
-        if (values === undefined) return   // 用户取消
+        const ans = rec && rec.params ? await askParams(it.title || it.id, rec.params) : null
+        if (ans === undefined) return   // 用户取消
+        if (ans) { values = ans.values; baseUrl = ans.baseUrl }
       }
       panel.remove()
       showToast('<span class="ok">▶</span> 运行中…')
-      try { const r = await H.browserRecReplayStored(it.id, values || undefined); showToast(r && r.ok ? '<span class="ok">✓</span> 运行完成,共 ' + r.stepReport.length + ' 步' + (r.stepReport.some((s) => !s.ok) ? '(有失败步,见控制台)' : '') : '<span class="err">⚠</span> 运行失败: ' + ((r && r.error) || '')) } catch (e) { showToast('<span class="err">⚠</span> ' + e.message) }
+      try {
+        const r = await H.browserRecReplayStored(it.id, values || undefined, baseUrl)
+        if (r && r.ok) {
+          const failed = r.stepReport.filter((s) => !s.ok).length
+          const sOk = !r.success || r.success.pass
+          showToast(failed === 0 && sOk ? '<span class="ok">✓</span> 运行完成,共 ' + r.stepReport.length + ' 步' + (r.success ? ' · 成功断言 ✓' : '') : '<span class="err">⚠</span> 完成但 ' + (failed ? failed + ' 步失败' : '成功断言未达成'))
+        } else showToast('<span class="err">⚠</span> 运行失败: ' + ((r && r.error) || ''))
+      } catch (e) { showToast('<span class="err">⚠</span> ' + e.message) }
     })
     // 删除
     row.querySelector('[data-act="del"]').addEventListener('click', async () => {
@@ -898,8 +921,8 @@ async function openRecMgr() {
   }
 }
 
-// 运行前填参数:一个极简 popover,每个参数一行(预填录制时默认值)。
-// resolve(值对象) = 运行;resolve(undefined) = 取消。
+// 运行前填参数:一个极简 popover,每个参数一行(预填录制时默认值;密码参数用密码框)。
+// resolve({values, baseUrl}) = 运行;resolve(undefined) = 取消。
 function askParams(name, params) {
   return new Promise((resolve) => {
     const prev = document.getElementById('sk-params'); if (prev) prev.remove()
@@ -911,8 +934,12 @@ function askParams(name, params) {
       ${params.map((p, i) => `
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
           <span style="width:110px;color:var(--txt2);font-size:12px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc2(p.label || p.key)}</span>
-          <input data-pk="${esc2(p.key)}" value="${esc2(p.default != null ? p.default : '')}" style="flex:1;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:7px;padding:6px 9px;color:var(--txt);font-size:12.5px;font-family:inherit;outline:none" ${i === 0 ? 'autofocus' : ''} />
+          <input data-pk="${esc2(p.key)}" ${p.secret ? 'type="password"' : ''} value="${esc2(p.default != null ? p.default : '')}" style="flex:1;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:7px;padding:6px 9px;color:var(--txt);font-size:12.5px;font-family:inherit;outline:none" ${i === 0 ? 'autofocus' : ''} />
         </div>`).join('')}
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+        <span style="width:110px;color:var(--txt3);font-size:11.5px;text-align:right">环境地址(可选)</span>
+        <input id="skp-baseurl" placeholder="留空=录制环境;如 https://uat.example.com" style="flex:1;background:rgba(255,255,255,.04);border:1px dashed var(--line);border-radius:7px;padding:5px 9px;color:var(--txt2);font-size:11.5px;font-family:inherit;outline:none" />
+      </div>
       <div style="display:flex;gap:7px;justify-content:flex-end;margin-top:10px">
         <button id="skp-cancel" style="background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:7px;padding:5px 12px;cursor:pointer;font-size:12px">取消</button>
         <button id="skp-run" style="background:var(--accent);border:none;color:#fff;border-radius:7px;padding:5px 14px;cursor:pointer;font-size:12px;font-weight:600">▶ 运行</button>
@@ -924,7 +951,7 @@ function askParams(name, params) {
     ov.querySelector('#skp-run').addEventListener('click', () => {
       const values = {}
       ov.querySelectorAll('input[data-pk]').forEach((inp) => { values[inp.dataset.pk] = inp.value })
-      done(values)
+      done({ values, baseUrl: ov.querySelector('#skp-baseurl').value.trim() || undefined })
     })
     ov.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') ov.querySelector('#skp-run').click()
@@ -994,14 +1021,15 @@ H.onBrowserVerifyResult && H.onBrowserVerifyResult(({ kind, verdict, summary, fu
   c.addEventListener('mouseenter', () => c.style.opacity = '1')
 })
 
-// 录制结束/晋升入口 → "保存为技能"卡:起名 + 一句话说明 + 勾选哪些输入框每次可改(参数化)。
-// 保存后这条录制就是一个可复用技能:技能库一键运行,或对 Agent 说"用XX技能跑一下"。
+// 录制结束/晋升入口 → "保存为技能"卡:起名 + 一句话说明 + 勾选哪些输入每次可改(参数化)
+// + 跳过滚动步开关 + 可选成功标志。保存后即可技能库一键运行,或对 Agent 说"用XX技能跑一下"。
 // 说明同时写进 expectation(给 agent 修复验证当成功判据)——一个输入两用,不给用户加负担。
 function saveAsSkill(rec) {
   if (document.getElementById('sk-save')) return
   const esc2 = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-  // 录制里的输入步 = 参数候选(带原始下标 stepIndex,回放时按它注入)
-  const inputSteps = (rec.events || []).map((ev, i) => ({ ev, i })).filter((x) => x.ev.act === 'input')
+  // 录制里的输入/下拉步 = 参数候选(带原始下标 stepIndex,回放时按它注入);密码步录制即脱敏,默认勾成参数
+  const inputSteps = (rec.events || []).map((ev, i) => ({ ev, i })).filter((x) => x.ev.act === 'input' || x.ev.act === 'select')
+  const scrollCount = (rec.events || []).filter((ev) => ev.act === 'scroll').length
   const ov = document.createElement('div'); ov.id = 'sk-save'
   ov.style.cssText = 'position:fixed;top:48px;left:50%;transform:translateX(-50%);z-index:9999;background:rgba(15,17,32,.97);border:1px solid var(--accent);border-radius:11px;padding:13px 15px;box-shadow:0 10px 40px rgba(0,0,0,.45);min-width:480px;max-width:580px;color:var(--txt);font-size:13px;line-height:1.55'
   ov.innerHTML = `
@@ -1009,16 +1037,19 @@ function saveAsSkill(rec) {
     <input id="sk-name" value="${esc2(rec.title || '')}" placeholder="技能名(例:导出月度报表 / 查客户额度)" style="width:100%;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--txt);font-size:12.5px;font-family:inherit;outline:none;margin-bottom:7px" />
     <textarea id="sk-desc" rows="2" placeholder="一句话:这条技能做什么 / 应该发生什么(例:点提交后应跳到结果页)" style="width:100%;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--txt);font-size:12.5px;font-family:inherit;outline:none;resize:vertical">${esc2(rec.description || rec.expectation || '')}</textarea>
     ${inputSteps.length ? `
-      <div style="font-size:11.5px;color:var(--txt2);margin:8px 0 5px">录到 ${inputSteps.length} 个输入 — 勾选"每次运行时要改的"设为参数:</div>
-      <div id="sk-plist" style="max-height:180px;overflow:auto">
+      <div style="font-size:11.5px;color:var(--txt2);margin:8px 0 5px">录到 ${inputSteps.length} 个输入/下拉 — 勾选"每次运行时要改的"设为参数:</div>
+      <div id="sk-plist" style="max-height:170px;overflow:auto">
         ${inputSteps.map((x) => `
           <div style="display:flex;align-items:center;gap:7px;margin-bottom:5px">
-            <input type="checkbox" data-step="${x.i}" style="cursor:pointer" />
-            <input data-label="${x.i}" placeholder="参数名(例:客户号)" style="width:130px;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:6px;padding:4px 7px;color:var(--txt);font-size:11.5px;font-family:inherit;outline:none" />
-            <span style="flex:1;color:var(--txt3);font-size:11px;font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc2(x.ev.sel)}">录制值: ${esc2(x.ev.value || '(空)')}</span>
+            <input type="checkbox" data-step="${x.i}" ${x.ev.secret ? 'checked' : ''} style="cursor:pointer" />
+            <input data-label="${x.i}" value="${x.ev.secret ? '密码' : ''}" placeholder="参数名(例:客户号)" style="width:130px;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:6px;padding:4px 7px;color:var(--txt);font-size:11.5px;font-family:inherit;outline:none" />
+            <span style="flex:1;color:var(--txt3);font-size:11px;font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc2(x.ev.sel)}">${x.ev.secret ? '••••(密码,已脱敏)' : (x.ev.act === 'select' ? '选了: ' + esc2(x.ev.text || x.ev.value || '(空)') : '录制值: ' + esc2(x.ev.value || '(空)'))}</span>
           </div>`).join('')}
       </div>` : ''}
-    <div style="display:flex;gap:7px;justify-content:flex-end;margin-top:9px">
+    <input id="sk-success" placeholder="成功标志(可选):CSS 选择器,或 text:页面应出现的文字" style="width:100%;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:8px;padding:6px 9px;color:var(--txt);font-size:11.5px;font-family:inherit;outline:none;margin-top:7px" />
+    <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
+      ${scrollCount ? `<label style="font-size:11.5px;color:var(--txt2);cursor:pointer;display:flex;align-items:center;gap:5px"><input id="sk-skipscroll" type="checkbox" checked style="cursor:pointer" />回放跳过 ${scrollCount} 个滚动步(懒加载页请取消)</label>` : ''}
+      <span style="flex:1"></span>
       <button id="sk-skip" style="background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:7px;padding:5px 12px;cursor:pointer;font-size:12px">仅存录制</button>
       <button id="sk-save-btn" style="background:var(--accent);border:none;color:#fff;border-radius:7px;padding:5px 13px;cursor:pointer;font-size:12px;font-weight:600">⚡ 保存技能</button>
     </div>`
@@ -1030,14 +1061,21 @@ function saveAsSkill(rec) {
     const name = nameInput.value.trim()
     if (!name) { nameInput.style.borderColor = '#e2424a'; nameInput.focus(); return }
     const desc = ov.querySelector('#sk-desc').value.trim()
-    // 勾选的输入步 → params:{key,label,stepIndex,default};key 用 p1/p2… 稳定短名
+    // 勾选的输入步 → params:{key,label,stepIndex,default,secret};key 用 p1/p2… 稳定短名
     const params = []
     ov.querySelectorAll('input[type="checkbox"][data-step]:checked').forEach((cb) => {
       const i = +cb.dataset.step
-      const label = (ov.querySelector(`input[data-label="${i}"]`).value || '').trim() || ('参数' + (params.length + 1))
-      params.push({ key: 'p' + (params.length + 1), label, stepIndex: i, default: (rec.events[i] && rec.events[i].value) || '' })
+      const ev = rec.events[i] || {}
+      const label = (ov.querySelector(`input[data-label="${i}"]`).value || '').trim() || (ev.secret ? '密码' : '参数' + (params.length + 1))
+      params.push({ key: 'p' + (params.length + 1), label, stepIndex: i, default: ev.secret ? '' : (ev.value || ''), ...(ev.secret ? { secret: true } : {}) })
     })
-    const okSave = await H.browserRecUpdate(rec.id, { title: name, description: desc, expectation: desc, skill: true, params })
+    const patch = { title: name, skill: true, params }
+    if (desc) { patch.description = desc; patch.expectation = desc }   // 空说明不覆盖调试流程先前写入的 expectation
+    const sv = ov.querySelector('#sk-success').value.trim()
+    if (sv) patch.success = sv.startsWith('text:') ? { kind: 'text', value: sv.slice(5).trim() } : { kind: 'css', value: sv }
+    const skipScroll = ov.querySelector('#sk-skipscroll')
+    if (skipScroll) patch.skipSteps = skipScroll.checked ? rec.events.map((ev, i) => ev.act === 'scroll' ? i : -1).filter((i) => i >= 0) : []
+    const okSave = await H.browserRecUpdate(rec.id, patch)
     showToast(okSave ? '<span class="ok">⚡</span> 技能「' + name + '」已保存 — 技能库可一键运行,也可以让 Agent 按名字调用' : '<span class="err">⚠</span> 保存失败')
     close()
   })

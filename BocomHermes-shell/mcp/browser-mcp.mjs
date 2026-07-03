@@ -130,8 +130,12 @@ const TOOLS = [
   },
   {
     name: 'skill_run',
-    description: '按名字运行一条已保存的浏览器技能:在用户可见的内嵌浏览器里逐步自动回放(窗口没开会自动打开),跑完返回每步结果与成败结论。params 按 skill_list 给的参数键传值,不传就用录制时的默认值。',
-    inputSchema: { type: 'object', properties: { name: { type: 'string', description: '技能名(skill_list 返回的 name)' }, params: { type: 'object', description: '运行时参数,如 {"p1":"6222..."}' } }, required: ['name'] },
+    description: '按名字运行一条已保存的浏览器技能:在用户可见的内嵌浏览器里逐步自动回放(窗口没开会自动打开),跑完返回每步结果、成功断言与成败结论。params 按 skill_list 给的参数键传值,不传就用录制时的默认值(select 下拉参数传 option 的 value 字典码;跨环境字典不同时建议不传,走录制文本回退)。',
+    inputSchema: { type: 'object', properties: {
+      name: { type: 'string', description: '技能名(skill_list 返回的 name)' },
+      params: { type: 'object', description: '运行时参数,如 {"p1":"6222..."}' },
+      baseUrl: { type: 'string', description: '可选,环境根地址(仅 http/https origin,如 https://uat.example.com):替换录制时的环境跑 dev/uat/prod;不传用录制环境。切环境不恢复录制登录态' },
+    }, required: ['name'] },
   },
   { name: 'browser_navigate', description: '打开一个网址（在内置无头浏览器里），返回页面标题与最终URL', inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } },
   { name: 'browser_get_text', description: '获取当前页面可见正文文本(innerText)', inputSchema: { type: 'object', properties: {} } },
@@ -149,11 +153,14 @@ async function callTool(name, args) {
     const r = await relayPost('/skill/list', {})
     const list = r.skills || []
     if (!list.length) return '还没有已保存的技能。让用户在内嵌浏览器工具条点「● 录制」把操作跑一遍,停止后「保存为技能」即可复用。'
-    return list.map((s) => `· ${s.name} — ${s.description || '(无说明)'} · ${s.steps} 步 · 起始 ${s.startUrl}` +
-      (s.params.length ? '\n  参数: ' + s.params.map((p) => `${p.key}=${p.label}(默认 ${p.default === '' ? '空' : p.default})`).join(', ') : '')).join('\n')
+    const fmtRun = (lr) => lr ? (lr.ok ? `上次运行✓` : `上次运行✗(${lr.fails}步失败)`) : '未运行过'
+    return list.map((s) => `· ${s.name} — ${s.description || '(无说明)'} · ${s.steps} 步 · ${fmtRun(s.lastRun)}${s.hasSuccess ? ' · 含成功断言' : ''} · 起始 ${s.startUrl}` +
+      (s.params.length ? '\n  参数: ' + s.params.map((p) => `${p.key}=${p.label}${p.secret ? '(密码,必传)' : `(默认 ${p.default === '' ? '空' : p.default})`}`).join(', ') : '')).join('\n')
   }
   if (name === 'skill_run') {
-    const r = await relayPost('/skill/run', { name: String(args.name || ''), params: args.params || {} })
+    const body = { name: String(args.name || ''), params: args.params || {} }
+    if (args.baseUrl) body.baseUrl = String(args.baseUrl)
+    const r = await relayPost('/skill/run', body)
     return r.report || JSON.stringify(r)
   }
   if (name === 'browser_navigate') { const r = await navigate(String(args.url || '')); return `已打开：${r.title}\n${r.url}` }
