@@ -166,10 +166,17 @@ async function detectPerm(base) {
 //                       有就复用,proc=null;没有才自起。
 // tryShare = false:跨项目隔离场景(如 backendDir)必须自起独立 serve,因为现有 serve 的 cwd 未必匹配。
 async function ensureServe(dir, handlers, log = console.log, opts = {}) {
-  const { tryShare = true, scanStart = 4096, scanEnd = 4110 } = opts
+  // requireDirMatch(默认开):serve 的 cwd 必须与请求目录一致才复用 —— 本版 serve 忽略会话级
+  // ?directory=,跨目录共享会让"切换项目"的新会话实际仍在旧 cwd 跑(工具/bash 全在错的仓库)。
+  const { tryShare = true, requireDirMatch = true, scanStart = 4096, scanEnd = 4110 } = opts
   const key = dir || '__home__'
   startKeepAlive(log)   // 保活:周期 GET /global/health 只刷本会话在用的 serve(纯保活,不判死不重启)
-  const existing = pool.get(key)
+  let existing = pool.get(key)
+  // 清跨目录共享的旧账:pool[key] 可能被早年映射到别的 cwd 的 entry
+  if (existing && requireDirMatch && (existing.dir || '') !== (dir || '') && existing.supportsDirectory !== true) {
+    log(`pool[${dir || '(home)'}] 指向 cwd=[${existing.dir || '(home)'}] 的 serve,目录不匹配 → 弃用该映射`)
+    pool.delete(key); existing = null
+  }
   if (existing) {
     let alive = true
     try { await existing.ready } catch { alive = false }
@@ -194,25 +201,31 @@ async function ensureServe(dir, handlers, log = console.log, opts = {}) {
   if (tryShare) {
     const ext = await findExistingServe(scanStart, scanEnd, log)
     if (ext) {
-      // 同 base 已注册 → 多 pool key 共享同一 entry,不再起第二个事件流
+      // 同 base 已注册 → 仅当 cwd 相同(或该 serve 已探明支持会话级目录)才共享;
+      // 否则落到下方自起分支 —— cwd 正确性优先于省一个进程
       const shared = baseToEntry.get(ext.base)
       if (shared) {
-        pool.set(key, shared)
-        log(`pool[${dir || '(home)'}] → 共享已注册 serve ${ext.base}`)
-        return shared
+        if (!requireDirMatch || (shared.dir || '') === (dir || '') || shared.supportsDirectory === true) {
+          pool.set(key, shared)
+          log(`pool[${dir || '(home)'}] → 共享已注册 serve ${ext.base}`)
+          return shared
+        }
+        log(`serve ${ext.base} cwd=[${shared.dir || '(home)'}] ≠ [${dir || '(home)'}],不共享 → 自起独立 serve`)
+      } else {
+        // 第一次发现这个 base → 注册 + 启事件流(无 proc,我们不管它生死)。
+        // dir 记为本次请求目录(外部 serve 的真实 cwd 探不到,按"用户在项目目录里手动起 serve"的主场景假设)
+        const info = { dir, key, base: ext.base, port: ext.port, proc: null, permStyle: 'new', external: true }
+        info.ready = (async () => {
+          info.permStyle = await detectPerm(info.base)
+          log(`复用外部 serve :${ext.port} for [${dir || '(home)'}] (permission: ${info.permStyle}) — 用户手动 bocomcode serve 或上轮自启`)
+          runEventLoop(info, handlers, log)
+          info.healthy = true   // 刚探通,先置健康;之后保活心跳每 2 分钟刷新
+        })()
+        baseToEntry.set(ext.base, info)
+        pool.set(key, info)
+        await info.ready
+        return info
       }
-      // 第一次发现这个 base → 注册 + 启事件流(无 proc,我们不管它生死)
-      const info = { dir, key, base: ext.base, port: ext.port, proc: null, permStyle: 'new', external: true }
-      info.ready = (async () => {
-        info.permStyle = await detectPerm(info.base)
-        log(`复用外部 serve :${ext.port} for [${dir || '(home)'}] (permission: ${info.permStyle}) — 用户手动 bocomcode serve 或上轮自启`)
-        runEventLoop(info, handlers, log)
-        info.healthy = true   // 刚探通,先置健康;之后保活心跳每 2 分钟刷新
-      })()
-      baseToEntry.set(ext.base, info)
-      pool.set(key, info)
-      await info.ready
-      return info
     }
   }
 
@@ -286,7 +299,7 @@ async function waitAssistantText(info, sessionId, maxMs = 600000) {
   }
   return prev
 }
-async function sendMessage(info, sessionId, text, model, files) {
+async function sendMessage(info, sessionId, text, model, files, onNote) {
   const parts = []
   if (text != null && text !== '') parts.push({ type: 'text', text })
   for (const f of (files || [])) {                          // 图片/文档 = file part(mime + data URL,实测格式)
@@ -294,12 +307,24 @@ async function sendMessage(info, sessionId, text, model, files) {
   }
   if (!parts.length) parts.push({ type: 'text', text: text || '' })
   const body = { parts }
-  if (model && model.providerID && model.modelID) {        // 按请求指定模型(各版本字段名兼容,多塞几个,认哪个用哪个)
+  const withModel = !!(model && model.providerID && model.modelID)
+  if (withModel) {                                          // 按请求指定模型(各版本字段名兼容,多塞几个,认哪个用哪个)
     body.model = { providerID: model.providerID, modelID: model.modelID }
     body.providerID = model.providerID; body.modelID = model.modelID
   }
-  const direct = extractText(await api(info.base, 'POST', `/session/${sessionId}/message`, body))
-  return direct || await waitAssistantText(info, sessionId)   // 空 body（流式版 serve）→ 轮询等完成
+  try {
+    const direct = extractText(await api(info.base, 'POST', `/session/${sessionId}/message`, body))
+    return direct || await waitAssistantText(info, sessionId)   // 空 body（流式版 serve）→ 轮询等完成
+  } catch (e) {
+    // serve 的 zod 校验不认我们的模型字段形状(4xx)→ 去掉模型重发一次并让用户看见,
+    // 而不是整条消息发不出去;其它错误原样上抛
+    if (withModel && /->\s*4\d\d/.test(String(e && e.message || ''))) {
+      if (onNote) { try { onNote('serve 拒绝了模型指定(' + (model.name || model.modelID) + '),本条已用默认模型发送') } catch {} }
+      const d2 = extractText(await api(info.base, 'POST', `/session/${sessionId}/message`, { parts: body.parts }))
+      return d2 || await waitAssistantText(info, sessionId)
+    }
+    throw e
+  }
 }
 // 列可用模型:GET /config/providers → 拍平成 [{providerID, modelID, name, provider}]
 async function listModels(info) {
@@ -584,5 +609,17 @@ function killAll() {
   pool.clear(); baseToEntry.clear()
 }
 
-module.exports = { ensureServe, createSession, sendMessage, listModels, abort, replyPermission, sessionExists, getMessages, killAll, setServeBin, onKeepAlive, probeOnce, AUTO_ALLOW,
+// 按需回收:自起且已无任何会话引用的 serve 退休(切项目重绑/关卡后调)。
+// inUseBases = 当前所有活跃会话所在 serve 的 base 集合;外部 serve 永远不动
+function retireIfOrphan(info, inUseBases) {
+  if (!info || !info.proc || info.external) return false
+  if (inUseBases && inUseBases.has(info.base)) return false
+  info.dead = true   // 停它的事件循环(runEventLoop 认 info.dead)
+  killProc(info.proc)
+  if (pool.get(info.key) === info) pool.delete(info.key)
+  if (info.base) baseToEntry.delete(info.base)
+  return true
+}
+
+module.exports = { ensureServe, createSession, sendMessage, listModels, abort, replyPermission, sessionExists, getMessages, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, AUTO_ALLOW,
   __test: { dispatch, waitAssistantText, extractText, pickTurnText } }

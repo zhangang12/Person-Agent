@@ -68,7 +68,8 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   onCardInject: (cb) => ipcRenderer.on('card-inject', (_e, p) => cb(p)),
   onCardNote: (cb) => ipcRenderer.on('card-note', (_e, p) => cb(p)),
   cardSend: (text, files) => ipcRenderer.invoke('card-send', (files && files.length) ? { text, files } : text),
-  cardReinit: () => ipcRenderer.invoke('card-reinit'),
+  cardReinit: (opts) => ipcRenderer.invoke('card-reinit', opts || {}),
+  cardPickProject: () => ipcRenderer.invoke('card-pick-project'),
   parseDoc: (path) => ipcRenderer.invoke('parse-doc', path),
   // 取拖入文件的本地路径:Electron 34 已移除 File.path,改用 webUtils.getPathForFile
   getDropPath: (file) => { try { return webUtils.getPathForFile(file) } catch (e) { return (file && file.path) || '' } },

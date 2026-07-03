@@ -602,8 +602,16 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     }
     win.on('closed', () => {
       const s = S.sessionByWc.get(wcId)
-      if (s) { const si = S.sessionInfo.get(s); if (si) oc.abort(si.serve, s); S.sessionInfo.delete(s); S.streamBuf.delete(s); S.sentPrompt.delete(s); S.firstMsgCtx.delete(s) }
+      let oldServe = null
+      if (s) { const si = S.sessionInfo.get(s); if (si) { oldServe = si.serve; oc.abort(si.serve, s) } S.sessionInfo.delete(s); S.streamBuf.delete(s); S.sentPrompt.delete(s); S.firstMsgCtx.delete(s) }
       S.sessionByWc.delete(wcId)
+      if (S.cardDir) S.cardDir.delete(wcId)       // per-card 目录/模型状态随卡销毁
+      if (S.modelByWc) S.modelByWc.delete(wcId)
+      // 本卡独占的自起 serve(切过项目的卡)没别的会话引用就退休,不留孤儿进程
+      if (oldServe) {
+        const inUseBases = new Set([...S.sessionInfo.values()].map((si) => si.serve && si.serve.base).filter(Boolean))
+        try { if (oc.retireIfOrphan(oldServe, inUseBases)) log('card closed: serve ' + oldServe.base + ' 已退休(无会话引用)') } catch {}
+      }
       forgetBusy(wcId)   // 关卡即清"忙"，避免球卡在思考态
     })
     return id
@@ -2099,6 +2107,18 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     const r = await dialog.showOpenDialog({ title: '选择代码仓库（新卡将对它说话）', properties: ['openDirectory'] })
     if (!r.canceled && r.filePaths[0]) applyProject(r.filePaths[0])
     return projName()
+  })
+  // 本卡专用选目录:只改这张卡的绑定目录(S.cardDir),不动全局 projectDir、不广播 —— 每卡可对不同仓库说话
+  ipcMain.handle('card-pick-project', async (e) => {
+    if (!S.cardDir) S.cardDir = new Map()
+    const cur = S.cardDir.get(e.sender.id) || S.settings.projectDir || ''
+    const r = await dialog.showOpenDialog({ title: '选择本卡对话的代码仓库(仅影响本卡)', defaultPath: cur || undefined, properties: ['openDirectory'] })
+    if (r.canceled || !r.filePaths[0]) return { changed: false, dir: cur, project: cur ? path.basename(cur) : '未选目录' }
+    const dir = r.filePaths[0]
+    if (dir === cur) return { changed: false, dir, project: path.basename(dir) }
+    S.cardDir.set(e.sender.id, dir)
+    S.settings.recentDirs = [dir, ...(S.settings.recentDirs || []).filter((d) => d !== dir)].slice(0, 6); saveSettings()   // 只记最近,不动全局
+    return { changed: true, dir, project: path.basename(dir) }
   })
   // 拖拽上传文档:把本地文档抽成文本(图片不走这,走 file part 给多模态)
   ipcMain.handle('parse-doc', async (_e, filePath) => {

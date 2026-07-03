@@ -290,37 +290,34 @@
   const ttl = document.getElementById('ttl'); ttl.textContent = title; ttl.title = title
   document.title = title + ' · BocomHermes'   // 任务栏/Alt+Tab 区分各卡
   const projEl = document.getElementById('proj')
-  // 项目标签：可点击切换项目目录（新卡才生效；当前卡的 serve 不动）
-  function paintProj(name) {
-    const txt = name || '未选目录'
-    projEl.textContent = txt
-    projEl.title = (name ? '项目目录：' + txt + '\n' : '') + '点击切换（仅影响新开的卡）'
-    projEl.classList.toggle('empty', !name)
+  // 项目标签 = 本卡视角:显示【本卡绑定】的目录,点击只切换本卡(不动全局、不影响其它卡)
+  function paintProj(name, dir) {
+    const txt = (name && name !== '未选目录') ? name : ''
+    projEl.textContent = txt || '未选目录'
+    projEl.title = '本卡项目目录：' + (dir || txt || '未选') + '\n点击切换（仅影响本卡，立即重建会话）'
+    projEl.classList.toggle('empty', !txt)
   }
   projEl.addEventListener('click', async () => {
-    // 切项目目录 → 立刻重绑本卡(换 serve + 新会话);只有真换了目录才重建(取消/同目录不动)
-    const getDir = () => ((window.BocomHermes.getSettings && window.BocomHermes.getSettings()) || {}).projectDir || ''
-    const before = getDir()
-    let name
-    try { name = await window.BocomHermes.pickProject() } catch (e) { return }
-    const after = getDir()
-    paintProj(name && name !== '未选目录' ? name : '')
-    if (after === before) return   // 取消 / 没换目录 → 不动当前会话
+    // 本卡专用切目录:选完立刻在新目录的 serve 上重建本卡会话;取消/同目录不动
+    let r
+    try { r = await window.BocomHermes.cardPickProject() } catch (e) { return }
+    if (!r || !r.changed) return
     if (busy) { try { window.BocomHermes.cardAbort() } catch {} }
     cardReady = false; setBusy(true); resetConversation()
     const boot = addMsg('', 'ai'); boot.textContent = '正在切换到新项目，重建会话…'
     try {
-      const r = await window.BocomHermes.cardReinit()
+      const rr = await window.BocomHermes.cardReinit({ dir: r.dir })
       boot.remove()
-      paintProj(r.project && r.project !== '未选目录' ? r.project : '')
+      paintProj(rr.project, rr.dir)
+      paintModelChip(rr.model)   // reinit 后后端以回包为准,chip 不再骗人
       cardReady = true; setBusy(false)
-      addMsg('已切换到项目「' + (r.project || '未选目录') + '」，新会话就绪，直接提问即可。', 'ai')
+      addMsg('本卡已切换到项目「' + (rr.project || '未选目录') + '」(' + (rr.dir || '') + ')，新会话就绪，直接提问即可。', 'ai')
       maybeDrain()
     } catch (e) {
       boot.className = 'msg ai err'; boot.textContent = '⚠ 切换失败：' + (e.message || e); setBusy(false)
     }
   })
-  window.BocomHermes.onProject && window.BocomHermes.onProject((p) => paintProj(p))
+  // 不再监听全局 project-changed 重绘 —— 全局项目只是"新卡默认",本卡标签唯一真相源是 cardInit/cardReinit 回包
   const feed = document.getElementById('feed'), st = document.getElementById('st')
   const ci = document.getElementById('ci'), send = document.getElementById('send')
   const quick = document.getElementById('quick')
@@ -335,15 +332,23 @@
   const pinBtn = document.getElementById('pin')
   pinBtn.addEventListener('click', async () => { const on = await window.BocomHermes.togglePin(); pinBtn.classList.toggle('on', on); pinBtn.title = on ? '已置顶（点击取消）' : '置顶' })
 
-  // 模型选择(仅影响本卡):点 chip → 列模型 → 选 → cardSetModel
+  // 模型选择(仅影响本卡):点 chip → 列模型 → 选 → cardSetModel。
+  // chip 状态以主进程回包为准:失败回滚、未就绪提示"就绪后生效"、init/reinit 后重绘 —— UI 不再骗人
   const modelEl = document.getElementById('model'), menuEl = document.getElementById('modelMenu')
-  let modelsCache = null, curModelKey = ''
+  let modelsCache = null, modelsCacheAt = 0, curModelKey = ''
   function setModelLabel(name) { modelEl.textContent = name || '默认模型'; modelEl.title = '当前模型：' + (name || 'serve 默认') + '\n点击切换（仅影响本卡）' }
+  function paintModelChip(m) {
+    curModelKey = (m && m.modelID) ? ((m.providerID || '') + '/' + m.modelID) : ''
+    setModelLabel(m && m.modelID ? (m.name || m.modelID) : '')
+  }
   async function openModelMenu() {
     const r = modelEl.getBoundingClientRect()
     menuEl.style.top = (r.bottom + 6) + 'px'; menuEl.style.right = (window.innerWidth - r.right) + 'px'; menuEl.style.left = 'auto'
     menuEl.hidden = false; menuEl.innerHTML = '<div class="mhint">加载模型…</div>'
-    if (!modelsCache || !modelsCache.length) { try { modelsCache = await window.BocomHermes.listModels() } catch (e) { modelsCache = [] } }   // 空不缓存,下次重试
+    // 空不缓存下次重试;成功缓存 60s(serve 换模型配置后列表能刷新)
+    if (!modelsCache || !modelsCache.length || Date.now() - modelsCacheAt > 60000) {
+      try { modelsCache = await window.BocomHermes.listModels(); if (modelsCache && modelsCache.length) modelsCacheAt = Date.now() } catch (e) { modelsCache = [] }
+    }
     if (!modelsCache || !modelsCache.length) { menuEl.innerHTML = '<div class="mhint">没拿到模型列表（serve 未就绪，稍后再点）</div>'; return }
     menuEl.innerHTML = ''
     const mk = (cls, name, sub, on, fn) => { const d = document.createElement('div'); d.className = 'mi' + (on ? ' on' : ''); d.innerHTML = '<span class="mn">' + esc(name) + '</span><span class="mp">' + esc(sub) + '</span>'; d.addEventListener('click', fn); menuEl.appendChild(d) }
@@ -351,17 +356,25 @@
     for (const m of modelsCache) mk('', m.name, m.provider || m.providerID, curModelKey === m.providerID + '/' + m.modelID, () => pickModel(m))
   }
   async function pickModel(m) {
-    curModelKey = m ? (m.providerID + '/' + m.modelID) : ''
-    setModelLabel(m ? m.name : '')
     menuEl.hidden = true
-    let ok = false
-    try { const r = await window.BocomHermes.cardSetModel(m); ok = !!(r && r.ok) } catch (e) {}
-    addNote(ok ? ('已切换模型：' + (m ? m.name : 'serve 默认') + '（仅本卡，下一条起生效）') : '切换模型失败', 'muted')
+    const prevKey = curModelKey, prevLabel = modelEl.textContent, prevTitle = modelEl.title
+    try {
+      const r = await window.BocomHermes.cardSetModel(m)
+      if (r && r.ok) {
+        paintModelChip(m || r.model)
+        addNote(r.applied
+          ? ('已切换模型：' + (m ? m.name : 'serve 默认') + '（仅本卡，下一条起生效）')
+          : ('模型已记录：' + (m ? m.name : 'serve 默认') + '，会话就绪后自动生效'), 'muted')
+        return
+      }
+    } catch (e) {}
+    curModelKey = prevKey; modelEl.textContent = prevLabel; modelEl.title = prevTitle   // 失败回滚,chip 不骗人
+    addNote('切换模型失败（引擎未响应，请稍后重试）', 'muted')
   }
   modelEl.addEventListener('click', (e) => { e.stopPropagation(); if (menuEl.hidden) openModelMenu(); else menuEl.hidden = true })
   document.addEventListener('click', (e) => { if (!menuEl.hidden && !menuEl.contains(e.target) && e.target !== modelEl) menuEl.hidden = true })
-  // 进卡时 chip 显示当前生效模型(全局默认),不再永远"默认模型"
-  try { const gm = (window.BocomHermes.getSettings && window.BocomHermes.getSettings().model) || null; if (gm && gm.modelID) { curModelKey = gm.providerID + '/' + gm.modelID; setModelLabel(gm.name || gm.modelID) } } catch (e) {}
+  // 进卡的初始 chip 由 boot 处 cardInit 回包绘制(= 本卡 override || 全局默认);这里先给全局默认兜底
+  try { const gm = (window.BocomHermes.getSettings && window.BocomHermes.getSettings().model) || null; if (gm && gm.modelID) paintModelChip(gm) } catch (e) {}
 
   // 点 文件:行 链接 → 在编辑器打开
   feed.addEventListener('click', (e) => {
@@ -690,7 +703,8 @@
     const boot = addMsg('', 'ai'); boot.textContent = sid ? '正在续接对话…' : embedded ? '正在连接调试助手…' : '正在启动引擎…（首次较慢，请稍候）'
     try {
       const r = await window.BocomHermes.cardInit(sid ? { sid, title } : { title })
-      paintProj(r.project && r.project !== '未选目录' ? r.project : '')
+      paintProj(r.project, r.dir)          // 本卡真实绑定目录
+      paintModelChip(r.model)              // 本卡实际生效模型(override || 全局默认),含 boot 期间预选的
       boot.remove()
       cardReady = true
       if (sid) {

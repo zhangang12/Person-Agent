@@ -153,64 +153,89 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
   }
 
   // ── IPC ─────────────────────────────────────────────────────────────────────
+  // per-card 状态(按 webContents 存,比 sessionInfo 长寿 —— 跨 init/reinit 存活):
+  //   S.cardDir:  wcId → 本卡绑定的项目目录(不动全局 projectDir)
+  //   S.modelByWc: wcId → 本卡选的模型({providerID,modelID,name} | null=serve默认)
+  if (!S.cardDir) S.cardDir = new Map()
+  if (!S.modelByWc) S.modelByWc = new Map()
+  // 会话就绪/重建时把 per-card 模型回放进 sessionInfo;返回给 UI 的是"实际生效"的模型
+  function replayModel(wcId, sid) {
+    const si = S.sessionInfo.get(sid); if (!si) return null
+    const mw = S.modelByWc.get(wcId)
+    if (mw !== undefined) si.model = mw
+    else { const h = S.history.find((x) => x.id === sid); if (h && h.model) si.model = h.model }   // 卡坞续接:恢复当初那张卡选的模型
+    return si.model || S.settings.model || null
+  }
   ipcMain.handle('card-init', async (e, opts) => {
     const sid = opts && opts.sid
     const wantTitle = (opts && opts.title) || ''
     if (sid) {
       const h = S.history.find((x) => x.id === sid)
-      const dir = (h && h.dir) || S.settings.projectDir || ''
+      const dir = S.cardDir.get(e.sender.id) || (h && h.dir) || S.settings.projectDir || ''
+      if (h && h.dir && !S.cardDir.has(e.sender.id)) S.cardDir.set(e.sender.id, h.dir)   // 钉住历史目录,后续 reinit 不漂回全局
       const serve = await oc.ensureServe(dir, S.handlers, log)
       const proj = dir ? path.basename(dir) : (S.settings.projectDir ? path.basename(S.settings.projectDir) : '未选目录')
       if (await oc.sessionExists(serve, sid)) {   // 会话还在 → 重连 + 回放（已有历史，不注入上下文）
         S.sessionByWc.set(e.sender.id, sid)
         S.sessionInfo.set(sid, { wc: e.sender, serve })
+        const model = replayModel(e.sender.id, sid)
         S.pushServeHealth && S.pushServeHealth(e.sender, serve)
         touchHistory(sid)
         let messages = []; try { messages = await oc.getMessages(serve, sid) } catch {}
-        return { sessionId: sid, project: proj, reattached: true, messages }
+        return { sessionId: sid, project: proj, dir, model, reattached: true, messages }
       }
       const ns = await oc.createSession(serve, wantTitle || (h && h.title) || 'BocomHermes 对话', dir)  // 已不在 → 新开一段(带项目目录)
       if (!ns) throw new Error('create session failed')
       S.sessionByWc.set(e.sender.id, ns)
       S.sessionInfo.set(ns, { wc: e.sender, serve })
+      const model1 = replayModel(e.sender.id, ns)
       S.pushServeHealth && S.pushServeHealth(e.sender, serve)
       const ctx1 = loadMemory() + loadProjectContext(dir); if (ctx1) S.firstMsgCtx.set(ns, ctx1)
       recordHistory(ns, wantTitle || (h && h.title), dir)
-      return { sessionId: ns, project: proj, reattached: false, stale: true }
+      return { sessionId: ns, project: proj, dir, model: model1, reattached: false, stale: true }
     }
-    const dir = S.settings.projectDir || ''
+    const dir = S.cardDir.get(e.sender.id) || S.settings.projectDir || ''
     const serve = await oc.ensureServe(dir, S.handlers, log)
     const sessionId = await oc.createSession(serve, 'BocomHermes 对话', dir)
     if (!sessionId) throw new Error('create session failed')
     S.sessionByWc.set(e.sender.id, sessionId)
     S.sessionInfo.set(sessionId, { wc: e.sender, serve })
+    const model0 = replayModel(e.sender.id, sessionId)
     S.pushServeHealth && S.pushServeHealth(e.sender, serve)
     const ctx0 = loadMemory() + loadProjectContext(dir); if (ctx0) S.firstMsgCtx.set(sessionId, ctx0)
     recordHistory(sessionId, wantTitle, dir)
-    return { sessionId, project: S.settings.projectDir ? path.basename(S.settings.projectDir) : '未选目录', reattached: false }
+    return { sessionId, project: dir ? path.basename(dir) : '未选目录', dir, model: model0, reattached: false }
   })
 
   // 切项目目录后即时重绑本卡:opencode 一个 serve 只认一个 cwd,换项目 = 换 serve + 换会话。
-  // 工作台内嵌卡用它实现"切目录立刻生效",不用关掉重开。
-  ipcMain.handle('card-reinit', async (e) => {
+  // opts.dir = 本卡要切到的目录(仅影响本卡,不动全局);不传则用本卡已绑目录/全局默认。
+  ipcMain.handle('card-reinit', async (e, opts) => {
     const old = S.sessionByWc.get(e.sender.id)
+    let oldServe = null
     if (old) {
       const si = S.sessionInfo.get(old)
-      if (si) { try { oc.abort(si.serve, old) } catch {} }
+      if (si) { oldServe = si.serve; try { oc.abort(si.serve, old) } catch {} }
       S.sessionInfo.delete(old); S.streamBuf.delete(old); S.sentPrompt.delete(old); S.firstMsgCtx.delete(old)
     }
     S.sessionByWc.delete(e.sender.id)
-    const dir = S.settings.projectDir || ''
-    const serve = await oc.ensureServe(dir, S.handlers, log)
+    if (opts && opts.dir) S.cardDir.set(e.sender.id, String(opts.dir))
+    const dir = (opts && opts.dir) || S.cardDir.get(e.sender.id) || S.settings.projectDir || ''
+    const serve = await oc.ensureServe(dir, S.handlers, log)   // requireDirMatch 默认开:cwd 不符不共享,自起独立 serve
     const sessionId = await oc.createSession(serve, 'BocomHermes 对话', dir)
     if (!sessionId) throw new Error('create session failed')
     S.sessionByWc.set(e.sender.id, sessionId)
     S.sessionInfo.set(sessionId, { wc: e.sender, serve })
+    const model = replayModel(e.sender.id, sessionId)
     S.pushServeHealth && S.pushServeHealth(e.sender, serve)
     const ctx = loadMemory() + loadProjectContext(dir); if (ctx) S.firstMsgCtx.set(sessionId, ctx)
     recordHistory(sessionId, 'BocomHermes 对话', dir)
+    // 旧 serve 若已无任何会话引用且是自起的 → 退休,不留孤儿进程
+    if (oldServe && oldServe !== serve) {
+      const inUseBases = new Set([...S.sessionInfo.values()].map((si) => si.serve && si.serve.base).filter(Boolean))
+      try { if (oc.retireIfOrphan(oldServe, inUseBases)) log('card-reinit: 旧 serve ' + oldServe.base + ' 已退休(无会话引用)') } catch {}
+    }
     log('card-reinit → [' + (dir || '(home)') + '] session ' + sessionId)
-    return { sessionId, project: dir ? path.basename(dir) : '未选目录' }
+    return { sessionId, project: dir ? path.basename(dir) : '未选目录', dir, model }
   })
 
   ipcMain.handle('card-send', async (e, arg) => {
@@ -236,7 +261,8 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
         }
       } catch {}
     }
-    try { return await oc.sendMessage(si.serve, sessionId, msg, model, fileArr) }
+    const onNote = (t) => { try { if (!si.wc.isDestroyed()) si.wc.send('card-note', { text: t, tone: 'muted' }) } catch {} }
+    try { return await oc.sendMessage(si.serve, sessionId, msg, model, fileArr, onNote) }
     catch (err) {
       const m = String((err && err.message) || err)
       if (/ECONNREFUSED|ECONNRESET|socket hang up|ENOTFOUND|EPIPE|fetch failed/i.test(m))
@@ -254,9 +280,14 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
     return out
   })
   ipcMain.handle('card-set-model', (e, model) => {
+    const m = (model && model.modelID) ? { providerID: model.providerID, modelID: model.modelID, name: model.name } : null
+    S.modelByWc.set(e.sender.id, m)   // 无论会话就绪与否都先记住 —— 卡启动期间的选择不再被静默吞掉
     const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
-    if (si) si.model = (model && model.modelID) ? { providerID: model.providerID, modelID: model.modelID, name: model.name } : null
-    return { ok: true, model: si ? si.model : null }
+    if (si) si.model = m
+    // 持久化进历史:卡坞重开这段会话时恢复当初所选
+    if (sessionId) { const h = S.history.find((x) => x.id === sessionId); if (h) { h.model = m; try { touchHistory(sessionId) } catch {} } }
+    // applied=false → UI 提示"会话就绪后自动生效",不再假报成功
+    return { ok: true, applied: !!si, model: m || S.settings.model || null }
   })
 
   ipcMain.on('card-abort', (e) => {
