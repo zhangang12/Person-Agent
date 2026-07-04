@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>HTTP 抓包 · BocomHermes</title>
+<script>try { document.documentElement.dataset.theme = window.BocomHermes.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
+<script>(function(){try{var p=new URLSearchParams(location.search),d=document.documentElement.style;['gox','goy','gfx','gfy'].forEach(function(k){var v=p.get(k);if(v)d.setProperty('--'+k,v)})}catch(e){}})()</script>
+<link rel="stylesheet" href="glass.css" />
+<style>
+  .wrap { display: flex; flex-direction: column; height: 100%; padding: 12px 14px 12px; gap: 9px; }
+  .hd { display: flex; align-items: center; gap: 8px; flex: none; }
+  .hd .ttl { flex: 1; font-size: 14px; font-weight: 700; }
+  .hbtn { border: none; background: transparent; color: var(--txt3); cursor: pointer; padding: 4px; border-radius: 7px; display: flex; }
+  .hbtn:hover { color: var(--txt); background: var(--composer-bg); }
+  .bar { flex: none; display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+  .btn { font-size: 12px; font-weight: 600; color: var(--send-fg); background: var(--brand); border: none; border-radius: 8px; padding: 6px 14px; cursor: pointer; font-family: var(--font); }
+  .btn.ghost { color: var(--txt2); background: transparent; border: 1px solid var(--composer-border); font-weight: 400; }
+  .btn.ghost:hover { color: var(--txt); border-color: var(--accent); }
+  .addr { font-family: var(--mono); font-size: 12px; color: var(--accent); background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 8px; padding: 5px 10px; cursor: pointer; }
+  .addr:hover { border-color: var(--accent); }
+  .hint { font-size: 11px; color: var(--txt3); line-height: 1.5; }
+  .bar input { flex: 1; min-width: 110px; background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 8px; padding: 6px 10px; color: var(--txt); font-size: 12px; font-family: var(--mono); outline: none; }
+  .bar input:focus { border-color: var(--accent); }
+  .list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding-right: 2px; }
+  .list::-webkit-scrollbar { width: 6px; } .list::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  .row { display: flex; align-items: center; gap: 8px; background: var(--ai-bg); border: 1px solid var(--ai-border); border-radius: 8px; padding: 6px 10px; cursor: pointer; font-family: var(--mono); font-size: 11.5px; }
+  .row:hover { border-color: var(--accent); }
+  .m { flex: none; width: 46px; font-weight: 700; color: var(--accent); }
+  .st { flex: none; width: 34px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .st.ok { color: var(--green); } .st.bad { color: var(--diff-del); } .st.warn { color: var(--warn-txt); }
+  .hp { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--txt2); }
+  .ms { flex: none; color: var(--txt3); font-variant-numeric: tabular-nums; }
+  .empty { color: var(--txt3); font-size: 12.5px; text-align: center; padding: 26px 12px; line-height: 1.8; }
+  /* 详情抽屉 */
+  .det { flex: none; max-height: 46%; overflow-y: auto; background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 10px; padding: 10px 12px; display: none; }
+  .det.show { display: block; }
+  .det h4 { margin: 8px 0 4px; font-size: 11px; letter-spacing: .06em; color: var(--txt3); text-transform: uppercase; }
+  .det pre { margin: 0; font-family: var(--mono); font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; color: var(--txt2); }
+  .det .dact { display: flex; gap: 6px; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<div class="glass">
+  <span class="hl"></span>
+  <div class="wrap">
+    <div class="hd">
+      <span class="ttl">🕸 HTTP 抓包(外部程序)</span>
+      <button id="x" class="hbtn nodrag" title="关闭"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="bar nodrag">
+      <button id="toggle" class="btn">▶ 启动代理</button>
+      <span id="addr" class="addr" hidden title="点击复制代理地址"></span>
+      <span class="sp" style="flex:1"></span>
+      <input id="q" placeholder="按 URL 过滤…" spellcheck="false" style="flex:none;width:180px" />
+      <button id="clear" class="btn ghost">清空</button>
+    </div>
+    <div class="hint nodrag" id="hint">把被测程序的 <b>HTTP 代理</b>指向上方地址即可捕获(如 Java:<code>-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=端口</code>;curl:<code>-x http://127.0.0.1:端口</code>)。只抓 HTTP,HTTPS 盲隧道放行;全程本机转发,数据不出网。</div>
+    <div class="list nodrag" id="list"><div class="empty">代理未启动 — 点「▶ 启动代理」开始</div></div>
+    <div class="det nodrag" id="det"></div>
+  </div>
+</div>
+<script>
+  const H = window.BocomHermes
+  const $ = (id) => document.getElementById(id)
+  H.onTheme && H.onTheme((t) => { document.documentElement.dataset.theme = t })
+  $('x').addEventListener('click', () => H.closeSelf())
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+  let running = false, port = 0, rows = [], curQ = ''
+  function paintBar() {
+    $('toggle').textContent = running ? '■ 停止代理' : '▶ 启动代理'
+    $('addr').hidden = !running
+    if (running) $('addr').textContent = '127.0.0.1:' + port
+  }
+  function stCls(s) { return !s ? 'bad' : s < 400 ? 'ok' : s < 500 ? 'warn' : 'bad' }
+  function render() {
+    const list = $('list')
+    const kw = curQ.toLowerCase()
+    const show = kw ? rows.filter((r) => (r.host + r.path).toLowerCase().includes(kw)) : rows
+    if (!show.length) { list.innerHTML = '<div class="empty">' + (running ? '等待流量… 把被测程序的 HTTP 代理指向 127.0.0.1:' + port : '代理未启动 — 点「▶ 启动代理」开始') + '</div>'; return }
+    list.innerHTML = ''
+    for (const r of show) {
+      const d = document.createElement('div'); d.className = 'row'
+      d.innerHTML = '<span class="m">' + esc(r.method) + '</span><span class="st ' + stCls(r.status) + '">' + (r.status || '✗') + '</span><span class="hp">' + esc(r.host + r.path) + '</span><span class="ms">' + (r.ms || 0) + 'ms</span>'
+      d.addEventListener('click', () => openDetail(r.id))
+      list.appendChild(d)
+    }
+  }
+  async function openDetail(id) {
+    const r = await H.httpcapGet(id); if (!r) return
+    const det = $('det')
+    const hdrs = (h) => Object.entries(h || {}).map(([k, v]) => k + ': ' + v).join('\n')
+    const curl = 'curl -X ' + r.method + " 'http://" + r.host + r.path + "'" + Object.entries(r.reqHeaders || {}).filter(([k]) => !/^(host|content-length|connection|proxy-)/i.test(k)).map(([k, v]) => " -H '" + k + ': ' + v + "'").join('') + (r.reqBody ? " -d '" + String(r.reqBody).replace(/'/g, "'\\''") + "'" : '')
+    det.innerHTML = '<div class="dact"><button class="btn ghost" id="d-curl">复制 cURL</button><button class="btn ghost" id="d-url">复制 URL</button><button class="btn ghost" id="d-x">收起</button></div>'
+      + '<h4>' + esc(r.method) + ' ' + esc(r.url) + ' → ' + (r.status || esc(r.error || '失败')) + ' · ' + r.ms + 'ms</h4>'
+      + '<h4>请求头</h4><pre>' + esc(hdrs(r.reqHeaders)) + '</pre>'
+      + (r.reqBody ? '<h4>请求体</h4><pre>' + esc(r.reqBody) + '</pre>' : '')
+      + '<h4>响应头</h4><pre>' + esc(hdrs(r.respHeaders)) + '</pre>'
+      + (r.respBody ? '<h4>响应体</h4><pre>' + esc(r.respBody) + '</pre>' : '')
+    det.classList.add('show')
+    $('d-x').addEventListener('click', () => det.classList.remove('show'))
+    $('d-curl').addEventListener('click', () => H.browserCopy(curl))
+    $('d-url').addEventListener('click', () => H.browserCopy('http://' + r.host + r.path))
+  }
+
+  $('toggle').addEventListener('click', async () => {
+    if (running) { await H.httpcapStop(); running = false; paintBar(); render(); return }
+    const r = await H.httpcapStart()
+    if (r && r.ok) { running = true; port = r.port; paintBar(); render() }
+  })
+  $('addr').addEventListener('click', () => { H.browserCopy('127.0.0.1:' + port) })
+  $('clear').addEventListener('click', async () => { await H.httpcapClear(); rows = []; render() })
+  let qT = null
+  $('q').addEventListener('input', () => { clearTimeout(qT); qT = setTimeout(() => { curQ = $('q').value.trim(); render() }, 180) })
+  H.onHttpcapAdd && H.onHttpcapAdd((rec) => { rows.unshift(rec); if (rows.length > 500) rows.pop(); render() })
+
+  ;(async () => {
+    try {
+      const st = await H.httpcapStatus()
+      running = !!st.running; port = st.port || 0
+      rows = await H.httpcapList({ limit: 200 })
+    } catch (e) {}
+    paintBar(); render()
+  })()
+</script>
+</body>
+</html>

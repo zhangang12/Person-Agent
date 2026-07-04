@@ -781,6 +781,28 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     S.auditWin.on('closed', () => { S.auditWin = null })
   }
 
+  // ── HTTP 抓包 GUI(仅本地 127.0.0.1 转发,不做 HTTPS MITM):抓外部程序(柜面客户端等)的 HTTP 流量 ──
+  const httpcap = require('./httpcap')({ log })
+  httpcap.setOnAdd((rec) => { try { if (S.httpcapWin && !S.httpcapWin.isDestroyed()) S.httpcapWin.webContents.send('httpcap-add', rec) } catch {} })
+  ipcMain.handle('httpcap-start', async (_e, port) => {
+    const p = await httpcap.start(port || 0)
+    try { S.audit && S.audit('httpcap', '启动抓包代理 127.0.0.1:' + p) } catch {}
+    return { ok: true, port: p, addr: '127.0.0.1:' + p }
+  })
+  ipcMain.handle('httpcap-stop', () => { httpcap.stop(); return { ok: true } })
+  ipcMain.handle('httpcap-status', () => httpcap.status())
+  ipcMain.handle('httpcap-list', (_e, opts) => httpcap.list(opts || {}))
+  ipcMain.handle('httpcap-get', (_e, id) => httpcap.get(id))
+  ipcMain.handle('httpcap-clear', () => { httpcap.clear(); return true })
+  function openHttpcap() {
+    if (S.httpcapWin && !S.httpcapWin.isDestroyed()) { S.httpcapWin.show(); S.httpcapWin.focus(); return }
+    const { width } = screen.getPrimaryDisplay().workAreaSize
+    const hx = Math.round(width / 2 - 380), hy = 90
+    S.httpcapWin = new BrowserWindow(baseOpts({ width: 760, height: 760, x: hx, y: hy, skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 540, minHeight: 420 }))
+    S.httpcapWin.loadFile(path.join(__dirname, '..', 'ui', 'httpcap.html'), { query: orbAnchorFor(hx, hy, 760, 760) })
+    S.httpcapWin.on('closed', () => { S.httpcapWin = null })
+  }
+
   function openMailView(msgId) {
     const id = String(msgId || '').replace(/^<|>$/g, ''); if (!id) return
     const { width } = screen.getPrimaryDisplay().workAreaSize
@@ -2064,6 +2086,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       { label: '📤 发件箱', click: openOutbox },
       { label: '📋 待办事项', click: () => createMailCenter('todos') },
       { label: '🛡 审计流水', click: openAudit },
+      { label: '🕸 HTTP 抓包(外部程序)', click: openHttpcap },
       { label: '卡坞 · 历史对话', click: openDock },
       { label: '切换深 / 浅主题', click: toggleTheme },
       { label: '设置…', click: openSettings },

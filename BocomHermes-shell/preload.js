@@ -92,6 +92,16 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   memoryWrite: (text) => ipcRenderer.invoke('memory-write', text),
   // 审计流水
   auditList: (opts) => ipcRenderer.invoke('audit-list', opts || {}),
+  // HTTP 抓包(外部程序)
+  httpcapStart: (port) => ipcRenderer.invoke('httpcap-start', port),
+  httpcapStop: () => ipcRenderer.invoke('httpcap-stop'),
+  httpcapStatus: () => ipcRenderer.invoke('httpcap-status'),
+  httpcapList: (opts) => ipcRenderer.invoke('httpcap-list', opts || {}),
+  httpcapGet: (id) => ipcRenderer.invoke('httpcap-get', id),
+  httpcapClear: () => ipcRenderer.invoke('httpcap-clear'),
+  onHttpcapAdd: (cb) => ipcRenderer.on('httpcap-add', (_e, r) => cb(r)),
+  // HTTP 抓包(外部程序)
+  httpcapStart: (port) => ipcRenderer.invoke('httpcap-start', port),
   // 剪贴板
   readClipboard: () => ipcRenderer.invoke('read-clipboard'),
   onFillInput: (cb) => ipcRenderer.on('fill-input', (_e, text) => cb(text)),
