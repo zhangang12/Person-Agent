@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>截图框选</title>
+<style>
+  /* 透明窗:真实桌面透过窗体可见。整屏一层暗色veil,拖出的选框区域挖空(还原清晰桌面) */
+  html, body { margin: 0; height: 100%; overflow: hidden; cursor: crosshair; -webkit-user-select: none; user-select: none; background: transparent; }
+  #veil { position: fixed; inset: 0; }
+  #sel { position: fixed; border: 1.5px solid #4d9fff; box-shadow: 0 0 0 1px rgba(255,255,255,.5); display: none; pointer-events: none; }
+  #dim { position: fixed; inset: 0; background: rgba(10,12,18,.42); pointer-events: none; }
+  /* 用 4 条遮罩围出"选框外变暗、框内透明"的效果 */
+  .mask { position: fixed; background: rgba(10,12,18,.42); pointer-events: none; }
+  #tip { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); background: rgba(15,17,32,.9); color: #eef2f8; font: 13px system-ui, sans-serif; padding: 7px 15px; border-radius: 999px; pointer-events: none; box-shadow: 0 6px 20px rgba(0,0,0,.4); }
+  #size { position: fixed; font: 11px ui-monospace, monospace; color: #fff; background: #4d9fff; padding: 1px 6px; border-radius: 4px; display: none; pointer-events: none; }
+</style>
+</head>
+<body>
+  <div id="dim"></div>
+  <div id="mtop" class="mask"></div><div id="mbot" class="mask"></div><div id="mlft" class="mask"></div><div id="mrgt" class="mask"></div>
+  <div id="sel"></div>
+  <div id="size"></div>
+  <div id="tip">拖动框选要提问的区域 · Esc 取消</div>
+  <div id="veil"></div>
+<script>
+  const H = window.BocomHermes
+  const sel = document.getElementById('sel'), dim = document.getElementById('dim'), sizeEl = document.getElementById('size'), tip = document.getElementById('tip')
+  const masks = { top: document.getElementById('mtop'), bot: document.getElementById('mbot'), lft: document.getElementById('mlft'), rgt: document.getElementById('mrgt') }
+  let sx = 0, sy = 0, drawing = false
+  const W = window.innerWidth, Hh = window.innerHeight
+
+  function layout(x, y, w, h) {
+    sel.style.display = 'block'
+    sel.style.left = x + 'px'; sel.style.top = y + 'px'; sel.style.width = w + 'px'; sel.style.height = h + 'px'
+    dim.style.display = 'none'   // 用 4 条 mask 精确围空选框
+    masks.top.style.cssText = 'position:fixed;background:rgba(10,12,18,.42);left:0;top:0;width:100%;height:' + y + 'px'
+    masks.bot.style.cssText = 'position:fixed;background:rgba(10,12,18,.42);left:0;top:' + (y + h) + 'px;width:100%;height:' + (Hh - y - h) + 'px'
+    masks.lft.style.cssText = 'position:fixed;background:rgba(10,12,18,.42);left:0;top:' + y + 'px;width:' + x + 'px;height:' + h + 'px'
+    masks.rgt.style.cssText = 'position:fixed;background:rgba(10,12,18,.42);left:' + (x + w) + 'px;top:' + y + 'px;width:' + (W - x - w) + 'px;height:' + h + 'px'
+    sizeEl.style.display = 'block'; sizeEl.textContent = w + ' × ' + h
+    sizeEl.style.left = x + 'px'; sizeEl.style.top = Math.max(0, y - 18) + 'px'
+  }
+  window.addEventListener('mousedown', (e) => { drawing = true; sx = e.clientX; sy = e.clientY; tip.style.display = 'none' })
+  window.addEventListener('mousemove', (e) => {
+    if (!drawing) return
+    const x = Math.min(sx, e.clientX), y = Math.min(sy, e.clientY)
+    layout(x, y, Math.abs(e.clientX - sx), Math.abs(e.clientY - sy))
+  })
+  window.addEventListener('mouseup', (e) => {
+    if (!drawing) return; drawing = false
+    const x = Math.min(sx, e.clientX), y = Math.min(sy, e.clientY), w = Math.abs(e.clientX - sx), h = Math.abs(e.clientY - sy)
+    if (w < 4 || h < 4) { H.snipCancel(); return }
+    H.snipCrop({ x, y, w, h })   // 主进程按 scaleFactor 裁剪并开卡
+  })
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape') H.snipCancel() })
+</script>
+</body>
+</html>

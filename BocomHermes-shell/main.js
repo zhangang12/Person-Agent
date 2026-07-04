@@ -118,7 +118,8 @@ app.whenReady().then(() => {
 
   initAudit(S, { app, path, fs, ipcMain, log })   // 先于 initWindow:S.audit 供各埋点处调用
   const deps = { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }
-  const { createOrb, createBrowser, createWorkspace, createMailCenter, openMailView, toggleOrbInput, buildTray, spawnEmailCard, recordHistory, touchHistory, spawnReqConfirm, spawnReqPlan } = initWindow(S, deps)
+  const { createOrb, createBrowser, createWorkspace, createMailCenter, openMailView, toggleOrbInput, buildTray, spawnEmailCard, snapAsk, recordHistory, touchHistory, spawnReqConfirm, spawnReqPlan } = initWindow(S, deps)
+  S.snapAsk = snapAsk
   S.createOrb = createOrb   // 留给 window-all-closed 兜底拉起球
 
   initSession(S, { ipcMain, path, fs, shell, oc, log, recordHistory, touchHistory })
@@ -148,6 +149,7 @@ app.whenReady().then(() => {
   if (!globalShortcut.register('Control+Shift+Space', toggleOrbInput)) log('global shortcut register failed (maybe in use)')
   globalShortcut.register('Control+Shift+B', () => createWorkspace())
   globalShortcut.register('Control+Shift+M', () => createMailCenter())
+  globalShortcut.register('Control+Shift+S', () => { try { snapAsk() } catch (e) { log('snapAsk shortcut err: ' + e.message) } })   // 截图提问
 
   // Ctrl+Shift+V：把剪贴板内容带入输入框（"选中即问"快捷路径）
   globalShortcut.register('Control+Shift+V', () => {

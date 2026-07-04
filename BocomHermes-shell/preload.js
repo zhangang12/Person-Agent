@@ -100,8 +100,9 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   httpcapGet: (id) => ipcRenderer.invoke('httpcap-get', id),
   httpcapClear: () => ipcRenderer.invoke('httpcap-clear'),
   onHttpcapAdd: (cb) => ipcRenderer.on('httpcap-add', (_e, r) => cb(r)),
-  // HTTP 抓包(外部程序)
-  httpcapStart: (port) => ipcRenderer.invoke('httpcap-start', port),
+  // 截图框选(遮罩窗用)
+  snipCrop: (rect) => ipcRenderer.invoke('snip-crop', rect),
+  snipCancel: () => ipcRenderer.send('snip-cancel'),
   // 剪贴板
   readClipboard: () => ipcRenderer.invoke('read-clipboard'),
   onFillInput: (cb) => ipcRenderer.on('fill-input', (_e, text) => cb(text)),

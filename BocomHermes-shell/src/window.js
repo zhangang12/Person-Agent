@@ -1,6 +1,6 @@
 ﻿'use strict'
 const USE_ACRYLIC = false
-const { clipboard, session, Notification } = require('electron')
+const { clipboard, session, Notification, desktopCapturer } = require('electron')
 const email = require('./email')
 const attachments = require('./attachments')
 const mailCache = require('./mail-cache')
@@ -780,6 +780,54 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     S.auditWin.loadFile(path.join(__dirname, '..', 'ui', 'audit.html'), { query: orbAnchorFor(ax, ay, 640, 720) })
     S.auditWin.on('closed', () => { S.auditWin = null })
   }
+
+  // ── 截图即问:全屏抓图 → 透明遮罩框选 → 裁剪 → 开一张带图的对话卡 ──────────────
+  // 抓图必须先于遮罩窗出现(否则遮罩自己也进图);遮罩是透明窗,真实桌面透过它可见,只画选框。
+  let snipBusy = false
+  async function snapAsk() {
+    if (snipBusy) return
+    if (S.snipWin && !S.snipWin.isDestroyed()) { try { S.snipWin.close() } catch {} return }
+    snipBusy = true
+    try {
+      const disp = screen.getPrimaryDisplay()
+      const { width, height } = disp.size
+      const sf = disp.scaleFactor || 1
+      // 抓主屏全图(按物理像素,拿到高清)
+      const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: Math.round(width * sf), height: Math.round(height * sf) } })
+      const src = sources.find((s) => String(s.display_id) === String(disp.id)) || sources[0]
+      if (!src || src.thumbnail.isEmpty()) { snipBusy = false; return }
+      S._snipShot = src.thumbnail        // NativeImage(物理像素),裁剪时用
+      S._snipSf = sf
+      const win = new BrowserWindow({
+        x: disp.bounds.x, y: disp.bounds.y, width, height,
+        frame: false, transparent: true, fullscreen: process.platform !== 'darwin', alwaysOnTop: true,
+        skipTaskbar: true, resizable: false, movable: false, hasShadow: false, enableLargerThanScreen: true,
+        webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false },
+      })
+      S.snipWin = win
+      win.setAlwaysOnTop(true, 'screen-saver')
+      win.loadFile(path.join(__dirname, '..', 'ui', 'snip.html'))
+      win.on('closed', () => { S.snipWin = null; snipBusy = false })
+    } catch (e) { log('snapAsk err: ' + e.message); snipBusy = false }
+  }
+  // 遮罩窗回传 CSS 像素选区 → 按 scaleFactor 换物理像素裁剪 → data URL → 开卡
+  ipcMain.handle('snip-crop', (_e, rect) => {
+    try {
+      const shot = S._snipShot, sf = S._snipSf || 1
+      if (S.snipWin && !S.snipWin.isDestroyed()) S.snipWin.close()
+      if (!shot || !rect || rect.w < 4 || rect.h < 4) { S._snipShot = null; return { ok: false } }
+      const px = { x: Math.round(rect.x * sf), y: Math.round(rect.y * sf), width: Math.round(rect.w * sf), height: Math.round(rect.h * sf) }
+      const cropped = shot.crop(px)
+      S._snipShot = null
+      const url = 'data:image/png;base64,' + cropped.toPNG().toString('base64')
+      // 默认问法自动发送(附截图);用户可在卡里继续追问
+      const id = spawnCard('截图提问', null, '这是我截的一张屏,请先看图说说你看到了什么/有什么问题,我接着追问。', null, { flash: true })
+      S.cardFiles = S.cardFiles || new Map()
+      S.cardFiles.set(String(id), [{ mime: 'image/png', url, filename: '截图.png' }])
+      return { ok: true }
+    } catch (e) { log('snip-crop err: ' + e.message); S._snipShot = null; return { ok: false, error: e.message } }
+  })
+  ipcMain.on('snip-cancel', () => { S._snipShot = null; if (S.snipWin && !S.snipWin.isDestroyed()) S.snipWin.close() })
 
   // ── HTTP 抓包 GUI(仅本地 127.0.0.1 转发,不做 HTTPS MITM):抓外部程序(柜面客户端等)的 HTTP 流量 ──
   const httpcap = require('./httpcap')({ log })
@@ -2085,6 +2133,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       { label: '📄 需求分析（Word）', click: () => spawnReqAnalysis('') },
       { label: '📤 发件箱', click: openOutbox },
       { label: '📋 待办事项', click: () => createMailCenter('todos') },
+      { label: '📸 截图提问', accelerator: 'Ctrl+Shift+S', click: () => snapAsk() },
       { label: '🛡 审计流水', click: openAudit },
       { label: '🕸 HTTP 抓包(外部程序)', click: openHttpcap },
       { label: '卡坞 · 历史对话', click: openDock },
@@ -3824,5 +3873,5 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('open-history', (_e, { sid, title }) => spawnCard(title, sid))
   ipcMain.handle('clear-history', () => { S.history = []; saveHistory(); return true })
 
-  return { createOrb, createBrowser, createWorkspace, createMailCenter, openMailView, spawnCard, spawnFanout, spawnWorkflow, spawnReqAnalysis, spawnReqConfirm, spawnReqPlan, spawnEmailCard, toggleInput, toggleOrbInput, buildTray, openDock, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory }
+  return { createOrb, createBrowser, createWorkspace, createMailCenter, openMailView, spawnCard, spawnFanout, spawnWorkflow, spawnReqAnalysis, spawnReqConfirm, spawnReqPlan, spawnEmailCard, snapAsk, toggleInput, toggleOrbInput, buildTray, openDock, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory }
 }
