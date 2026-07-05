@@ -12,6 +12,7 @@ const { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, app
 const initRecorder = require('./recorder')
 const { cdpConsoleLevel, fmtRO, fmtException, resolveFrame } = require('./cdp-format')
 const initMail = require('./mail')
+const initMcpConfig = require('./mcp-config')
 
 module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }) {
   // 纯文件 IO 函数搬进 recorder-core 的 initStore 工厂,这里注入依赖后解构使用
@@ -1852,91 +1853,9 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('outbox-cancel', (_e, id) => S.outbox.cancel(id))
   ipcMain.handle('outbox-send-now', (_e, id) => S.outbox.sendNow(id))
 
-  // ── MCP 一键注册到 opencode/bocomcode 配置文件 ────────────────────────────
-  // 扫描候选路径 → 让前端展示 → 用户挑一个 → 备份 + 深合并 mcp.* 字段 + 写回
-  function mcpBaseDir() {
-    // dev: BocomHermes-shell/mcp/;packaged: <install>/resources/app.asar.unpacked/mcp/
-    const appPath = app.getAppPath()
-    const base = appPath.endsWith('app.asar')
-      ? path.join(path.dirname(appPath), 'app.asar.unpacked')
-      : appPath
-    return path.join(base, 'mcp').replace(/\\/g, '/')
-  }
-  function mcpEntries() {
-    const b = mcpBaseDir()
-    return {
-      'BocomHermes-browser': { type: 'local', command: ['node', b + '/browser-mcp.mjs'], enabled: true, environment: { BOCOMHERMES_BROWSER_HEADFUL: '0' } },
-      'BocomHermes-httpcap': { type: 'local', command: ['node', b + '/httpcap-mcp.mjs'], enabled: true },
-      'BocomHermes-git':     { type: 'local', command: ['node', b + '/git-mcp.mjs'],     enabled: true },
-      'BocomHermes-repro':   { type: 'local', command: ['node', b + '/repro-mcp.mjs'],   enabled: true },
-      'BocomHermes-mail':    { type: 'local', command: ['node', b + '/mail-mcp.mjs'],    enabled: true },
-      'BocomHermes-db':      { type: 'local', command: ['node', b + '/db-mcp.mjs'],      enabled: true },
-      'BocomHermes-orch':    { type: 'local', command: ['node', b + '/orch-mcp.mjs'],    enabled: true },
-      'BocomHermes-doc':     { type: 'local', command: ['node', b + '/doc-mcp.mjs'],     enabled: true },
-    }
-  }
-  function configCandidates() {
-    const home = app.getPath('home')
-    const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming')
-    const explicit = [process.env.OPENCODE_CONFIG, process.env.BOCOMCODE_CONFIG].filter(Boolean)
-    // 注意:opencode/bocomcode 实际常用 opencode.jsonc(带注释),.jsonc 优先于 .json,
-    // 否则"自动注册"会新建一个 serve 根本不读的 .json,等于没注册(两文件打架)。
-    return [
-      ...explicit,
-      path.join(appData, 'opencode', 'opencode.jsonc'),
-      path.join(appData, 'opencode', 'opencode.json'),
-      path.join(appData, 'bocomcode', 'opencode.jsonc'),
-      path.join(appData, 'bocomcode', 'opencode.json'),
-      path.join(home, '.config', 'opencode', 'opencode.jsonc'),
-      path.join(home, '.config', 'opencode', 'opencode.json'),
-      path.join(home, '.config', 'bocomcode', 'opencode.jsonc'),
-      path.join(home, '.config', 'bocomcode', 'opencode.json'),
-      path.join(home, '.opencode.jsonc'),
-      path.join(home, '.opencode.json'),
-      path.join(home, '.bocomcode.jsonc'),
-      path.join(home, '.bocomcode.json'),
-    ]
-  }
-  ipcMain.handle('mcp-register-status', () => {
-    const cands = configCandidates().map((p) => {
-      const exists = fs.existsSync(p)
-      let hasOur = false, parseErr = null
-      if (exists) {
-        try { const cfg = JSON.parse(fs.readFileSync(p, 'utf8')); hasOur = !!(cfg && cfg.mcp && cfg.mcp['BocomHermes-mail']) }
-        catch (e) { parseErr = e.message }
-      }
-      return { path: p, exists, hasOur, parseErr }
-    })
-    return { candidates: cands, entries: Object.keys(mcpEntries()), mcpBaseDir: mcpBaseDir() }
-  })
-  ipcMain.handle('mcp-register', async (_e, targetPath) => {
-    const entries = mcpEntries()
-    let target = targetPath
-    if (!target) {
-      // 自动选:已存在的优先;否则默认 %APPDATA%/opencode/opencode.json
-      const cands = configCandidates()
-      target = cands.find((p) => fs.existsSync(p)) || cands[1]
-    }
-    if (!target) throw new Error('找不到可写入的配置路径')
-    try { fs.mkdirSync(path.dirname(target), { recursive: true }) } catch {}
-    let existing = {}, backup = null
-    if (fs.existsSync(target)) {
-      try { existing = JSON.parse(fs.readFileSync(target, 'utf8')) || {} }
-      catch (e) { throw new Error('已有 ' + target + ' 但 JSON 解析失败,人工修一下再试: ' + e.message) }
-      backup = target + '.bak.' + Date.now()
-      try { fs.copyFileSync(target, backup) } catch (e) { log('mcp register backup err: ' + e.message) }
-    }
-    if (!existing.$schema) existing.$schema = 'https://opencode.ai/config.json'
-    existing.mcp = existing.mcp || {}
-    const overwritten = []
-    for (const [k, v] of Object.entries(entries)) {
-      if (existing.mcp[k]) overwritten.push(k)
-      existing.mcp[k] = v
-    }
-    fs.writeFileSync(target, JSON.stringify(existing, null, 2))
-    log('mcp register: wrote ' + Object.keys(entries).length + ' entries to ' + target + (backup ? ' (backup ' + backup + ')' : ''))
-    return { ok: true, path: target, backup, added: Object.keys(entries), overwritten }
-  })
+  // ── MCP 一键注册 ────────────────────────────────────────────────────────────
+  // 把自带 8 个本地 MCP server 写进 opencode/bocomcode 配置,整块搬进 ./mcp-config 的 initMcpConfig(ctx)。
+  initMcpConfig({ app, path, fs, ipcMain, log })
 
   // ── Settings: IMAP 字段读写 ───────────────────────────────────────────────
   ipcMain.handle('set-settings', (_e, patch) => {
