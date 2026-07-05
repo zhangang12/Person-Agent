@@ -386,3 +386,64 @@
   }
 
 module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs }
+
+// ── 纯文件 IO 工厂:window.js 注入 { app, fs, path, execSync } 后解构使用 ────────
+// 这些函数从 window.js 原样搬入,只把对 app/fs/path/execSync 的引用改为工厂参数(名字不变)。
+function initStore({ app, fs, path, execSync }) {
+  function recDir() { return path.join(app.getPath('userData'), 'recordings') }
+  function readRec(id) { return JSON.parse(fs.readFileSync(path.join(recDir(), String(id).replace(/[^\w.-]/g, '') + '.json'), 'utf8')) }
+  function writeLastRun(id, replay) {
+    try {
+      const fp = path.join(recDir(), String(id).replace(/[^\w.-]/g, '') + '.json')
+      const j = JSON.parse(fs.readFileSync(fp, 'utf8'))
+      const fails = replay.stepReport.filter((s) => !s.ok && !s.transient).length
+      j.lastRun = { at: Date.now(), ok: fails === 0 && (!replay.success || replay.success.pass), steps: replay.stepReport.length, fails }
+      fs.writeFileSync(fp, JSON.stringify(j, null, 2))
+    } catch {}
+  }
+  function skillList() {
+    let files = []; try { files = fs.readdirSync(recDir()).filter((f) => f.endsWith('.json')) } catch { return [] }
+    const out = []
+    for (const f of files) {
+      try {
+        const j = JSON.parse(fs.readFileSync(path.join(recDir(), f), 'utf8'))
+        if (!j.skill) continue
+        out.push({ id: j.id || f.replace(/\.json$/, ''), name: j.title || j.id, description: j.description || '', startUrl: j.startUrl || '',
+          steps: (j.events || []).length,
+          lastRun: j.lastRun || null,
+          hasSuccess: !!(j.success && j.success.value),
+          params: (j.params || []).map((p) => ({ key: p.key, label: p.label || p.key, default: p.default != null ? p.default : '', secret: !!p.secret })) })
+      } catch {}
+    }
+    return out
+  }
+  function loadAssertions(bundleId) {
+    if (!bundleId) return []
+    const fp = path.join(app.getPath('userData'), 'assertions', bundleId + '.json')
+    try { const a = JSON.parse(fs.readFileSync(fp, 'utf8')); return Array.isArray(a) ? a : [] } catch { return [] }
+  }
+  function loadScans(bundleId) {
+    if (!bundleId) return { scans: [], scannedFiles: new Set() }
+    const fp = path.join(app.getPath('userData'), 'scans', bundleId + '.json')
+    let arr = []
+    try { arr = JSON.parse(fs.readFileSync(fp, 'utf8')); if (!Array.isArray(arr)) arr = [] } catch {}
+    const files = new Set()
+    for (const s of arr) for (const f of (s.files || [])) files.add(f)
+    return { scans: arr, scannedFiles: files }
+  }
+  function loadReview(bundleId) {
+    if (!bundleId) return null
+    const fp = path.join(app.getPath('userData'), 'reviews', bundleId + '.json')
+    try { return JSON.parse(fs.readFileSync(fp, 'utf8')) } catch { return null }
+  }
+  function gitChangedFiles(dir) {
+    if (!dir) return []
+    const out = new Set()
+    for (const cmd of ['git diff --name-only HEAD', 'git diff --cached --name-only HEAD', 'git ls-files --others --exclude-standard']) {
+      try { execSync(cmd, { cwd: dir, encoding: 'utf8', timeout: 3000 }).split('\n').forEach((l) => { l = l.trim(); if (l) out.add(l) }) } catch {}
+    }
+    return [...out]
+  }
+  return { recDir, readRec, writeLastRun, skillList, loadAssertions, loadScans, loadReview, gitChangedFiles }
+}
+module.exports.initStore = initStore

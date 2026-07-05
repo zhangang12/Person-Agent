@@ -11,6 +11,8 @@ const { extractMeeting } = require('./meeting-extract')
 const { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs } = require('./recorder-core')
 
 module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }) {
+  // 纯文件 IO 函数搬进 recorder-core 的 initStore 工厂,这里注入依赖后解构使用
+  const { recDir, readRec, writeLastRun, skillList, loadAssertions, loadScans, loadReview, gitChangedFiles } = require('./recorder-core').initStore({ app, fs, path, execSync: require('child_process').execSync })
   // 额外窗口引用
   S.orbInputWin = null
   S.browser = { win: null, tabs: [], activeId: null, consoleH: 0, seq: 0, mode: 'standalone', leftW: 0, cardView: null, cardWcId: null, _dragging: false }
@@ -2952,15 +2954,6 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   // ── 命中证据 ─────────────────────────────────────────────────────────────
   // 用 V8 PreciseCoverage 看 "agent 改过的文件里有多少函数在回放期间真被执行了"。
   // 若改的函数没被命中,大概率是改错地方(或该复现路径不覆盖此改动)→ 验证报告里报警。
-  const { execSync } = require('child_process')
-  function gitChangedFiles(dir) {
-    if (!dir) return []
-    const out = new Set()
-    for (const cmd of ['git diff --name-only HEAD', 'git diff --cached --name-only HEAD', 'git ls-files --others --exclude-standard']) {
-      try { execSync(cmd, { cwd: dir, encoding: 'utf8', timeout: 3000 }).split('\n').forEach((l) => { l = l.trim(); if (l) out.add(l) }) } catch {}
-    }
-    return [...out]
-  }
   async function startCoverage(tab) {
     if (!tab.dbg) return false
     try {
@@ -2980,27 +2973,6 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   // ── 断言驱动验证 ─────────────────────────────────────────────────────────
   // Agent 改完代码用 mcp 'repro_assert' 写断言到 userData/assertions/<bundleId>.json
   // 验证回放后,这里读出来逐条对照"修复后"状态打 ✓/✗
-  function loadAssertions(bundleId) {
-    if (!bundleId) return []
-    const fp = path.join(app.getPath('userData'), 'assertions', bundleId + '.json')
-    try { const a = JSON.parse(fs.readFileSync(fp, 'utf8')); return Array.isArray(a) ? a : [] } catch { return [] }
-  }
-  // 读 agent 通过 scan_impact 工具登记的影响半径扫描 → 算出"已扫文件集合"
-  function loadScans(bundleId) {
-    if (!bundleId) return { scans: [], scannedFiles: new Set() }
-    const fp = path.join(app.getPath('userData'), 'scans', bundleId + '.json')
-    let arr = []
-    try { arr = JSON.parse(fs.readFileSync(fp, 'utf8')); if (!Array.isArray(arr)) arr = [] } catch {}
-    const files = new Set()
-    for (const s of arr) for (const f of (s.files || [])) files.add(f)
-    return { scans: arr, scannedFiles: files }
-  }
-  // 读 agent 通过 repro_self_review 工具登记的自审
-  function loadReview(bundleId) {
-    if (!bundleId) return null
-    const fp = path.join(app.getPath('userData'), 'reviews', bundleId + '.json')
-    try { return JSON.parse(fs.readFileSync(fp, 'utf8')) } catch { return null }
-  }
   async function checkAssertions(tab, assertions) {
     if (!assertions.length) return []
     const wc = tab.view.webContents
@@ -3220,8 +3192,6 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   // 不新建第二套子系统:录制 JSON 就地扩展 skill/description/params/skipSteps/success 字段。
   // params[].stepIndex 指向 events 里某个 input/select 步;回放前把运行时值写进【深拷贝】的
   // events[i].value,再喂给 replayRec —— 参数化在门口完成,只落输入步、拒绝替 selector(防注入)。
-  function recDir() { return path.join(app.getPath('userData'), 'recordings') }
-  function readRec(id) { return JSON.parse(fs.readFileSync(path.join(recDir(), String(id).replace(/[^\w.-]/g, '') + '.json'), 'utf8')) }
   // 单个录制事件的白名单净化(导入/步骤编辑共用):返回净化后的事件或 null(丢弃)。
   // 只放行已知 act,字段类型强转+截断,navigate/fu 强制 http/https —— 挡 loadURL/executeJavaScript 注入。
   const _ACTS = new Set(['navigate', 'click', 'input', 'key', 'submit', 'scroll', 'select', 'check'])
@@ -3248,32 +3218,6 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   }
   // 运行历史:重读磁盘 read-modify-write,只改 lastRun 一个键。
   // 严禁序列化内存里的 rec/clone —— replayRec 会把 preState(cookie)塞进 events[i]._restorePreState,直接 stringify 会持久化敏感态
-  function writeLastRun(id, replay) {
-    try {
-      const fp = path.join(recDir(), String(id).replace(/[^\w.-]/g, '') + '.json')
-      const j = JSON.parse(fs.readFileSync(fp, 'utf8'))
-      const fails = replay.stepReport.filter((s) => !s.ok && !s.transient).length
-      j.lastRun = { at: Date.now(), ok: fails === 0 && (!replay.success || replay.success.pass), steps: replay.stepReport.length, fails }
-      fs.writeFileSync(fp, JSON.stringify(j, null, 2))
-    } catch {}
-  }
-  // 技能清单 = recordings 里标了 skill:true 的那些(name 复用 title)
-  function skillList() {
-    let files = []; try { files = fs.readdirSync(recDir()).filter((f) => f.endsWith('.json')) } catch { return [] }
-    const out = []
-    for (const f of files) {
-      try {
-        const j = JSON.parse(fs.readFileSync(path.join(recDir(), f), 'utf8'))
-        if (!j.skill) continue
-        out.push({ id: j.id || f.replace(/\.json$/, ''), name: j.title || j.id, description: j.description || '', startUrl: j.startUrl || '',
-          steps: (j.events || []).length,
-          lastRun: j.lastRun || null,
-          hasSuccess: !!(j.success && j.success.value),
-          params: (j.params || []).map((p) => ({ key: p.key, label: p.label || p.key, default: p.default != null ? p.default : '', secret: !!p.secret })) })
-      } catch {}
-    }
-    return out
-  }
   // 按名字跑技能(relay /skill/run 与 agent 共用):浏览器没开就自动拉起,回完给文字结论 + 写运行历史
   async function skillRun(a) {
     const want = String((a && (a.name || a.id)) || '').trim()
