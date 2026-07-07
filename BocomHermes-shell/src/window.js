@@ -8,7 +8,7 @@ const emailSummarySeen = require('./email-summary-seen')
 const initOutbox = require('./outbox')
 const db = require('./db')
 const { extractMeeting } = require('./meeting-extract')
-const { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents } = require('./recorder-core')
+const { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, markHumanGates } = require('./recorder-core')
 const initRecorder = require('./recorder')
 const { cdpConsoleLevel, fmtRO, fmtException, resolveFrame } = require('./cdp-format')
 const initMail = require('./mail')
@@ -1563,6 +1563,10 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       const c = compactEvents(r.events)
       events = c.events; compaction = { from: r.events.length, to: c.events.length, dropped: c.dropped }
       log('rec compact: ' + r.events.length + ' → ' + c.events.length + ' events(降噪删 ' + c.dropped.length + ' 步)')
+      // 人机断点识别:验证码/动态令牌/滑块这类"必须人来"的步标 human,回放到此暂停等人现场输入(见 replayRec)
+      events = markHumanGates(events)
+      const gates = events.filter((e) => e.human)
+      if (gates.length) log('rec human-gates: ' + gates.length + ' 处(' + gates.map((g) => g.humanHint).join('/') + ')— 回放将暂停等人工输入')
     } catch (e) { log('rec compact err(回退原始事件): ' + e.message) }
     const rec = { id, tabId: r.tabId, startedAt: r.startedAt, startUrl: r.startUrl, durationMs: Date.now() - r.startedAt, events, compaction, snapshot, preState: r.preState || null }
     try { fs.writeFileSync(path.join(dir, id + '.json'), JSON.stringify(rec, null, 2)) } catch (e) { log('rec save err: ' + e.message) }
@@ -1609,6 +1613,8 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('browser-eval', async (_e, expr) => await brEval(String(expr || '')))
   // 闭环验证：重载复现页并把修复后状态回灌 Agent
   ipcMain.handle('browser-verify', async () => { await verifyFix() })
+  // 人机断点续跑:回放暂停在验证码/滑块步时,用户点 HUD「继续」→ 解开 replayRec 里挂着的 resolver
+  ipcMain.on('browser-replay-resume', () => { const f = S.browser && S.browser._replayResume; if (typeof f === 'function') { try { f() } catch {} } })
   // 复制到剪贴板（供网络面板「复制 URL / 复制 cURL」、拾取「复制选择器」）
   ipcMain.handle('browser-copy', (_e, text) => { clipboard.writeText(String(text || '')); return true })
   ipcMain.on('browser-reveal', (_e, filePath) => { try { shell.showItemInFolder(String(filePath || '')) } catch (e) { log('reveal err: ' + e.message) } })

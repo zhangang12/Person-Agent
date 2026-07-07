@@ -73,6 +73,39 @@ module.exports = function initRecorder(ctx) {
       })()`, true)
     } catch {}
   }
+  // 人机断点:回放到 human 步(验证码/滑块/动态令牌)时暂停,把可见浏览器交还给人现场输入,
+  // 人填完【自动续跑】(检测目标字段被填入且稳定)或点 HUD 的「继续」【手动续跑】,二者竞速,先到先续。
+  // 一次性验证码不照填(录制值已清空),人现场输入,回放随后走下一步(提交)。最长等 5 分钟兜底。
+  async function awaitHumanGate(wc, ev, i, sendProg) {
+    const fr = frameFor(wc, ev)
+    const elExpr = findElExpr(ev.sel, ev.selAlt)
+    try { await waitForEl(fr, elExpr, 5000, true) } catch {}   // 等字段出现再暂停(高亮/检测才有的放矢)
+    await highlightTarget(fr, ev, i + 1)
+    sendProg({ pause: true, i: i + 1, hint: ev.humanHint || '需人工操作', sel: ev.sel || '' })
+    let done = false
+    const manual = new Promise((res) => { S.browser._replayResume = () => { if (!done) { done = true; res('manual') } } })
+    const auto = (async () => {
+      let lastV = null, stableAt = 0
+      const t0 = Date.now()
+      while (!done && Date.now() - t0 < 300000) {   // 最长 5 分钟
+        await sleep(500)
+        let v = ''
+        try { v = await fr.executeJavaScript(`(()=>{var __el=null;return (${elExpr})?String((__el.value!=null?__el.value:__el.innerText)||''):''})()`, true) } catch {}
+        if (v && v.trim().length >= 4) {   // 验证码通常 ≥4 位;滑块/无值类只能靠手动「继续」
+          if (v === lastV) { if (!stableAt) stableAt = Date.now(); else if (Date.now() - stableAt >= 1200) return 'auto' }
+          else { lastV = v; stableAt = 0 }
+        }
+      }
+      return 'timeout'
+    })()
+    const how = await Promise.race([manual, auto])
+    done = true
+    S.browser._replayResume = null
+    sendProg({ resume: true, i: i + 1 })
+    log('replay human-gate 步 ' + (i + 1) + '(' + (ev.humanHint || '') + ')续跑: ' + how)
+    return how
+  }
+
   async function execStep(wc, ev, tab, opts) {
     if (ev.act === 'navigate') {
       // 事件来自页面 console 的 __BR__ 通道,被录页面可伪造 navigate 注入 file://、data: 等 —— 回放只认 http/https
@@ -282,6 +315,15 @@ module.exports = function initRecorder(ctx) {
       const gap = Math.min(Math.max(0, (ev.t || 0) - lastT), gapCap)   // 步间 sleep 封顶(fast 模式 400ms)
       if (gap > 50) await sleep(gap)
       lastT = ev.t || 0
+      // 人机断点(验证码/滑块/动态令牌):暂停等人现场输入,不照填录制值(已清空),续跑后走下一步
+      if (ev.human) {
+        const how = await awaitHumanGate(wc, ev, i, sendProg)
+        stepReport.push({ i: i + 1, act: ev.act, sel: ev.sel || '', ok: true, human: true, how })
+        sendProg({ i: i + 1, total: rec.events.length, act: ev.act, ok: true })
+        consecutiveFails = 0
+        await waitNetIdle(tab, 300, 3000)
+        continue
+      }
       await highlightTarget(frameFor(wc, ev), ev, i + 1)   // 红框打在事件所属 frame(含 iframe)
       await sleep(fast ? 60 : 180)
       // 级联收缩:已有连续失败时缩短 waitForEl,防「等5s×重试」把 3 连败早停拖到 30s+;成功即复原。

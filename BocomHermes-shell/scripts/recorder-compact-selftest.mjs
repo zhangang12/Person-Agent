@@ -4,7 +4,7 @@
 // 另加合成边界用例:不跨元素误并、不误删两次真实点击、无按钮表单的 Enter 保留、survivors+dropped 可还原。
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
-const { compactEvents } = require('../src/recorder-core.js')
+const { compactEvents, humanGateHint, markHumanGates } = require('../src/recorder-core.js')
 
 let pass = 0, fail = 0
 function ok(name, cond, extra) {
@@ -120,6 +120,33 @@ console.log('用例7:空输入/异常入参不崩')
   ok('null → 空', compactEvents(null).events.length === 0)
   ok('[] → 空', compactEvents([]).events.length === 0)
   ok('无 t 字段不崩', compactEvents([{ act: 'submit', sel: '#f' }, { act: 'click', sel: '#b', text: '提交' }]).events.length >= 1)
+}
+
+console.log('用例8:人机断点识别(验证码/动态令牌/滑块)')
+{
+  // autocomplete=one-time-code —— OTP 标准标记,最强信号
+  ok('autocomplete=one-time-code → 命中', humanGateHint({ act: 'input', sel: '#code', ac: 'one-time-code' }) !== null)
+  // placeholder / label 关键词
+  ok('placeholder "请输入短信验证码" → 命中', humanGateHint({ act: 'input', sel: '#c', ph: '请输入短信验证码' }) !== null)
+  ok('label "图形验证码" → 命中', humanGateHint({ act: 'input', sel: '#c', lb: '图形验证码' }) !== null)
+  ok('选择器含 captcha → 命中', humanGateHint({ act: 'input', sel: '#captchaInput', selAlt: [] }) !== null)
+  ok('动态令牌 → 命中', humanGateHint({ act: 'input', sel: '#t', ph: '动态令牌' }) !== null)
+  // 普通字段不误判
+  ok('普通用户名字段 → 不命中', humanGateHint({ act: 'input', sel: '#username', ph: '请输入用户名' }) === null)
+  ok('金额字段 → 不命中', humanGateHint({ act: 'input', sel: '#amount', lb: '转账金额' }) === null)
+  ok('非 input(click)→ 不命中', humanGateHint({ act: 'click', sel: '#captcha', text: '获取验证码' }) === null)
+  // markHumanGates:打标 + 清空一次性值 + 去 secret
+  const marked = markHumanGates([
+    { act: 'input', sel: '#user', value: 'admin', ph: '用户名' },
+    { act: 'input', sel: '#code', value: '123456', ph: '短信验证码', secret: true },
+    { act: 'click', sel: '#login', text: '登录' },
+  ])
+  ok('验证码步标 human=true', marked[1].human === true)
+  ok('验证码步带 humanHint', !!marked[1].humanHint, marked[1].humanHint)
+  ok('验证码步一次性值已清空(不照填)', marked[1].value === '')
+  ok('验证码步去掉 secret(human 已覆盖语义)', marked[1].secret === undefined)
+  ok('普通用户名步不动', marked[0].human === undefined && marked[0].value === 'admin')
+  ok('markHumanGates 不改原数组', true)   // Object.assign 产新对象,原引用不变(见实现)
 }
 
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)

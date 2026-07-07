@@ -1049,12 +1049,29 @@ function ensureHud() {
   return p
 }
 let hudHideT = null
+// 人机断点暂停横幅:回放到验证码/滑块这类步时显示,可点击(与 HUD 的 pointer-events:none 不同)。
+// 待在 chrome 顶栏(top:46px,页面视图从 82px 起),不遮页面表单 —— 人要在页面里现场输验证码。
+function clearReplayPause() { const b = document.getElementById('replaypause'); if (b) b.remove() }
+function showReplayPause(d) {
+  clearReplayPause()
+  const b = document.createElement('div'); b.id = 'replaypause'
+  b.style.cssText = 'position:fixed;top:46px;left:50%;transform:translateX(-50%);z-index:10000;display:flex;align-items:center;gap:10px;background:rgba(214,163,45,.16);border:1.5px solid #d6a32d;border-radius:8px;padding:5px 8px 5px 12px;color:var(--txt);font-size:12px;box-shadow:0 6px 22px rgba(0,0,0,.45);pointer-events:auto;white-space:nowrap'
+  b.innerHTML = `<span style="font-size:13px">⏸</span><span>请在页面完成:<b style="color:#e6c25a">${String(d.hint || '需人工操作').replace(/</g,'&lt;')}</b> —— 填完自动继续,或点右侧</span>`
+  const btn = document.createElement('button')
+  btn.textContent = '继续 ▶'
+  btn.style.cssText = 'background:#d6a32d;border:none;color:#1a1400;font-weight:700;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px'
+  btn.addEventListener('click', () => { btn.disabled = true; btn.style.opacity = '.5'; btn.textContent = '继续中…'; H.browserReplayResume && H.browserReplayResume() })
+  b.appendChild(btn)
+  document.body.appendChild(b)
+}
 H.onBrowserReplayProgress && H.onBrowserReplayProgress((d) => {
+  if (d.pause) { showReplayPause(d); return }             // 人机断点:显示可点的暂停横幅,等人现场操作
+  if (d.resume) { clearReplayPause(); return }            // 人填完/点继续 → 收横幅,回放续跑
   const p = ensureHud()
   clearTimeout(hudHideT)
   p.hidden = false
   if (d.start) { p.style.borderColor = 'var(--line)'; p.textContent = '▶ ' + (d.title || '') + ' 0/' + d.total; return }
-  if (d.done) { p.textContent = (d.fails ? '⚠ ' + d.fails + ' 步失败 / ' : '✓ 完成 ') + d.total + ' 步'; hudHideT = setTimeout(() => { p.hidden = true }, 4000); return }
+  if (d.done) { clearReplayPause(); p.textContent = (d.fails ? '⚠ ' + d.fails + ' 步失败 / ' : '✓ 完成 ') + d.total + ' 步'; hudHideT = setTimeout(() => { p.hidden = true }, 4000); return }
   p.textContent = '▶ 步 ' + d.i + '/' + d.total + ' · ' + d.act + (d.ok ? '' : ' ✗ ' + (d.err || ''))
   p.style.borderColor = d.ok ? 'var(--line)' : '#e2424a'
 })

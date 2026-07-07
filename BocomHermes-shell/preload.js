@@ -173,6 +173,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   browserRecStop:       ()    => ipcRenderer.invoke('browser-rec-stop'),
   onBrowserRecCount:    (cb)  => ipcRenderer.on('browser-rec-count', (_e, d) => cb(d)),
   onBrowserReplayProgress: (cb) => ipcRenderer.on('browser-replay-progress', (_e, d) => cb(d)),
+  browserReplayResume:  ()    => ipcRenderer.send('browser-replay-resume'),   // 人机断点:人填完验证码点"继续"续跑
   browserRecSetExpectation: (recId, text) => ipcRenderer.invoke('browser-rec-set-expectation', { recId, text }),
   browserOpenRecDir:    ()    => ipcRenderer.send('browser-open-rec-dir'),
   browserRollback:      (opts) => ipcRenderer.invoke('browser-rollback-changes', opts || {}),

@@ -62,6 +62,22 @@
   };
   window.bocomSel = function(el){ return selBuild(el)[0]; };
   var isCheckable = function(el){ return !!(el && el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio')); };
+  // 采字段上下文(placeholder / label 文本 / autocomplete / inputmode)—— 供"人机断点"识别(验证码/动态令牌等)。
+  // autocomplete="one-time-code" 是 OTP 的 W3C 标准标记,最强信号;label 优先 el.labels,退 closest('label'),退 aria-label。
+  var fieldCtx = function(el){
+    var o = {};
+    try {
+      if (el.placeholder) o.ph = String(el.placeholder).slice(0,60);
+      var ac = el.getAttribute && el.getAttribute('autocomplete'); if (ac) o.ac = String(ac).slice(0,40);
+      var im = el.getAttribute && el.getAttribute('inputmode'); if (im) o.im = String(im).slice(0,20);
+      var lb = '';
+      if (el.labels && el.labels.length) lb = el.labels[0].innerText || el.labels[0].textContent || '';
+      if (!lb && el.closest) { var L = el.closest('label'); if (L) lb = L.innerText || ''; }
+      if (!lb && el.getAttribute) lb = el.getAttribute('aria-label') || '';
+      if (lb) o.lb = String(lb).replace(/\\s+/g,' ').trim().slice(0,40);
+    } catch(_){}
+    return o;
+  };
   // 输入防抖:per-element pend+flush —— 换元素/点按钮/回车/提交时先把上一个输入吐出去。
   // 修两个次序 bug:快速切换输入框丢前一个事件;敲完字 250ms 内提交 → input 排到 click/submit 之后,回放先提交空表单
   var inputTmr = null, inputPend = null;
@@ -72,6 +88,7 @@
     var v = el.isContentEditable ? (el.innerText||'') : (el.value||'');
     var c = selBuild(el);
     var ev = { act:'input', sel:c[0], selAlt:c.slice(1), value:String(v).slice(0,200) };
+    var fc = fieldCtx(el); for (var fk in fc) ev[fk] = fc[fk];   // ph/lb/ac/im:供停录后启发式识别"人机断点"
     if (el.tagName === 'INPUT' && el.type === 'password') { ev.secret = true; ev.value = ''; }   // 密码不存明文(安全键盘控件本就录不到,这里只管普通 password 框)
     if (ret) return JSON.stringify(ev);
     emit(ev); return null;
@@ -436,7 +453,32 @@ function compactEvents(events) {
   return { events: arr.map((o) => o.ev), dropped }
 }
 
-module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents }
+// ── 人机断点识别(地基第 2 层,确定性、不依赖模型网关)────────────────────────
+// 有些输入必须人来、且每次不同(短信/邮箱验证码、图形码、动态口令、滑块、人脸),录制的值是一次性的、
+// 回放照填必然失败或触发风控。识别出来 → 回放到这一步【暂停】,把浏览器交还给人现场输入,人填完再续跑。
+// 靠字段上下文(autocomplete/placeholder/label + 选择器)+ 关键词判定;autocomplete="one-time-code" 是 OTP 的 W3C 标准标记,命中即判定。
+const HUMAN_RE = /验证码|校验码|短信码|动态[口令码]|动态令牌|图形码|图片码|captcha|verif(?:y|ication)[-\s_]?code|one[-\s]?time|(?:^|[^a-z])otp(?:[^a-z]|$)|滑块|拖动验证|滑动验证|人脸|指纹|扫码/i
+function humanGateHint(ev) {
+  if (!ev || ev.act !== 'input') return null
+  if (/one-time-code/i.test(String(ev.ac || ''))) return '验证码(one-time-code)'
+  const hay = [ev.ph, ev.lb, ev.sel, ...(Array.isArray(ev.selAlt) ? ev.selAlt : [])].filter(Boolean).join(' ')
+  if (!HUMAN_RE.test(hay)) return null
+  const m = hay.match(/验证码|校验码|短信码|动态口令|动态令牌|图形码|captcha|otp|滑块|人脸|指纹|扫码/i)
+  return (m ? m[0] : '需人工输入')
+}
+// 给事件序列打人机断点标记:命中的 input 步置 human=true + humanHint,并清空 value(一次性验证码不留存、回放不照填,靠人现场输入)。
+// 纯函数:原地不改入参,返回带标记的新数组。
+function markHumanGates(events) {
+  return (Array.isArray(events) ? events : []).map((ev) => {
+    const hint = humanGateHint(ev)
+    if (!hint) return ev
+    const o = Object.assign({}, ev, { human: true, humanHint: hint, value: '' })
+    delete o.secret   // 人机断点语义已覆盖"不照填",secret 标记多余
+    return o
+  })
+}
+
+module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, humanGateHint, markHumanGates }
 
 // ── 纯文件 IO 工厂:window.js 注入 { app, fs, path, execSync } 后解构使用 ────────
 // 这些函数从 window.js 原样搬入,只把对 app/fs/path/execSync 的引用改为工厂参数(名字不变)。
