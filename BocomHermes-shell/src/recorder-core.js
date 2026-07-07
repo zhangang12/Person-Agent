@@ -478,7 +478,82 @@ function markHumanGates(events) {
   })
 }
 
-module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, humanGateHint, markHumanGates }
+// ── SKILL 语义视图(Phase 2,对标 Codex Record & Replay 的技能文档)──────────────
+// 设计:docs/技能系统-意图执行与Agent解析链设计.md。events 仍是唯一可执行真相;
+// steps 是从 events 确定性生成的语义视图(ei 回指 events 下标),只承载 意图/输入来源/断点,
+// 不复制 action 全量字段 —— 避免双真相漂移。events/params/skipSteps 任一变动就重建(见 window.js refreshSkillArtifacts)。
+// Codex 技能四要素:何时使用 / 所需输入 / 操作步骤 / 结果核验(skillMd 按此四段渲染,给人读、给 Agent 当上下文)。
+function fieldName(ev) { return ev.lb || ev.ph || null }   // 录制时抓的 label/placeholder(recorder fieldCtx)
+function selDesc(ev) {
+  const fn = fieldName(ev); if (fn) return fn
+  const s = String(ev.sel || '')
+  if (s.startsWith('__text__:')) { const i = s.indexOf('|'); return s.slice(i + 1) }
+  return s.replace(/^#/, '') || ev.act
+}
+function stepIntent(ev) {
+  switch (ev.act) {
+    case 'navigate': return (ev.spa ? '页内跳转到 ' : '打开 ') + String(ev.url || '')
+    case 'click': return '点击「' + (ev.text || selDesc(ev)) + '」'
+    case 'input': return ev.human ? '人工输入:' + (ev.humanHint || '需人工操作') : '填写「' + selDesc(ev) + '」'
+    case 'select': return '选择「' + selDesc(ev) + '」=' + (ev.text || ev.value || '')
+    case 'check': return (ev.checked ? '勾选' : '取消勾选') + '「' + selDesc(ev) + '」'
+    case 'key': return '按 ' + ev.key + (ev.key === 'Enter' ? '(确认)' : '')
+    case 'submit': return '提交表单'
+    case 'scroll': return '滚动页面'
+    default: return String(ev.act || '')
+  }
+}
+// rec(events/params/skipSteps)→ { skillRev, steps }。纯函数,离线可测,无 LLM 也能跑(降级基线);
+// Phase 4 的编译时 Agent 只是在这份草稿上精修 intent/补 expect,schema 不变。
+function upgradeToSkill(rec) {
+  const events = Array.isArray(rec && rec.events) ? rec.events : []
+  const params = Array.isArray(rec && rec.params) ? rec.params : []
+  const skip = new Set(Array.isArray(rec && rec.skipSteps) ? rec.skipSteps : [])
+  const byIdx = new Map(params.map((p) => [p.stepIndex, p]))
+  const steps = []
+  events.forEach((ev, ei) => {
+    if (skip.has(ei) || !ev) return   // 用户勾掉的噪声步不进语义视图(回放层仍按 skipSteps 跳)
+    const st = { ei, act: ev.act, intent: stepIntent(ev) }
+    if (ev.act === 'input' || ev.act === 'select') {
+      const p = byIdx.get(ei)
+      if (ev.human) st.input = { name: ev.humanHint || '人工输入', source: 'resolve', ask: (ev.humanHint || '需人工输入') + (fieldName(ev) ? '(字段:' + fieldName(ev) + ')' : '') }
+      else if (p) st.input = { name: p.label || p.key, source: 'param', key: p.key }
+      else st.input = { name: selDesc(ev), source: 'static', value: ev.secret ? '' : String(ev.value == null ? '' : ev.value).slice(0, 200) }
+    }
+    if (ev.human) st.gate = { type: 'human', hint: ev.humanHint || '需人工操作' }
+    steps.push(st)
+  })
+  return { skillRev: 1, steps }
+}
+// Codex 四段式技能文档(确定性渲染,可反复重建;.skill.md 落在 recordings 目录与 JSON 并排)
+function skillMd(rec) {
+  const { steps } = upgradeToSkill(rec)
+  const L = ['# 技能:' + (rec.title || rec.id || '未命名'), '']
+  L.push('## 何时使用')
+  L.push(rec.description || rec.expectation || '(未填写 —— 建议补一句"什么情况下跑这个技能")')
+  L.push('起始页:' + (rec.startUrl || ''), '')
+  L.push('## 所需输入')
+  const inputs = steps.filter((s) => s.input && s.input.source !== 'static')
+  if (!inputs.length) L.push('无 —— 全部步骤为静态值,可直接运行。')
+  for (const s of inputs) {
+    if (s.input.source === 'param') L.push('- 【运行参数】' + s.input.name + '(运行前填写,key=' + s.input.key + ')')
+    else L.push('- 【运行时解析】' + s.input.ask + '(回放到该步暂停,由人或 Agent 现场提供)')
+  }
+  L.push('', '## 操作步骤')
+  steps.forEach((s, i) => {
+    let line = (i + 1) + '. ' + s.intent
+    if (s.input && s.input.source === 'param') line += '  [参数:' + s.input.name + ']'
+    if (s.gate) line += '  [⏸ ' + s.gate.hint + ']'
+    L.push(line)
+  })
+  L.push('', '## 结果核验')
+  if (rec.success && rec.success.value) L.push('- 成功标志:' + (rec.success.kind === 'text' ? '页面出现文本' : '页面出现元素') + '「' + rec.success.value + '」')
+  if (rec.expectation && rec.expectation !== rec.description) L.push('- 期望:' + rec.expectation)
+  L.push('- 回放后自动核对:步骤成功率 + 控制台报错 + 网络/业务异常(diffReport)')
+  return L.join('\n')
+}
+
+module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd }
 
 // ── 纯文件 IO 工厂:window.js 注入 { app, fs, path, execSync } 后解构使用 ────────
 // 这些函数从 window.js 原样搬入,只把对 app/fs/path/execSync 的引用改为工厂参数(名字不变)。

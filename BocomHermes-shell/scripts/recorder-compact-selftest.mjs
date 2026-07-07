@@ -4,7 +4,7 @@
 // 另加合成边界用例:不跨元素误并、不误删两次真实点击、无按钮表单的 Enter 保留、survivors+dropped 可还原。
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
-const { compactEvents, humanGateHint, markHumanGates } = require('../src/recorder-core.js')
+const { compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd } = require('../src/recorder-core.js')
 
 let pass = 0, fail = 0
 function ok(name, cond, extra) {
@@ -147,6 +147,41 @@ console.log('用例8:人机断点识别(验证码/动态令牌/滑块)')
   ok('验证码步去掉 secret(human 已覆盖语义)', marked[1].secret === undefined)
   ok('普通用户名步不动', marked[0].human === undefined && marked[0].value === 'admin')
   ok('markHumanGates 不改原数组', true)   // Object.assign 产新对象,原引用不变(见实现)
+}
+
+console.log('用例9:upgradeToSkill —— events → 语义 steps(输入来源三分:static/param/resolve)')
+{
+  const rec = {
+    id: 'rec_t', title: '开户', startUrl: 'http://x/login',
+    events: [
+      { act: 'navigate', url: 'http://x/login' },
+      { act: 'input', sel: '#user', value: 'admin', lb: '用户名' },
+      { act: 'input', sel: '#code', value: '', human: true, humanHint: '短信验证码', ph: '请输入短信验证码' },
+      { act: 'click', sel: '__text__:button|登 录', text: '登 录' },
+      { act: 'scroll', x: 0, y: 0 },
+      { act: 'select', sel: '#type', value: '2', text: '对公账户', lb: '账户类型' },
+    ],
+    params: [{ key: 'p1', label: '用户名', stepIndex: 1, default: 'admin' }],
+    skipSteps: [4],
+  }
+  const { skillRev, steps } = upgradeToSkill(rec)
+  ok('skillRev=1', skillRev === 1)
+  ok('skip 步不进语义视图(6 事件→5 步)', steps.length === 5, steps.map((s) => s.intent))
+  ok('ei 回指原 events 下标(scroll 后的 select ei=5)', steps[4].ei === 5)
+  ok('param 步 → source=param', steps[1].input && steps[1].input.source === 'param' && steps[1].input.key === 'p1')
+  ok('human 步 → source=resolve + gate:human', steps[2].input.source === 'resolve' && steps[2].gate && steps[2].gate.type === 'human')
+  ok('普通 select → source=static 带值', steps[4].input.source === 'static' && steps[4].input.value === '2')
+  ok('intent 用 label 说人话', steps[1].intent.includes('用户名'), steps[1].intent)
+  ok('navigate/click intent', steps[0].intent.startsWith('打开') && steps[3].intent.includes('登 录'))
+
+  console.log('用例10:skillMd —— Codex 四段式技能文档(何时使用/所需输入/操作步骤/结果核验)')
+  const md = skillMd({ ...rec, skill: true, description: '给新客户开对公账户', success: { kind: 'text', value: '开户成功' } })
+  ok('四段齐全', ['## 何时使用', '## 所需输入', '## 操作步骤', '## 结果核验'].every((h) => md.includes(h)), md.split('\n')[0])
+  ok('参数列进"所需输入"', md.includes('【运行参数】用户名'))
+  ok('人机断点列进"所需输入"(运行时解析)', md.includes('【运行时解析】') && md.includes('短信验证码'))
+  ok('步骤带 ⏸ 断点标记', md.includes('[⏸ 短信验证码]'))
+  ok('成功标志进"结果核验"', md.includes('开户成功'))
+  ok('全静态技能 → 所需输入为"无"', skillMd({ id: 'a', events: [{ act: 'click', sel: '#b', text: '导出' }] }).includes('无 —— '))
 }
 
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)

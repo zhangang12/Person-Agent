@@ -8,7 +8,7 @@ const emailSummarySeen = require('./email-summary-seen')
 const initOutbox = require('./outbox')
 const db = require('./db')
 const { extractMeeting } = require('./meeting-extract')
-const { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, markHumanGates } = require('./recorder-core')
+const { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, markHumanGates, upgradeToSkill, skillMd } = require('./recorder-core')
 const initRecorder = require('./recorder')
 const { cdpConsoleLevel, fmtRO, fmtException, resolveFrame } = require('./cdp-format')
 const initMail = require('./mail')
@@ -1569,6 +1569,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       if (gates.length) log('rec human-gates: ' + gates.length + ' 处(' + gates.map((g) => g.humanHint).join('/') + ')— 回放将暂停等人工输入')
     } catch (e) { log('rec compact err(回退原始事件): ' + e.message) }
     const rec = { id, tabId: r.tabId, startedAt: r.startedAt, startUrl: r.startUrl, durationMs: Date.now() - r.startedAt, events, compaction, snapshot, preState: r.preState || null }
+    refreshSkillArtifacts(rec)   // steps 语义视图(此刻尚无 params/title,保存为技能时会重建)
     try { fs.writeFileSync(path.join(dir, id + '.json'), JSON.stringify(rec, null, 2)) } catch (e) { log('rec save err: ' + e.message) }
     S.browser.lastRec = rec
     log('rec stop: ' + id + ' · ' + events.length + ' events · pre-fix snapshot: ' + snapshot.errs.length + ' errs / ' + snapshot.bad.length + ' bad')
@@ -1672,7 +1673,11 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     } else {
       if (ev.sel != null) e2.sel = String(ev.sel).slice(0, 1000)
       if (Array.isArray(ev.selAlt)) e2.selAlt = ev.selAlt.slice(0, 8).map((s) => String(s).slice(0, 1000))
-      if (ev.act === 'input') { e2.value = String(ev.value == null ? '' : ev.value).slice(0, 200); if (ev.secret) { e2.secret = true; e2.value = '' } }
+      if (ev.transient) e2.transient = true   // 日历格子标记:丢了会让这类步计入级联早停(存量修复)
+      // 语义字段随事件走:人机断点(human/humanHint)与字段上下文(ph/lb/ac/im),编辑保存不能洗掉
+      if (ev.human) { e2.human = true; if (ev.humanHint) e2.humanHint = String(ev.humanHint).slice(0, 60) }
+      for (const k of ['ph', 'lb', 'ac', 'im']) if (ev[k]) e2[k] = String(ev[k]).slice(0, 60)
+      if (ev.act === 'input') { e2.value = String(ev.value == null ? '' : ev.value).slice(0, 200); if (ev.secret) { e2.secret = true; e2.value = '' } if (ev.human) e2.value = '' }
       if (ev.act === 'select') { e2.value = String(ev.value == null ? '' : ev.value).slice(0, 200); if (ev.text) e2.text = String(ev.text).slice(0, 60) }
       if (ev.act === 'check') e2.checked = !!ev.checked
       if (ev.act === 'key') { if (!_KEYS.has(ev.key)) return null; e2.key = ev.key }
@@ -1682,6 +1687,16 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     }
     e2.t = Number(ev.t) || 0
     return e2
+  }
+  // SKILL 语义视图 + 技能文档(对标 Codex R&R,设计见 docs/技能系统-意图执行与Agent解析链设计.md):
+  // events/params/skipSteps 任一变动就重建 steps;技能(skill:true)另落 <id>.skill.md(四段式,与 JSON 并排)。
+  // 纯增强,try/catch 兜底,绝不阻断保存。
+  function refreshSkillArtifacts(j) {
+    try {
+      const v = upgradeToSkill(j)
+      j.skillRev = v.skillRev; j.steps = v.steps
+      if (j.skill && j.id) fs.writeFileSync(path.join(recDir(), String(j.id).replace(/[^\w.-]/g, '') + '.skill.md'), skillMd(j))
+    } catch (e) { log('skill view err: ' + e.message) }
   }
   // 运行历史:重读磁盘 read-modify-write,只改 lastRun 一个键。
   // 严禁序列化内存里的 rec/clone —— replayRec 会把 preState(cookie)塞进 events[i]._restorePreState,直接 stringify 会持久化敏感态
@@ -1776,13 +1791,15 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
         if (s && (s.kind === 'css' || s.kind === 'text') && typeof s.value === 'string' && s.value.length > 0 && s.value.length <= 500) j.success = { kind: s.kind, value: s.value }
         else delete j.success
       }
+      refreshSkillArtifacts(j)   // params/skill/success 变了 → 重建 steps;skill:true 落 .skill.md
       fs.writeFileSync(fp, JSON.stringify(j, null, 2))
       return true
     } catch (e) { log('rec update err: ' + e.message); return false }
   })
   ipcMain.handle('browser-rec-delete', (_e, id) => {
-    const fp = path.join(recDir(), String(id).replace(/[^\w.-]/g, '') + '.json')
-    try { fs.unlinkSync(fp); log('rec deleted: ' + id); return true } catch (e) { log('rec del err: ' + e.message); return false }
+    const base = path.join(recDir(), String(id).replace(/[^\w.-]/g, ''))
+    try { fs.unlinkSync(base + '.skill.md') } catch {}   // 技能文档随录制一起删
+    try { fs.unlinkSync(base + '.json'); log('rec deleted: ' + id); return true } catch (e) { log('rec del err: ' + e.message); return false }
   })
   // 入参兼容两种形态:'rec_xx'(旧)或 { id, params, baseUrl }(带运行时参数/环境切换)
   ipcMain.handle('browser-rec-replay-stored', async (_e, arg) => {
@@ -1888,6 +1905,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     // 重映射 skipSteps
     if (Array.isArray(j.skipSteps)) j.skipSteps = j.skipSteps.filter((x) => idxMap.has(x)).map((x) => idxMap.get(x))
     delete j.lastRun   // 步骤变了,上次运行结果作废
+    refreshSkillArtifacts(j)   // events/params/skipSteps 都可能变了 → 重建语义视图
     try { fs.writeFileSync(fp, JSON.stringify(j, null, 2)); log('rec edit-steps: ' + id + ' → ' + events.length + ' 步') }
     catch (e) { return { ok: false, error: e.message } }
     return { ok: true, steps: events.length, params: (j.params || []).length }
