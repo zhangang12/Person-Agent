@@ -509,11 +509,12 @@ function upgradeToSkill(rec) {
   const events = Array.isArray(rec && rec.events) ? rec.events : []
   const params = Array.isArray(rec && rec.params) ? rec.params : []
   const skip = new Set(Array.isArray(rec && rec.skipSteps) ? rec.skipSteps : [])
+  const ovr = (rec && rec.intentOverrides && typeof rec.intentOverrides === 'object') ? rec.intentOverrides : null   // Agent 精修的人话步名(ei 键),优先于启发式
   const byIdx = new Map(params.map((p) => [p.stepIndex, p]))
   const steps = []
   events.forEach((ev, ei) => {
     if (skip.has(ei) || !ev) return   // 用户勾掉的噪声步不进语义视图(回放层仍按 skipSteps 跳)
-    const st = { ei, act: ev.act, intent: stepIntent(ev) }
+    const st = { ei, act: ev.act, intent: (ovr && typeof ovr[ei] === 'string' && ovr[ei]) || stepIntent(ev) }
     if (ev.act === 'input' || ev.act === 'select') {
       const p = byIdx.get(ei)
       if (ev.human) st.input = { name: ev.humanHint || '人工输入', source: 'resolve', ask: (ev.humanHint || '需人工输入') + (fieldName(ev) ? '(字段:' + fieldName(ev) + ')' : '') }
@@ -550,10 +551,56 @@ function skillMd(rec) {
   if (rec.success && rec.success.value) L.push('- 成功标志:' + (rec.success.kind === 'text' ? '页面出现文本' : '页面出现元素') + '「' + rec.success.value + '」')
   if (rec.expectation && rec.expectation !== rec.description) L.push('- 期望:' + rec.expectation)
   L.push('- 回放后自动核对:步骤成功率 + 控制台报错 + 网络/业务异常(diffReport)')
+  if (rec.skillNotes) L.push('', '## 注意事项(决策点/隐藏偏好)', rec.skillNotes)   // Agent 精修补的"Codex 式"决策点说明
   return L.join('\n')
 }
 
-module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd }
+// ── Phase 4·编译时 Agent:精修补丁应用(纯函数)────────────────────────────────
+// Agent 产出 JSON 补丁 { title, description, intents:{ei:名}, params:[{stepIndex,label}], success, notes },
+// 这里逐字段校验后应用:坏字段静默丢弃(宁缺毋滥,坏补丁绝不毁技能)。
+// intent 精修存 intentOverrides(ei 键)—— upgradeToSkill 优先读,steps 随 events 重建也不丢;
+// success 只在用户没设过时应用(人的判断优先于模型);params 只追加合法新参数,不动已有。
+function applyRefinePatch(rec, patch) {
+  const j = JSON.parse(JSON.stringify(rec || {}))
+  const p = (patch && typeof patch === 'object') ? patch : {}
+  const applied = []
+  if (typeof p.title === 'string' && p.title.trim() && p.title.trim() !== (j.title || '')) { j.title = p.title.trim().slice(0, 40); applied.push('标题') }
+  if (typeof p.description === 'string' && p.description.trim()) { j.description = p.description.trim().slice(0, 300); applied.push('何时使用') }
+  const events = Array.isArray(j.events) ? j.events : []
+  if (p.intents && typeof p.intents === 'object' && !Array.isArray(p.intents)) {
+    const ovr = Object.assign({}, j.intentOverrides)
+    let n = 0
+    for (const [k, v] of Object.entries(p.intents)) {
+      const ei = Number(k)
+      if (!Number.isInteger(ei) || ei < 0 || ei >= events.length) continue
+      if (typeof v !== 'string' || !v.trim()) continue
+      ovr[ei] = v.trim().slice(0, 40); n++
+    }
+    if (n) { j.intentOverrides = ovr; applied.push('步骤命名×' + n) }
+  }
+  if (Array.isArray(p.params)) {
+    const have = new Set((j.params || []).map((x) => x && x.stepIndex))
+    const add = []
+    for (const s of p.params) {
+      const si = Number(s && s.stepIndex)
+      const ev = events[si]
+      if (!Number.isInteger(si) || !ev || have.has(si)) continue
+      if (ev.act !== 'input' && ev.act !== 'select') continue
+      if (ev.secret || ev.human) continue   // 密码/人机断点步不参数化(各有专属机制)
+      const label = String((s && s.label) || '').trim().slice(0, 30); if (!label) continue
+      add.push({ key: 'p' + ((j.params || []).length + add.length + 1), label, stepIndex: si, default: String(ev.value == null ? '' : ev.value).slice(0, 200) })
+      have.add(si)
+    }
+    if (add.length) { j.params = [...(j.params || []), ...add]; applied.push('参数建议×' + add.length) }
+  }
+  if (!j.success && p.success && (p.success.kind === 'css' || p.success.kind === 'text') && typeof p.success.value === 'string' && p.success.value.trim()) {
+    j.success = { kind: p.success.kind, value: p.success.value.trim().slice(0, 500) }; applied.push('成功判据')
+  }
+  if (typeof p.notes === 'string' && p.notes.trim()) { j.skillNotes = p.notes.trim().slice(0, 500); applied.push('注意事项') }
+  return { rec: j, applied }
+}
+
+module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, applyRefinePatch }
 
 // ── 纯文件 IO 工厂:window.js 注入 { app, fs, path, execSync } 后解构使用 ────────
 // 这些函数从 window.js 原样搬入,只把对 app/fs/path/execSync 的引用改为工厂参数(名字不变)。

@@ -8,7 +8,7 @@ const emailSummarySeen = require('./email-summary-seen')
 const initOutbox = require('./outbox')
 const db = require('./db')
 const { extractMeeting } = require('./meeting-extract')
-const { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, markHumanGates, upgradeToSkill, skillMd } = require('./recorder-core')
+const { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, markHumanGates, upgradeToSkill, skillMd, applyRefinePatch } = require('./recorder-core')
 const initRecorder = require('./recorder')
 const { cdpConsoleLevel, fmtRO, fmtException, resolveFrame } = require('./cdp-format')
 const initMail = require('./mail')
@@ -1805,6 +1805,59 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('browser-rec-get', (_e, id) => { try { return readRec(id) } catch { return null } })
   // 技能文档(Codex 四段式):现生成保证与 JSON 同步,不读 .skill.md 缓存(那份是给文件系统/Agent 看的)
   ipcMain.handle('browser-rec-skillmd', (_e, id) => { try { return skillMd(readRec(id)) } catch { return null } })
+  // 【编译时 Agent·Phase 4】技能精修(对标 Codex"LLM 起草 SKILL.md"):确定性草稿(四段文档+事件明细)
+  // 交给 Agent 无头会话,产出 JSON 补丁(标题/何时使用/步骤命名/参数建议/成功判据/注意事项),
+  // applyRefinePatch 逐字段校验后落盘。纯增强:失败/超时/坏 JSON 都不动技能。
+  async function skillRefine(id) {
+    let rec; try { rec = readRec(id) } catch (e) { return { ok: false, error: '读取失败: ' + e.message } }
+    const evDigest = (rec.events || []).map((ev, i) => {
+      const bits = [i + '.', ev.act, ev.sel || ev.url || '']
+      if (ev.text) bits.push('text=' + ev.text)
+      if (ev.lb) bits.push('label=' + ev.lb)
+      if (ev.ph) bits.push('placeholder=' + ev.ph)
+      if (ev.act === 'input' && !ev.secret && !ev.human) bits.push('value=' + String(ev.value == null ? '' : ev.value).slice(0, 40))
+      if (ev.secret) bits.push('(密码)')
+      if (ev.human) bits.push('⏸human:' + (ev.humanHint || ''))
+      return bits.join(' ')
+    }).join('\n')
+    const prompt = '你在精修一个浏览器自动化技能(录制生成的草稿)。目标:文档一眼能懂、参数识别完整、成功判据可自动检查。\n\n'
+      + '## 当前技能文档(确定性草稿)\n' + skillMd(rec) + '\n\n'
+      + '## 原始事件明细(行首数字=stepIndex)\n' + evDigest + '\n\n'
+      + '请只输出一个 JSON(不要其它文字),形如:\n'
+      + '{ "title": "≤20字技能名(现有名够好就原样返回)",\n'
+      + '  "description": "何时使用:一两句,什么场景跑这个技能",\n'
+      + '  "intents": { "0": "打开登录页", "5": "填写管理员账号" },\n'
+      + '  "params": [ { "stepIndex": 3, "label": "客户手机号" } ],\n'
+      + '  "success": { "kind": "text", "value": "导出成功" },\n'
+      + '  "notes": "决策点/隐藏偏好/注意事项,没有则空字符串" }\n'
+      + '规则:\n'
+      + '- intents:键=事件下标(字符串),值=这步的人话名(≤20字);只写你能明显改善的步。\n'
+      + '- params:只提名"每次运行都会不同"的输入步(stepIndex 必须指向 input/select 步);录制值像常量配置的不要提名。\n'
+      + '- success:从操作意图+最后页面推断可自动检查的成功标志(text=页面出现文本/css=出现元素);推断不出就省略该键。\n'
+      + '- 不确定就少写,宁缺毋滥。'
+    let serve
+    try { serve = await oc.ensureServe(S.settings.projectDir || process.cwd(), S.handlers, log) } catch (e) { return { ok: false, error: 'serve 不可用: ' + e.message } }
+    const sid = await oc.createSession(serve, '技能精修:' + (rec.title || id))
+    if (!sid) return { ok: false, error: 'createSession 失败' }
+    log('skill refine: ' + id + ' → session ' + sid)
+    let raw
+    try {
+      raw = await Promise.race([
+        oc.sendMessage(serve, sid, prompt),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('Agent 精修超时(180s)—— 网关慢,可稍后重试')), 180000)),
+      ])
+    } catch (e) { try { oc.abort(serve, sid) } catch {} return { ok: false, error: e.message } }
+    const m = String(raw || '').match(/\{[\s\S]*\}/)
+    if (!m) return { ok: false, error: 'Agent 未返回 JSON:' + String(raw || '(空)').slice(0, 120) }
+    let patch; try { patch = JSON.parse(m[0]) } catch (e) { return { ok: false, error: '补丁 JSON 解析失败: ' + e.message } }
+    const { rec: j2, applied } = applyRefinePatch(rec, patch)
+    if (!applied.length) return { ok: true, applied: [], note: 'Agent 认为无需改动(或补丁全被校验拒绝)' }
+    refreshSkillArtifacts(j2)
+    try { fs.writeFileSync(path.join(recDir(), String(id).replace(/[^\w.-]/g, '') + '.json'), JSON.stringify(j2, null, 2)) } catch (e) { return { ok: false, error: '写盘失败: ' + e.message } }
+    log('skill refine applied: ' + id + ' → ' + applied.join('/'))
+    return { ok: true, applied }
+  }
+  ipcMain.handle('browser-rec-refine', async (_e, id) => await skillRefine(id))
   ipcMain.handle('browser-rec-update', (_e, { id, patch }) => {
     if (!id || !patch || typeof patch !== 'object') return false
     const fp = path.join(recDir(), String(id).replace(/[^\w.-]/g, '') + '.json')
@@ -1935,6 +1988,12 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     }
     // 重映射 skipSteps
     if (Array.isArray(j.skipSteps)) j.skipSteps = j.skipSteps.filter((x) => idxMap.has(x)).map((x) => idxMap.get(x))
+    // 重映射 intentOverrides(Agent 精修的步名按 ei 键存,删步后下标平移)
+    if (j.intentOverrides && typeof j.intentOverrides === 'object') {
+      const no = {}
+      for (const [k, v] of Object.entries(j.intentOverrides)) { const ni = idxMap.get(Number(k)); if (ni !== undefined) no[ni] = v }
+      j.intentOverrides = no
+    }
     delete j.lastRun   // 步骤变了,上次运行结果作废
     refreshSkillArtifacts(j)   // events/params/skipSteps 都可能变了 → 重建语义视图
     try { fs.writeFileSync(fp, JSON.stringify(j, null, 2)); log('rec edit-steps: ' + id + ' → ' + events.length + ' 步') }
