@@ -52,9 +52,12 @@ const TOOLS = [
   { name: 'read_notes', description: '读某个复现包当前所有便签(给 lens 启动前看,避免重复工作)。无便签返回空数组。', inputSchema: { type: 'object', properties: { bundleId: { type: 'string' } }, required: ['bundleId'] } },
   { name: 'skill_pending_resolves', description: '列出技能回放当前挂起的"运行时解析请求"(回放暂停在某步,等一个运行时才知道的值:物料数据/文件路径/验证码等)。回放暂停时主程序会把请求发进对话;也可主动调这个查漏。', inputSchema: { type: 'object', properties: {} } },
   { name: 'skill_resolve', description: '答复一个挂起的解析请求:把你用工具(读项目文件/Excel/查库/看证据)解出的值写回,回放立刻续跑并把值填入该步字段。**只在确有把握时调用**;只有人知道的值(如短信验证码)不要猜,回复用户说明即可,用户会在页面手动输入。', inputSchema: { type: 'object', properties: { gateId: { type: 'string', description: '解析请求 id(来自暂停通知或 skill_pending_resolves)' }, value: { type: 'string', description: '解出的值(将按输入步写进目标字段)' }, note: { type: 'string', description: '可选:一句话依据(留档)' } }, required: ['gateId', 'value'] } },
+  { name: 'skill_refine', description: '提交技能精修结果(主程序请你整理技能时调用):把改进后的字段写回,主程序校验后自动落盘并更新技能文档。只传你有把握改善的字段;不确定就省略。', inputSchema: { type: 'object', properties: { recId: { type: 'string', description: '技能 id(形如 rec_xxx,来自整理请求)' }, title: { type: 'string', description: '≤20字技能名(现有名够好就省略)' }, description: { type: 'string', description: '何时使用:一两句' }, intents: { type: 'object', description: '{事件下标: 这步的人话名},只写能明显改善的步' }, params: { type: 'array', items: { type: 'object' }, description: '[{stepIndex, label}] 提名"每次运行都不同"的输入步为参数' }, success: { type: 'object', description: '{kind:"text"|"css", value} 可自动检查的成功标志' }, notes: { type: 'string', description: '决策点/隐藏偏好/注意事项' } }, required: ['recId'] } },
 ]
 // 解析总线目录(与主进程 window.js resolveBus 的文件契约):req=<gateId>.json,res=<gateId>.res.json
 const RSV = path.join(userData(), 'resolves')
+// 精修总线目录(与主进程 skillRefineFlow 的文件契约):<recId>.json = Agent 提交的补丁,主进程轮询取走
+const RFN = path.join(userData(), 'refines')
 
 async function callTool(name, a) {
   a = a || {}
@@ -80,6 +83,18 @@ async function callTool(name, a) {
     if (!fs.existsSync(path.join(RSV, gateId + '.json'))) return '没有这个挂起请求(可能已续跑或超时):' + gateId
     try { fs.writeFileSync(path.join(RSV, gateId + '.res.json'), JSON.stringify({ value, note: String(a.note || '').slice(0, 200), at: Date.now() })) } catch (e) { return '写入失败:' + e.message }
     return `✓ 已答复 ${gateId},回放将自动续跑并把值填入该步字段。`
+  }
+  if (name === 'skill_refine') {
+    const recId = String(a.recId || '').trim()
+    if (!/^[\w.-]{3,60}$/.test(recId)) return 'recId 形如 rec_xxx(来自整理请求),收到:' + (recId || '(空)')
+    const patch = {}
+    for (const k of ['title', 'description', 'notes']) if (typeof a[k] === 'string' && a[k].trim()) patch[k] = a[k]
+    if (a.intents && typeof a.intents === 'object' && !Array.isArray(a.intents)) patch.intents = a.intents
+    if (Array.isArray(a.params)) patch.params = a.params
+    if (a.success && typeof a.success === 'object') patch.success = a.success
+    if (!Object.keys(patch).length) return '补丁为空 —— 至少传一个待改进字段(title/description/intents/params/success/notes)。'
+    try { fs.mkdirSync(RFN, { recursive: true }); fs.writeFileSync(path.join(RFN, recId + '.json'), JSON.stringify({ patch, at: Date.now() })) } catch (e) { return '写入失败:' + e.message }
+    return `✓ 已提交对 ${recId} 的精修(${Object.keys(patch).join('/')}),主程序校验后自动落盘并更新技能文档。`
   }
   if (name === 'list_bundles') {
     try {

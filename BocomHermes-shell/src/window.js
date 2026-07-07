@@ -1865,64 +1865,84 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('browser-rec-get', (_e, id) => { try { return readRec(id) } catch { return null } })
   // 技能文档(Codex 四段式):现生成保证与 JSON 同步,不读 .skill.md 缓存(那份是给文件系统/Agent 看的)
   ipcMain.handle('browser-rec-skillmd', (_e, id) => { try { return skillMd(readRec(id)) } catch { return null } })
-  // 【编译时 Agent·Phase 4】技能精修(对标 Codex"LLM 起草 SKILL.md"):确定性草稿(四段文档+事件明细)
-  // 交给 Agent 无头会话,产出 JSON 补丁(标题/何时使用/步骤命名/参数建议/成功判据/注意事项),
-  // applyRefinePatch 逐字段校验后落盘。纯增强:失败/超时/坏 JSON 都不动技能。
-  async function skillRefine(id) {
-    let rec; try { rec = readRec(id) } catch (e) { return { ok: false, error: '读取失败: ' + e.message } }
-    const evDigest = (rec.events || []).map((ev, i) => {
-      const bits = [i + '.', ev.act, ev.sel || ev.url || '']
-      if (ev.text) bits.push('text=' + ev.text)
-      if (ev.lb) bits.push('label=' + ev.lb)
-      if (ev.ph) bits.push('placeholder=' + ev.ph)
-      if (ev.act === 'input' && !ev.secret && !ev.human) bits.push('value=' + String(ev.value == null ? '' : ev.value).slice(0, 40))
-      if (ev.secret) bits.push('(密码)')
-      if (ev.human) bits.push('⏸human:' + (ev.humanHint || ''))
-      return bits.join(' ')
-    }).join('\n')
-    const prompt = '你在精修一个浏览器自动化技能(录制生成的草稿)。目标:文档一眼能懂、参数识别完整、成功判据可自动检查。\n\n'
-      + '## 当前技能文档(确定性草稿)\n' + skillMd(rec) + '\n\n'
-      + '## 原始事件明细(行首数字=stepIndex)\n' + evDigest + '\n\n'
-      + '请只输出一个 JSON(不要其它文字),形如:\n'
-      + '{ "title": "≤20字技能名(现有名够好就原样返回)",\n'
-      + '  "description": "何时使用:一两句,什么场景跑这个技能",\n'
-      + '  "intents": { "0": "打开登录页", "5": "填写管理员账号" },\n'
-      + '  "params": [ { "stepIndex": 3, "label": "客户手机号" } ],\n'
-      + '  "success": { "kind": "text", "value": "导出成功" },\n'
-      + '  "notes": "决策点/隐藏偏好/注意事项,没有则空字符串" }\n'
-      + '规则:\n'
-      + '- intents:键=事件下标(字符串),值=这步的人话名(≤20字);只写你能明显改善的步。\n'
-      + '- params:只提名"每次运行都会不同"的输入步(stepIndex 必须指向 input/select 步);录制值像常量配置的不要提名。\n'
-      + '- success:从操作意图+最后页面推断可自动检查的成功标志(text=页面出现文本/css=出现元素);推断不出就省略该键。\n'
-      + '- 不确定就少写,宁缺毋滥。'
-    let serve
-    try { serve = await oc.ensureServe(S.settings.projectDir || process.cwd(), S.handlers, log) } catch (e) { return { ok: false, error: 'serve 不可用: ' + e.message } }
-    const sid = await oc.createSession(serve, '技能精修:' + (rec.title || id))
-    if (!sid) return { ok: false, error: 'createSession 失败' }
-    log('skill refine: ' + id + ' → session ' + sid)
-    let raw
+  // 【编译时 Agent·Phase 4(工作流化)】技能精修:「保存为技能」后【自动触发】,不设手动按钮
+  // (一步工作流,对标 Codex"录完即起草";用户反馈:精修要可视化 + 不给一堆选项)。
+  // 可视化优先:工作台卡片开着 → card-inject 把整理请求发进【可见对话】,用户看着 Agent 干活;
+  // 没开工作台 → 降级无头会话(同一 prompt)。两条路 Agent 都用 MCP 工具 skill_refine(recId,…)
+  // 提交补丁(refines/<id>.json 文件总线),这里轮询取走 → 剥掉用户已定字段(标题必保,
+  // 描述仅在空/懒时收)→ applyRefinePatch 校验 → 落盘 + browser-skill-refined 通知。
+  // 纯增强:超时(5 分钟)/失败/坏补丁都不动技能。
+  const refinesDir = () => path.join(app.getPath('userData'), 'refines')
+  const _refining = new Set()
+  async function skillRefineFlow(id) {
+    if (_refining.has(id)) return
+    _refining.add(id)
     try {
-      raw = await Promise.race([
-        oc.sendMessage(serve, sid, prompt),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('Agent 精修超时(180s)—— 网关慢,可稍后重试')), 180000)),
-      ])
-    } catch (e) { try { oc.abort(serve, sid) } catch {} return { ok: false, error: e.message } }
-    const m = String(raw || '').match(/\{[\s\S]*\}/)
-    if (!m) return { ok: false, error: 'Agent 未返回 JSON:' + String(raw || '(空)').slice(0, 120) }
-    let patch; try { patch = JSON.parse(m[0]) } catch (e) { return { ok: false, error: '补丁 JSON 解析失败: ' + e.message } }
-    const { rec: j2, applied } = applyRefinePatch(rec, patch)
-    if (!applied.length) return { ok: true, applied: [], note: 'Agent 认为无需改动(或补丁全被校验拒绝)' }
-    refreshSkillArtifacts(j2)
-    try { fs.writeFileSync(path.join(recDir(), String(id).replace(/[^\w.-]/g, '') + '.json'), JSON.stringify(j2, null, 2)) } catch (e) { return { ok: false, error: '写盘失败: ' + e.message } }
-    log('skill refine applied: ' + id + ' → ' + applied.join('/'))
-    return { ok: true, applied }
+      let rec; try { rec = readRec(id) } catch (e) { log('refine 读取失败: ' + e.message); return }
+      try { fs.mkdirSync(refinesDir(), { recursive: true }) } catch {}
+      try { fs.unlinkSync(path.join(refinesDir(), id + '.json')) } catch {}   // 清陈旧补丁,防误取上一轮的
+      const evDigest = (rec.events || []).map((ev, i) => {
+        const bits = [i + '.', ev.act, ev.sel || ev.url || '']
+        if (ev.text) bits.push('text=' + ev.text)
+        if (ev.lb) bits.push('label=' + ev.lb)
+        if (ev.ph) bits.push('placeholder=' + ev.ph)
+        if (ev.act === 'input' && !ev.secret && !ev.human) bits.push('value=' + String(ev.value == null ? '' : ev.value).slice(0, 40))
+        if (ev.secret) bits.push('(密码)')
+        if (ev.human) bits.push('⏸human:' + (ev.humanHint || ''))
+        return bits.join(' ')
+      }).join('\n')
+      const prompt = '请整理这条刚保存的浏览器自动化技能(自动工作流,直接做,无需征询用户):\n\n'
+        + '## 当前技能文档(确定性草稿)\n' + skillMd(rec) + '\n\n'
+        + '## 原始事件明细(行首数字=stepIndex)\n' + evDigest + '\n\n'
+        + '任务:\n'
+        + '1. 给含糊的步骤起人话名:intents={事件下标:名字},≤20字/步,只写能明显改善的\n'
+        + '2. 提名"每次运行都会不同"的输入步为参数:params=[{stepIndex,label}](stepIndex 必须是 input/select 步;录制值像常量配置的不提名)\n'
+        + '3. 推断可自动检查的成功标志:success={kind:"text"或"css",value}(推断不出就省略)\n'
+        + '4. 补"何时使用"(description)与注意事项/决策点(notes),可省略\n'
+        + '完成后调用 MCP 工具 skill_refine(recId="' + id + '", …上述字段…) 提交;不确定的字段省略,宁缺毋滥。\n'
+        + '提交后用一两句话说明你改了什么即可,不要把 JSON 贴在对话里。'
+      const b = S.browser
+      const viaCard = b.mode === 'workspace' && b.cardView && !b.cardView.webContents.isDestroyed()
+      if (viaCard) {
+        b.cardView.webContents.send('card-inject', { text: prompt, disp: '🛠 自动整理技能「' + (rec.title || id) + '」:步骤命名/参数识别/成功判据…' })
+      } else {
+        try {
+          const serve = await oc.ensureServe(S.settings.projectDir || process.cwd(), S.handlers, log)
+          const sid = await oc.createSession(serve, '技能精修:' + (rec.title || id))
+          if (!sid) { log('refine createSession 失败'); return }
+          oc.sendMessage(serve, sid, prompt).catch((e) => log('refine 无头会话错误: ' + e.message))
+        } catch (e) { log('refine serve 不可用: ' + e.message); return }
+      }
+      log('skill refine 已发起(' + (viaCard ? '工作台可视' : '无头降级') + '): ' + id)
+      // 轮询 Agent 经 skill_refine 提交的补丁,最长 5 分钟;拿不到就静默放弃(技能已可用,精修只是增强)
+      const fp = path.join(refinesDir(), id + '.json')
+      const t0 = Date.now()
+      let got = null
+      while (Date.now() - t0 < 300000) {
+        await sleep(1500)
+        try { got = JSON.parse(fs.readFileSync(fp, 'utf8')); break } catch {}
+      }
+      if (!got || !got.patch) { log('refine 超时/无补丁: ' + id); return }
+      try { fs.unlinkSync(fp) } catch {}
+      // 重读技能(等待期间用户可能改过)再套补丁;用户已定字段优先:标题必保,描述仅空/懒(=标题)时收
+      let cur; try { cur = readRec(id) } catch { return }
+      const patch = got.patch
+      if (cur.title) delete patch.title
+      if (cur.description && cur.description !== cur.title) delete patch.description
+      const { rec: j2, applied } = applyRefinePatch(cur, patch)
+      if (!applied.length) { log('refine 无可应用改进: ' + id); return }
+      refreshSkillArtifacts(j2)
+      try { fs.writeFileSync(path.join(recDir(), String(id).replace(/[^\w.-]/g, '') + '.json'), JSON.stringify(j2, null, 2)) } catch (e) { log('refine 写盘失败: ' + e.message); return }
+      log('skill refine 应用: ' + id + ' → ' + applied.join('/'))
+      if (b.win && !b.win.isDestroyed()) b.win.webContents.send('browser-skill-refined', { id, title: j2.title || id, applied })
+    } finally { _refining.delete(id) }
   }
-  ipcMain.handle('browser-rec-refine', async (_e, id) => await skillRefine(id))
   ipcMain.handle('browser-rec-update', (_e, { id, patch }) => {
     if (!id || !patch || typeof patch !== 'object') return false
     const fp = path.join(recDir(), String(id).replace(/[^\w.-]/g, '') + '.json')
     try {
       const j = JSON.parse(fs.readFileSync(fp, 'utf8'))
+      const wasSkill = !!j.skill   // 晋升检测:非技能 → 技能 的那一次触发自动精修
       const allowed = ['title', 'starred', 'expectation', 'description', 'params', 'skill']   // events 不进白名单,保持只读
       for (const k of allowed) if (k in patch) j[k] = patch[k]
       // 形状校验后才放行的字段(坏形状直接丢弃,不落盘)
@@ -1937,6 +1957,8 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       }
       refreshSkillArtifacts(j)   // params/skill/success 变了 → 重建 steps;skill:true 落 .skill.md
       fs.writeFileSync(fp, JSON.stringify(j, null, 2))
+      // 一步工作流:「保存为技能」的那一次自动触发 Agent 精修(可视化跑在工作台对话;fire-and-forget,失败不影响保存)
+      if (patch.skill === true && !wasSkill) setTimeout(() => { skillRefineFlow(j.id || id).catch((e) => log('refine flow err: ' + e.message)) }, 400)
       return true
     } catch (e) { log('rec update err: ' + e.message); return false }
   })

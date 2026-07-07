@@ -896,8 +896,7 @@ async function openRecMgr() {
         ${it.lastRun ? `<span style="font-size:10px;color:${it.lastRun.ok ? '#5dcf95' : '#ff8b8b'};border:1px solid ${it.lastRun.ok ? 'rgba(26,168,110,.4)' : 'rgba(226,66,74,.4)'};border-radius:5px;padding:0 5px" title="上次运行 ${fmtTime(it.lastRun.at)}">${it.lastRun.ok ? '✓ 上次成功' : '✗ 上次 ' + it.lastRun.fails + ' 步失败'}</span>` : ''}
         <span style="flex:1"></span>
         ${!it.skill ? `<button data-act="mkskill" style="background:transparent;border:1px solid rgba(74,168,255,.4);color:var(--accent);border-radius:6px;padding:3px 9px;cursor:pointer;font-size:11px">⚙ 存为技能</button>` : ''}
-        <button data-act="refine" title="Agent 精修:给步骤起人话名/识别参数/推断成功判据/补注意事项(走本地 serve,最长 3 分钟)" style="background:transparent;border:1px solid var(--line);color:var(--txt3);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">🤖 精修</button>
-        <button data-act="doc" title="技能文档(何时使用/所需输入/操作步骤/结果核验)" style="background:transparent;border:1px solid var(--line);color:var(--txt3);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">📄 文档</button>
+        <button data-act="doc" title="技能文档(何时使用/所需输入/操作步骤/结果核验;保存为技能后 Agent 自动整理完善)" style="background:transparent;border:1px solid var(--line);color:var(--txt3);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">📄 文档</button>
         <button data-act="edit" title="编辑步骤(删步/重排/改输入值)" style="background:transparent;border:1px solid var(--line);color:var(--txt3);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">✎ 步骤</button>
         ${it.skill ? `<button data-act="export" title="导出技能 JSON(已剥离登录态,可分享)" style="background:transparent;border:1px solid var(--line);color:var(--txt3);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">导出</button>` : ''}
         <button data-act="replay" style="background:rgba(26,168,110,.15);border:1px solid #1aa86e;color:#5dcf95;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px">▶ 运行</button>
@@ -921,20 +920,6 @@ async function openRecMgr() {
       if (!rec) { showToast('<span class="err">⚠</span> 读取录制失败'); return }
       closePanel()
       saveAsSkill(rec)
-    })
-    // Agent 精修:无头会话产 JSON 补丁 → 校验落盘(失败不动技能);完成后重开列表看效果
-    row.querySelector('[data-act="refine"]').addEventListener('click', async (e) => {
-      const btn = e.currentTarget
-      btn.disabled = true; btn.textContent = '🤖 精修中…'
-      showToast('🤖 Agent 精修中(走本地 serve,最长 3 分钟)…')
-      try {
-        const r = await H.browserRecRefine(it.id)
-        if (r && r.ok) {
-          showToast('<span class="ok">✓</span> 精修完成:' + (r.applied && r.applied.length ? r.applied.join('、') : (r.note || '无改动')))
-          if (r.applied && r.applied.length && document.getElementById('recmgr')) { closePanel(); openRecMgr() }
-        } else showToast('<span class="err">⚠</span> 精修失败: ' + ((r && r.error) || ''))
-      } catch (err) { showToast('<span class="err">⚠</span> ' + err.message) }
-      if (btn.isConnected) { btn.disabled = false; btn.textContent = '🤖 精修' }
     })
     // 技能文档:面板内嵌视图(不新开原生层,零布局纠缠),现生成保证与 JSON 同步
     row.querySelector('[data-act="doc"]').addEventListener('click', async () => {
@@ -1100,6 +1085,11 @@ function showReplayPause(d) {
   b.appendChild(btn)
   document.body.appendChild(b)
 }
+// 「保存为技能」触发的 Agent 自动精修完成 → toast 告知改了什么(过程本身在工作台对话里可视)
+H.onBrowserSkillRefined && H.onBrowserSkillRefined((d) => {
+  const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+  showToast('<span class="ok">🛠</span> 技能「' + esc(d.title) + '」已由 Agent 整理:' + esc((d.applied || []).join('、')))
+})
 H.onBrowserReplayProgress && H.onBrowserReplayProgress((d) => {
   if (d.pause) { showReplayPause(d); return }             // 人机断点:显示可点的暂停横幅,等人现场操作
   if (d.resume) { clearReplayPause(); return }            // 人填完/点继续 → 收横幅,回放续跑
