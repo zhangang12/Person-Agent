@@ -13,11 +13,19 @@
     // 源头守卫:天枢自己的 chrome 页(新标签页搜索框等,body[data-bocom-chrome])上的操作不录 —— 否则用户在地址搜索框敲目标 URL 会漏进录制,回放目标页根本没这框。__ping__ 健康自检走独立 PING_JS,不受影响。
     try { if (document.body && document.body.getAttribute && document.body.getAttribute('data-bocom-chrome')) return; } catch(_){}
     try { if (window.top !== window && !e.fu) e.fu = location.href; } catch(_){ } var s = '__BR__' + JSON.stringify(e); try { if (typeof window.__bocom_rec_emit === 'function') return window.__bocom_rec_emit(s); } catch(_){} try { console.log(s); } catch(_){} };
+  // 动态 id(框架每次渲染都变,回放必失配)不作选择器候选:Element UI/Plus 的 el-id-<数字>、
+  // React useId(:r../«r..»)、含 6+ 连续数字或纯 hex 的随机 id。
+  var isDynId = function(id){
+    id = String(id||'');
+    return /^el-id-\\d/.test(id) || /^:r[0-9a-z]+:?$/i.test(id) || /^[«][^»]*[»]$/.test(id) || /\\d{6,}/.test(id) || /^[0-9a-f]{8,}$/i.test(id);
+  };
+  // 瞬态状态类(聚焦/激活/选中/悬停/展开…):录制时元素处于某态才有,回放状态不同 → 带进选择器会失配,建路径时剔除,只留结构/语义类。
+  var TRANSIENT_CLS = /^(?:is-|has-)|(?:^|[-_])(?:focus|active|hover|selected|checked|current|expanded|open|show|visible|highlight|disabled|loading|dragging)(?:[-_]|$)/i;
   // 记多个选择器候选:回放时按优先级 fallback,DOM 结构小幅变动也能命中
   var selBuild = function(el){
     if (!el || el === document || el === document.body) return ['body'];
     var cands = [];
-    if (el.id) cands.push('#' + CSS.escape(el.id));
+    if (el.id && !isDynId(el.id)) cands.push('#' + CSS.escape(el.id));
     var attrs = ['data-test','data-testid','data-cy','data-qa','name','aria-label'];
     for (var i=0;i<attrs.length;i++) {
       var v = el.getAttribute && el.getAttribute(attrs[i]);
@@ -47,7 +55,7 @@
     for (var d=0; d<5 && n && n.tagName && n !== document.body; d++) {
       var s = n.tagName.toLowerCase();
       if (typeof n.className === 'string' && n.className.trim()) {
-        var cls = n.className.trim().split(/\\s+/).slice(0,2).filter(Boolean).map(function(c){return '.'+CSS.escape(c)}).join('');
+        var cls = n.className.trim().split(/\\s+/).filter(function(c){return c && !TRANSIENT_CLS.test(c)}).slice(0,2).map(function(c){return '.'+CSS.escape(c)}).join('');
         if (cls) s += cls;
       }
       var par = n.parentNode;

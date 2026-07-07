@@ -248,18 +248,20 @@ module.exports = function initRecorder(ctx) {
   // ── 命中证据 ─────────────────────────────────────────────────────────────
   // 用 V8 PreciseCoverage 看 "agent 改过的文件里有多少函数在回放期间真被执行了"。
   // 若改的函数没被命中,大概率是改错地方(或该复现路径不覆盖此改动)→ 验证报告里报警。
+  const covWc = (tab) => (tab && tab.view && !tab.view.webContents.isDestroyed()) ? tab.view.webContents : null   // 标签/视图可能已销毁(回放中途关页/切标签)→ 守卫,消 coverage 噪声报错
   async function startCoverage(tab) {
-    if (!tab.dbg) return false
+    const wc = covWc(tab); if (!tab.dbg || !wc) return false
     try {
-      await tab.view.webContents.debugger.sendCommand('Profiler.enable')
-      await tab.view.webContents.debugger.sendCommand('Profiler.startPreciseCoverage', { callCount: true, detailed: false })
+      await wc.debugger.sendCommand('Profiler.enable')
+      await wc.debugger.sendCommand('Profiler.startPreciseCoverage', { callCount: true, detailed: false })
       return true
     } catch (e) { log('coverage start fail: ' + e.message); return false }
   }
   async function stopCoverage(tab) {
+    const wc = covWc(tab); if (!wc) return null
     try {
-      const r = await tab.view.webContents.debugger.sendCommand('Profiler.takePreciseCoverage')
-      try { await tab.view.webContents.debugger.sendCommand('Profiler.stopPreciseCoverage') } catch {}
+      const r = await wc.debugger.sendCommand('Profiler.takePreciseCoverage')
+      try { await wc.debugger.sendCommand('Profiler.stopPreciseCoverage') } catch {}
       return r.result || []
     } catch (e) { log('coverage take fail: ' + e.message); return null }
   }
