@@ -180,6 +180,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   currentDiff:          ()    => ipcRenderer.invoke('current-diff'),
   browserRecList:       ()    => ipcRenderer.invoke('browser-rec-list'),
   browserRecGet:        (id)  => ipcRenderer.invoke('browser-rec-get', id),
+  browserRecSkillMd:    (id)  => ipcRenderer.invoke('browser-rec-skillmd', id),   // Codex 四段式技能文档
   browserRecUpdate:     (id, patch) => ipcRenderer.invoke('browser-rec-update', { id, patch }),
   browserRecDelete:     (id)  => ipcRenderer.invoke('browser-rec-delete', id),
   browserRecReplayStored:(id, params, baseUrl) => ipcRenderer.invoke('browser-rec-replay-stored', (params || baseUrl) ? { id, params, baseUrl } : id),

@@ -896,6 +896,7 @@ async function openRecMgr() {
         ${it.lastRun ? `<span style="font-size:10px;color:${it.lastRun.ok ? '#5dcf95' : '#ff8b8b'};border:1px solid ${it.lastRun.ok ? 'rgba(26,168,110,.4)' : 'rgba(226,66,74,.4)'};border-radius:5px;padding:0 5px" title="上次运行 ${fmtTime(it.lastRun.at)}">${it.lastRun.ok ? '✓ 上次成功' : '✗ 上次 ' + it.lastRun.fails + ' 步失败'}</span>` : ''}
         <span style="flex:1"></span>
         ${!it.skill ? `<button data-act="mkskill" style="background:transparent;border:1px solid rgba(74,168,255,.4);color:var(--accent);border-radius:6px;padding:3px 9px;cursor:pointer;font-size:11px">⚙ 存为技能</button>` : ''}
+        <button data-act="doc" title="技能文档(何时使用/所需输入/操作步骤/结果核验)" style="background:transparent;border:1px solid var(--line);color:var(--txt3);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">📄 文档</button>
         <button data-act="edit" title="编辑步骤(删步/重排/改输入值)" style="background:transparent;border:1px solid var(--line);color:var(--txt3);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">✎ 步骤</button>
         ${it.skill ? `<button data-act="export" title="导出技能 JSON(已剥离登录态,可分享)" style="background:transparent;border:1px solid var(--line);color:var(--txt3);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">导出</button>` : ''}
         <button data-act="replay" style="background:rgba(26,168,110,.15);border:1px solid #1aa86e;color:#5dcf95;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px">▶ 运行</button>
@@ -919,6 +920,25 @@ async function openRecMgr() {
       if (!rec) { showToast('<span class="err">⚠</span> 读取录制失败'); return }
       closePanel()
       saveAsSkill(rec)
+    })
+    // 技能文档:面板内嵌视图(不新开原生层,零布局纠缠),现生成保证与 JSON 同步
+    row.querySelector('[data-act="doc"]').addEventListener('click', async () => {
+      const md = await H.browserRecSkillMd(it.id)
+      if (!md) { showToast('<span class="err">⚠</span> 生成文档失败'); return }
+      const dv = document.createElement('div')
+      dv.style.cssText = 'position:absolute;inset:0;z-index:5;background:rgba(13,15,28,.99);display:flex;flex-direction:column'
+      dv.innerHTML = `
+        <div style="padding:10px 14px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line)">
+          <button data-d="back" style="background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:6px;padding:3px 9px;cursor:pointer;font-size:11px">← 返回</button>
+          <span style="flex:1;font-weight:700;color:var(--txt);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📄 ${esc2(it.title || it.id)}</span>
+          <button data-d="copy" style="background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:6px;padding:3px 9px;cursor:pointer;font-size:11px">复制</button>
+        </div>
+        <pre style="flex:1;overflow:auto;margin:0;padding:12px 16px;font-size:11.5px;line-height:1.65;white-space:pre-wrap;color:var(--txt2);font-family:ui-monospace,Consolas,monospace"></pre>`
+      dv.querySelector('pre').textContent = md
+      dv.querySelector('[data-d="back"]').addEventListener('click', () => dv.remove())
+      dv.querySelector('[data-d="copy"]').addEventListener('click', () => { H.browserCopy(md); showToast('<span class="ok">✓</span> 已复制文档') })
+      panel.style.position = 'fixed'   // 已是 fixed,确保 absolute 子层以面板为参照
+      panel.appendChild(dv)
     })
     // 编辑步骤(删步/重排/改 input 值)
     row.querySelector('[data-act="edit"]').addEventListener('click', async () => {

@@ -1774,6 +1774,8 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   })
   // 取整条录制(技能编辑器要列 input 步做参数勾选)
   ipcMain.handle('browser-rec-get', (_e, id) => { try { return readRec(id) } catch { return null } })
+  // 技能文档(Codex 四段式):现生成保证与 JSON 同步,不读 .skill.md 缓存(那份是给文件系统/Agent 看的)
+  ipcMain.handle('browser-rec-skillmd', (_e, id) => { try { return skillMd(readRec(id)) } catch { return null } })
   ipcMain.handle('browser-rec-update', (_e, { id, patch }) => {
     if (!id || !patch || typeof patch !== 'object') return false
     const fp = path.join(recDir(), String(id).replace(/[^\w.-]/g, '') + '.json')
