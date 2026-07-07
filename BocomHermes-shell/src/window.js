@@ -8,7 +8,7 @@ const emailSummarySeen = require('./email-summary-seen')
 const initOutbox = require('./outbox')
 const db = require('./db')
 const { extractMeeting } = require('./meeting-extract')
-const { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, markHumanGates, upgradeToSkill, skillMd, applyRefinePatch } = require('./recorder-core')
+const { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, markHumanGates, upgradeToSkill, skillMd, applyRefinePatch, rowToParamValues } = require('./recorder-core')
 const initRecorder = require('./recorder')
 const { cdpConsoleLevel, fmtRO, fmtException, resolveFrame } = require('./cdp-format')
 const initMail = require('./mail')
@@ -27,7 +27,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // ── 邮件子系统 ──────────────────────────────────────────────────────────────
   // 收发/发件箱安全闸门/IMAP IDLE/本地中继/mail-cache/待办-邮件闭环/DB 只读中继,整块搬进 ./mail 的
   // initMail(ctx) 工厂。ctx 注入外部模块 + 后定义但已提升的 function;回传 3 个外部调用点用到的函数。
-  const mail = initMail({ S, app, path, fs, shell, ipcMain, log, oc, Notification, email, attachments, mailCache, emailSummarySeen, db, initOutbox, openOutbox, sendOrbState, createMailCenter, openMailView, spawnCard, spawnWorkflow, maybeSuggestMeeting, skillList, skillRun })
+  const mail = initMail({ S, app, path, fs, shell, ipcMain, log, oc, Notification, email, attachments, mailCache, emailSummarySeen, db, initOutbox, openOutbox, sendOrbState, createMailCenter, openMailView, spawnCard, spawnWorkflow, maybeSuggestMeeting, skillList, skillRun, skillRunBatch })
 
   const projName = () => S.settings.projectDir ? path.basename(S.settings.projectDir) : '未选目录'
 
@@ -1773,6 +1773,66 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     if (replay.after.bad.length) lines.push('网络/业务异常 ' + replay.after.bad.length + ' 条: ' + replay.after.bad.slice(0, 3).map((b) => (b.biz ? '200·' + b.biz : (b.status || b.state)) + ' ' + b.url).join(' | '))
     lines.push('结束页面: ' + (replay.after.url || '?'))
     return { ok, pass: ok, report: lines.join('\n'), stepReport: replay.stepReport }
+  }
+  // 批量跑技能(relay /skill/run-batch,Phase 5·数据集循环,设计文档第 6 节):
+  // dataset 每行 = {参数label/key: 值} = 一次独立运行(独立参数注入/独立结果);循环在技能外,技能保持线性。
+  // 行间容错:默认失败跳过继续(onError:'stop' 则中止);每行重读技能文件 —— replayRec 会把 preState
+  // 塞进 events[i]._restorePreState,复用内存对象会让上一行的状态污染下一行。
+  async function skillRunBatch(a) {
+    const want = String((a && (a.name || a.id)) || '').trim()
+    if (!want) return { error: '缺少 name(技能名)' }
+    const dataset = Array.isArray(a && a.dataset) ? a.dataset : null
+    if (!dataset || !dataset.length) return { error: '缺少 dataset(非空数组,每行 = {参数label: 值};参数名先用 skill_list 查)' }
+    if (dataset.length > 200) return { error: 'dataset 上限 200 行(收到 ' + dataset.length + '),请分批' }
+    if (a && a.baseUrl && !safeOrigin(a.baseUrl)) return { error: 'baseUrl 必须是 http/https origin,如 https://uat.example.com' }
+    if (S.browser._batchRunning) return { error: '已有批量任务在跑,等它结束再发起' }
+    const all = skillList()
+    let hit = all.find((s) => s.name === want || s.id === want)
+    if (!hit) {
+      const fz = all.filter((s) => s.name.includes(want))
+      if (fz.length > 1) return { error: '「' + want + '」命中多条技能,请用全名: ' + fz.map((s) => s.name).join('、') }
+      hit = fz[0]
+    }
+    if (!hit) return { error: '没有叫「' + want + '」的技能。现有: ' + (all.map((s) => s.name).join('、') || '(空)') }
+    if (!brActive()) {   // 与 skillRun 同款:浏览器没开就自动拉起
+      let first; try { first = readRec(hit.id) } catch (e) { return { error: '读取技能失败: ' + e.message } }
+      createBrowser(first.startUrl)
+      for (let i = 0; i < 100 && !brActive(); i++) await sleep(150)
+      if (!brActive() && S.browser.win && !S.browser.win.isDestroyed()) {
+        newTab(first.startUrl)
+        for (let i = 0; i < 40 && !brActive(); i++) await sleep(150)
+      }
+      if (!brActive()) return { error: '内嵌浏览器未能就绪(15s 超时)' }
+      await sleep(1200)
+    }
+    S.browser._batchRunning = true
+    try {
+      const rows = []
+      let passN = 0, failN = 0
+      for (let ri = 0; ri < dataset.length; ri++) {
+        let rec; try { rec = readRec(hit.id) } catch (e) { rows.push({ row: ri + 1, ok: false, firstErr: '读取技能失败: ' + e.message, unmatched: [] }); failN++; break }
+        if (a && a.baseUrl) rec = applyBaseUrl(rec, a.baseUrl)
+        const { values, unmatched } = rowToParamValues(rec.params || [], dataset[ri])
+        S.browser.lastRec = rec
+        const replay = await replayRec(applyParams(rec, values), { fast: true })
+        const fails = replay.ok ? replay.stepReport.filter((s) => !s.ok && !s.transient) : null
+        const rowOk = !!replay.ok && fails.length === 0 && (!replay.success || replay.success.pass)
+        rowOk ? passN++ : failN++
+        rows.push({ row: ri + 1, ok: rowOk,
+          fails: fails ? fails.length : -1,
+          firstErr: rowOk ? '' : (fails && fails[0] ? '步' + fails[0].i + ' ' + fails[0].err : (replay.error || (replay.success && !replay.success.pass ? '成功断言未达成' : ''))),
+          unmatched })
+        log('skill batch「' + hit.name + '」行 ' + (ri + 1) + '/' + dataset.length + ': ' + (rowOk ? 'PASS' : 'FAIL'))
+        if (!rowOk && (a && a.onError) === 'stop') break
+      }
+      try { S.audit && S.audit('skill', 'Agent 批量运行技能「' + hit.name + '」', { by: 'agent', rows: rows.length, pass: passN, fail: failN }) } catch {}
+      const lines = ['技能「' + hit.name + '」批量运行 ' + rows.length + '/' + dataset.length + ' 行 · ✅ ' + passN + ' / ❌ ' + failN + (rows.length < dataset.length ? '(onError=stop 提前中止)' : '')]
+      const unm = rows.find((r) => r.unmatched && r.unmatched.length)
+      if (unm) lines.push('⚠ 有列名未匹配到任何参数(检查 dataset 键是否 = 参数 label): ' + unm.unmatched.join('、'))
+      for (const r of rows.slice(0, 60)) lines.push('  行' + r.row + ' ' + (r.ok ? '✓' : '✗ ' + r.firstErr))
+      if (rows.length > 60) lines.push('  …(共 ' + rows.length + ' 行,只列前 60)')
+      return { ok: failN === 0, pass: passN, fail: failN, report: lines.join('\n'), rows }
+    } finally { S.browser._batchRunning = false }
   }
   // 录制管理面板:list / star / rename / delete / replay-stored
   ipcMain.handle('browser-rec-list', () => {

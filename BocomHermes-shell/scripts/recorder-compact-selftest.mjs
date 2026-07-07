@@ -4,7 +4,7 @@
 // 另加合成边界用例:不跨元素误并、不误删两次真实点击、无按钮表单的 Enter 保留、survivors+dropped 可还原。
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
-const { compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, applyRefinePatch } = require('../src/recorder-core.js')
+const { compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, applyRefinePatch, rowToParamValues } = require('../src/recorder-core.js')
 
 let pass = 0, fail = 0
 function ok(name, cond, extra) {
@@ -231,6 +231,32 @@ console.log('用例11:applyRefinePatch —— Agent 精修补丁校验应用(坏
   // 坏补丁不毁技能
   const { rec: j3, applied: a3 } = applyRefinePatch(rec, null)
   ok('空补丁 → 无应用不崩', a3.length === 0 && j3.events.length === 5)
+}
+
+console.log('用例12:rowToParamValues —— 数据行 → 运行参数(批跑映射)')
+{
+  const params = [
+    { key: 'p1', label: '客户手机号', stepIndex: 1 },
+    { key: 'p2', label: '金额', stepIndex: 3 },
+    { key: 'p3', label: '备注', stepIndex: 5 },
+  ]
+  // label 精确命中 + key 命中 + 未匹配列报告
+  const r1 = rowToParamValues(params, { '客户手机号': '13800001111', 'p2': 8000, '无关列': 'x' })
+  ok('label 精确命中', r1.values.p1 === '13800001111')
+  ok('key 命中 + 数字转字符串', r1.values.p2 === '8000')
+  ok('未命中参数不出现在 values(走 default 兜底)', !('p3' in r1.values))
+  ok('多余列进 unmatched', r1.unmatched.length === 1 && r1.unmatched[0] === '无关列')
+  // 包含关系:唯一才用
+  const r2 = rowToParamValues(params, { '手机号': '139' })
+  ok('包含关系唯一命中("手机号"⊂"客户手机号")', r2.values.p1 === '139')
+  const r3 = rowToParamValues([{ key: 'a', label: '开户金额' }, { key: 'b', label: '转账金额' }], { '金额': '1' })
+  ok('包含关系歧义(两参数都含"金额")→ 各自唯一候选仍命中', r3.values.a === '1' && r3.values.b === '1')
+  // 同 label 多参数(旧录制密码×N)同值
+  const r4 = rowToParamValues([{ key: 'p1', label: '密码' }, { key: 'p2', label: '密码' }], { '密码': 'x1' })
+  ok('同 label 多参数各自命中同列(同值)', r4.values.p1 === 'x1' && r4.values.p2 === 'x1')
+  // 异常入参不崩
+  ok('null 行不崩', rowToParamValues(params, null).unmatched.length === 0)
+  ok('数组行不崩', rowToParamValues(params, ['x']).unmatched.length === 0)
 }
 
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)

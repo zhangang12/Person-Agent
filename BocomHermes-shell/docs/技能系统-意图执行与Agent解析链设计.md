@@ -115,7 +115,7 @@
 | 2 | SKILL schema v1 + `upgradeToSkill` 确定性升格 + `skillMd` 四段式技能文档(.skill.md 与 JSON 并排) | 否 | ✅ steps=语义视图(ei 回指 events,不复制 action 防双真相);events 仍是唯一可执行来源 |
 | 3 | 解析链②接入执行器:`skill_resolve`/`skill_pending_resolves` MCP + resolveBus 文件总线 + 三路竞速(Agent/人自动/人手动),超时降级到人 | ②需要 | ✅ |
 | 4 | 编译时 Agent:技能库「🤖 精修」→ 无头会话产 JSON 补丁 → `applyRefinePatch` 校验落盘(intentOverrides/参数建议/成功判据/注意事项);人已设的 success 不覆盖 | 是 | ✅ |
-| 5 | 绑定时 Agent + run plan(数据集循环) | 是 | |
+| 5 | 数据集批跑:`skill_run_batch` MCP(browser-mcp)→ relay `/skill/run-batch` → `skillRunBatch`(行级容错/互斥/上限200)+ `rowToParamValues` 列名→参数映射(label 精确→key→包含唯一) | 是(Agent 读物料表组 dataset) | ✅ |
 | 6 | 自愈回放(失败步 Agent 重定位 + 回写 SKILL) | 是 | |
 
 ## 8. 与 Codex Record & Replay 对照

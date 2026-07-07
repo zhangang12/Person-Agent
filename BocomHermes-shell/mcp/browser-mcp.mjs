@@ -137,6 +137,16 @@ const TOOLS = [
       baseUrl: { type: 'string', description: '可选,环境根地址(仅 http/https origin,如 https://uat.example.com):替换录制时的环境跑 dev/uat/prod;不传用录制环境。切环境不恢复录制登录态' },
     }, required: ['name'] },
   },
+  {
+    name: 'skill_run_batch',
+    description: '用一批数据循环运行同一条技能(数据集批跑):dataset 每行 = {参数label或key: 值},每行独立回放一遍并汇总 PASS/FAIL。适合"按物料表跑 N 条测试案例 / 批量录入"。用法:先 skill_list 看参数名 → 从 Excel/DB/文件读出数据 → 按参数 label 组行 → 调本工具。默认某行失败继续跑下一行(onError="stop" 则中止);上限 200 行,更多请分批。',
+    inputSchema: { type: 'object', properties: {
+      name: { type: 'string', description: '技能名(skill_list 返回的 name)' },
+      dataset: { type: 'array', items: { type: 'object' }, description: '每行一个对象,键=参数 label(或 key),如 [{"客户手机号":"138…","金额":"8000"}, …]' },
+      baseUrl: { type: 'string', description: '可选,环境根地址(http/https origin);切环境不恢复录制登录态' },
+      onError: { type: 'string', enum: ['skip', 'stop'], description: '某行失败后:skip=继续下一行(默认)/ stop=中止' },
+    }, required: ['name', 'dataset'] },
+  },
   { name: 'browser_navigate', description: '打开一个网址（在内置无头浏览器里），返回页面标题与最终URL', inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } },
   { name: 'browser_get_text', description: '获取当前页面可见正文文本(innerText)', inputSchema: { type: 'object', properties: {} } },
   { name: 'browser_get_html', description: '获取当前页面或某选择器的 HTML', inputSchema: { type: 'object', properties: { selector: { type: 'string', description: 'CSS 选择器，可空=整页' } } } },
@@ -161,6 +171,13 @@ async function callTool(name, args) {
     const body = { name: String(args.name || ''), params: args.params || {} }
     if (args.baseUrl) body.baseUrl = String(args.baseUrl)
     const r = await relayPost('/skill/run', body)
+    return r.report || JSON.stringify(r)
+  }
+  if (name === 'skill_run_batch') {
+    const body = { name: String(args.name || ''), dataset: Array.isArray(args.dataset) ? args.dataset : [] }
+    if (args.baseUrl) body.baseUrl = String(args.baseUrl)
+    if (args.onError) body.onError = String(args.onError)
+    const r = await relayPost('/skill/run-batch', body)
     return r.report || JSON.stringify(r)
   }
   if (name === 'browser_navigate') { const r = await navigate(String(args.url || '')); return `已打开：${r.title}\n${r.url}` }

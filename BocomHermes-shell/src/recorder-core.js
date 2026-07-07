@@ -600,7 +600,31 @@ function applyRefinePatch(rec, patch) {
   return { rec: j, applied }
 }
 
-module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, applyRefinePatch }
+// ── Phase 5·数据集批跑:一行数据 → 运行参数 values(纯函数)────────────────────
+// Agent 从 Excel/DB 读出的行键是"人话列名",按参数 label 对齐:label 精确 → key 精确 → 包含关系(唯一命中才用)。
+// 未命中的参数走 applyParams 的 default 兜底;行里多出的键收进 unmatched(报告透出,提示列名没对上)。
+// 同 label 多参数(旧录制"密码×4")各自命中同一列,天然同值 —— 正确语义。
+function rowToParamValues(params, row) {
+  const ps = Array.isArray(params) ? params : []
+  const r = (row && typeof row === 'object' && !Array.isArray(row)) ? row : {}
+  const values = {}
+  const used = new Set()
+  for (const p of ps) {
+    if (!p || !p.key) continue
+    let hitKey = null
+    if (p.label != null && Object.prototype.hasOwnProperty.call(r, p.label)) hitKey = p.label
+    else if (Object.prototype.hasOwnProperty.call(r, p.key)) hitKey = p.key
+    else if (p.label) {
+      const cands = Object.keys(r).filter((k) => String(k).includes(p.label) || String(p.label).includes(String(k)))
+      if (cands.length === 1) hitKey = cands[0]
+    }
+    if (hitKey != null) { values[p.key] = String(r[hitKey] == null ? '' : r[hitKey]).slice(0, 200); used.add(hitKey) }
+  }
+  const unmatched = Object.keys(r).filter((k) => !used.has(k))
+  return { values, unmatched }
+}
+
+module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, applyRefinePatch, rowToParamValues }
 
 // ── 纯文件 IO 工厂:window.js 注入 { app, fs, path, execSync } 后解构使用 ────────
 // 这些函数从 window.js 原样搬入,只把对 app/fs/path/execSync 的引用改为工厂参数(名字不变)。
