@@ -377,8 +377,8 @@ module.exports = function initRecorder(ctx) {
     const covOn = await startCoverage(tab)
     const skipSet = new Set(Array.isArray(rec.skipSteps) ? rec.skipSteps : [])
     const stepReport = []
-    // 回放进度浮层:每步推 browser-replay-progress 给 chrome 顶带 HUD(与页内红框互补:红框看"点哪",HUD 看"进到哪/卡在哪")
-    const sendProg = (d) => { const w = S.browser.win; if (w && !w.isDestroyed()) w.webContents.send('browser-replay-progress', d) }
+    // 回放进度浮层:每步推 browser-replay-progress —— 浏览器 chrome 顶带 HUD + 「录制与回放」中心实况条,双端同步
+    const sendProg = (d) => { for (const w of [S.browser.win, S.skillsWin]) if (w && !w.isDestroyed()) { try { w.webContents.send('browser-replay-progress', d) } catch {} } }
     sendProg({ start: true, total: rec.events.length, title: rec.title || rec.id || '' })
     let lastT = 0
     let storageRestored = false

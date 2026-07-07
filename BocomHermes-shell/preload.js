@@ -187,6 +187,17 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   browserRecReplayStored:(id, params, baseUrl) => ipcRenderer.invoke('browser-rec-replay-stored', (params || baseUrl) ? { id, params, baseUrl } : id),
   browserRecExport:     (id)  => ipcRenderer.invoke('browser-rec-export', id),
   browserRecImport:     ()    => ipcRenderer.invoke('browser-rec-import'),
+  // 「🎬 录制与回放」中心(ui/skills.html):发起面;执行仍在内嵌浏览器
+  skillsRecord:         (url) => ipcRenderer.invoke('skills-record', url || ''),
+  skillsStopRec:        ()    => ipcRenderer.invoke('skills-stop-rec'),
+  skillsRun:            (a)   => ipcRenderer.invoke('skills-run', a || {}),
+  skillsRunBatch:       (a)   => ipcRenderer.invoke('skills-run-batch', a || {}),
+  skillsMakeSkill:      (id)  => ipcRenderer.invoke('skills-make-skill', id),
+  onSkillBatchProgress: (cb)  => ipcRenderer.on('skill-batch-progress', (_e, d) => cb(d)),
+  onSkillsChanged:      (cb)  => ipcRenderer.on('skills-changed', (_e, d) => cb(d)),
+  onBrowserDoStopRec:   (cb)  => ipcRenderer.on('browser-do-stop-rec', () => cb()),           // 中心叫浏览器走自己的停录流(弹保存卡)
+  onBrowserOpenSaveSkill: (cb) => ipcRenderer.on('browser-open-save-skill', (_e, d) => cb(d)), // 中心叫浏览器给原始录制弹保存卡
+  onBrowserRecUi:       (cb)  => ipcRenderer.on('browser-rec-ui', (_e, d) => cb(d)),          // 中心发起录制 → 浏览器按钮态同步
   browserRecEditSteps:  (id, keep) => ipcRenderer.invoke('browser-rec-edit-steps', { id, keep }),
   onBrowserVerifyResult:(cb)  => ipcRenderer.on('wf-verify-result', (_e, p) => cb(p)),
   browserHistory:       ()    => ipcRenderer.sendSync('get-browser-history'),

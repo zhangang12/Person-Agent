@@ -461,6 +461,21 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     S.mailCenterWin.loadFile(path.join(__dirname, '..', 'ui', 'mailcenter.html'), { query })
   }
 
+  // 「🎬 录制与回放」中心:录制/技能的一级入口(与浏览器/邮件中心同级,进托盘菜单)。
+  // 页面 ui/skills.html —— Codex Record & Replay 式一条流:录一遍 → 自动整理成技能 → 一键复用/批量跑。
+  // 执行引擎不在这窗口里:录制/回放仍发生在内嵌浏览器,这里是发起与总览面;进度经 skillsNotify 中继过来。
+  function createSkillCenter() {
+    if (S.skillsWin && !S.skillsWin.isDestroyed()) { S.skillsWin.show(); S.skillsWin.focus(); return }
+    const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
+    const W = Math.min(880, sw - 80), Hh = Math.min(820, sh - 80)
+    const sx = Math.round((sw - W) / 2), sy = Math.round((sh - Hh) / 2)
+    S.skillsWin = new BrowserWindow(baseOpts({ width: W, height: Hh, x: sx, y: sy, skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 640, minHeight: 520 }))
+    S.skillsWin.on('closed', () => { S.skillsWin = null })
+    S.skillsWin.loadFile(path.join(__dirname, '..', 'ui', 'skills.html'), { query: orbAnchorFor(sx, sy, W, Hh) })
+  }
+  // 往「录制与回放」中心推事件(窗口没开就丢弃 —— 它只是视图,不是状态源)
+  function skillsNotify(ch, d) { const w = S.skillsWin; if (w && !w.isDestroyed()) { try { w.webContents.send(ch, d || {}) } catch {} } }
+
   function toggleInput() { toggleOrbInput() }
 
   function toggleTheme() {
@@ -1057,6 +1072,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       { label: S.settings.orbHidden ? '显示桌面悬浮球' : '隐藏桌面悬浮球', click: () => setOrbHidden(!S.settings.orbHidden) },
       { type: 'separator' },
       { label: '🌐 调试工作台（Agent + 浏览器）', accelerator: 'Ctrl+Shift+B', click: () => createWorkspace() },
+      { label: '🎬 录制与回放（浏览器技能）', accelerator: 'Ctrl+Shift+R', click: () => createSkillCenter() },
       { label: '📧 邮件（收件箱 · 摘要 · 设置）', accelerator: 'Ctrl+Shift+M', click: () => createMailCenter() },
       { label: '📄 需求分析（Word）', click: () => spawnReqAnalysis('') },
       { label: '📤 发件箱', click: openOutbox },
@@ -1496,8 +1512,10 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   // 「● 已录 N 步」实时徽标:每入队一个事件就推一次计数到 chrome
   function brSendRecCount() {
     const b = S.browser
-    if (!b.rec || !b.win || b.win.isDestroyed()) return
-    b.win.webContents.send('browser-rec-count', { n: b.rec.events.length })
+    if (!b.rec) return
+    const payload = { n: b.rec.events.length }
+    if (b.win && !b.win.isDestroyed()) b.win.webContents.send('browser-rec-count', payload)
+    skillsNotify('browser-rec-count', payload)   // 「录制与回放」中心的实况条同步跳数
   }
 
   // 把某个 tab 接入当前录制(原始 tab 与录制期间新开的 tab 共用):幂等挂钩 did-frame-finish-load,
@@ -1533,7 +1551,8 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     rec.cleanups.push(() => { try { wc.off('did-frame-finish-load', handler) } catch {} ; tab._recWired = false })   // 复位 _recWired:否则下次录制同一 tab 被幂等拦住不再挂钩
   }
 
-  ipcMain.handle('browser-rec-start', async () => {
+  // 录制启动核心:浏览器工具栏与「录制与回放」中心共用(后者经 skills-record 先确保浏览器就绪)
+  async function recStart() {
     const tab = brActive()
     if (!tab) return { ok: false, error: '没有活跃标签' }
     if (S.browser.rec && S.browser.rec.active) return { ok: true, already: true }   // #10 已在录制中:拒绝并发重入(双击录制会泄漏 did-frame-finish-load 监听器 + 卡死 _recWired)
@@ -1586,13 +1605,15 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     log('rec start: tab ' + tab.id + ' @ ' + S.browser.rec.startUrl)
     brSendRecCount()   // 初始 navigate 已入队 → 徽标从 1 起跳
     return { ok: true, health }
-  })
+  }
+  ipcMain.handle('browser-rec-start', async () => await recStart())
 
-  ipcMain.handle('browser-rec-stop', async () => {
+  async function recStop() {
     const r = S.browser.rec
     if (!r || !r.active) return { ok: false, error: '没有进行中的录制' }
     r.active = false
     if (S.browser.win && !S.browser.win.isDestroyed()) S.browser.win.webContents.send('browser-rec-count', { n: r.events.length, done: true })   // 收徽标
+    skillsNotify('browser-rec-count', { n: r.events.length, done: true })   // 「录制与回放」中心同步收实况条
     if (r.cleanups) for (const fn of r.cleanups) { try { fn() } catch {} }
     // 把页面里的 flag 关掉(监听仍在,只是不再 emit);顺手收掉防抖里还没吐出来的最后一个输入。
     // 必须走返回值通道:此刻 r.active 已 false,console 通道的 __BR__ 会被 pushConsole 丢弃且有异步竞态。
@@ -1631,8 +1652,10 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     try { fs.writeFileSync(path.join(dir, id + '.json'), JSON.stringify(rec, null, 2)) } catch (e) { log('rec save err: ' + e.message) }
     S.browser.lastRec = rec
     log('rec stop: ' + id + ' · ' + events.length + ' events · pre-fix snapshot: ' + snapshot.errs.length + ' errs / ' + snapshot.bad.length + ' bad')
+    skillsNotify('skills-changed')
     return { ok: true, ...rec }
-  })
+  }
+  ipcMain.handle('browser-rec-stop', async () => await recStop())
 
   // ── 回放 ─────────────────────────────────────────────────────────────────
   // 按录制时间线在当前 tab 自动播放;每步执行后等"网络静默"(<=900ms 无新请求),
@@ -1674,6 +1697,45 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('browser-verify', async () => { await verifyFix() })
   // 人机断点续跑:回放暂停在验证码/滑块步时,用户点 HUD「继续」→ 解开 replayRec 里挂着的 resolver
   ipcMain.on('browser-replay-resume', () => { const f = S.browser && S.browser._replayResume; if (typeof f === 'function') { try { f() } catch {} } })
+
+  // ── 「录制与回放」中心的 IPC 面(ui/skills.html)──────────────────────────────
+  // 执行全部复用既有引擎:录制=recStart、运行=skillRun、批跑=skillRunBatch;这里只做"确保浏览器就绪+调度"。
+  // 录制:可带起始网址;浏览器没开自动拉起,已开则导航过去,然后走与工具栏同一套 recStart
+  ipcMain.handle('skills-record', async (_e, url) => {
+    const u = String(url || '').trim()
+    if (!brActive()) {
+      createBrowser(u)
+      for (let i = 0; i < 100 && !brActive(); i++) await sleep(150)
+      if (!brActive() && S.browser.win && !S.browser.win.isDestroyed()) { newTab(u); for (let i = 0; i < 40 && !brActive(); i++) await sleep(150) }
+      if (!brActive()) return { ok: false, error: '内嵌浏览器未能就绪(15s 超时)' }
+      if (u) await sleep(1500)   // 让起始页加载完,录制脚本注入/健康自检才有落点
+    } else {
+      if (u) { const wc = brWC(); const nu = normalizeUrl(u); if (wc && nu) { wc.loadURL(nu); await sleep(1500) } }
+      if (S.browser.win && !S.browser.win.isDestroyed()) S.browser.win.focus()
+    }
+    const r = await recStart()
+    // 浏览器壳的录制按钮/徽标同步进入录制态(recStart 只管引擎;徽标本会随首个计数事件出现,按钮态要显式推)
+    if (r && r.ok && S.browser.win && !S.browser.win.isDestroyed()) S.browser.win.webContents.send('browser-rec-ui', { on: true })
+    return r
+  })
+  // 停止:浏览器窗还在 → 让它走自己的停录流(弹"保存为技能"卡,用户就在那给技能起名);窗没了才直接停
+  ipcMain.handle('skills-stop-rec', async () => {
+    const bw = S.browser.win
+    if (bw && !bw.isDestroyed()) { bw.webContents.send('browser-do-stop-rec'); bw.focus(); return { ok: true, via: 'browser' } }
+    return await recStop()
+  })
+  // 运行/批跑:直接复用按名字/id 跑技能的引擎入口(自带确保浏览器/参数注入/审计)
+  ipcMain.handle('skills-run', async (_e, a) => await skillRun(a || {}))
+  ipcMain.handle('skills-run-batch', async (_e, a) => await skillRunBatch(a || {}))
+  // 原始录制"整理成技能":确保浏览器开着,让它弹既有的保存卡(表单在浏览器壳里,不重造)
+  ipcMain.handle('skills-make-skill', async (_e, id) => {
+    if (!brActive()) { createBrowser(''); for (let i = 0; i < 100 && !brActive(); i++) await sleep(150) }
+    const bw = S.browser.win
+    if (!bw || bw.isDestroyed()) return { ok: false, error: '内嵌浏览器未能就绪' }
+    bw.focus(); await sleep(250)
+    bw.webContents.send('browser-open-save-skill', { id: String(id || '') })
+    return { ok: true }
+  })
   // 复制到剪贴板（供网络面板「复制 URL / 复制 cURL」、拾取「复制选择器」）
   ipcMain.handle('browser-copy', (_e, text) => { clipboard.writeText(String(text || '')); return true })
   ipcMain.on('browser-reveal', (_e, filePath) => { try { shell.showItemInFolder(String(filePath || '')) } catch (e) { log('reveal err: ' + e.message) } })
@@ -1852,6 +1914,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
           firstErr: rowOk ? '' : (fails && fails[0] ? '步' + fails[0].i + ' ' + fails[0].err : (replay.error || (replay.success && !replay.success.pass ? '成功断言未达成' : ''))),
           unmatched })
         log('skill batch「' + hit.name + '」行 ' + (ri + 1) + '/' + dataset.length + ': ' + (rowOk ? 'PASS' : 'FAIL'))
+        skillsNotify('skill-batch-progress', { row: ri + 1, total: dataset.length, pass: passN, fail: failN, ok: rowOk, firstErr: rows[rows.length - 1].firstErr || '' })
         if (!rowOk && (a && a.onError) === 'stop') break
       }
       try { S.audit && S.audit('skill', 'Agent 批量运行技能「' + hit.name + '」', { by: 'agent', rows: rows.length, pass: passN, fail: failN }) } catch {}
@@ -1879,6 +1942,8 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
           skill: !!j.skill,
           description: j.description || '',
           paramCount: (j.params || []).length,
+          params: (j.params || []).map((p) => ({ key: p.key, label: p.label || p.key, secret: !!p.secret, default: p.default != null ? String(p.default) : '' })),   // 「录制与回放」中心:填参/批跑映射预览用
+          gates: (j.events || []).filter((e) => e && e.human).length,   // 人机断点数(验证码等,卡片上提示"回放会暂停等人")
           startUrl: j.startUrl || '',
           expectation: j.expectation || '',
           eventCount: (j.events || []).length,
@@ -1964,6 +2029,8 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       try { fs.writeFileSync(path.join(recDir(), String(id).replace(/[^\w.-]/g, '') + '.json'), JSON.stringify(j2, null, 2)) } catch (e) { log('refine 写盘失败: ' + e.message); return }
       log('skill refine 应用: ' + id + ' → ' + applied.join('/'))
       if (b.win && !b.win.isDestroyed()) b.win.webContents.send('browser-skill-refined', { id, title: j2.title || id, applied })
+      skillsNotify('browser-skill-refined', { id, title: j2.title || id, applied })
+      skillsNotify('skills-changed')
     } finally { _refining.delete(id) }
   }
   ipcMain.handle('browser-rec-update', (_e, { id, patch }) => {
@@ -1988,13 +2055,14 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       fs.writeFileSync(fp, JSON.stringify(j, null, 2))
       // 一步工作流:「保存为技能」的那一次自动触发 Agent 精修(可视化跑在工作台对话;fire-and-forget,失败不影响保存)
       if (patch.skill === true && !wasSkill) setTimeout(() => { skillRefineFlow(j.id || id).catch((e) => log('refine flow err: ' + e.message)) }, 400)
+      skillsNotify('skills-changed')
       return true
     } catch (e) { log('rec update err: ' + e.message); return false }
   })
   ipcMain.handle('browser-rec-delete', (_e, id) => {
     const base = path.join(recDir(), String(id).replace(/[^\w.-]/g, ''))
     try { fs.unlinkSync(base + '.skill.md') } catch {}   // 技能文档随录制一起删
-    try { fs.unlinkSync(base + '.json'); log('rec deleted: ' + id); return true } catch (e) { log('rec del err: ' + e.message); return false }
+    try { fs.unlinkSync(base + '.json'); log('rec deleted: ' + id); skillsNotify('skills-changed'); return true } catch (e) { log('rec del err: ' + e.message); return false }
   })
   // 入参兼容两种形态:'rec_xx'(旧)或 { id, params, baseUrl }(带运行时参数/环境切换)
   ipcMain.handle('browser-rec-replay-stored', async (_e, arg) => {
@@ -2131,5 +2199,5 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('open-history', (_e, { sid, title }) => spawnCard(title, sid))
   ipcMain.handle('clear-history', () => { S.history = []; saveHistory(); return true })
 
-  return { createOrb, createBrowser, createWorkspace, createMailCenter, openMailView, spawnCard, spawnFanout, spawnWorkflow, spawnReqAnalysis, spawnReqConfirm, spawnReqPlan, spawnEmailCard, snapAsk, toggleInput, toggleOrbInput, buildTray, openDock, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory }
+  return { createOrb, createBrowser, createWorkspace, createSkillCenter, createMailCenter, openMailView, spawnCard, spawnFanout, spawnWorkflow, spawnReqAnalysis, spawnReqConfirm, spawnReqPlan, spawnEmailCard, snapAsk, toggleInput, toggleOrbInput, buildTray, openDock, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory }
 }

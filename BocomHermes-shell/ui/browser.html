@@ -1057,6 +1057,18 @@ H.onBrowserRecCount && H.onBrowserRecCount(({ n, done }) => {
   $('brecbadge').hidden = false
   $('brecn').textContent = n
 })
+// 「录制与回放」中心的遥控:停录走本壳自己的流程(弹保存卡)/ 给原始录制弹保存卡 / 同步录制按钮态
+H.onBrowserDoStopRec && H.onBrowserDoStopRec(() => stopRec())
+H.onBrowserOpenSaveSkill && H.onBrowserOpenSaveSkill(async ({ id }) => {
+  const rec = await H.browserRecGet(id)
+  if (rec) saveAsSkill(rec)
+  else showToast('<span class="err">⚠</span> 读取录制失败')
+})
+H.onBrowserRecUi && H.onBrowserRecUi(({ on }) => {
+  $('brec').classList.toggle('on', !!on)
+  $('brectxt').textContent = on ? '停止' : '录制'
+  if (on) $('brecbadge').hidden = false
+})
 
 // 回放进度 HUD:chrome 顶带(82px 安全区)内显示「▶ 步 i/N · act」,与页内红框互补(红框看"点哪",HUD 看"进到哪/卡在哪")
 function ensureHud() {
