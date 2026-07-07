@@ -8,7 +8,7 @@ const emailSummarySeen = require('./email-summary-seen')
 const initOutbox = require('./outbox')
 const db = require('./db')
 const { extractMeeting } = require('./meeting-extract')
-const { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, markHumanGates, upgradeToSkill, skillMd, applyRefinePatch, rowToParamValues } = require('./recorder-core')
+const { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, markHumanGates, upgradeToSkill, skillMd, applyRefinePatch, rowToParamValues, relocateSelectors } = require('./recorder-core')
 const initRecorder = require('./recorder')
 const { cdpConsoleLevel, fmtRO, fmtException, resolveFrame } = require('./cdp-format')
 const initMail = require('./mail')
@@ -516,12 +516,22 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     notifyAgent(req) {
       const b = S.browser
       if (b.mode !== 'workspace' || !b.cardView || b.cardView.webContents.isDestroyed()) return false
-      const disp = `⏸ 回放暂停·步 ${req.step}:需要「${req.ask}」`
-      const text = `技能回放暂停在第 ${req.step} 步,需要一个运行时值:「${req.ask}」\n`
-        + `目标字段:${req.sel}\n所在页面:${req.url}\n\n`
-        + `请判断这个值能否用你手上的工具(读项目文件/Excel/查库/看复现证据)可靠得出:\n`
-        + `- 能 → 解出后调用 MCP 工具 skill_resolve(gateId="${req.gateId}", value="…"),回放会立即续跑;\n`
-        + `- 不能(如短信验证码只在用户手机上)→ 直接回复说明,用户会在页面手动输入。不要猜。`
+      let disp, text
+      if (req.kind === 'relocate') {   // Phase 6b:选择器失配,让 Agent 看当前页候选给一个新选择器
+        disp = `⏳ 自愈·步 ${req.step}:元素定位失败,Agent 重定位中…`
+        text = `技能回放第 ${req.step} 步的元素找不到了(页面可能改版/动态 id)。这步意图:${req.ask}\n`
+          + `原选择器:${req.sel}${req.origAlt ? '(备选:' + req.origAlt + ')' : ''}\n所在页面:${req.url}\n\n`
+          + `当前页可交互元素(tag #id '文本' name):\n${req.candidates || '(未采集到)'}\n\n`
+          + `请从上面挑出对应目标元素,调用 MCP 工具 skill_relocate(gateId="${req.gateId}", selector="一个能唯一定位它的 CSS 选择器")。\n`
+          + `优先用稳定锚点(语义 id/name/属性/文本);拿不准就用 skill_relocate 传你最有把握的一个,回放会立即用它续跑。`
+      } else {
+        disp = `⏸ 回放暂停·步 ${req.step}:需要「${req.ask}」`
+        text = `技能回放暂停在第 ${req.step} 步,需要一个运行时值:「${req.ask}」\n`
+          + `目标字段:${req.sel}\n所在页面:${req.url}\n\n`
+          + `请判断这个值能否用你手上的工具(读项目文件/Excel/查库/看复现证据)可靠得出:\n`
+          + `- 能 → 解出后调用 MCP 工具 skill_resolve(gateId="${req.gateId}", value="…"),回放会立即续跑;\n`
+          + `- 不能(如短信验证码只在用户手机上)→ 直接回复说明,用户会在页面手动输入。不要猜。`
+      }
       try { b.cardView.webContents.send('card-inject', { text, disp }); return true } catch { return false }
     },
   }
@@ -529,7 +539,26 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // 【录制回放引擎】9 个函数搬进 ./recorder 的 initRecorder 工厂,这里注入闭包依赖后解构使用。
   // 必须放在 brActive(const,非提升)之后:initRecorder(ctx) 构造 ctx 时会即时读取 brActive。
   // 时序安全:此行在 initWindow 函数体靠前执行,而所有调用点(wireRecToTab/IPC handler/verifyFix/skillRun)均运行期才触发。
-  const { injectRecorder, waitNetIdle, waitForEl, highlightTarget, execStep, startCoverage, stopCoverage, checkAssertions, replayRec } = initRecorder({ S, brActive, session, log, snapshotBad, RECORDER_JS, frameFor, findElExpr, coverageHits, gitChangedFiles, resolveBus })
+  // 自愈回写:把回放中重定位成功的步的稳定选择器持久化进技能(自愈=自更新,下次直接命中,无需再自愈)
+  function persistHeal(recId, heals) {
+    if (!recId || !heals || !heals.length) return
+    try {
+      const fp = path.join(recDir(), String(recId).replace(/[^\w.-]/g, '') + '.json')
+      const j = JSON.parse(fs.readFileSync(fp, 'utf8'))
+      const ev = j.events || []
+      let n = 0
+      for (const h of heals) {
+        const e = ev[h && h.ei]
+        if (e && ['click', 'input', 'select', 'check', 'submit'].includes(e.act) && typeof h.sel === 'string' && h.sel) {
+          e.sel = String(h.sel).slice(0, 1000)
+          e.selAlt = Array.isArray(h.selAlt) ? h.selAlt.slice(0, 8).map((s) => String(s).slice(0, 1000)) : []
+          n++
+        }
+      }
+      if (n) { refreshSkillArtifacts(j); fs.writeFileSync(fp, JSON.stringify(j, null, 2)); log('skill self-heal 回写 ' + n + ' 步选择器: ' + recId) }
+    } catch (e) { log('persistHeal err: ' + e.message) }
+  }
+  const { injectRecorder, waitNetIdle, waitForEl, highlightTarget, execStep, startCoverage, stopCoverage, checkAssertions, replayRec } = initRecorder({ S, brActive, session, log, snapshotBad, RECORDER_JS, frameFor, findElExpr, coverageHits, gitChangedFiles, resolveBus, relocateSelectors, persistHeal })
 
   // ── 调试分诊 + 多 agent 对抗分析（工作台「发给 Agent」的大脑）──────────────────
   const tinyJson = (t) => { try { const m = String(t || '').replace(/<think>[\s\S]*?<\/think>/gi, ' ').match(/\{[\s\S]*\}/); return m ? JSON.parse(m[0]) : null } catch { return null } }

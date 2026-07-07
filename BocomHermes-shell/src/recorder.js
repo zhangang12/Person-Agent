@@ -2,7 +2,7 @@
 // 只搬不改函数体，行为 100% 不变。函数间互相调用（模块内互见）。
 // ctx 注入 window.js 闭包与 ./recorder-core 的外部符号；sleep 本模块自定义（不从 ctx 拿）。
 module.exports = function initRecorder(ctx) {
-  const { S, brActive, session, log, snapshotBad, RECORDER_JS, frameFor, findElExpr, coverageHits, gitChangedFiles, resolveBus } = ctx
+  const { S, brActive, session, log, snapshotBad, RECORDER_JS, frameFor, findElExpr, coverageHits, gitChangedFiles, resolveBus, relocateSelectors, persistHeal } = ctx
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
   async function injectRecorder(wc) {
@@ -134,6 +134,52 @@ module.exports = function initRecorder(ctx) {
     sendProg({ resume: true, i: i + 1 })
     log('replay 解析断点 步 ' + (i + 1) + '(' + (ev.humanHint || '') + ')续跑: ' + win.how + (win.note ? ' · ' + win.note : ''))
     return win.how
+  }
+
+  // ── Phase 6·自愈回放:某步选择器全失配(页面改版/动态 id/瞬态类) → 不早停,重新定位 ──
+  // 6a 确定性:靠录制的语义锚点(placeholder/label/文本)在当前页找同一元素 → 换稳定选择器重跑;
+  // 6b Agent:6a 无锚点/未命中 → 采集页面可交互元素摘要 + 这步意图,经 resolveBus 交 Agent 回一个新选择器。
+  // 命中即回写技能(自愈=自更新,下次直接用);无工作台/Agent/超时 → 返回 null,退回原早停逻辑。
+  async function selfHeal(wc, ev, tab, i, sendProg) {
+    const fr = frameFor(wc, ev)
+    const tryCand = async (c, waitMs) => {
+      const found = await waitForEl(fr, findElExpr(c, []), waitMs, ev.act !== 'check').catch(() => false)
+      if (!found) return null
+      const r = await execStep(wc, { ...ev, sel: c, selAlt: [] }, tab, { waitMs: Math.min(waitMs, 1500) })
+      return r.ok ? r : null
+    }
+    // 6a:确定性语义重定位
+    for (const c of (relocateSelectors ? relocateSelectors(ev) : [])) {
+      const r = await tryCand(c, 1500)
+      if (r) { log('replay self-heal 步 ' + (i + 1) + ' 确定性命中: ' + c); return { ok: true, how: 'auto', sel: c } }
+    }
+    // 6b:交 Agent 重定位(需 resolveBus;无工作台/不应答则超时退回)
+    if (!resolveBus) return null
+    let cands = ''
+    try {
+      cands = await fr.executeJavaScript(`(function(){var out=[];var els=document.querySelectorAll('button,a,input,select,textarea,[role="button"],[onclick]');for(var i=0;i<els.length&&out.length<60;i++){var e=els[i];var r=e.getBoundingClientRect();if(!r.width&&!r.height)continue;var t=(e.innerText||e.value||e.placeholder||e.getAttribute&&e.getAttribute('aria-label')||'').trim().slice(0,40);var id=e.id&&!/^el-id-\\d|\\d{6,}/.test(e.id)?('#'+e.id):'';out.push(e.tagName.toLowerCase()+(id?' '+id:'')+(t?' \\''+t+'\\'':'')+(e.name?' name='+e.name:''))}return out.join('\\n')})()`, true)
+    } catch {}
+    const gateId = 'g' + Date.now().toString(36) + '_h' + (i + 1)
+    const intent = (ev.act === 'input' ? '填写' : ev.act + ' ') + (ev.text || ev.lb || ev.ph || ev.sel || '')
+    const req = { gateId, kind: 'relocate', step: i + 1, ei: i, ask: '这步找不到元素,请给一个能定位它的 CSS 选择器。意图:' + intent, sel: ev.sel || '', origAlt: (ev.selAlt || []).join(' | '), candidates: cands, url: (() => { try { return wc.getURL() } catch { return '' } })(), at: Date.now() }
+    let agentOn = false
+    try { resolveBus.post(req); agentOn = resolveBus.notifyAgent(req) } catch {}
+    if (!agentOn) { try { resolveBus.clear(gateId) } catch {} return null }   // 没通知到 Agent 就别空等,直接退回早停
+    sendProg({ pause: true, i: i + 1, hint: '定位失败,Agent 重定位中…', sel: ev.sel || '', agent: true, heal: true })
+    let newSel = null
+    const t0 = Date.now()
+    while (Date.now() - t0 < 120000) {   // 自愈等 Agent 最长 2 分钟
+      await sleep(1200)
+      const res = resolveBus.check(gateId)
+      if (res && typeof res.value === 'string' && res.value) { newSel = res.value.slice(0, 1000); break }
+    }
+    try { resolveBus.clear(gateId) } catch {}
+    sendProg({ resume: true, i: i + 1 })
+    if (!newSel) return null
+    const r = await tryCand(newSel, 2000)
+    if (r) { log('replay self-heal 步 ' + (i + 1) + ' Agent 重定位命中: ' + newSel); return { ok: true, how: 'agent', sel: newSel } }
+    log('replay self-heal 步 ' + (i + 1) + ' Agent 给的选择器仍未命中: ' + newSel)
+    return null
   }
 
   async function execStep(wc, ev, tab, opts) {
@@ -337,6 +383,7 @@ module.exports = function initRecorder(ctx) {
     let lastT = 0
     let storageRestored = false
     let consecutiveFails = 0; let cascadeFrom = -1
+    const healed = []   // 自愈成功的步(回放结束回写技能:selector 自更新)
     for (let i = 0; i < rec.events.length; i++) {
       const ev = rec.events[i]
       // 跳过步(如滚动噪声)必须推占位条目并更新 lastT —— diffReport/verifyFix/skillRun 全按 stepReport 长度对齐计数
@@ -369,8 +416,15 @@ module.exports = function initRecorder(ctx) {
         r = await execStep(wc, ev, tab, { waitMs: 1500 })
         r.retried = true
       }
+      // 自愈:重试后仍"找不到元素"的可定位步 → 语义重定位(6a)/ Agent 重定位(6b);命中即续跑并回写技能
+      let healHow = null
+      if (!r.ok && !ev.transient && String(r.err || '').startsWith('selector(+alt) not found') && ['click', 'input', 'select', 'check', 'submit'].includes(ev.act)) {
+        const h = await selfHeal(wc, ev, tab, i, sendProg)
+        if (h && h.ok) { r = { ok: true }; healHow = h.how; healed.push({ ei: i, sel: h.sel, selAlt: [] }) }
+      }
       const entry = { i: i + 1, act: ev.act, sel: ev.sel || ev.url || '', ok: r.ok, err: r.err || '' }
       if (r.retried) entry.retried = true
+      if (healHow) { entry.healed = healHow; entry.sel = healed[healed.length - 1].sel }
       if (r.secret) entry.secret = true
       if (ev.transient) entry.transient = true
       stepReport.push(entry)
@@ -417,7 +471,9 @@ module.exports = function initRecorder(ctx) {
     try { dialogs = (await wc.executeJavaScript('window.__bocom_dlgs||[]', true)) || [] } catch {}
     const cov = covOn ? await stopCoverage(tab) : null
     const hitInfo = cov ? coverageHits(cov, changedFiles) : []
-    return { ok: true, stepReport, after, changedFiles, hitInfo, covOn, cascadeFrom, totalSteps: rec.events.length, success: successRes, dialogs, baseSwapped: !!rec._baseSwapped }
+    // 自愈回写:换环境(_baseSwapped)不写(DOM 可能不同);仅对有 id 的技能持久化修正后的选择器,下次直接命中
+    if (healed.length && rec.id && !rec._baseSwapped && typeof persistHeal === 'function') { try { persistHeal(rec.id, healed) } catch (e) { log('persistHeal err: ' + e.message) } }
+    return { ok: true, stepReport, after, changedFiles, hitInfo, covOn, cascadeFrom, totalSteps: rec.events.length, success: successRes, dialogs, baseSwapped: !!rec._baseSwapped, healed }
   }
 
   return { injectRecorder, waitNetIdle, waitForEl, highlightTarget, execStep, startCoverage, stopCoverage, checkAssertions, replayRec }

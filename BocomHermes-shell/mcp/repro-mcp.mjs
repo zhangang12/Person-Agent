@@ -52,6 +52,7 @@ const TOOLS = [
   { name: 'read_notes', description: '读某个复现包当前所有便签(给 lens 启动前看,避免重复工作)。无便签返回空数组。', inputSchema: { type: 'object', properties: { bundleId: { type: 'string' } }, required: ['bundleId'] } },
   { name: 'skill_pending_resolves', description: '列出技能回放当前挂起的"运行时解析请求"(回放暂停在某步,等一个运行时才知道的值:物料数据/文件路径/验证码等)。回放暂停时主程序会把请求发进对话;也可主动调这个查漏。', inputSchema: { type: 'object', properties: {} } },
   { name: 'skill_resolve', description: '答复一个挂起的解析请求:把你用工具(读项目文件/Excel/查库/看证据)解出的值写回,回放立刻续跑并把值填入该步字段。**只在确有把握时调用**;只有人知道的值(如短信验证码)不要猜,回复用户说明即可,用户会在页面手动输入。', inputSchema: { type: 'object', properties: { gateId: { type: 'string', description: '解析请求 id(来自暂停通知或 skill_pending_resolves)' }, value: { type: 'string', description: '解出的值(将按输入步写进目标字段)' }, note: { type: 'string', description: '可选:一句话依据(留档)' } }, required: ['gateId', 'value'] } },
+  { name: 'skill_relocate', description: '自愈重定位:回放某步元素找不到(页面改版/动态 id)时,主程序会带上"这步意图 + 当前页可交互元素清单"请你重定位。从清单里挑出目标,回一个能唯一定位它的 CSS 选择器。命中则回放续跑并把新选择器回写进技能(下次无需再自愈)。', inputSchema: { type: 'object', properties: { gateId: { type: 'string', description: '自愈请求 id(来自自愈通知)' }, selector: { type: 'string', description: '一个能定位目标元素的 CSS 选择器(优先稳定锚点:语义 id/name/属性/文本)' }, note: { type: 'string', description: '可选:一句话依据' } }, required: ['gateId', 'selector'] } },
   { name: 'skill_refine', description: '提交技能精修结果(主程序请你整理技能时调用):把改进后的字段写回,主程序校验后自动落盘并更新技能文档。只传你有把握改善的字段;不确定就省略。', inputSchema: { type: 'object', properties: { recId: { type: 'string', description: '技能 id(形如 rec_xxx,来自整理请求)' }, title: { type: 'string', description: '≤20字技能名(现有名够好就省略)' }, description: { type: 'string', description: '何时使用:一两句' }, intents: { type: 'object', description: '{事件下标: 这步的人话名},只写能明显改善的步' }, params: { type: 'array', items: { type: 'object' }, description: '[{stepIndex, label}] 提名"每次运行都不同"的输入步为参数' }, success: { type: 'object', description: '{kind:"text"|"css", value} 可自动检查的成功标志' }, notes: { type: 'string', description: '决策点/隐藏偏好/注意事项' } }, required: ['recId'] } },
 ]
 // 解析总线目录(与主进程 window.js resolveBus 的文件契约):req=<gateId>.json,res=<gateId>.res.json
@@ -83,6 +84,15 @@ async function callTool(name, a) {
     if (!fs.existsSync(path.join(RSV, gateId + '.json'))) return '没有这个挂起请求(可能已续跑或超时):' + gateId
     try { fs.writeFileSync(path.join(RSV, gateId + '.res.json'), JSON.stringify({ value, note: String(a.note || '').slice(0, 200), at: Date.now() })) } catch (e) { return '写入失败:' + e.message }
     return `✓ 已答复 ${gateId},回放将自动续跑并把值填入该步字段。`
+  }
+  if (name === 'skill_relocate') {
+    const gateId = String(a.gateId || '').trim()
+    if (!/^g[\w-]{3,60}$/.test(gateId)) return 'gateId 形如 g…(来自自愈通知),收到:' + (gateId || '(空)')
+    const selector = String(a.selector == null ? '' : a.selector).slice(0, 1000).trim()
+    if (!selector) return '需要非空 selector(一个能定位目标元素的 CSS 选择器)。'
+    if (!fs.existsSync(path.join(RSV, gateId + '.json'))) return '没有这个自愈请求(可能已续跑或超时):' + gateId
+    try { fs.writeFileSync(path.join(RSV, gateId + '.res.json'), JSON.stringify({ value: selector, note: String(a.note || '').slice(0, 200), at: Date.now() })) } catch (e) { return '写入失败:' + e.message }
+    return `✓ 已提交选择器给 ${gateId},回放将用它重跑该步;命中则自动回写进技能(下次直接用,无需再自愈)。`
   }
   if (name === 'skill_refine') {
     const recId = String(a.recId || '').trim()

@@ -191,7 +191,7 @@
   }, { capture:true, passive:true });
 })();`
 
-  // 把"普通 CSS 选择器"或"__text__:tag|text"伪选择器转成页面里能跑的"找元素"表达式
+  // 把"普通 CSS 选择器"或伪选择器(__text__:tag|text / __label__:文本)转成页面里能跑的"找元素"表达式
   function selExpr(sel) {
     const s = String(sel || '')
     if (s.startsWith('__text__:')) {
@@ -199,7 +199,33 @@
       const txt = s.slice(idx + 1)
       return `(function(){var els=document.querySelectorAll(${JSON.stringify(tag)});for(var i=0;i<els.length;i++){var t=(els[i].innerText||els[i].value||'').trim();if(t===${JSON.stringify(txt)}||t.indexOf(${JSON.stringify(txt)})===0)return els[i]}return null})()`
     }
+    // __label__:文本 —— 找文本匹配的 <label> 的关联控件(label.control / for→#id / 内含 input)。自愈重定位输入框用。
+    if (s.startsWith('__label__:')) {
+      const t = s.slice(10)
+      return `(function(){var ls=document.querySelectorAll('label');for(var i=0;i<ls.length;i++){var tx=(ls[i].innerText||ls[i].textContent||'').trim();if(tx===${JSON.stringify(t)}||tx.indexOf(${JSON.stringify(t)})===0){var c=ls[i].control||(ls[i].htmlFor&&document.getElementById(ls[i].htmlFor))||ls[i].querySelector('input,textarea,select');if(c)return c}}return null})()`
+    }
     return `document.querySelector(${JSON.stringify(s)})`
+  }
+
+  // ── Phase 6a·确定性自愈:选择器全失配时,靠录制的语义锚点(placeholder/label/文本)在当前页重定位 ──
+  // 返回一组【稳定选择器】候选(selExpr 直接能跑);回放兜底逐个试,命中即用并回写技能(自愈=自更新)。
+  // 不依赖网关:动态 id / 瞬态类 / 小改版 导致原选择器失效时,语义锚点通常还在。
+  function relocateSelectors(ev) {
+    if (!ev) return []
+    const out = []
+    const esc = (s) => String(s).replace(/"/g, '\\"')
+    if (ev.act === 'input' || ev.act === 'select') {
+      if (ev.ph) { out.push('input[placeholder="' + esc(ev.ph) + '"]', 'textarea[placeholder="' + esc(ev.ph) + '"]') }
+      if (ev.lb) out.push('__label__:' + String(ev.lb).trim())
+      if (ev.ac === 'one-time-code') out.push('input[autocomplete="one-time-code"]')
+    }
+    if ((ev.act === 'click' || ev.act === 'submit' || ev.act === 'check') && ev.text) {
+      const t = String(ev.text).trim()
+      if (t && t.length <= 40 && !String(ev.sel || '').startsWith('__text__:')) {   // 原 sel 已是 __text__ 还失配,再拼同样的没意义
+        out.push('__text__:button|' + t, '__text__:a|' + t)
+      }
+    }
+    return out
   }
 
   // 把 sel + selAlt 串成"按优先级 fallback,谁先找到用谁"的表达式;变量名 __el 给后续操作用
@@ -632,7 +658,7 @@ function rowToParamValues(params, row) {
   return { values, unmatched }
 }
 
-module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, applyRefinePatch, rowToParamValues }
+module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, applyRefinePatch, rowToParamValues, relocateSelectors }
 
 // ── 纯文件 IO 工厂:window.js 注入 { app, fs, path, execSync } 后解构使用 ────────
 // 这些函数从 window.js 原样搬入,只把对 app/fs/path/execSync 的引用改为工厂参数(名字不变)。

@@ -116,7 +116,9 @@
 | 3 | 解析链②接入执行器:`skill_resolve`/`skill_pending_resolves` MCP + resolveBus 文件总线 + 三路竞速(Agent/人自动/人手动),超时降级到人 | ②需要 | ✅ |
 | 4 | 编译时 Agent(工作流化):「保存为技能」自动触发精修,无手动按钮;工作台开着走 card-inject【可视对话】,否则降级无头;Agent 调 `skill_refine` MCP 提交补丁(refines/ 文件总线)→ `applyRefinePatch` 校验落盘;用户已定的 标题/描述/success 不覆盖 | 是 | ✅ |
 | 5 | 数据集批跑:`skill_run_batch` MCP(browser-mcp)→ relay `/skill/run-batch` → `skillRunBatch`(行级容错/互斥/上限200)+ `rowToParamValues` 列名→参数映射(label 精确→key→包含唯一) | 是(Agent 读物料表组 dataset) | ✅ |
-| 6 | 自愈回放(失败步 Agent 重定位 + 回写 SKILL) | 是 | |
+| 6 | 自愈回放:失配步不早停 → 6a 确定性语义重定位(placeholder/label/文本 + `relocateSelectors`/`__label__`)/ 6b Agent 重定位(采集页面候选 → `skill_relocate` MCP);命中即 `persistHeal` 回写技能(自更新) | 6b 需要 | ✅ |
+
+**六阶段全部落地。** 后续增强(非阻塞):file-gate(上传图片,input[type=file] 注入)、wait-gate(等导出/下载完成)作为解析链的更多 gate 类型接入,机制已就绪。
 
 ## 8. 与 Codex Record & Replay 对照
 
