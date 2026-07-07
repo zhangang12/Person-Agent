@@ -50,10 +50,37 @@ const TOOLS = [
   { name: 'repro_rollback', description: '验证 FAIL 后,把本次 session 的改动回滚到 HEAD。默认回滚所有改动文件(git checkout + git clean 未跟踪);files 列表非空则只回滚那些。**慎用**:会丢失本次未提交的改动;但当你已确定本次修复方向错误时,这是干净重来的最快路径。', inputSchema: { type: 'object', properties: { cwd: { type: 'string', description: '仓库根目录绝对路径' }, files: { type: 'array', items: { type: 'string' }, description: '可选:仅回滚这些文件;省略=回滚所有改动' }, dryRun: { type: 'boolean', description: 'true 只列出会被回滚的文件,不真动手(强烈建议先 dryRun)' } }, required: ['cwd'] } },
   { name: 'bundle_note', description: '多 agent 协作共享便签:把"假设 X"标 confirmed/excluded/maybe + 证据。后续 lens/agent 看到 excluded 不再重查,看到 confirmed 不再质疑,**省 token**+**避免重复工作**。改写同 key 会覆盖。', inputSchema: { type: 'object', properties: { bundleId: { type: 'string' }, key: { type: 'string', description: '简短假设 key,如 is_cors / is_null_pointer / is_5xx / is_schema_change' }, status: { type: 'string', enum: ['confirmed', 'excluded', 'maybe'] }, evidence: { type: 'string', description: '1-2 句证据,如 "已读 api.js:42,无 cors 配置,排除"' } }, required: ['bundleId', 'key', 'status', 'evidence'] } },
   { name: 'read_notes', description: '读某个复现包当前所有便签(给 lens 启动前看,避免重复工作)。无便签返回空数组。', inputSchema: { type: 'object', properties: { bundleId: { type: 'string' } }, required: ['bundleId'] } },
+  { name: 'skill_pending_resolves', description: '列出技能回放当前挂起的"运行时解析请求"(回放暂停在某步,等一个运行时才知道的值:物料数据/文件路径/验证码等)。回放暂停时主程序会把请求发进对话;也可主动调这个查漏。', inputSchema: { type: 'object', properties: {} } },
+  { name: 'skill_resolve', description: '答复一个挂起的解析请求:把你用工具(读项目文件/Excel/查库/看证据)解出的值写回,回放立刻续跑并把值填入该步字段。**只在确有把握时调用**;只有人知道的值(如短信验证码)不要猜,回复用户说明即可,用户会在页面手动输入。', inputSchema: { type: 'object', properties: { gateId: { type: 'string', description: '解析请求 id(来自暂停通知或 skill_pending_resolves)' }, value: { type: 'string', description: '解出的值(将按输入步写进目标字段)' }, note: { type: 'string', description: '可选:一句话依据(留档)' } }, required: ['gateId', 'value'] } },
 ]
+// 解析总线目录(与主进程 window.js resolveBus 的文件契约):req=<gateId>.json,res=<gateId>.res.json
+const RSV = path.join(userData(), 'resolves')
 
 async function callTool(name, a) {
   a = a || {}
+  if (name === 'skill_pending_resolves') {
+    let files = []
+    try { files = fs.readdirSync(RSV).filter((f) => f.endsWith('.json') && !f.endsWith('.res.json')) } catch { return '(当前没有挂起的解析请求)' }
+    const out = []
+    for (const f of files) {
+      try {
+        const j = JSON.parse(fs.readFileSync(path.join(RSV, f), 'utf8'))
+        if (!j.gateId || fs.existsSync(path.join(RSV, j.gateId + '.res.json'))) continue   // 已答复
+        if (Date.now() - (j.at || 0) > 10 * 60 * 1000) continue                            // 超 10 分钟视为过期(回放早已超时续跑)
+        out.push(`gateId=${j.gateId}  步${j.step}  需要:「${j.ask}」  字段:${j.sel}  页面:${j.url}`)
+      } catch {}
+    }
+    return out.length ? out.join('\n') : '(当前没有挂起的解析请求)'
+  }
+  if (name === 'skill_resolve') {
+    const gateId = String(a.gateId || '').trim()
+    if (!/^g[\w-]{3,60}$/.test(gateId)) return 'gateId 形如 g…(来自暂停通知/skill_pending_resolves),收到:' + (gateId || '(空)')
+    const value = String(a.value == null ? '' : a.value).slice(0, 500)
+    if (!value) return '需要非空 value;若这个值只有人知道(如验证码),不要调本工具,回复用户说明即可。'
+    if (!fs.existsSync(path.join(RSV, gateId + '.json'))) return '没有这个挂起请求(可能已续跑或超时):' + gateId
+    try { fs.writeFileSync(path.join(RSV, gateId + '.res.json'), JSON.stringify({ value, note: String(a.note || '').slice(0, 200), at: Date.now() })) } catch (e) { return '写入失败:' + e.message }
+    return `✓ 已答复 ${gateId},回放将自动续跑并把值填入该步字段。`
+  }
   if (name === 'list_bundles') {
     try {
       const ds = fs.readdirSync(EVD).filter((d) => /^b_/.test(d))

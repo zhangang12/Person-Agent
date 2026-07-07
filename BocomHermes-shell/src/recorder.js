@@ -2,7 +2,7 @@
 // 只搬不改函数体，行为 100% 不变。函数间互相调用（模块内互见）。
 // ctx 注入 window.js 闭包与 ./recorder-core 的外部符号；sleep 本模块自定义（不从 ctx 拿）。
 module.exports = function initRecorder(ctx) {
-  const { S, brActive, session, log, snapshotBad, RECORDER_JS, frameFor, findElExpr, coverageHits, gitChangedFiles } = ctx
+  const { S, brActive, session, log, snapshotBad, RECORDER_JS, frameFor, findElExpr, coverageHits, gitChangedFiles, resolveBus } = ctx
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
   async function injectRecorder(wc) {
@@ -73,17 +73,27 @@ module.exports = function initRecorder(ctx) {
       })()`, true)
     } catch {}
   }
-  // 人机断点:回放到 human 步(验证码/滑块/动态令牌)时暂停,把可见浏览器交还给人现场输入,
-  // 人填完【自动续跑】(检测目标字段被填入且稳定)或点 HUD 的「继续」【手动续跑】,二者竞速,先到先续。
-  // 一次性验证码不照填(录制值已清空),人现场输入,回放随后走下一步(提交)。最长等 5 分钟兜底。
+  // 解析断点(设计:docs/技能系统-意图执行与Agent解析链设计.md 第 4 节):回放到 human/resolve 步暂停,
+  // 三路竞速,先到先续:
+  //   ② Agent —— resolveBus 落 req + card-inject 通知工作台 Agent,Agent 用工具解出后经 skill_resolve 写回,
+  //      轮询到即把值填入该步字段(原生 setter + input/change,与 input 步同款)再续跑;
+  //   ③ 人·自动 —— 检测目标字段被人填入且值稳定(验证码场景,录制值已清空不照填);
+  //   ③ 人·手动 —— 点 HUD 暂停横幅的「继续」。
+  // 无工作台/Agent 不应答 → 链自动只剩③,技能永远跑得动。最长等 5 分钟兜底超时。
   async function awaitHumanGate(wc, ev, i, sendProg) {
     const fr = frameFor(wc, ev)
     const elExpr = findElExpr(ev.sel, ev.selAlt)
     try { await waitForEl(fr, elExpr, 5000, true) } catch {}   // 等字段出现再暂停(高亮/检测才有的放矢)
     await highlightTarget(fr, ev, i + 1)
-    sendProg({ pause: true, i: i + 1, hint: ev.humanHint || '需人工操作', sel: ev.sel || '' })
+    const gateId = 'g' + Date.now().toString(36) + '_' + (i + 1)
+    let agentOn = false
+    if (resolveBus) {
+      const req = { gateId, step: i + 1, ei: i, ask: ev.humanHint || '需人工操作', sel: ev.sel || '', url: (() => { try { return wc.getURL() } catch { return '' } })(), at: Date.now() }
+      try { resolveBus.post(req); agentOn = resolveBus.notifyAgent(req) } catch {}
+    }
+    sendProg({ pause: true, i: i + 1, hint: ev.humanHint || '需人工操作', sel: ev.sel || '', agent: agentOn })
     let done = false
-    const manual = new Promise((res) => { S.browser._replayResume = () => { if (!done) { done = true; res('manual') } } })
+    const manual = new Promise((res) => { S.browser._replayResume = () => { if (!done) { done = true; res({ how: 'manual' }) } } })
     const auto = (async () => {
       let lastV = null, stableAt = 0
       const t0 = Date.now()
@@ -92,18 +102,38 @@ module.exports = function initRecorder(ctx) {
         let v = ''
         try { v = await fr.executeJavaScript(`(()=>{var __el=null;return (${elExpr})?String((__el.value!=null?__el.value:__el.innerText)||''):''})()`, true) } catch {}
         if (v && v.trim().length >= 4) {   // 验证码通常 ≥4 位;滑块/无值类只能靠手动「继续」
-          if (v === lastV) { if (!stableAt) stableAt = Date.now(); else if (Date.now() - stableAt >= 1200) return 'auto' }
+          if (v === lastV) { if (!stableAt) stableAt = Date.now(); else if (Date.now() - stableAt >= 1200) return { how: 'auto' } }
           else { lastV = v; stableAt = 0 }
         }
       }
-      return 'timeout'
+      return { how: 'timeout' }
     })()
-    const how = await Promise.race([manual, auto])
+    const agentP = (async () => {   // 链②:轮询 Agent 经 skill_resolve 写回的答复;无总线则永不 resolve(不影响竞速)
+      if (!resolveBus) return new Promise(() => {})
+      while (!done) {
+        await sleep(1000)
+        const r = resolveBus.check(gateId)
+        if (r && typeof r.value === 'string' && r.value) return { how: 'agent', value: r.value, note: r.note || '' }
+      }
+      return new Promise(() => {})   // done 由别路赢下:挂起等 race 收尾,不产生结果
+    })()
+    const win = await Promise.race([manual, auto, agentP])
     done = true
     S.browser._replayResume = null
+    if (resolveBus) { try { resolveBus.clear(gateId) } catch {} }
+    // Agent 给了值 → 填入该步字段(与 execStep input 同款:原生 setter + input/change 事件)
+    if (win.how === 'agent') {
+      try {
+        await fr.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';
+          var v=${JSON.stringify(String(win.value || ''))};
+          if (__el.isContentEditable){__el.focus();__el.innerText=v}
+          else{var p=Object.getOwnPropertyDescriptor(__el.__proto__,'value');p&&p.set?p.set.call(__el,v):(__el.value=v);}
+          __el.dispatchEvent(new Event('input',{bubbles:true}));__el.dispatchEvent(new Event('change',{bubbles:true}));return 'OK';})()`, true)
+      } catch (e) { log('agent resolve 写值失败: ' + e.message) }
+    }
     sendProg({ resume: true, i: i + 1 })
-    log('replay human-gate 步 ' + (i + 1) + '(' + (ev.humanHint || '') + ')续跑: ' + how)
-    return how
+    log('replay 解析断点 步 ' + (i + 1) + '(' + (ev.humanHint || '') + ')续跑: ' + win.how + (win.note ? ' · ' + win.note : ''))
+    return win.how
   }
 
   async function execStep(wc, ev, tab, opts) {

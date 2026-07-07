@@ -1076,7 +1076,8 @@ function showReplayPause(d) {
   clearReplayPause()
   const b = document.createElement('div'); b.id = 'replaypause'
   b.style.cssText = 'position:fixed;top:46px;left:50%;transform:translateX(-50%);z-index:10000;display:flex;align-items:center;gap:10px;background:rgba(214,163,45,.16);border:1.5px solid #d6a32d;border-radius:8px;padding:5px 8px 5px 12px;color:var(--txt);font-size:12px;box-shadow:0 6px 22px rgba(0,0,0,.45);pointer-events:auto;white-space:nowrap'
-  b.innerHTML = `<span style="font-size:13px">⏸</span><span>请在页面完成:<b style="color:#e6c25a">${String(d.hint || '需人工操作').replace(/</g,'&lt;')}</b> —— 填完自动继续,或点右侧</span>`
+  const agentTip = d.agent ? '已通知 Agent 尝试解析;也可' : '——'
+  b.innerHTML = `<span style="font-size:13px">⏸</span><span>${d.agent ? '🤖 ' : ''}请在页面完成:<b style="color:#e6c25a">${String(d.hint || '需人工操作').replace(/</g,'&lt;')}</b> ${agentTip}填完自动继续,或点右侧</span>`
   const btn = document.createElement('button')
   btn.textContent = '继续 ▶'
   btn.style.cssText = 'background:#d6a32d;border:none;color:#1a1400;font-weight:700;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px'

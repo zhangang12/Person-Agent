@@ -497,10 +497,39 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // 浏览器 IPC / brWC / 调试分诊层仍留在本文件,消费下面解构出的函数。
   const { brActive, newTab, closeTab, activateTab, brSetDevice, brRotateDevice, brZoom, brLayout, brSendTabs, sendNetSnapshot, attachDbg, detachDbg, normalizeUrl, brScreenshot, brNetBody, brPickElement, brEval, createBrowser, createWorkspace } = initBrowser({ S, session, log, path, fs, app, BrowserWindow, WebContentsView, oc, ensureOrbAlive, forgetBusy, wireRecToTab, brSendRecCount, cdpConsoleLevel, fmtRO, fmtException })
 
+  // 【解析链②·文件总线】回放暂停步 ↔ Agent 的通信(设计:docs/技能系统-意图执行与Agent解析链设计.md 第 4 节):
+  // 主进程写 req(userData/resolves/<gateId>.json)+ card-inject 通知工作台 Agent;
+  // Agent 用 repro-mcp 的 skill_resolve 写 res(<gateId>.res.json);replayRec 轮询到即续跑。
+  // 与 assertions/scans/reviews 同款文件总线 —— MCP 是独立进程,共享 userData 是既有契约。
+  const resolvesDir = () => path.join(app.getPath('userData'), 'resolves')
+  const resolveBus = {
+    post(req) {
+      try {
+        fs.mkdirSync(resolvesDir(), { recursive: true })
+        for (const f of fs.readdirSync(resolvesDir())) { try { const fp = path.join(resolvesDir(), f); if (Date.now() - fs.statSync(fp).mtimeMs > 30 * 60 * 1000) fs.unlinkSync(fp) } catch {} }   // 顺手清陈旧 req/res
+        fs.writeFileSync(path.join(resolvesDir(), req.gateId + '.json'), JSON.stringify(req, null, 2))
+      } catch (e) { log('resolve post err: ' + e.message) }
+    },
+    check(gateId) { try { return JSON.parse(fs.readFileSync(path.join(resolvesDir(), gateId + '.res.json'), 'utf8')) } catch { return null } },
+    clear(gateId) { for (const suf of ['.json', '.res.json']) { try { fs.unlinkSync(path.join(resolvesDir(), gateId + suf)) } catch {} } },
+    // 尽力通知工作台 Agent(链②):无工作台/卡已销毁 → false,解析链自动只剩人工(链③),技能照样跑
+    notifyAgent(req) {
+      const b = S.browser
+      if (b.mode !== 'workspace' || !b.cardView || b.cardView.webContents.isDestroyed()) return false
+      const disp = `⏸ 回放暂停·步 ${req.step}:需要「${req.ask}」`
+      const text = `技能回放暂停在第 ${req.step} 步,需要一个运行时值:「${req.ask}」\n`
+        + `目标字段:${req.sel}\n所在页面:${req.url}\n\n`
+        + `请判断这个值能否用你手上的工具(读项目文件/Excel/查库/看复现证据)可靠得出:\n`
+        + `- 能 → 解出后调用 MCP 工具 skill_resolve(gateId="${req.gateId}", value="…"),回放会立即续跑;\n`
+        + `- 不能(如短信验证码只在用户手机上)→ 直接回复说明,用户会在页面手动输入。不要猜。`
+      try { b.cardView.webContents.send('card-inject', { text, disp }); return true } catch { return false }
+    },
+  }
+
   // 【录制回放引擎】9 个函数搬进 ./recorder 的 initRecorder 工厂,这里注入闭包依赖后解构使用。
   // 必须放在 brActive(const,非提升)之后:initRecorder(ctx) 构造 ctx 时会即时读取 brActive。
   // 时序安全:此行在 initWindow 函数体靠前执行,而所有调用点(wireRecToTab/IPC handler/verifyFix/skillRun)均运行期才触发。
-  const { injectRecorder, waitNetIdle, waitForEl, highlightTarget, execStep, startCoverage, stopCoverage, checkAssertions, replayRec } = initRecorder({ S, brActive, session, log, snapshotBad, RECORDER_JS, frameFor, findElExpr, coverageHits, gitChangedFiles })
+  const { injectRecorder, waitNetIdle, waitForEl, highlightTarget, execStep, startCoverage, stopCoverage, checkAssertions, replayRec } = initRecorder({ S, brActive, session, log, snapshotBad, RECORDER_JS, frameFor, findElExpr, coverageHits, gitChangedFiles, resolveBus })
 
   // ── 调试分诊 + 多 agent 对抗分析（工作台「发给 Agent」的大脑）──────────────────
   const tinyJson = (t) => { try { const m = String(t || '').replace(/<think>[\s\S]*?<\/think>/gi, ' ').match(/\{[\s\S]*\}/); return m ? JSON.parse(m[0]) : null } catch { return null } }
