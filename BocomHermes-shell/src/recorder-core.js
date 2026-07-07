@@ -9,7 +9,10 @@
   if (window.__bocom_rec_init) return; window.__bocom_rec_init = true;
   // 双通道单发:优先 CDP binding(页面覆写 console.log 也打不死);binding 命中即 return,不会双通道重复入队。
   // 子框架(iframe)里发的事件带 fu=本框架 URL,回放时据此定位到对应 frame(银行老系统业务表单常在 iframe)
-  var emit = function(e){ try { if (window.top !== window && !e.fu) e.fu = location.href; } catch(_){ } var s = '__BR__' + JSON.stringify(e); try { if (typeof window.__bocom_rec_emit === 'function') return window.__bocom_rec_emit(s); } catch(_){} try { console.log(s); } catch(_){} };
+  var emit = function(e){
+    // 源头守卫:天枢自己的 chrome 页(新标签页搜索框等,body[data-bocom-chrome])上的操作不录 —— 否则用户在地址搜索框敲目标 URL 会漏进录制,回放目标页根本没这框。__ping__ 健康自检走独立 PING_JS,不受影响。
+    try { if (document.body && document.body.getAttribute && document.body.getAttribute('data-bocom-chrome')) return; } catch(_){}
+    try { if (window.top !== window && !e.fu) e.fu = location.href; } catch(_){ } var s = '__BR__' + JSON.stringify(e); try { if (typeof window.__bocom_rec_emit === 'function') return window.__bocom_rec_emit(s); } catch(_){} try { console.log(s); } catch(_){} };
   // 记多个选择器候选:回放时按优先级 fallback,DOM 结构小幅变动也能命中
   var selBuild = function(el){
     if (!el || el === document || el === document.body) return ['body'];
@@ -385,7 +388,55 @@
     return clone
   }
 
-module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs }
+// ── 录制降噪:把"逐事件照录"压成"有意义的操作序列" ──────────────────────────
+// 停录保存前跑一遍(window.js browser-rec-stop),纯函数、可离线自测。只删【可证明的噪声】,保守优先:
+//   1 scroll —— 回放 click 自带 scrollIntoView,滚到固定 x/y 无意义且页面高度一变即失配
+//   2 同元素连续 input 合并留最后 —— 用户反复敲/组件程序化重填 → 只需终值;顺带把"密码敲 4 下=4 个密码步/参数"收成 1 个
+//   3 只为聚焦的 click —— 紧跟同元素 input/select/check,输入步自己会聚焦+写值,点一下纯多余
+//   4 提交去重 —— Enter / 点提交按钮 / 表单 submit 三者常同时出现(一次登录仨提交步),回放会【重复提交】(银行表单危险),收成一个
+//   5 key:Tab —— 纯焦点移动,回放按选择器直接写值不依赖 Tab 遍历
+// newtab 搜索框(#s)这类 chrome 噪声由 RECORDER_JS 的 emit 源头守卫拦掉,不在此函数职责内。
+// 返回 { events: 压缩后, dropped: [{i,act,sel,reason}] };survivors + dropped(按原下标 i)可还原原始序列,透明可回溯。
+function compactEvents(events) {
+  const src = Array.isArray(events) ? events : []
+  const dropped = []
+  const drop = (o, reason) => { dropped.push({ i: o.i, act: o.ev.act, sel: o.ev.sel || o.ev.url || '', reason }) }
+  const SUBMIT_TXT = /登录|登陆|登入|提交|确定|确认|保存|搜索|查询|下一步|signin|login|submit|save|search|next/i
+  const isSubmitClick = (ev) => !!(ev && ev.act === 'click' && SUBMIT_TXT.test(String(ev.text || '').replace(/\s+/g, '')))
+  const gap = (a, b) => Math.abs((Number(b && b.t) || 0) - (Number(a && a.t) || 0))
+  let arr = src.map((ev, i) => ({ ev, i }))   // 带原下标处理,dropped 记原始位置
+
+  // Pass 1:删 scroll、key:Tab
+  arr = arr.filter((o) => {
+    if (o.ev.act === 'scroll') { drop(o, 'scroll-噪声(回放靠 scrollIntoView)'); return false }
+    if (o.ev.act === 'key' && o.ev.key === 'Tab') { drop(o, 'key:Tab-纯焦点移动'); return false }
+    return true
+  })
+  // Pass 2:同元素连续 input 合并 —— 前一次被后一次覆盖(值/secret 以最后一次为准)
+  arr = arr.filter((o, idx, a) => {
+    const nx = a[idx + 1]
+    if (o.ev.act === 'input' && o.ev.sel && nx && nx.ev.act === 'input' && nx.ev.sel === o.ev.sel) { drop(o, 'input-被同元素后一次覆盖'); return false }
+    return true
+  })
+  // Pass 3:删只为聚焦的 click(紧跟同元素 input/select/check)
+  arr = arr.filter((o, idx, a) => {
+    const nx = a[idx + 1]
+    if (o.ev.act === 'click' && o.ev.sel && nx && (nx.ev.act === 'input' || nx.ev.act === 'select' || nx.ev.act === 'check') && nx.ev.sel === o.ev.sel) { drop(o, 'click-仅聚焦(后随同元素输入)'); return false }
+    return true
+  })
+  // Pass 4:提交去重
+  //  4a 紧跟 click/key:Enter 的 submit → 删(前者已触发提交,防重复提交)
+  //  4b 紧跟"提交按钮 click"的 key:Enter → 删(同一次提交,保留更稳的按钮点击)
+  arr = arr.filter((o, idx, a) => {
+    const prev = a[idx - 1], nx = a[idx + 1]
+    if (o.ev.act === 'submit' && prev && (prev.ev.act === 'click' || (prev.ev.act === 'key' && prev.ev.key === 'Enter')) && gap(prev.ev, o.ev) < 800) { drop(o, 'submit-冗余(前一步已触发提交)'); return false }
+    if (o.ev.act === 'key' && o.ev.key === 'Enter' && nx && isSubmitClick(nx.ev) && gap(o.ev, nx.ev) < 800) { drop(o, 'Enter-与提交按钮点击同意图'); return false }
+    return true
+  })
+  return { events: arr.map((o) => o.ev), dropped }
+}
+
+module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents }
 
 // ── 纯文件 IO 工厂:window.js 注入 { app, fs, path, execSync } 后解构使用 ────────
 // 这些函数从 window.js 原样搬入,只把对 app/fs/path/execSync 的引用改为工厂参数(名字不变)。

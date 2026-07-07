@@ -19,6 +19,7 @@
     "plan:test": "node scripts/reqplan-selftest.mjs",
     "mail:test": "node scripts/mail-parse-selftest.mjs",
     "tool:test": "node scripts/tool-part-selftest.mjs",
+    "compact:test": "node scripts/recorder-compact-selftest.mjs",
     "modelroute": "node scripts/model-route-probe.mjs",
     "mcp:browser": "node mcp/browser-mcp.mjs",
     "mcp:browser:test": "node mcp/selftest.mjs",

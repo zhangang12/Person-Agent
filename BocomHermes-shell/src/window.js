@@ -8,7 +8,7 @@ const emailSummarySeen = require('./email-summary-seen')
 const initOutbox = require('./outbox')
 const db = require('./db')
 const { extractMeeting } = require('./meeting-extract')
-const { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs } = require('./recorder-core')
+const { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents } = require('./recorder-core')
 const initRecorder = require('./recorder')
 const { cdpConsoleLevel, fmtRO, fmtException, resolveFrame } = require('./cdp-format')
 const initMail = require('./mail')
@@ -1556,10 +1556,18 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     const id = 'rec_' + Date.now().toString(36)
     const dir = path.join(app.getPath('userData'), 'recordings')
     try { fs.mkdirSync(dir, { recursive: true }) } catch {}
-    const rec = { id, tabId: r.tabId, startedAt: r.startedAt, startUrl: r.startUrl, durationMs: Date.now() - r.startedAt, events: r.events, snapshot, preState: r.preState || null }
+    // 降噪:逐事件照录 → 有意义的操作序列(删滚动/合并重复输入/去焦点点击/去重复提交/去 Tab)。
+    // 带兜底:compactEvents 万一抛异常也绝不阻断保存,回退原始事件。dropped 明细留档,透明可回溯。
+    let events = r.events, compaction = null
+    try {
+      const c = compactEvents(r.events)
+      events = c.events; compaction = { from: r.events.length, to: c.events.length, dropped: c.dropped }
+      log('rec compact: ' + r.events.length + ' → ' + c.events.length + ' events(降噪删 ' + c.dropped.length + ' 步)')
+    } catch (e) { log('rec compact err(回退原始事件): ' + e.message) }
+    const rec = { id, tabId: r.tabId, startedAt: r.startedAt, startUrl: r.startUrl, durationMs: Date.now() - r.startedAt, events, compaction, snapshot, preState: r.preState || null }
     try { fs.writeFileSync(path.join(dir, id + '.json'), JSON.stringify(rec, null, 2)) } catch (e) { log('rec save err: ' + e.message) }
     S.browser.lastRec = rec
-    log('rec stop: ' + id + ' · ' + r.events.length + ' events · pre-fix snapshot: ' + snapshot.errs.length + ' errs / ' + snapshot.bad.length + ' bad')
+    log('rec stop: ' + id + ' · ' + events.length + ' events · pre-fix snapshot: ' + snapshot.errs.length + ' errs / ' + snapshot.bad.length + ' bad')
     return { ok: true, ...rec }
   })
 
