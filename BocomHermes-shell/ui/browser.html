@@ -628,7 +628,12 @@ H.onBrowserNetSnapshot(({ items }) => {
   updateNetCount()
 })
 H.onBrowserNetAdd(({ kind, rec }) => {
-  if(!netMap.has(rec.id)) netOrder.push(rec.id)
+  if(!netMap.has(rec.id)){
+    netOrder.push(rec.id)
+    // #8 与主进程 MAX_NET=600 对齐:主进程按首见 requestId FIFO 驱逐但不发 evict 消息,渲染侧须自行同上界裁剪,
+    //    否则单页长时间轮询会无限增长、与主进程失同步、点旧行进不了详情(brNetBody 已驱逐返回 null)。
+    while(netOrder.length > 600){ const old = netOrder.shift(); netMap.delete(old); if(netSel===old) closeDetail() }
+  }
   netMap.set(rec.id, Object.assign(netMap.get(rec.id) || {}, rec))
   scheduleNet()
 })
