@@ -31,8 +31,10 @@
   .node.error .nst, .node.timeout .nst, .node.aborted .nst { fill: var(--diff-del); }
   .node.sel rect { stroke: var(--accent); stroke-width: 2.2; }
   .edge { fill: none; stroke: var(--txt3); stroke-width: 1.3; opacity: .7; }
-  .detail { flex: none; font-size: 11.5px; color: var(--txt); background: var(--composer-bg); border: .5px solid var(--accent); border-radius: 9px; padding: 7px 9px; line-height: 1.45; display: none; }
+  .detail { flex: none; font-size: 11.5px; color: var(--txt); background: var(--composer-bg); border: .5px solid var(--accent); border-radius: 9px; padding: 7px 9px; line-height: 1.5; display: none; max-height: 30%; overflow-y: auto; -webkit-user-select: text; user-select: text; white-space: pre-wrap; overflow-wrap: anywhere; }
   .detail.on { display: block; }
+  .detail .dh { font-weight: 600; margin-bottom: 3px; }
+  .detail .dout { color: var(--txt2); font-size: 11px; }
 
   #feed { flex: 1 1 45%; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
   .banner { font-size: 12px; padding: 7px 10px; border-radius: 9px; }
@@ -135,9 +137,16 @@
   graphEl.addEventListener('click', (e) => {
     const g = e.target.closest('.node'); if (!g) return
     const t = tasks.get(g.dataset.id); if (!t) return
+    if (selId === t.id) { selId = null; draw(); detailEl.className = 'detail'; return }   // 再点一次收起
     selId = t.id; draw()
     detailEl.className = 'detail on'
-    detailEl.textContent = '[' + t.id + ' · ' + (t.role || 'worker') + '] ' + t.goal
+    detailEl.innerHTML = ''
+    const h = document.createElement('div'); h.className = 'dh'
+    h.textContent = '[' + t.id + ' · ' + (t.role || 'worker') + '] ' + t.goal
+    detailEl.appendChild(h)
+    const o = document.createElement('div'); o.className = 'dout'
+    o.textContent = t.output ? t.output : (t.error ? '✗ ' + t.error : (t.status === 'running' ? '运行中…' : '(还没有产出)'))
+    detailEl.appendChild(o)
   })
 
   function banner(cls, text) { const b = document.createElement('div'); b.className = 'banner ' + cls; b.textContent = text; feed.appendChild(b); feed.scrollTop = feed.scrollHeight; return b }
@@ -163,12 +172,22 @@
     return p.sub ? { key: base + '/' + (p.agentId || '_'), name: label + ' ▸ ' + (p.agentName || '子agent') } : { key: base, name: label }
   })
 
+  // 进度横幅:单条常驻,随事件滚动更新(第 x 轮 · 运行中 k · 完成 m/n),不再是静态"正在规划…"
+  let curRound = 0
+  function refreshBanner(extra) {
+    if (!runningBanner) return
+    const all = [...tasks.values()]
+    const run = all.filter((t) => t.status === 'running').length
+    const done = all.filter((t) => t.status && t.status !== 'pending' && t.status !== 'running').length
+    runningBanner.textContent = extra || ('第 ' + (curRound || 1) + ' 轮 · 运行中 ' + run + ' · 完成 ' + done + '/' + all.length)
+  }
   let runningBanner = banner('run', '正在规划…')
   window.BocomHermes.onWorkflowEvent((ev) => {
     if (ev.type === 'plan') {
-      if (ev.done && (!ev.tasks || !ev.tasks.length)) { banner('run', '第 ' + ev.round + ' 轮：判定可收尾，正在汇总…'); return }
+      curRound = ev.round || curRound
+      if (ev.done && (!ev.tasks || !ev.tasks.length)) { refreshBanner('第 ' + ev.round + ' 轮：判定可收尾，正在汇总…'); return }
       for (const t of ev.tasks || []) if (!tasks.has(t.id)) tasks.set(t.id, { id: t.id, role: t.role, goal: t.goal, deps: t.deps || [], status: 'pending' })
-      draw()
+      draw(); refreshBanner()
     } else if (ev.type === 'plan-approve') {
       const box = document.createElement('div'); box.className = 'approve'
       const t = document.createElement('div'); t.className = 't'
@@ -183,6 +202,12 @@
         badge.textContent = task.role || 'worker'
         item.appendChild(badge)
         item.appendChild(document.createTextNode(task.goal))
+        if (task.deps && task.deps.length) {   // 依赖可见:一眼看出哪些并行、哪些等前置
+          const dep = document.createElement('span')
+          dep.style.cssText = 'font-family:var(--mono);font-size:10px;color:var(--txt3);margin-left:5px;'
+          dep.textContent = '← ' + task.deps.join(',')
+          item.appendChild(dep)
+        }
         tlist.appendChild(item)
       }
       const btns = document.createElement('div'); btns.className = 'btns'
@@ -193,18 +218,32 @@
       go.onclick = () => reply('run', false); auto.onclick = () => reply('run', true); no.onclick = () => reply('abort', false)
       btns.append(go, auto, no); box.append(t, tlist, btns); feed.appendChild(box); feed.scrollTop = feed.scrollHeight
     } else if (ev.type === 'task') {
-      const t = tasks.get(ev.id); if (t) { t.status = ev.status; draw() }
+      const t = tasks.get(ev.id)
+      if (t) {
+        t.status = ev.status
+        if (ev.output) t.output = ev.output
+        if (ev.error) t.error = ev.error
+        draw(); refreshBanner()
+        // 详情面板开着且正是这个节点 → 实时刷新产出
+        if (selId === ev.id && detailEl.classList.contains('on')) { const o = detailEl.querySelector('.dout'); if (o) o.textContent = t.output || (t.error ? '✗ ' + t.error : (t.status === 'running' ? '运行中…' : '(还没有产出)')) }
+      }
       // 编排事件是权威收尾:会话销毁竞态下迟到的工具事件会被丢,工具清单跟 DAG 节点一起收
       if (ev.status && ev.status !== 'running') mon.done(ev.id, ev.status === 'ok' ? 'completed' : 'error')
     } else if (ev.type === 'final') {
-      if (runningBanner) runningBanner.remove()
+      if (runningBanner) { runningBanner.remove(); runningBanner = null }
       const secs = ev.elapsedMs ? Math.round(ev.elapsedMs / 1000) + 's' : ''
-      banner('done', '完成 · ' + ev.rounds + ' 轮 · ' + secs + (ev.unmet && ev.unmet.length ? ' · 未满足依赖:' + ev.unmet.join(',') : ''))
+      const okN = [...tasks.values()].filter((t) => t.status === 'ok').length
+      const b = banner('done', '完成 · ' + ev.rounds + ' 轮 · ' + okN + '/' + tasks.size + ' 任务成功 · ' + secs + (ev.stopped ? ' · 提前收尾(' + ev.stopped + ')' : '') + (ev.unmet && ev.unmet.length ? ' · 未满足依赖:' + ev.unmet.join(',') : ''))
+      const cp = document.createElement('button')   // 最终成果一键复制(拿去贴文档/邮件)
+      cp.textContent = '复制成果'
+      cp.style.cssText = 'margin-left:8px;font-size:11px;color:var(--accent);background:transparent;border:1px solid var(--accent);border-radius:6px;padding:1px 8px;cursor:pointer'
+      cp.addEventListener('click', () => { try { navigator.clipboard.writeText(ev.final || '') } catch {} cp.textContent = '已复制' ; setTimeout(() => cp.textContent = '复制成果', 1500) })
+      b.appendChild(cp)
       const box = document.createElement('div'); box.className = 'wf-final'
       box.innerHTML = window.Rich.renderMarkdown(ev.final || '(无最终成果)')
       feed.appendChild(box); feed.scrollTop = feed.scrollHeight
     } else if (ev.type === 'error') {
-      if (runningBanner) runningBanner.remove()
+      if (runningBanner) { runningBanner.remove(); runningBanner = null }
       banner('err', '⚠ 出错：' + ev.error)
     }
   })

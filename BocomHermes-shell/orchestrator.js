@@ -20,11 +20,13 @@ function extractJson(text) {
 }
 
 const clip = (s, n = 600) => { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n) + '…' : s }
+// 尾部截取:worker 按约定把【交接】要点写在结尾 —— 给 planner/下游传摘要时取尾部,交接段不被截丢
+const tailClip = (s, n = 600) => { s = String(s == null ? '' : s); return s.length > n ? '…' + s.slice(-n) : s }
 const arr = (x) => Array.isArray(x) ? x.map((v) => String(v)).filter(Boolean) : []
 const summarize = (results) => {
   const arr = [...results.values()]
   if (!arr.length) return '（暂无）'
-  return arr.map((r) => `- [${r.task.id}] ${r.task.goal}（${r.status}）\n  摘要：${clip(r.output, 280)}`).join('\n')
+  return arr.map((r) => `- [${r.task.id}] ${r.task.goal}（${r.status}）\n  摘要：${tailClip(r.output, 280)}`).join('\n')
 }
 const aborted = (opts) => !!(opts.signal && opts.signal.aborted)
 
@@ -100,6 +102,8 @@ function buildPlanPrompt(goal, doneSummary, ledger, maxBatch) {
     '3. role 为这个子任务"现编"一句话人设(贴着任务本身，不要套通用头衔)。',
     '4. 看账本与上轮结果、按真实发现规划下一批，不要一次排满；够了就 done:true。',
     '5. 子任务都能用工具读代码/查库——让它们去核实，别靠猜。',
+    '6. 上轮有 error/timeout 的任务：判断是换方案重派、拆小一点、还是绕开；不要原样重复失败任务。',
+    '7. 目标要能落地：涉及代码/配置的子任务，goal 里点到文件或模块级（下游拿到就能动手）。',
     '',
     `只输出 JSON(下一批 <=${maxBatch} 个任务)，不要解释 / markdown / <think>：`,
     '{"ledger":{"facts":["据已完成结果更新的已确认事实"],"open":["仍未决的问题"],"assumptions":["未证实的假设"]},"tasks":[{"id":"短id","role":"现编的一句话人设","goal":"具体做什么","deps":["同批依赖id，可空"]}],"done":false}',
@@ -115,12 +119,13 @@ function buildWorkPrompt(task, ctx, goal) {
     '你的子任务：' + task.goal,
     ctx ? '可参考的上游结果：\n' + ctx : '',
     '请完成这个子任务并直接给出结果。务必用你的工具读代码 / 查库去核实，不要凭空猜测。',
+    '结尾必须有一节「【交接】」：用 3-5 行要点写清 关键结论 / 产出位置(文件路径、命令、数据) / 给下游的提醒 —— 下游任务与规划器主要看这一节。',
   ].filter(Boolean).join('\n')
 }
 function buildReducePrompt(goal, results, ledger) {
   const parts = [...results.values()].map((r) => `## [${r.task.id}] ${r.task.goal}\n${r.output}`).join('\n\n')
   const open = ledger && arr(ledger.open).length ? '\n\n仍未决 / 待澄清(请在结尾单列，不要藏掉)：\n- ' + arr(ledger.open).join('\n- ') : ''
-  return ['总目标：' + goal, '以下是各子任务产出，请汇总成一份连贯、完整、去重的最终成果(有冲突要点明，不要简单拼接)：', parts + open].join('\n\n')
+  return ['总目标：' + goal, '以下是各子任务产出，请汇总成一份连贯、完整、去重的最终成果(有冲突要点明，不要简单拼接)。保留各任务给出的文件路径/命令/数据等可执行细节，结论先行：', parts + open].join('\n\n')
 }
 
 // ---- 规划一轮（容错解析 + 重试 + 净化）----
@@ -156,7 +161,7 @@ function runDag(run, batch, results, opts) {
         if (!(t.deps || []).every((d) => results.has(d))) continue
         pending.delete(id); active++
         opts.onTaskStart && opts.onTaskStart(t)
-        const ctx = (t.deps || []).filter((d) => results.has(d)).map((d) => `【${d}】\n${clip(results.get(d).output, 800)}`).join('\n\n')
+        const ctx = (t.deps || []).filter((d) => results.has(d)).map((d) => `【${d}】\n${tailClip(results.get(d).output, 800)}`).join('\n\n')   // 尾部截取:上游【交接】段在结尾,不被截丢
         const t0 = Date.now()
         runGuarded(run, buildWorkPrompt(t, ctx, opts.goal), { kind: 'work', role: t.role, id: t.id }, opts, opts.taskRetries)
           .then((out) => { results.set(t.id, { task: t, output: out, status: 'ok', ms: Date.now() - t0 }); opts.onTaskDone && opts.onTaskDone(t, out, 'ok') })

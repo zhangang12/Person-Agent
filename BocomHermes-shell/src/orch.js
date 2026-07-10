@@ -2,7 +2,10 @@
 
 module.exports = function initOrch(S, { ipcMain, oc, orch, log }) {
   ipcMain.on('abort-workflow', (e) => {
-    const w = S.workflows.get(e.sender.id); if (w) { try { w.ac.abort() } catch {} }
+    const w = S.workflows.get(e.sender.id); if (!w) return
+    try { w.ac.abort() } catch {}
+    // 真停:同时中止所有在飞的 opencode 会话 —— 只停编排循环的话,进行中的子任务会继续烧网关到超时(240s)
+    for (const s of w.sessions) { try { oc.abort(w.serve, s) } catch {} }
   })
 
   ipcMain.on('wf-approve', (e, { reqId, decision, auto }) => {
@@ -43,7 +46,8 @@ module.exports = function initOrch(S, { ipcMain, oc, orch, log }) {
         run, signal: ac.signal, maxConcurrency: 2, maxRounds: 4, maxTasks: 16, maxBatch: 5, taskTimeoutMs: 240000, onBeforeBatch,
         onPlan: (round, plan) => send('plan', { round, done: plan.done, tasks: plan.tasks.map((t) => ({ id: t.id, role: t.role, goal: t.goal, deps: t.deps })) }),
         onTaskStart: (t) => send('task', { id: t.id, status: 'running' }),
-        onTaskDone: (t, out) => send('task', { id: t.id, status: 'ok', chars: (out || '').length }),
+        // 产出随事件带给前端(截 2500):点 DAG 节点即可看该任务的实际产出,不用等最终汇总
+        onTaskDone: (t, out) => send('task', { id: t.id, status: 'ok', chars: (out || '').length, output: String(out || '').slice(0, 2500) }),
         onTaskError: (t, err, st) => send('task', { id: t.id, status: st || 'error', error: String(err && err.message || err) }),
       })
       send('final', { final: res.final, stopped: res.stopped, done: res.done, rounds: res.rounds, elapsedMs: res.elapsedMs, unmet: res.unmet })
