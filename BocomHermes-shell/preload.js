@@ -42,9 +42,9 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   clearHistory: () => ipcRenderer.invoke('clear-history'),
   // 工作流（动态编排）
   spawnWorkflow: (goal) => ipcRenderer.invoke('spawn-workflow', goal),
-  runWorkflow: (goal) => ipcRenderer.invoke('run-workflow', goal),
+  runWorkflow: (goal, wfId) => ipcRenderer.invoke('run-workflow', goal, wfId),
   abortWorkflow: () => ipcRenderer.send('abort-workflow'),
-  wfApprove: (reqId, decision, auto) => ipcRenderer.send('wf-approve', { reqId, decision, auto }),
+  wfApprove: (reqId, decision, auto, keepIds) => ipcRenderer.send('wf-approve', { reqId, decision, auto, keepIds }),
   onWorkflowEvent: (cb) => ipcRenderer.on('wf-event', (_e, p) => cb(p)),
   // 需求分析（多Agent 对抗 → 三类清单）
   openReqAnalysis: () => ipcRenderer.invoke('open-req-analysis'),

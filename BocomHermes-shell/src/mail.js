@@ -291,6 +291,17 @@ module.exports = function initMail(ctx) {
             try { const id = spawnWorkflow(goal); return reply({ ok: true, id }) }
             catch (e) { return reply({ error: e.message }) }
           }
+          // 工作流成果回取:不再一次性 —— Agent 拿 id 查状态/取成果全文(注册表 + 存档),继续在对话里用
+          if (req.url === '/orch/result') {
+            const regs = S.wfRegistry ? [...S.wfRegistry.values()] : []
+            const id = String(a.id == null ? '' : a.id).trim()
+            const w = id ? regs.find((r) => String(r.id) === id) : regs[regs.length - 1]   // 不带 id = 最近一个
+            if (!w) return reply({ error: id ? ('没有 id=' + id + ' 的工作流(现有: ' + regs.map((r) => r.id).join(',') + ')') : '还没有任何工作流记录' })
+            if (w.status === 'running') return reply({ ok: true, id: w.id, status: 'running', round: w.round, goal: w.goal })
+            let full = w.final || ''
+            try { if (w.archive) full = fs.readFileSync(w.archive, 'utf8') } catch {}
+            return reply({ ok: true, id: w.id, status: w.status, goal: w.goal, rounds: w.rounds, elapsedMs: w.elapsedMs, archive: w.archive || '', final: String(full).slice(0, 14000) })
+          }
           // ── 浏览器技能(SKILL):录制一次 → 存成命名技能 → agent 按名字带参回放 ──
           // 执行统一走 GUI 主进程的强回放引擎(selAlt fallback + 登录态恢复 + 红框可视化),
           // browser-mcp 只是发现+调度面 —— 不在它自己的 headless 浏览器里重造弱引擎。

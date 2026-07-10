@@ -123,7 +123,7 @@ app.whenReady().then(() => {
   S.createOrb = createOrb   // 留给 window-all-closed 兜底拉起球
 
   initSession(S, { ipcMain, path, fs, shell, oc, log, recordHistory, touchHistory })
-  initOrch(S, { ipcMain, oc, orch, log })
+  initOrch(S, { ipcMain, oc, orch, log, app, path, fs })
   const todosApi = initTodos(S, { ipcMain, app, path, fs, log })
   S.todosApi = todosApi   // window.js 的会议抽取在运行期经 S 调 addSuggestion(初始化顺序无环)
   initTrigger(S, { path, fs, app, log, spawnEmailCard, createMailCenter, Notification })

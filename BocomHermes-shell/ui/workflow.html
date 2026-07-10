@@ -87,7 +87,11 @@
   document.getElementById('goal').textContent = goal
   document.getElementById('ttl').title = goal
   const feed = document.getElementById('feed'), graphEl = document.getElementById('graph'), detailEl = document.getElementById('detail')
-  document.getElementById('x').addEventListener('click', () => window.BocomHermes.closeSelf())
+  // 跑动中关窗要确认:关闭 = 中止全部在跑子任务(spawnWorkflow 的 closed 钩子会杀会话)
+  document.getElementById('x').addEventListener('click', () => {
+    if (runningBanner && !confirm('工作流仍在运行,关闭将中止所有子任务。确定关闭?')) return
+    window.BocomHermes.closeSelf()
+  })
   document.getElementById('min').addEventListener('click', () => window.BocomHermes.minimizeSelf())
   document.getElementById('max').addEventListener('click', () => window.BocomHermes.toggleMaximize())
 
@@ -194,28 +198,40 @@
       t.textContent = '第 ' + ev.round + ' 轮 · ' + ev.count + ' 个子任务，确认执行？'
       // 任务列表预览
       const tlist = document.createElement('div'); tlist.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin:2px 0;'
+      const cks = []
       for (const task of (ev.tasks || [])) {
-        const item = document.createElement('div')
-        item.style.cssText = 'font-size:11px;color:var(--txt2);background:var(--composer-bg);border:.5px solid var(--composer-border);border-radius:7px;padding:4px 8px;line-height:1.4;'
+        const item = document.createElement('label')
+        item.style.cssText = 'display:flex;align-items:flex-start;gap:6px;font-size:11px;color:var(--txt2);background:var(--composer-bg);border:.5px solid var(--composer-border);border-radius:7px;padding:4px 8px;line-height:1.4;cursor:pointer;'
+        const ck = document.createElement('input'); ck.type = 'checkbox'; ck.checked = true; ck.dataset.tid = task.id; ck.style.cssText = 'margin-top:1px;cursor:pointer'
+        cks.push(ck); item.appendChild(ck)
+        const body = document.createElement('span')
         const badge = document.createElement('span')
         badge.style.cssText = 'font-family:var(--mono);font-size:10px;color:var(--accent);margin-right:5px;'
         badge.textContent = task.role || 'worker'
-        item.appendChild(badge)
-        item.appendChild(document.createTextNode(task.goal))
+        body.appendChild(badge)
+        body.appendChild(document.createTextNode(task.goal))
         if (task.deps && task.deps.length) {   // 依赖可见:一眼看出哪些并行、哪些等前置
           const dep = document.createElement('span')
           dep.style.cssText = 'font-family:var(--mono);font-size:10px;color:var(--txt3);margin-left:5px;'
           dep.textContent = '← ' + task.deps.join(',')
-          item.appendChild(dep)
+          body.appendChild(dep)
         }
+        item.appendChild(body)
         tlist.appendChild(item)
       }
       const btns = document.createElement('div'); btns.className = 'btns'
       const go = document.createElement('button'); go.className = 'go'; go.textContent = '批准执行'
+      go.title = '只跑勾选的任务;全不勾 = 直接收尾汇总'
       const auto = document.createElement('button'); auto.className = 'auto'; auto.textContent = '自动·不再询问'
       const no = document.createElement('button'); no.className = 'no'; no.textContent = '停止'
-      const reply = (decision, a) => { window.BocomHermes.wfApprove(ev.reqId, decision, a); box.remove() }
-      go.onclick = () => reply('run', false); auto.onclick = () => reply('run', true); no.onclick = () => reply('abort', false)
+      const reply = (decision, a, keepIds) => { window.BocomHermes.wfApprove(ev.reqId, decision, a, keepIds); box.remove() }
+      go.onclick = () => {
+        const keep = cks.filter((c) => c.checked).map((c) => c.dataset.tid)
+        // 勾掉的任务从图上移走(不执行);全勾 = 不传 keepIds,走全量
+        if (keep.length !== cks.length) { for (const c of cks) if (!c.checked) { tasks.delete(c.dataset.tid); } draw() }
+        reply('run', false, keep.length === cks.length ? null : keep)
+      }
+      auto.onclick = () => reply('run', true, null); no.onclick = () => reply('abort', false, null)
       btns.append(go, auto, no); box.append(t, tlist, btns); feed.appendChild(box); feed.scrollTop = feed.scrollHeight
     } else if (ev.type === 'task') {
       const t = tasks.get(ev.id)
@@ -239,6 +255,14 @@
       cp.style.cssText = 'margin-left:8px;font-size:11px;color:var(--accent);background:transparent;border:1px solid var(--accent);border-radius:6px;padding:1px 8px;cursor:pointer'
       cp.addEventListener('click', () => { try { navigator.clipboard.writeText(ev.final || '') } catch {} cp.textContent = '已复制' ; setTimeout(() => cp.textContent = '复制成果', 1500) })
       b.appendChild(cp)
+      if (ev.archive) {   // 成果已落盘:关窗不丢;对话 Agent 可用 workflow_result 取回继续用
+        const op = document.createElement('button')
+        op.textContent = '打开存档'
+        op.title = ev.archive + '\n对话里的 Agent 也能取:workflow_result(id=' + (params.get('id') || '') + ')'
+        op.style.cssText = cp.style.cssText
+        op.addEventListener('click', () => window.BocomHermes.openLoc(ev.archive, 1))
+        b.appendChild(op)
+      }
       const box = document.createElement('div'); box.className = 'wf-final'
       box.innerHTML = window.Rich.renderMarkdown(ev.final || '(无最终成果)')
       feed.appendChild(box); feed.scrollTop = feed.scrollHeight
@@ -249,7 +273,7 @@
   })
   feed.addEventListener('click', (e) => { const a = e.target.closest('a.floc'); if (a) { e.preventDefault(); window.BocomHermes.openLoc(a.dataset.file, a.dataset.line) } })
   document.getElementById('stop').addEventListener('click', () => { window.BocomHermes.abortWorkflow(); banner('err', '已请求停止…') })
-  ;(async () => { try { await window.BocomHermes.runWorkflow(goal) } catch (e) { banner('err', '⚠ ' + (e.message || e)) } })()
+  ;(async () => { try { await window.BocomHermes.runWorkflow(goal, params.get('id') || '') } catch (e) { banner('err', '⚠ ' + (e.message || e)) } })()
 </script>
   <script src="carddrag.js"></script>
 </body>

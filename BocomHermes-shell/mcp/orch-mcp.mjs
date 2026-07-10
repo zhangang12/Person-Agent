@@ -54,6 +54,11 @@ const TOOLS = [
       required: ['goal'],
     },
   },
+  {
+    name: 'workflow_result',
+    description: '取回某个动态工作流的成果(工作流不是一次性的:成果已存档,随时可取回继续用)。进行中 → 返回状态;完成 → 返回最终成果全文。用户问"刚才那个工作流结果怎样/基于结果继续做 X"时调这个,拿到成果直接接着干活。',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', description: '工作流 id(run_workflow 返回过);省略 = 最近一个' } } },
+  },
 ]
 
 async function callTool(name, a) {
@@ -62,7 +67,15 @@ async function callTool(name, a) {
     const goal = String(a.goal || '').trim()
     if (!goal) return '需要 goal(交给小队的总目标)'
     const r = await relayPost('/orch/run', { goal })
-    return '已拉起动态工作流(窗口已打开,正在按复杂度拆解 → 并行执行 → 汇总;第一份计划会等用户批准)。工作流 id=' + (r.id != null ? r.id : '?') + '。完成后产出会在工作流窗口里,你可以继续和用户讨论别的。'
+    return '已拉起动态工作流,id=' + (r.id != null ? r.id : '?') + '(窗口已打开:按复杂度拆解 → 并行执行 → 汇总;第一份计划等用户批准)。'
+      + '完成后调 workflow_result(id="' + (r.id != null ? r.id : '') + '") 取回成果全文继续用;现在可以先和用户讨论别的。'
+  }
+  if (name === 'workflow_result') {
+    const body = {}
+    if (a.id != null && String(a.id).trim()) body.id = String(a.id).trim()
+    const r = await relayPost('/orch/result', body)
+    if (r.status === 'running') return '工作流 #' + r.id + ' 仍在进行(第 ' + (r.round || '?') + ' 轮):' + r.goal + '\n稍后再调 workflow_result 取成果。'
+    return '工作流 #' + r.id + '(' + r.status + ' · ' + (r.rounds || 0) + ' 轮 · ' + Math.round((r.elapsedMs || 0) / 1000) + 's)\n目标:' + r.goal + (r.archive ? '\n存档:' + r.archive : '') + '\n\n' + (r.final || '(无成果)')
   }
   throw new Error('未知工具: ' + name)
 }
