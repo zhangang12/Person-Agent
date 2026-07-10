@@ -1327,10 +1327,14 @@ function showReplayPause(d) {
   clearReplayPause()
   const b = document.createElement('div'); b.id = 'replaypause'
   b.style.cssText = 'position:fixed;top:46px;left:50%;transform:translateX(-50%);z-index:10000;display:flex;align-items:center;gap:10px;background:#fffbeb;border:1px solid #f0c33c;border-radius:8px;padding:5px 8px 5px 12px;color:#6b4e0e;font-size:12px;box-shadow:0 4px 18px rgba(16,24,40,.16);pointer-events:auto;white-space:nowrap;font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif'
-  const agentTip = d.agent ? '已通知 Agent 尝试解析;也可' : '——'
-  b.innerHTML = `<span style="font-size:13px">⏸</span><span>请在页面完成:<b style="color:#8a6410">${String(d.hint || '需人工操作').replace(/</g,'&lt;')}</b> ${agentTip}填完自动继续,或点右侧</span>`
+  if (d.takeover) {
+    b.innerHTML = `<span style="font-size:13px">🤖</span><span><b style="color:#8a6410">Agent 已接管执行</b> — 过程见左侧对话;完成后自动继续,也可点右侧确认</span>`
+  } else {
+    const agentTip = d.agent ? '已通知 Agent 尝试解析;也可' : '——'
+    b.innerHTML = `<span style="font-size:13px">⏸</span><span>请在页面完成:<b style="color:#8a6410">${String(d.hint || '需人工操作').replace(/</g,'&lt;')}</b> ${agentTip}填完自动继续,或点右侧</span>`
+  }
   const btn = document.createElement('button')
-  btn.textContent = '继续'
+  btn.textContent = d.takeover ? '已完成,继续' : '继续'
   btn.style.cssText = 'background:#b57e10;border:none;color:#fff;font-weight:600;border-radius:6px;padding:4px 13px;cursor:pointer;font-size:12px'
   btn.addEventListener('click', () => { btn.disabled = true; btn.style.opacity = '.5'; btn.textContent = '继续中…'; H.browserReplayResume && H.browserReplayResume() })
   b.appendChild(btn)
@@ -1342,7 +1346,7 @@ H.onBrowserSkillRefined && H.onBrowserSkillRefined((d) => {
   showToast('<span class="ok">🛠</span> 技能「' + esc(d.title) + '」已由 Agent 整理:' + esc((d.applied || []).join('、')))
 })
 H.onBrowserReplayProgress && H.onBrowserReplayProgress((d) => {
-  if (d.pause) { showReplayPause(d); sbStatus('<span class="warn">⏸ ' + esc(d.hint || '需人工操作') + (d.agent ? ' · 🤖 Agent 解析中' : ' · 等你在页面输入') + '</span>'); return }
+  if (d.pause) { showReplayPause(d); sbStatus(d.takeover ? '<span class="warn">🤖 Agent 接管执行中 — 过程见左侧对话</span>' : '<span class="warn">⏸ ' + esc(d.hint || '需人工操作') + (d.agent ? ' · Agent 解析中' : ' · 等你在页面输入') + '</span>'); return }
   if (d.resume) { clearReplayPause(); sbStatus('▶ 已续跑…'); return }
   const p = ensureHud()
   clearTimeout(hudHideT)

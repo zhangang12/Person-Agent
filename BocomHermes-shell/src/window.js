@@ -8,7 +8,7 @@ const emailSummarySeen = require('./email-summary-seen')
 const initOutbox = require('./outbox')
 const db = require('./db')
 const { extractMeeting } = require('./meeting-extract')
-const { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, markHumanGates, upgradeToSkill, skillMd, applyRefinePatch, rowToParamValues, relocateSelectors } = require('./recorder-core')
+const { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, markHumanGates, upgradeToSkill, skillMd, applyRefinePatch, rowToParamValues, relocateSelectors, takeoverDigest } = require('./recorder-core')
 const initRecorder = require('./recorder')
 const { cdpConsoleLevel, fmtRO, fmtException, resolveFrame } = require('./cdp-format')
 const initMail = require('./mail')
@@ -27,7 +27,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // ── 邮件子系统 ──────────────────────────────────────────────────────────────
   // 收发/发件箱安全闸门/IMAP IDLE/本地中继/mail-cache/待办-邮件闭环/DB 只读中继,整块搬进 ./mail 的
   // initMail(ctx) 工厂。ctx 注入外部模块 + 后定义但已提升的 function;回传 3 个外部调用点用到的函数。
-  const mail = initMail({ S, app, path, fs, shell, ipcMain, log, oc, Notification, email, attachments, mailCache, emailSummarySeen, db, initOutbox, openOutbox, sendOrbState, createMailCenter, openMailView, spawnCard, spawnWorkflow, maybeSuggestMeeting, skillList, skillRun, skillRunBatch })
+  const mail = initMail({ S, app, path, fs, shell, ipcMain, log, oc, Notification, email, attachments, mailCache, emailSummarySeen, db, initOutbox, openOutbox, sendOrbState, createMailCenter, openMailView, spawnCard, spawnWorkflow, maybeSuggestMeeting, skillList, skillRun, skillRunBatch, skillPageRead, skillPageAct, skillTakeoverDone })
 
   const projName = () => S.settings.projectDir ? path.basename(S.settings.projectDir) : '未选目录'
 
@@ -524,7 +524,24 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       const b = S.browser
       if (b.mode !== 'workspace' || !b.cardView || b.cardView.webContents.isDestroyed()) return false
       let disp, text
-      if (req.kind === 'relocate') {   // Phase 6b:选择器失配,让 Agent 看当前页候选给一个新选择器
+      if (req.kind === 'takeover') {   // 混合执行:严格回放整段失败 → Agent 流程级接管,直接操作内嵌浏览器完成剩余
+        disp = `🤖 回放第 ${req.step} 步起整段失败 — Agent 接管执行中…`
+        text = `技能「${req.title}」的严格回放从第 ${req.step} 步起整段失败,请你【接管执行剩余流程】。\n`
+          + `目标:${req.goal || '(见步骤)'}${req.successText ? '\n成功标志:' + req.successText : ''}\n`
+          + `当前页面:${req.url}\n失败点:${req.failText}\n\n`
+          + `【已完成的步骤】\n${req.doneText}\n\n【剩余步骤(按意图达成,不必逐字照做)】\n${req.restText}\n\n`
+          + `工具(操作的就是用户可见的内嵌浏览器):\n`
+          + `- skill_page_read():看当前页 —— URL/可交互元素(带现成选择器)/正文节选。每步操作前先读页。\n`
+          + `- skill_page_act(action, …):执行一步。action ∈ click|type|type_param|select|check|enter|navigate|wait。\n`
+          + `  · selector 用 read 返回的现成选择器,或 __text__:tag|文本(按可见文本);【严禁】:has-text()/xpath。\n`
+          + `  · secret 参数(密码等)用 action:"type_param" + key(如 "p1"),引擎代填,值不经过你。\n`
+          + `- 做完(或确认无法完成)调 skill_takeover_done(gateId="${req.gateId}", status="done"|"failed", note)。\n\n`
+          + `噪声处理原则:\n`
+          + `- 登录缓存:若当前已是登录态(页面已在系统内),登录相关步骤直接跳过,从业务步做起;\n`
+          + `- 录制里的无意义操作(菜单来回切换/多余点击)忽略,以达成技能目标为准;\n`
+          + `- 遇到验证码等只有用户能提供的输入:在对话里提醒用户去页面输入,等他完成再继续;\n`
+          + `- 每步之间用 skill_page_read 确认页面状态再动手,不要盲点。`
+      } else if (req.kind === 'relocate') {   // Phase 6b:选择器失配,让 Agent 看当前页候选给一个新选择器
         disp = `⏳ 自愈·步 ${req.step}:元素定位失败,Agent 重定位中…`
         text = `技能回放第 ${req.step} 步的元素找不到了(页面可能改版/动态 id)。这步意图:${req.ask}\n`
           + `原选择器:${req.sel}${req.origAlt ? '(备选:' + req.origAlt + ')' : ''}\n所在页面:${req.url}\n\n`
@@ -567,7 +584,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       if (n) { refreshSkillArtifacts(j); fs.writeFileSync(fp, JSON.stringify(j, null, 2)); log('skill self-heal 回写 ' + n + ' 步选择器: ' + recId) }
     } catch (e) { log('persistHeal err: ' + e.message) }
   }
-  const { injectRecorder, waitNetIdle, waitForEl, highlightTarget, execStep, startCoverage, stopCoverage, checkAssertions, replayRec } = initRecorder({ S, brActive, session, log, snapshotBad, RECORDER_JS, frameFor, findElExpr, coverageHits, gitChangedFiles, resolveBus, relocateSelectors, persistHeal })
+  const { injectRecorder, waitNetIdle, waitForEl, highlightTarget, execStep, startCoverage, stopCoverage, checkAssertions, replayRec } = initRecorder({ S, brActive, session, log, snapshotBad, RECORDER_JS, frameFor, findElExpr, coverageHits, gitChangedFiles, resolveBus, relocateSelectors, persistHeal, takeoverDigest })
 
   // ── 调试分诊 + 多 agent 对抗分析（工作台「发给 Agent」的大脑）──────────────────
   const tinyJson = (t) => { try { const m = String(t || '').replace(/<think>[\s\S]*?<\/think>/gi, ' ').match(/\{[\s\S]*\}/); return m ? JSON.parse(m[0]) : null } catch { return null } }
@@ -1852,6 +1869,9 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     try { S.audit && S.audit('skill', 'Agent 运行技能「' + hit.name + '」', { by: 'agent', steps: replay.stepReport.length, result: ok ? 'PASS' : (fails.length + ' 步失败'), baseUrl: (a && a.baseUrl) || '' }) } catch {}
     const lines = ['技能「' + hit.name + '」回放 ' + replay.stepReport.length + '/' + replay.totalSteps + ' 步 · ' + (fails.length === 0 ? '✅ 步骤全部成功' : '❌ ' + fails.length + ' 步失败') + (retried ? '(' + retried + ' 步重试后成功)' : '')]
     for (const f of fails.slice(0, 8)) lines.push('  · 步 ' + f.i + ' ' + f.act + ' "' + String(f.sel).slice(0, 60) + '" — ' + f.err)
+    const skippedState = replay.stepReport.filter((s) => s.skipped === 'state').length
+    if (skippedState) lines.push('· ' + skippedState + ' 步已被页面状态满足自动跳过(登录缓存/无效导航)')
+    if (replay.takeover) lines.push('· 第 ' + replay.takeover.from + ' 步起由 Agent 接管:' + (replay.takeover.status === 'done' ? '目标达成 ✓' : '未完成(' + replay.takeover.status + ')') + (replay.takeover.note ? ' — ' + replay.takeover.note : ''))
     if (replay.success) lines.push('成功断言: ' + (replay.success.pass ? '✓ 达成' : '✗ 未达成') + ' [' + replay.success.kind + '] "' + replay.success.value + '"' + (replay.success.err ? '(检查出错: ' + replay.success.err + ')' : ''))
     if (replay.dialogs && replay.dialogs.length) lines.push('自动应答弹窗 ' + replay.dialogs.length + ' 个(confirm→确定): ' + replay.dialogs.slice(0, 3).map((d) => d.k + '「' + d.m + '」').join(' | '))
     if (replay.baseSwapped) lines.push('已切环境运行(未恢复录制时的登录态;需要登录的流程请先在浏览器登录目标环境,或把登录步录进技能)')
@@ -1920,6 +1940,64 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       if (rows.length > 60) lines.push('  …(共 ' + rows.length + ' 行,只列前 60)')
       return { ok: failN === 0, pass: passN, fail: failN, report: lines.join('\n'), rows }
     } finally { S.browser._batchRunning = false }
+  }
+  // ── 混合执行 · Agent 直接操作内嵌浏览器的三个动作面(relay /skill/page-*,browser-mcp 转发)────
+  // 复用确定性引擎的同一套加固原语(waitForEl/原生 setter+事件/__text__),Element-UI 等框架事件才触发得对。
+  // 读页任何时候可用;【执行】仅在接管期(S.browser._takeover.active)开放 —— 防 Agent 随手戳生产页面。
+  async function skillPageRead() {
+    const tab = brActive(); if (!tab) return { error: '没有活跃标签' }
+    const wc = tab.view.webContents
+    let text = '', els = ''
+    try { text = String(await wc.executeJavaScript('(document.body&&document.body.innerText)||""', true) || '').slice(0, 6000) } catch {}
+    try {
+      els = await wc.executeJavaScript(`(function(){var out=[];var dyn=/^el-id-\\d|\\d{6,}/;
+        var es=document.querySelectorAll('button,a,input,select,textarea,[role="button"],[onclick]');
+        for(var i=0;i<es.length&&out.length<80;i++){var e=es[i];var r=e.getBoundingClientRect();if(!r.width&&!r.height)continue;
+        var t=(e.innerText||e.value||e.placeholder||(e.getAttribute&&e.getAttribute('aria-label'))||'').trim().slice(0,40);
+        var sel='';if(e.id&&!dyn.test(e.id))sel='#'+e.id;
+        else if(e.name)sel=e.tagName.toLowerCase()+'[name="'+e.name+'"]';
+        else if(e.placeholder)sel='input[placeholder="'+String(e.placeholder).replace(/"/g,'')+'"]';
+        else if(t&&t.length<=30&&!/\\n/.test(t))sel='__text__:'+e.tagName.toLowerCase()+'|'+t;
+        out.push(e.tagName.toLowerCase()+(t?' 「'+t+'」':'')+(sel?'  → '+sel:''))}
+        return out.join('\\n')})()`, true)
+    } catch (e) { els = '(采集失败: ' + e.message + ')' }
+    return { ok: true, url: wc.getURL(), title: wc.getTitle(), elements: els, text }
+  }
+  async function skillPageAct(a) {
+    const t = S.browser._takeover
+    if (!t || !t.active) return { error: '当前没有进行中的接管(仅回放整段失败、Agent 被点名接管时才可执行页面操作)' }
+    const tab = brActive(); if (!tab) return { error: '没有活跃标签' }
+    const wc = tab.view.webContents
+    const action = String((a && a.action) || '')
+    const sel = a && a.selector != null ? String(a.selector).slice(0, 1000) : ''
+    let ev = null
+    if (action === 'click') ev = { act: 'click', sel, selAlt: [] }
+    else if (action === 'type') ev = { act: 'input', sel, selAlt: [], value: String(a.value == null ? '' : a.value).slice(0, 500) }
+    else if (action === 'type_param') {
+      const v = t.paramValues[String(a.key || '')]
+      if (v == null) return { error: '参数无值: ' + (a.key || '(空)') + '(可用: ' + Object.keys(t.paramValues).join(',') + ')' }
+      ev = { act: 'input', sel, selAlt: [], value: v }
+    }
+    else if (action === 'select') ev = { act: 'select', sel, selAlt: [], value: String(a.value == null ? '' : a.value).slice(0, 200), text: String(a.text == null ? '' : a.text).slice(0, 60) }
+    else if (action === 'check') ev = { act: 'check', sel, selAlt: [], checked: a.checked !== false }
+    else if (action === 'enter') ev = { act: 'key', sel, selAlt: [], key: 'Enter' }
+    else if (action === 'navigate') ev = { act: 'navigate', url: String(a.url || '') }
+    else if (action === 'wait') { await sleep(Math.min(Math.max(+a.ms || 800, 100), 5000)); return { ok: true, url: wc.getURL() } }
+    else return { error: '未知 action: ' + action + '(可用 click|type|type_param|select|check|enter|navigate|wait)' }
+    const r = await execStep(wc, ev, tab, { waitMs: 4000 })
+    await waitNetIdle(brActive(), 300, 2500)
+    const masked = action === 'type_param'
+    log('takeover act: ' + action + ' ' + (sel || ev.url || '') + (masked ? ' (值已代填)' : '') + ' → ' + (r.ok ? 'ok' : r.err))
+    return r.ok ? { ok: true, url: wc.getURL() } : { error: r.err || '执行失败' }
+  }
+  function skillTakeoverDone(a) {
+    const t = S.browser._takeover
+    if (!t || !t.active) return { error: '当前没有进行中的接管' }
+    if (String(a && a.gateId || '') !== t.gateId) return { error: 'gateId 不匹配(当前 ' + t.gateId + ')' }
+    const status = (a && a.status) === 'done' ? 'done' : 'failed'
+    t.result = { status, note: String(a && a.note || '').slice(0, 300) }
+    log('takeover done: ' + status + (t.result.note ? ' — ' + t.result.note : ''))
+    return { ok: true, status }
   }
   // 录制管理面板:list / star / rename / delete / replay-stored
   ipcMain.handle('browser-rec-list', () => {

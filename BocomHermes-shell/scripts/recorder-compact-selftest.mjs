@@ -4,7 +4,7 @@
 // 另加合成边界用例:不跨元素误并、不误删两次真实点击、无按钮表单的 Enter 保留、survivors+dropped 可还原。
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
-const { compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, applyRefinePatch, rowToParamValues, relocateSelectors, selExpr } = require('../src/recorder-core.js')
+const { compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, applyRefinePatch, rowToParamValues, relocateSelectors, selExpr, takeoverDigest } = require('../src/recorder-core.js')
 
 let pass = 0, fail = 0
 function ok(name, cond, extra) {
@@ -283,6 +283,31 @@ console.log('用例13:relocateSelectors —— 自愈语义重定位候选(Phase
   ok('__label__ 生成查 label 的表达式', e.includes("querySelectorAll('label')") && e.includes('用户名') && e.includes('.control'))
   ok('普通 CSS 仍 querySelector', selExpr('#id').startsWith('document.querySelector('))
   ok('__text__ 仍走文本分支', selExpr('__text__:button|x').includes('innerText'))
+}
+
+console.log('用例15:takeoverDigest —— 接管摘要(secret 脱敏/人机断点标注/已做与剩余切分)')
+{
+  const rec = {
+    id: 'r', title: '登录网银', description: '登录后导出用户反馈', success: { kind: 'text', value: '导出成功' },
+    events: [
+      { act: 'navigate', url: 'http://x/login' },
+      { act: 'input', sel: '#u', value: 'admin', lb: '用户名' },
+      { act: 'input', sel: '#p', value: 'RUNTIME_PWD_123', secret: true },
+      { act: 'input', sel: '#c', value: '', human: true, humanHint: '短信验证码' },
+      { act: 'click', sel: '__text__:button|登 录', text: '登 录' },
+      { act: 'click', sel: '__text__:span|导出', text: '导出' },
+    ],
+    params: [{ key: 'p1', label: '密码', stepIndex: 2, secret: true }],
+  }
+  const d = takeoverDigest(rec, 4, { err: 'selector not found' })
+  ok('目标/标题带上', d.title === '登录网银' && d.goal.includes('导出用户反馈'))
+  ok('成功标志带上', d.successText.includes('导出成功'))
+  ok('已完成/剩余按 fromIndex 切分', d.doneText.includes('1.') && d.doneText.includes('4.') && d.restText.includes('5.') && d.restText.includes('6.'))
+  ok('失败点描述', d.failText.includes('第 5 步'))
+  ok('★ secret 值绝不出现在摘要', !JSON.stringify(d).includes('RUNTIME_PWD_123'))
+  ok('secret 步指向 type_param + 参数键', d.doneText.includes('type_param') && d.doneText.includes('p1'))
+  ok('人机断点标注提醒用户', d.doneText.includes('短信验证码') && d.doneText.includes('提醒用户'))
+  ok('普通值可见(非敏感,给 Agent 上下文)', d.doneText.includes('admin'))
 }
 
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)

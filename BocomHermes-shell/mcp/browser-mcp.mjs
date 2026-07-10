@@ -147,6 +147,30 @@ const TOOLS = [
       onError: { type: 'string', enum: ['skip', 'stop'], description: '某行失败后:skip=继续下一行(默认)/ stop=中止' },
     }, required: ['name', 'dataset'] },
   },
+  {
+    name: 'skill_page_read',
+    description: '【混合执行】读用户可见的内嵌浏览器当前页:URL/标题/可交互元素清单(带现成可用的选择器)/正文节选。技能回放失败被点名接管时,每步操作前先调这个确认页面状态。',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'skill_page_act',
+    description: '【混合执行·仅接管期可用】在内嵌浏览器执行一步操作(与回放引擎同一套加固原语,框架事件触发正确)。action: click|type|type_param|select|check|enter|navigate|wait。selector 用 skill_page_read 给的现成选择器,或 __text__:tag|文本(按可见文本);严禁 :has-text()/xpath。secret 参数(密码)用 type_param+key,引擎代填,值不经过你。',
+    inputSchema: { type: 'object', properties: {
+      action: { type: 'string', enum: ['click', 'type', 'type_param', 'select', 'check', 'enter', 'navigate', 'wait'] },
+      selector: { type: 'string', description: '目标元素(click/type/type_param/select/check/enter 用)' },
+      value: { type: 'string', description: 'type 的文本 / select 的 value' },
+      text: { type: 'string', description: 'select 可选:按选项文本回退' },
+      key: { type: 'string', description: 'type_param 用:参数键(如 p1)' },
+      checked: { type: 'boolean', description: 'check 用,默认 true' },
+      url: { type: 'string', description: 'navigate 用(仅 http/https)' },
+      ms: { type: 'number', description: 'wait 用,毫秒(≤5000)' },
+    }, required: ['action'] },
+  },
+  {
+    name: 'skill_takeover_done',
+    description: '【混合执行】接管收口:剩余流程做完(或确认无法完成)时必须调用,回放据此出报告。status: done=目标达成 / failed=无法完成(note 说明原因)。',
+    inputSchema: { type: 'object', properties: { gateId: { type: 'string', description: '接管请求 id(来自接管通知)' }, status: { type: 'string', enum: ['done', 'failed'] }, note: { type: 'string', description: '一句话:做了什么/为何失败' } }, required: ['gateId', 'status'] },
+  },
   { name: 'browser_navigate', description: '打开一个网址（在内置无头浏览器里），返回页面标题与最终URL', inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } },
   { name: 'browser_get_text', description: '获取当前页面可见正文文本(innerText)', inputSchema: { type: 'object', properties: {} } },
   { name: 'browser_get_html', description: '获取当前页面或某选择器的 HTML', inputSchema: { type: 'object', properties: { selector: { type: 'string', description: 'CSS 选择器，可空=整页' } } } },
@@ -179,6 +203,22 @@ async function callTool(name, args) {
     if (args.onError) body.onError = String(args.onError)
     const r = await relayPost('/skill/run-batch', body)
     return r.report || JSON.stringify(r)
+  }
+  if (name === 'skill_page_read') {
+    const r = await relayPost('/skill/page-read', {})
+    return '当前页:' + r.url + (r.title ? '(' + r.title + ')' : '') + '\n\n可交互元素(→ 后为现成选择器):\n' + (r.elements || '(无)') + '\n\n正文节选:\n' + String(r.text || '').slice(0, 3000)
+  }
+  if (name === 'skill_page_act') {
+    const body = { action: String(args.action || '') }
+    for (const k of ['selector', 'value', 'text', 'key', 'url']) if (args[k] != null) body[k] = String(args[k])
+    if (args.checked != null) body.checked = !!args.checked
+    if (args.ms != null) body.ms = +args.ms
+    const r = await relayPost('/skill/page-act', body)
+    return '✓ 已执行 ' + body.action + ',当前页:' + (r.url || '')
+  }
+  if (name === 'skill_takeover_done') {
+    const r = await relayPost('/skill/takeover-done', { gateId: String(args.gateId || ''), status: String(args.status || ''), note: String(args.note || '') })
+    return '✓ 接管已收口(' + r.status + '),回放报告随之更新。'
   }
   if (name === 'browser_navigate') { const r = await navigate(String(args.url || '')); return `已打开：${r.title}\n${r.url}` }
   if (name === 'browser_get_text') { return String(await evalJs('document.body ? document.body.innerText : document.documentElement.innerText') || '').slice(0, 20000) }

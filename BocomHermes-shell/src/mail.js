@@ -4,7 +4,7 @@
 // 对外回传 3 个被 window.js 外部调用点用到的函数:effectiveSmtp/effectiveOb/startIdleWatcher。
 'use strict'
 module.exports = function initMail(ctx) {
-  const { S, app, path, fs, shell, ipcMain, log, oc, Notification, email, attachments, mailCache, emailSummarySeen, db, initOutbox, openOutbox, sendOrbState, createMailCenter, openMailView, spawnCard, spawnWorkflow, maybeSuggestMeeting, skillList, skillRun, skillRunBatch } = ctx
+  const { S, app, path, fs, shell, ipcMain, log, oc, Notification, email, attachments, mailCache, emailSummarySeen, db, initOutbox, openOutbox, sendOrbState, createMailCenter, openMailView, spawnCard, spawnWorkflow, maybeSuggestMeeting, skillList, skillRun, skillRunBatch, skillPageRead, skillPageAct, skillTakeoverDone } = ctx
   // 解析"有效的" SMTP 配置:sameAsImap=true 时用户名/密码从 IMAP 取(host/port/secure 仍从 SMTP 取)
   function effectiveSmtp(S) {
     const sm = S.settings.smtp || {}
@@ -301,6 +301,16 @@ module.exports = function initMail(ctx) {
           // Phase 5·数据集批跑:dataset 每行={参数label:值}=独立回放一遍,汇总 PASS/FAIL(上限 200 行)
           if (req.url === '/skill/run-batch') {
             try { return reply(await skillRunBatch(a)) } catch (e) { return reply({ error: e.message }) }
+          }
+          // 混合执行·Agent 接管:读页(任何时候)/ 执行一步(仅接管期)/ 接管收口
+          if (req.url === '/skill/page-read') {
+            try { return reply(await skillPageRead()) } catch (e) { return reply({ error: e.message }) }
+          }
+          if (req.url === '/skill/page-act') {
+            try { return reply(await skillPageAct(a)) } catch (e) { return reply({ error: e.message }) }
+          }
+          if (req.url === '/skill/takeover-done') {
+            try { return reply(skillTakeoverDone(a)) } catch (e) { return reply({ error: e.message }) }
           }
           return reply({ error: 'unknown ' + req.url })
         } catch (e) { reply({ error: e.message }) }

@@ -118,7 +118,9 @@
 | 5 | 数据集批跑:`skill_run_batch` MCP(browser-mcp)→ relay `/skill/run-batch` → `skillRunBatch`(行级容错/互斥/上限200)+ `rowToParamValues` 列名→参数映射(label 精确→key→包含唯一) | 是(Agent 读物料表组 dataset) | ✅ |
 | 6 | 自愈回放:失配步不早停 → 6a 确定性语义重定位(placeholder/label/文本 + `relocateSelectors`/`__label__`)/ 6b Agent 重定位(采集页面候选 → `skill_relocate` MCP);命中即 `persistHeal` 回写技能(自更新) | 6b 需要 | ✅ |
 
-**六阶段全部落地。** 后续增强(非阻塞):file-gate(上传图片,input[type=file] 注入)、wait-gate(等导出/下载完成)作为解析链的更多 gate 类型接入,机制已就绪。
+| 7 | 混合执行:①噪声层(纯确定性)—— 导航重定向检测(登录缓存)→ 元素步快速失败 + `probeAnchor` 锚点跳段(后续步目标已在当前页 → 中间段视为"已被页面状态满足"整段跳过,治登录块/菜单往返);②流程级接管 —— 级联 3 连败/导航失败不再早停,`takeoverDigest`(secret 以 type_param 指代,值由引擎持有代填)交工作台 Agent,Agent 用 `skill_page_read/skill_page_act`(与回放引擎同一套加固原语)直接操作内嵌浏览器,`skill_takeover_done` 收口;接管期外 page_act 拒绝执行 | ②需要 | ✅ |
+
+**七阶段全部落地。** 对标 Codex 的范式差距(它=模型每次执行,我们=确定性回放)由 Phase 7 收敛:确定性快路径 + 失败时模型慢路径。后续增强(非阻塞):file-gate(上传)、wait-gate(等导出)、录制采集关键步截图(给精修/接管视觉上下文)、条件步。
 
 ## 8. 与 Codex Record & Replay 对照
 

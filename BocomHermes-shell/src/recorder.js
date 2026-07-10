@@ -2,7 +2,7 @@
 // 只搬不改函数体，行为 100% 不变。函数间互相调用（模块内互见）。
 // ctx 注入 window.js 闭包与 ./recorder-core 的外部符号；sleep 本模块自定义（不从 ctx 拿）。
 module.exports = function initRecorder(ctx) {
-  const { S, brActive, session, log, snapshotBad, RECORDER_JS, frameFor, findElExpr, coverageHits, gitChangedFiles, resolveBus, relocateSelectors, persistHeal } = ctx
+  const { S, brActive, session, log, snapshotBad, RECORDER_JS, frameFor, findElExpr, coverageHits, gitChangedFiles, resolveBus, relocateSelectors, persistHeal, takeoverDigest } = ctx
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
   async function injectRecorder(wc) {
@@ -185,6 +185,66 @@ module.exports = function initRecorder(ctx) {
     return null
   }
 
+  // ── 混合执行 · 噪声层①:锚点跳段(纯确定性,零 LLM)────────────────────────────
+  // 元素步找不到时向前探测:若窗口内某后续步的目标【已在当前页】,说明中间那段已被页面状态满足
+  // (典型:登录缓存 → 登录块整段该跳;录制里的菜单往返 → 目标页早已就位),整段跳过不计失败。
+  // 只探到下一个 navigate 边界(跨页锚点无意义);navigate 步本身按"URL 路径 == 当前页"算命中。
+  async function probeAnchor(wc, events, from, skipSet) {
+    let curPath = ''
+    try { curPath = new URL(wc.getURL()).pathname } catch {}
+    const LIM = Math.min(events.length, from + 1 + 12)
+    for (let j = from + 1; j < LIM; j++) {
+      if (skipSet.has(j)) continue
+      const e2 = events[j]; if (!e2) continue
+      if (e2.act === 'navigate') {
+        try { if (new URL(e2.url).pathname === curPath) return j } catch {}
+        return -1   // 跨页边界:后面的元素在别的页上,当前页探不到
+      }
+      if (e2.human) continue   // 人机断点步(验证码)不当锚点:它属于被跳过的登录块的概率更高
+      if (!e2.sel || !['click', 'input', 'select', 'check', 'submit'].includes(e2.act)) continue
+      try {
+        const hit = await frameFor(wc, e2).executeJavaScript(`(()=>{var __el=null;return !!(${findElExpr(e2.sel, e2.selAlt)})})()`, true)
+        if (hit) return j
+      } catch {}
+    }
+    return -1
+  }
+
+  // ── 混合执行 · 流程级接管:严格回放整段失败 → 把剩余流程交给工作台 Agent ─────────
+  // Agent 拿到:技能目标/已完成/失败点/剩余步骤摘要(secret 以 type_param 指代,值由引擎持有代填),
+  // 用 skill_page_read / skill_page_act 直接操作内嵌浏览器,做完调 skill_takeover_done(gateId, status)。
+  // 无工作台/Agent 不应答 → 返回 null,退回原早停。上限 10 分钟;用户点「继续」= 人工确认已完成。
+  async function awaitAgentTakeover(wc, tab, fromIndex, rec, paramValues, sendProg, failInfo) {
+    if (!resolveBus || typeof takeoverDigest !== 'function') return null
+    const digest = takeoverDigest(rec, fromIndex, failInfo)
+    const gateId = 'g' + Date.now().toString(36) + '_t' + (fromIndex + 1)
+    S.browser._takeover = { gateId, active: true, fromIndex, paramValues: paramValues || {}, result: null }
+    const req = { gateId, kind: 'takeover', step: fromIndex + 1, ...digest, url: (() => { try { return wc.getURL() } catch { return '' } })(), at: Date.now() }
+    let agentOn = false
+    try { agentOn = resolveBus.notifyAgent(req) } catch {}
+    if (!agentOn) { S.browser._takeover = null; return null }
+    log('replay takeover: 步 ' + (fromIndex + 1) + ' 起交给 Agent(' + gateId + ')')
+    sendProg({ pause: true, takeover: true, i: fromIndex + 1, hint: 'Agent 已接管执行,过程见左侧对话', agent: true })
+    let done = false
+    const manual = new Promise((res) => { S.browser._replayResume = () => { if (!done) { done = true; res({ status: 'done', note: '用户确认完成' }) } } })
+    const agentP = (async () => {
+      const t0 = Date.now()
+      while (!done && Date.now() - t0 < 600000) {   // 最长 10 分钟
+        await sleep(1000)
+        const t = S.browser._takeover
+        if (t && t.result) return t.result
+      }
+      return { status: 'timeout', note: 'Agent 接管超时(10 分钟)' }
+    })()
+    const win = await Promise.race([manual, agentP])
+    done = true
+    S.browser._replayResume = null
+    S.browser._takeover = null
+    sendProg({ resume: true, i: fromIndex + 1 })
+    log('replay takeover 结束: ' + win.status + (win.note ? ' — ' + win.note : ''))
+    return win
+  }
+
   async function execStep(wc, ev, tab, opts) {
     if (ev.act === 'navigate') {
       // 事件来自页面 console 的 __BR__ 通道,被录页面可伪造 navigate 注入 file://、data: 等 —— 回放只认 http/https
@@ -200,6 +260,10 @@ module.exports = function initRecorder(ctx) {
       }
       try { wc.loadURL(ev.url) } catch (e) { return { ok: false, err: e.message } }
       await new Promise((res) => { const t = setTimeout(res, 12000); wc.once('did-stop-loading', () => { clearTimeout(t); res() }) })
+      // 混合执行·噪声层:导航被重定向(如登录缓存 → /login 直落 /overview)要让上层知道,
+      // 后续"登录页元素找不到"就能快速失败 + 锚点跳段,而不是傻等 5s 再级联早停
+      let redirected = false
+      try { redirected = new URL(wc.getURL()).pathname !== new URL(ev.url).pathname } catch {}
       // 首次 navigate 后,把 localStorage/sessionStorage 恢复 + reload(让页面在正确状态下重新初始化)
       if (ev._restorePreState) {
         try {
@@ -211,7 +275,7 @@ module.exports = function initRecorder(ctx) {
           await new Promise((res) => { const t = setTimeout(res, 12000); wc.once('did-stop-loading', () => { clearTimeout(t); res() }) })
         } catch (e) { log('storage restore err: ' + e.message) }
       }
-      return { ok: true }
+      return { ok: true, redirected }
     }
     const elExpr = findElExpr(ev.sel, ev.selAlt)
     const fr = frameFor(wc, ev)   // iframe 里录的步骤定位到对应子框架;主框架步骤 fr===wc
@@ -387,6 +451,11 @@ module.exports = function initRecorder(ctx) {
     let storageRestored = false
     let consecutiveFails = 0; let cascadeFrom = -1
     const healed = []   // 自愈成功的步(回放结束回写技能:selector 自更新)
+    // 混合执行:运行时参数值表(applyParams 后从事件里取)——Agent 接管时引擎持值代填(type_param),secret 值不进模型
+    const paramValues = {}
+    for (const p of (rec.params || [])) { const e2 = rec.events[p.stepIndex]; if (e2 && e2.value != null) paramValues[p.key] = String(e2.value) }
+    let redirectFast = false   // 导航被重定向(如登录缓存直落主页)→ 元素步快速失败,把时间留给锚点跳段
+    let takeoverInfo = null    // 流程级接管结果 { from, status, note }
     for (let i = 0; i < rec.events.length; i++) {
       const ev = rec.events[i]
       // 跳过步(如滚动噪声)必须推占位条目并更新 lastT —— diffReport/verifyFix/skillRun 全按 stepReport 长度对齐计数
@@ -410,7 +479,7 @@ module.exports = function initRecorder(ctx) {
       await sleep(fast ? 60 : 180)
       // 级联收缩:已有连续失败时缩短 waitForEl,防「等5s×重试」把 3 连败早停拖到 30s+;成功即复原。
       // transient 步(日历格子点击,换月后已消失)预期找不到 → 短等 800ms,不傻等 5s
-      const stepOpts = { waitMs: ev.transient ? 800 : (consecutiveFails >= 1 ? Math.min(waitMsBase, 1500) : waitMsBase) }
+      const stepOpts = { waitMs: ev.transient ? 800 : (redirectFast ? 1200 : (consecutiveFails >= 1 ? Math.min(waitMsBase, 1500) : waitMsBase)) }
       let r = await execStep(wc, ev, tab, stepOpts)
       // 只对「元素未找到」重试一次:executeJavaScript 异常多为页面跳转中上下文销毁,
       // click/submit 是否已生效不可知,盲目重试有真实双提交风险。transient 步不重试(终值另由 input 步写)
@@ -418,6 +487,23 @@ module.exports = function initRecorder(ctx) {
         await sleep(400)
         r = await execStep(wc, ev, tab, { waitMs: 1500 })
         r.retried = true
+      }
+      // 混合执行·噪声层①:找不到先向前探锚点 —— 若后续某步的目标已在当前页,说明中间段已被
+      // 页面状态满足(登录缓存跳过登录块 / 录制里的菜单往返),整段跳过不计失败(零 LLM)
+      if (!r.ok && !ev.transient && String(r.err || '').startsWith('selector(+alt) not found') && ['click', 'input', 'select', 'check', 'submit'].includes(ev.act)) {
+        const j = await probeAnchor(wc, rec.events, i, skipSet)
+        if (j > i) {
+          for (let k = i; k < j; k++) {
+            const e2 = rec.events[k]
+            stepReport.push({ i: k + 1, act: e2.act, sel: e2.sel || e2.url || '', ok: true, skipped: 'state' })
+            sendProg({ i: k + 1, total: rec.events.length, act: e2.act, ok: true })
+          }
+          log('replay skip-ahead: 步 ' + (i + 1) + '~' + j + ' 已被页面状态满足(登录缓存/菜单往返),跳到步 ' + (j + 1))
+          lastT = (rec.events[j - 1] && rec.events[j - 1].t) || lastT
+          consecutiveFails = 0; redirectFast = false
+          i = j - 1
+          continue
+        }
       }
       // 自愈:重试后仍"找不到元素"的可定位步 → 语义重定位(6a)/ Agent 重定位(6b);命中即续跑并回写技能
       let healHow = null
@@ -432,8 +518,20 @@ module.exports = function initRecorder(ctx) {
       if (ev.transient) entry.transient = true
       stepReport.push(entry)
       sendProg({ i: i + 1, total: rec.events.length, act: ev.act, ok: r.ok, err: (r.err || '').slice(0, 80) })
-      if (!r.ok && ev.act === 'navigate') break
-      if (r.ok && ev.act === 'navigate') { try { await wc.executeJavaScript(DLG_STUB, true) } catch {} }   // 整页加载清掉桩 → 重注入
+      if (!r.ok && ev.act === 'navigate') {
+        // 混合执行:导航都到不了 → 交给 Agent 流程级接管(带技能摘要,操作内嵌浏览器完成剩余);不可用则维持早停
+        const tk = await awaitAgentTakeover(wc, tab, i, rec, paramValues, sendProg, { err: r.err })
+        if (tk && tk.status === 'done') {
+          entry.ok = true; entry.agent = true; entry.err = ''
+          for (let k = i + 1; k < rec.events.length; k++) { const e2 = rec.events[k]; stepReport.push({ i: k + 1, act: e2.act, sel: e2.sel || e2.url || '', ok: true, agent: true }) }
+          takeoverInfo = { from: i + 1, status: 'done', note: tk.note || '' }
+        } else if (tk) takeoverInfo = { from: i + 1, status: tk.status, note: tk.note || '' }
+        break
+      }
+      if (r.ok && ev.act === 'navigate') {
+        try { await wc.executeJavaScript(DLG_STUB, true) } catch {}   // 整页加载清掉桩 → 重注入
+        if (r.redirected) { redirectFast = true; log('replay: 导航被重定向(可能已登录/路由守卫),后续步启用快速失败+锚点跳段') }
+      }
       // 级联失败检测:连续 3 个非 navigate 步失败 → 后续大概率都依赖前面失败步,提前 break 不无谓继续。
       // 密码步的显式失败不计入(登录态靠 preState 恢复兜底,不该拖垮整场验证)
       if (!r.ok && ev.act !== 'navigate') {
@@ -441,11 +539,21 @@ module.exports = function initRecorder(ctx) {
           consecutiveFails++
           if (consecutiveFails >= 3) {
             if (cascadeFrom < 0) cascadeFrom = i + 1 - (consecutiveFails - 1)   // 第一个连续 fail 步号
-            log('replay early-abort: ' + consecutiveFails + ' consecutive fails from step ' + cascadeFrom)
+            // 混合执行:级联失败不再直接早停 → 先尝试 Agent 流程级接管(从首个失败步起);不可用才早停
+            const tk = await awaitAgentTakeover(wc, tab, cascadeFrom - 1, rec, paramValues, sendProg, { err: r.err })
+            if (tk && tk.status === 'done') {
+              for (const e of stepReport) if (e.i >= cascadeFrom && !e.ok) { e.ok = true; e.agent = true; e.err = '' }   // 级联段:目标已由 Agent 达成
+              for (let k = i + 1; k < rec.events.length; k++) { const e2 = rec.events[k]; stepReport.push({ i: k + 1, act: e2.act, sel: e2.sel || e2.url || '', ok: true, agent: true }) }
+              takeoverInfo = { from: cascadeFrom, status: 'done', note: tk.note || '' }
+              cascadeFrom = -1   // 已被接管完成,不再当级联早停上报
+            } else {
+              if (tk) takeoverInfo = { from: cascadeFrom, status: tk.status, note: tk.note || '' }
+              log('replay early-abort: ' + consecutiveFails + ' consecutive fails from step ' + cascadeFrom)
+            }
             break
           }
         }
-      } else if (r.ok) consecutiveFails = 0
+      } else if (r.ok) { consecutiveFails = 0; if (ev.act !== 'navigate') redirectFast = false }
       // 等网络静默(取代固定 sleep);click/submit/select/check 常触发 XHR(级联下拉靠它填下级 options),
       // navigate 后 SPA 首屏 XHR 是最大 flake 源
       if (ev.act === 'click' || ev.act === 'submit' || ev.act === 'key' || ev.act === 'select' || ev.act === 'check' || ev.act === 'navigate') await waitNetIdle(tab, 300, 3000)
@@ -476,7 +584,7 @@ module.exports = function initRecorder(ctx) {
     const hitInfo = cov ? coverageHits(cov, changedFiles) : []
     // 自愈回写:换环境(_baseSwapped)不写(DOM 可能不同);仅对有 id 的技能持久化修正后的选择器,下次直接命中
     if (healed.length && rec.id && !rec._baseSwapped && typeof persistHeal === 'function') { try { persistHeal(rec.id, healed) } catch (e) { log('persistHeal err: ' + e.message) } }
-    return { ok: true, stepReport, after, changedFiles, hitInfo, covOn, cascadeFrom, totalSteps: rec.events.length, success: successRes, dialogs, baseSwapped: !!rec._baseSwapped, healed }
+    return { ok: true, stepReport, after, changedFiles, hitInfo, covOn, cascadeFrom, totalSteps: rec.events.length, success: successRes, dialogs, baseSwapped: !!rec._baseSwapped, healed, takeover: takeoverInfo }
   }
 
   return { injectRecorder, waitNetIdle, waitForEl, highlightTarget, execStep, startCoverage, stopCoverage, checkAssertions, replayRec }

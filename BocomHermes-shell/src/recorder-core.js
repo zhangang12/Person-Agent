@@ -634,6 +634,41 @@ function applyRefinePatch(rec, patch) {
   return { rec: j, applied }
 }
 
+// ── 混合执行 · 接管上下文摘要(纯函数)─────────────────────────────────────────
+// 严格回放整段失败(级联 3 连败/导航失败)→ 把技能上下文交给 Agent 流程级接管。
+// 摘要含:目标/已完成/失败点/剩余步骤(意图+选择器+值)。
+// 【安全】secret 值绝不进摘要:以「type_param(参数键)」指代,由引擎持值代填;
+// 人机断点步注明"提醒用户到页面输入"。
+function takeoverDigest(rec, fromIndex, fail) {
+  const evs = Array.isArray(rec && rec.events) ? rec.events : []
+  const params = Array.isArray(rec && rec.params) ? rec.params : []
+  const paramIdx = new Map(params.map((p) => [p.stepIndex, p]))
+  const { steps } = upgradeToSkill(rec)
+  const intentAt = new Map(steps.map((s) => [s.ei, s.intent]))
+  const line = (ev, i) => {
+    const it = intentAt.get(i) || ev.act
+    const p = paramIdx.get(i)
+    let v = ''
+    if (ev.act === 'input' || ev.act === 'select') {
+      if (ev.human) v = ' (需人工:' + (ev.humanHint || '人工输入') + ' — 在对话里提醒用户到页面输入后再继续)'
+      else if (ev.secret || (p && p.secret)) v = ' (secret 参数 ' + (p ? p.key : '') + (p && p.label ? ':' + p.label : '') + ' — 用 skill_page_act 的 type_param 代填,值不会给你)'
+      else if (p) v = ' =「' + String(ev.value == null ? '' : ev.value).slice(0, 60) + '」(参数 ' + p.key + ')'
+      else v = ' =「' + String(ev.value == null ? '' : ev.value).slice(0, 60) + '」'
+    }
+    return (i + 1) + '. ' + it + v + (ev.sel ? '  [sel: ' + String(ev.sel).slice(0, 80) + ']' : (ev.url ? '  [url: ' + String(ev.url).slice(0, 100) + ']' : ''))
+  }
+  const doneL = [], restL = []
+  evs.forEach((ev, i) => { if (!ev) return; (i < fromIndex ? doneL : restL).push(line(ev, i)) })
+  return {
+    title: rec && (rec.title || rec.id) || '',
+    goal: rec && (rec.description || rec.expectation) || '',
+    successText: rec && rec.success && rec.success.value ? ((rec.success.kind === 'text' ? '页面出现文本' : '页面出现元素') + '「' + rec.success.value + '」') : '',
+    doneText: doneL.join('\n') || '(无)',
+    restText: restL.join('\n') || '(无)',
+    failText: fail ? ('第 ' + (fromIndex + 1) + ' 步失败:' + (fail.err || '')) : '',
+  }
+}
+
 // ── Phase 5·数据集批跑:一行数据 → 运行参数 values(纯函数)────────────────────
 // Agent 从 Excel/DB 读出的行键是"人话列名",按参数 label 对齐:label 精确 → key 精确 → 包含关系(唯一命中才用)。
 // 未命中的参数走 applyParams 的 default 兜底;行里多出的键收进 unmatched(报告透出,提示列名没对上)。
@@ -658,7 +693,7 @@ function rowToParamValues(params, row) {
   return { values, unmatched }
 }
 
-module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, applyRefinePatch, rowToParamValues, relocateSelectors }
+module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, applyRefinePatch, rowToParamValues, relocateSelectors, takeoverDigest }
 
 // ── 纯文件 IO 工厂:window.js 注入 { app, fs, path, execSync } 后解构使用 ────────
 // 这些函数从 window.js 原样搬入,只把对 app/fs/path/execSync 的引用改为工厂参数(名字不变)。
