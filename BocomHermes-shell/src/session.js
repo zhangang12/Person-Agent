@@ -50,6 +50,7 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
   }
   function onText({ sessionId, text, role, partID, kind, status, delta, toolInput, toolOutput, toolTitle, toolError, subagent, agentId, agentName, taskChild, taskDesc }) {
     const si = S.sessionInfo.get(sessionId); if (!si || !si.wc || si.wc.isDestroyed()) return
+    si.lastAt = Date.now()   // 流活动时间戳:工作流空转看门狗据此判"会话是否还活着"(慢≠死,有动静就不杀)
     if (role && role !== 'assistant') return
     const tag = si.tag || null   // 登记方自定义的任务身份(scope/kind/id…)：随 card-stream 下发,窗口按并发任务分组(监控组件 agentmon)
     // 诊断:分别确认子agent的【工具】和【文本/思考】是否路由到父卡片(排查"工具没进 🔍 组")

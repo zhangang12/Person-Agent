@@ -121,5 +121,20 @@ const trivialRun = async (p, m) => m.kind === 'plan' ? '{"tasks":[],"done":true}
 const rtv = await orchestrate('几点了', { run: trivialRun })
 ok(rtv.done && rtv.tasks.length === 0 && rtv.rounds === 1, '简单目标第1轮即 done、不拆任务')
 
+console.log('超时元数据下传 + 耗时回调 + 规划旁白:')
+let seenTimeoutMs = null, seenDoneMs = null, seenNote = ''
+const metaRun = async (p, m) => {
+  if (m.kind === 'plan') return m.round === 1 ? '{"note":"先勘察再动手","tasks":[{"id":"m1","role":"r","goal":"M"}],"done":false}' : '{"tasks":[],"done":true}'
+  if (m.kind === 'reduce') return 'R'
+  seenTimeoutMs = m.timeoutMs; return 'out'
+}
+const rMeta = await orchestrate('元数据', { run: metaRun, taskTimeoutMs: 12345, maxRounds: 2,
+  onPlan: (round, plan) => { if (round === 1) seenNote = plan.note },
+  onTaskDone: (t, out, st, ms) => { seenDoneMs = ms } })
+ok(seenTimeoutMs === 12345, 'run 收到 meta.timeoutMs=taskTimeoutMs(生产端据此收割超时僵尸会话)')
+ok(typeof seenDoneMs === 'number' && seenDoneMs >= 0, 'onTaskDone 第 4 参带 ms 耗时(UI 时间线用)')
+ok(seenNote === '先勘察再动手', '规划器 note 旁白透出(UI 叙事行用)')
+ok(rMeta.done, '流程正常收尾')
+
 console.log(`\n小结：${pass} 通过 / ${fail} 失败`)
 process.exit(fail ? 1 : 0)

@@ -49,6 +49,14 @@
   .banner.run { background: var(--composer-bg); color: var(--txt2); }
   .banner.done { background: rgba(10,157,110,.12); color: var(--green); }
   .banner.err { background: var(--warn-bg); color: var(--warn-txt); border: .5px solid var(--warn-border); }
+  /* Claude 式时间线:轮次分段头 + 规划器旁白 + 每任务一行状态(⏺ 运行 / ✓ 完成+耗时 / ✗ 失败+原因) */
+  .rhead { font-size: 10.5px; color: var(--txt3); text-align: center; margin: 3px 0 0; letter-spacing: .06em; user-select: none; }
+  .note { font-size: 11.5px; color: var(--txt2); border-left: 2px solid var(--accent); padding: 2px 9px; line-height: 1.5; }
+  .tl { display: flex; align-items: baseline; gap: 6px; font-size: 11.5px; color: var(--txt2); padding: 0 2px; font-variant-numeric: tabular-nums; }
+  .tl .g { flex: none; }
+  .tl.run .g { color: var(--accent); } .tl.ok .g { color: var(--green); } .tl.err .g { color: var(--diff-del); }
+  .tl .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tl .ms { margin-left: auto; flex: none; color: var(--txt3); font-family: var(--mono); font-size: 10.5px; }
   .wf-final { background: var(--ai-bg); border: .5px solid var(--ai-border); border-radius: 11px; padding: 9px 11px; overflow-wrap: anywhere; line-height: 1.55; -webkit-user-select: text; user-select: text; }
   .wf-final h1,.wf-final h2,.wf-final h3,.wf-final h4 { font-size: 13px; font-weight: 600; margin: 9px 0 4px; }
   .wf-final p { margin: 5px 0; } .wf-final ul,.wf-final ol { margin: 5px 0; padding-left: 18px; }
@@ -194,11 +202,40 @@
     runningBanner.textContent = extra || ('第 ' + (curRound || 1) + ' 轮 · 运行中 ' + run + ' · 完成 ' + done + '/' + all.length)
   }
   let runningBanner = banner('run', '正在规划…')
+  // 滚动守卫:用户上翻阅读时不拽底;贴近底部(≤60px)才跟随新内容。force=阶段切换点(审批/最终成果)仍强制到底
+  const nearBottom = () => feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 60
+  function scrollFeed(force) { if (force || nearBottom()) feed.scrollTop = feed.scrollHeight }
+  // 时间线元素:轮次分段头 + 规划器旁白(note)+ 每任务一行状态
+  function roundHead(round, n, planned) {
+    const h = document.createElement('div'); h.className = 'rhead'
+    h.textContent = '── 第 ' + round + ' 轮 · ' + n + ' 个任务' + (planned > n ? '(计划 ' + planned + ',预算截为 ' + n + ')' : '') + ' ──'
+    feed.appendChild(h); scrollFeed(false)
+  }
+  function plannerNote(text) { if (!text) return; const d = document.createElement('div'); d.className = 'note'; d.textContent = text; feed.appendChild(d); scrollFeed(false) }
+  const tlines = new Map()   // 任务 id → 时间线行(状态流转就地更新,不刷屏)
+  function taskLine(ev) {
+    const t = tasks.get(ev.id)
+    let el = tlines.get(ev.id)
+    if (!el) {
+      el = document.createElement('div'); el.className = 'tl'
+      el.innerHTML = '<span class="g"></span><span class="lbl"></span><span class="ms"></span>'
+      tlines.set(ev.id, el); feed.appendChild(el); scrollFeed(false)
+    }
+    const lbl = ev.id + (t ? ' · ' + t.goal : '')
+    const g = el.querySelector('.g'), l = el.querySelector('.lbl'), m = el.querySelector('.ms')
+    const secs = ev.ms ? Math.round(ev.ms / 1000) + 's' : ''
+    if (ev.status === 'running') { el.className = 'tl run'; g.textContent = '⏺'; l.textContent = lbl; m.textContent = '' }
+    else if (ev.status === 'ok') { el.className = 'tl ok'; g.textContent = '✓'; l.textContent = lbl; m.textContent = secs }
+    else { el.className = 'tl err'; g.textContent = '✗'; l.textContent = lbl + (ev.error ? ' — ' + String(ev.error).slice(0, 60) : ''); m.textContent = secs }
+  }
   window.BocomHermes.onWorkflowEvent((ev) => {
     if (ev.type === 'plan') {
       curRound = ev.round || curRound
-      if (ev.done && (!ev.tasks || !ev.tasks.length)) { refreshBanner('第 ' + ev.round + ' 轮：判定可收尾，正在汇总…'); return }
-      for (const t of ev.tasks || []) if (!tasks.has(t.id)) tasks.set(t.id, { id: t.id, role: t.role, goal: t.goal, deps: t.deps || [], status: 'pending' })
+      // done=true 一律收尾(编排器此时 break,即使 tasks 非空也不会执行 —— 不画幽灵轮次)
+      if (ev.done || !ev.tasks || !ev.tasks.length) { plannerNote(ev.note || (ev.done ? '判定可收尾' : '')); refreshBanner('第 ' + ev.round + ' 轮：' + (ev.done ? '判定可收尾，正在汇总…' : '本轮无新任务')); return }
+      roundHead(ev.round, ev.tasks.length, ev.plannedTotal || ev.tasks.length)
+      plannerNote(ev.note)
+      for (const t of ev.tasks) if (!tasks.has(t.id)) tasks.set(t.id, { id: t.id, role: t.role, goal: t.goal, deps: t.deps || [], status: 'pending' })
       draw(); refreshBanner()
     } else if (ev.type === 'plan-approve') {
       const box = document.createElement('div'); box.className = 'approve'
@@ -243,6 +280,7 @@
       btns.append(go, auto, no); box.append(t, tlist, btns); feed.appendChild(box); feed.scrollTop = feed.scrollHeight
     } else if (ev.type === 'task') {
       const t = tasks.get(ev.id)
+      taskLine(ev)   // 时间线行:⏺ 运行 / ✓ 完成+耗时 / ✗ 失败+原因,就地更新
       if (t) {
         t.status = ev.status
         if (ev.output) t.output = ev.output

@@ -318,7 +318,7 @@ async function sendMessage(info, sessionId, text, model, files, onNote) {
   } catch (e) {
     // serve 的 zod 校验不认我们的模型字段形状(4xx)→ 去掉模型重发一次并让用户看见,
     // 而不是整条消息发不出去;其它错误原样上抛
-    if (withModel && /->\s*4\d\d/.test(String(e && e.message || ''))) {
+    if (withModel && /->\s*4\d\d/.test(String(e && e.message || '')) && !abortedSids.has(sessionId)) {   // 已中止的会话不重发(防二次僵尸)
       if (onNote) { try { onNote('serve 拒绝了模型指定(' + (model.name || model.modelID) + '),本条已用默认模型发送') } catch {} }
       const d2 = extractText(await api(info.base, 'POST', `/session/${sessionId}/message`, { parts: body.parts }))
       return d2 || await waitAssistantText(info, sessionId)
@@ -343,7 +343,14 @@ async function listModels(info) {
     return out
   } catch { return [] }
 }
-async function abort(info, sessionId) { try { await api(info.base, 'POST', `/session/${sessionId}/abort`) } catch {} }
+// 已中止会话登记:sendMessage 的"4xx 去模型重发"降级分支绝不能对刚被 abort 的会话重发
+// (abort 会让在飞 POST 以 4xx 收尾 → 降级分支把全量 prompt 灌回死会话 = 无人收割的二次僵尸)。
+const abortedSids = new Set()
+async function abort(info, sessionId) {
+  abortedSids.add(sessionId)
+  if (abortedSids.size > 500) abortedSids.clear()   // 粗粒度防涨:sid 全局唯一,清空只影响极老会话的降级判断
+  try { await api(info.base, 'POST', `/session/${sessionId}/abort`) } catch {}
+}
 
 // 重连用：会话是否还在（直接 GET 取不到就扫列表；未知路由会回 SPA HTML→JSON.parse 抛错→走兜底）
 async function sessionExists(info, sid) {

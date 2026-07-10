@@ -43,7 +43,7 @@ async function runGuarded(run, prompt, meta, opts, retries) {
   let lastErr
   for (let i = 0; i <= retries; i++) {
     if (aborted(opts)) throw new Error('已中止')
-    try { return await withTimeout(Promise.resolve(run(prompt, { ...meta, attempt: i, signal: opts.signal })), opts.taskTimeoutMs) }
+    try { return await withTimeout(Promise.resolve(run(prompt, { ...meta, attempt: i, signal: opts.signal, timeoutMs: opts.taskTimeoutMs })), opts.taskTimeoutMs) }   // timeoutMs 下传:生产 run 据此在编排超时后掐掉底层会话(否则僵尸生成 + 重试双跑)
     catch (e) { lastErr = e; if (aborted(opts)) throw e }
   }
   throw lastErr
@@ -104,10 +104,11 @@ function buildPlanPrompt(goal, doneSummary, ledger, maxBatch) {
     '5. 子任务都能用工具读代码/查库——让它们去核实，别靠猜。',
     '6. 上轮有 error/timeout 的任务：判断是换方案重派、拆小一点、还是绕开；不要原样重复失败任务。',
     '7. 目标要能落地：涉及代码/配置的子任务，goal 里点到文件或模块级（下游拿到就能动手）。',
+    '8. 高风险产出(代码改动/关键结论)：后续轮安排【独立验证/评审】任务交叉校验，不要让产出方自证。',
     '',
     `只输出 JSON(下一批 <=${maxBatch} 个任务)，不要解释 / markdown / <think>：`,
-    '{"ledger":{"facts":["据已完成结果更新的已确认事实"],"open":["仍未决的问题"],"assumptions":["未证实的假设"]},"tasks":[{"id":"短id","role":"现编的一句话人设","goal":"具体做什么","deps":["同批依赖id，可空"]}],"done":false}',
-    '若目标已可收尾、无需更多子任务，输出：{"ledger":{...},"tasks":[],"done":true}',
+    '{"ledger":{"facts":["据已完成结果更新的已确认事实"],"open":["仍未决的问题"],"assumptions":["未证实的假设"]},"note":"一句话说人话：本轮为什么这么拆(或为什么收尾)","tasks":[{"id":"短id","role":"现编的一句话人设","goal":"具体做什么","deps":["同批依赖id，可空"]}],"done":false}',
+    '若目标已可收尾、无需更多子任务，输出：{"ledger":{...},"note":"收尾理由","tasks":[],"done":true}',
   ].join('\n')
 }
 function buildWorkPrompt(task, ctx, goal) {
@@ -138,7 +139,7 @@ async function planOnce(run, goal, doneSummary, ledger, knownIds, opts) {
       const nextLedger = (j.ledger && typeof j.ledger === 'object')
         ? { facts: arr(j.ledger.facts), open: arr(j.ledger.open), assumptions: arr(j.ledger.assumptions) }
         : ledger
-      return { tasks: sanitizePlan(j.tasks, knownIds), done: !!j.done, ledger: nextLedger }
+      return { tasks: sanitizePlan(j.tasks, knownIds), done: !!j.done, ledger: nextLedger, note: typeof j.note === 'string' ? j.note.slice(0, 200) : '' }   // note=规划器叙事(一句话思路),UI 当旁白展示
     }
   }
   throw new Error('Planner 未产出合法任务图(JSON)')
@@ -164,11 +165,12 @@ function runDag(run, batch, results, opts) {
         const ctx = (t.deps || []).filter((d) => results.has(d)).map((d) => `【${d}】\n${tailClip(results.get(d).output, 800)}`).join('\n\n')   // 尾部截取:上游【交接】段在结尾,不被截丢
         const t0 = Date.now()
         runGuarded(run, buildWorkPrompt(t, ctx, opts.goal), { kind: 'work', role: t.role, id: t.id }, opts, opts.taskRetries)
-          .then((out) => { results.set(t.id, { task: t, output: out, status: 'ok', ms: Date.now() - t0 }); opts.onTaskDone && opts.onTaskDone(t, out, 'ok') })
+          .then((out) => { const ms = Date.now() - t0; results.set(t.id, { task: t, output: out, status: 'ok', ms }); opts.onTaskDone && opts.onTaskDone(t, out, 'ok', ms) })
           .catch((e) => {
+            const ms = Date.now() - t0
             const st = /超时|timeout/i.test(e && e.message || '') ? 'timeout' : (aborted(opts) ? 'aborted' : 'error')
-            results.set(t.id, { task: t, output: '(' + st + '：' + (e && e.message || e) + ')', status: st, ms: Date.now() - t0 })
-            opts.onTaskError && opts.onTaskError(t, e, st)
+            results.set(t.id, { task: t, output: '(' + st + '：' + (e && e.message || e) + ')', status: st, ms })
+            opts.onTaskError && opts.onTaskError(t, e, st, ms)
           })
           .finally(() => { active--; tick() })
       }
@@ -197,11 +199,12 @@ async function orchestrate(goal, options) {
     round++; opts._round = round
     const plan = await planOnce(opts.run, goal, summarize(results), ledger, [...results.keys()], opts)
     ledger = plan.ledger || ledger
-    opts.onPlan && opts.onPlan(round, plan)
-    if (plan.done || plan.tasks.length === 0) { done = true; break }
+    if (plan.done || plan.tasks.length === 0) { opts.onPlan && opts.onPlan(round, { ...plan, tasks: [] }); done = true; break }   // 收尾轮:不播任务(done+非空 tasks 时那些任务不会执行,播出去=UI 幽灵节点)
     const room = Math.max(0, opts.maxTasks - total)
-    if (room === 0) { stopped = 'task-budget'; break }
+    if (room === 0) { opts.onPlan && opts.onPlan(round, { ...plan, tasks: [], plannedTotal: plan.tasks.length }); stopped = 'task-budget'; break }
     let batch = plan.tasks.slice(0, room)
+    // onPlan 只播【实际排程的批】:plan.tasks 可能被任务预算截断,播全量会让 UI 出现永不执行的幽灵 pending 节点
+    opts.onPlan && opts.onPlan(round, { ...plan, tasks: batch, plannedTotal: plan.tasks.length })
     if (opts.onBeforeBatch) {                                  // 人审检查点：批准/编辑/中止
       const d = await opts.onBeforeBatch(round, batch)
       if (aborted(opts) || (d && d.abort)) { stopped = 'aborted'; break }
@@ -225,11 +228,16 @@ async function orchestrate(goal, options) {
 }
 
 // ---- 生产适配：一次 run = 一个 opencode 会话发一条消息取回文本 ----
+// meta.timeoutMs(runGuarded 下传)在编排超时后 +2s 收割底层会话:不掐的话僵尸继续生成 + 重试双跑。
+// 主产品路径(src/orch.js)有自己更完整的 run(空转看门狗);这里是导出 API/脚本用的最小正确版。
 function openCodeRunner(oc, serve) {
   return async (prompt, meta) => {
     const sid = await oc.createSession(serve, '编排:' + (meta && meta.kind || 'task') + (meta && meta.id ? ':' + meta.id : ''))
     if (!sid) throw new Error('createSession 失败')
-    return await oc.sendMessage(serve, sid, prompt)
+    let reap = null
+    if (meta && meta.timeoutMs > 0) reap = setTimeout(() => { try { oc.abort(serve, sid) } catch {} }, meta.timeoutMs + 2000)
+    try { return await oc.sendMessage(serve, sid, prompt) }
+    finally { if (reap) clearTimeout(reap) }
   }
 }
 
