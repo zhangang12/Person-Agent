@@ -2,7 +2,7 @@
 // 只搬不改函数体，行为 100% 不变。函数间互相调用（模块内互见）。
 // ctx 注入 window.js 闭包与 ./recorder-core 的外部符号；sleep 本模块自定义（不从 ctx 拿）。
 module.exports = function initRecorder(ctx) {
-  const { S, brActive, session, log, snapshotBad, RECORDER_JS, frameFor, findElExpr, coverageHits, gitChangedFiles, resolveBus, relocateSelectors, persistHeal, takeoverDigest } = ctx
+  const { S, brActive, session, log, snapshotBad, RECORDER_JS, frameFor, findElExpr, coverageHits, gitChangedFiles, resolveBus, relocateSelectors, persistHeal, takeoverDigest, pageRead } = ctx
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
   async function injectRecorder(wc) {
@@ -219,7 +219,10 @@ module.exports = function initRecorder(ctx) {
     const digest = takeoverDigest(rec, fromIndex, failInfo)
     const gateId = 'g' + Date.now().toString(36) + '_t' + (fromIndex + 1)
     S.browser._takeover = { gateId, active: true, fromIndex, paramValues: paramValues || {}, result: null }
-    const req = { gateId, kind: 'takeover', step: fromIndex + 1, ...digest, url: (() => { try { return wc.getURL() } catch { return '' } })(), at: Date.now() }
+    // 把当前页快照(可交互元素+现成选择器)直接嵌进接管请求 —— opencode Agent 不用先花一个回合 read,上手即动
+    let pageSnap = null
+    try { if (typeof pageRead === 'function') pageSnap = await pageRead() } catch {}
+    const req = { gateId, kind: 'takeover', step: fromIndex + 1, ...digest, url: (() => { try { return wc.getURL() } catch { return '' } })(), pageTitle: (pageSnap && pageSnap.title) || '', pageElements: (pageSnap && String(pageSnap.elements || '').slice(0, 4000)) || '', at: Date.now() }
     let agentOn = false
     try { agentOn = resolveBus.notifyAgent(req) } catch {}
     if (!agentOn) { S.browser._takeover = null; return null }

@@ -61,7 +61,7 @@ module.exports = function initMcpConfig(ctx) {
     })
     return { candidates: cands, entries: Object.keys(mcpEntries()), mcpBaseDir: mcpBaseDir() }
   })
-  ipcMain.handle('mcp-register', async (_e, targetPath) => {
+  function doRegister(targetPath) {
     const entries = mcpEntries()
     let target = targetPath
     if (!target) {
@@ -88,5 +88,29 @@ module.exports = function initMcpConfig(ctx) {
     fs.writeFileSync(target, JSON.stringify(existing, null, 2))
     log('mcp register: wrote ' + Object.keys(entries).length + ' entries to ' + target + (backup ? ' (backup ' + backup + ')' : ''))
     return { ok: true, path: target, backup, added: Object.keys(entries), overwritten }
-  })
+  }
+  ipcMain.handle('mcp-register', async (_e, targetPath) => doRegister(targetPath))
+
+  // 启动自动注册:没注册 = Agent 手里一个天枢工具都没有(技能解析/自愈/接管全空转,且静默无感)。
+  // 只在【缺失】时写(带备份);已注册但 mcpBaseDir 变了(如换安装目录)也重写,保证 command 路径指向当前程序。
+  function autoRegisterIfMissing() {
+    try {
+      const base = mcpBaseDir()
+      for (const p of configCandidates()) {
+        if (!fs.existsSync(p)) continue
+        try {
+          const cfg = JSON.parse(fs.readFileSync(p, 'utf8'))
+          const ent = cfg && cfg.mcp && cfg.mcp['BocomHermes-repro']
+          if (ent) {
+            const cmd = Array.isArray(ent.command) ? ent.command.join(' ') : ''
+            if (cmd.includes(base)) return { ok: true, already: true, path: p }   // 已注册且路径正确
+            log('mcp auto-register: 已注册但路径过期(' + cmd + '),按当前目录重写')
+            return doRegister(p)
+          }
+        } catch {}   // 坏 JSON 的候选跳过,别在启动期抛
+      }
+      return doRegister()   // 一个都没注册 → 写默认目标
+    } catch (e) { log('mcp auto-register err: ' + e.message); return { ok: false, error: e.message } }
+  }
+  return { autoRegisterIfMissing }
 }

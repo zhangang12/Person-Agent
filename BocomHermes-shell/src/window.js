@@ -528,19 +528,20 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         disp = `🤖 回放第 ${req.step} 步起整段失败 — Agent 接管执行中…`
         text = `技能「${req.title}」的严格回放从第 ${req.step} 步起整段失败,请你【接管执行剩余流程】。\n`
           + `目标:${req.goal || '(见步骤)'}${req.successText ? '\n成功标志:' + req.successText : ''}\n`
-          + `当前页面:${req.url}\n失败点:${req.failText}\n\n`
+          + `当前页面:${req.url}${req.pageTitle ? '(' + req.pageTitle + ')' : ''}\n失败点:${req.failText}\n\n`
+          + `【当前页可交互元素(→ 后为现成选择器,可直接用,无需先 read)】\n${req.pageElements || '(未采集到,先调 skill_page_read)'}\n\n`
           + `【已完成的步骤】\n${req.doneText}\n\n【剩余步骤(按意图达成,不必逐字照做)】\n${req.restText}\n\n`
           + `工具(操作的就是用户可见的内嵌浏览器):\n`
-          + `- skill_page_read():看当前页 —— URL/可交互元素(带现成选择器)/正文节选。每步操作前先读页。\n`
           + `- skill_page_act(action, …):执行一步。action ∈ click|type|type_param|select|check|enter|navigate|wait。\n`
-          + `  · selector 用 read 返回的现成选择器,或 __text__:tag|文本(按可见文本);【严禁】:has-text()/xpath。\n`
+          + `  · selector 用上面清单的现成选择器,或 __text__:tag|文本(按可见文本);【严禁】:has-text()/xpath。\n`
           + `  · secret 参数(密码等)用 action:"type_param" + key(如 "p1"),引擎代填,值不经过你。\n`
+          + `- skill_page_read():页面变化后(点击/导航)重新看一眼再动手,不要盲点。\n`
           + `- 做完(或确认无法完成)调 skill_takeover_done(gateId="${req.gateId}", status="done"|"failed", note)。\n\n`
+          + `【本任务只用以上三个 skill_ 工具】不要读写文件、不要用终端/bash、不要改代码 —— 这是页面操作任务,不是编码任务。\n\n`
           + `噪声处理原则:\n`
           + `- 登录缓存:若当前已是登录态(页面已在系统内),登录相关步骤直接跳过,从业务步做起;\n`
           + `- 录制里的无意义操作(菜单来回切换/多余点击)忽略,以达成技能目标为准;\n`
-          + `- 遇到验证码等只有用户能提供的输入:在对话里提醒用户去页面输入,等他完成再继续;\n`
-          + `- 每步之间用 skill_page_read 确认页面状态再动手,不要盲点。`
+          + `- 遇到验证码等只有用户能提供的输入:在对话里提醒用户去页面输入,等他完成再继续。`
       } else if (req.kind === 'relocate') {   // Phase 6b:选择器失配,让 Agent 看当前页候选给一个新选择器
         disp = `⏳ 自愈·步 ${req.step}:元素定位失败,Agent 重定位中…`
         text = `技能回放第 ${req.step} 步的元素找不到了(页面可能改版/动态 id)。这步意图:${req.ask}\n`
@@ -584,7 +585,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       if (n) { refreshSkillArtifacts(j); fs.writeFileSync(fp, JSON.stringify(j, null, 2)); log('skill self-heal 回写 ' + n + ' 步选择器: ' + recId) }
     } catch (e) { log('persistHeal err: ' + e.message) }
   }
-  const { injectRecorder, waitNetIdle, waitForEl, highlightTarget, execStep, startCoverage, stopCoverage, checkAssertions, replayRec } = initRecorder({ S, brActive, session, log, snapshotBad, RECORDER_JS, frameFor, findElExpr, coverageHits, gitChangedFiles, resolveBus, relocateSelectors, persistHeal, takeoverDigest })
+  const { injectRecorder, waitNetIdle, waitForEl, highlightTarget, execStep, startCoverage, stopCoverage, checkAssertions, replayRec } = initRecorder({ S, brActive, session, log, snapshotBad, RECORDER_JS, frameFor, findElExpr, coverageHits, gitChangedFiles, resolveBus, relocateSelectors, persistHeal, takeoverDigest, pageRead: skillPageRead })
 
   // ── 调试分诊 + 多 agent 对抗分析（工作台「发给 Agent」的大脑）──────────────────
   const tinyJson = (t) => { try { const m = String(t || '').replace(/<think>[\s\S]*?<\/think>/gi, ' ').match(/\{[\s\S]*\}/); return m ? JSON.parse(m[0]) : null } catch { return null } }
@@ -1331,7 +1332,14 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
 
   // ── MCP 一键注册 ────────────────────────────────────────────────────────────
   // 把自带 8 个本地 MCP server 写进 opencode/bocomcode 配置,整块搬进 ./mcp-config 的 initMcpConfig(ctx)。
-  initMcpConfig({ app, path, fs, ipcMain, log })
+  // 启动即确保已注册:缺失/路径过期自动补写(带备份)——否则 Agent 静默没有任何天枢工具(技能解析/自愈/接管全空转)。
+  const mcpCfg = initMcpConfig({ app, path, fs, ipcMain, log })
+  setTimeout(() => {
+    try {
+      const r = mcpCfg.autoRegisterIfMissing()
+      if (r && r.ok && !r.already) log('MCP 自动注册完成 → ' + r.path + '(若已有外部 serve 在跑,需重启 serve 才带上工具)')
+    } catch (e) { log('MCP 自动注册异常: ' + e.message) }
+  }, 800)
 
   // ── Settings: IMAP 字段读写 ───────────────────────────────────────────────
   ipcMain.handle('set-settings', (_e, patch) => {
