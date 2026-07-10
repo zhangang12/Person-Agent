@@ -5,11 +5,13 @@
 <title>BocomHermes · 浏览器</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
+/* 浅色外壳(去 AI 化):柔和白灰系,不用纯白大底;层次靠 面(#fff)/底(#f3f4f7)/发丝线,不靠光效。
+   语义色收敛为企业级饱和度(错误红/警告琥珀/成功绿),主行动蓝 #2456d6。 */
 :root{
-  --bg:#0b0c16; --bg2:#0f1120; --line:rgba(255,255,255,.08);
-  --txt:rgba(255,255,255,.88); --txt2:rgba(255,255,255,.55); --txt3:rgba(255,255,255,.32);
-  --accent:#4aa8ff; --accent-dim:rgba(74,168,255,.15);
-  --err:#ff6b6b; --warn:#ffb340; --ok:#3ddc84; --purple:#9d7bff;
+  --bg:#f3f4f7; --bg2:#ffffff; --line:rgba(17,24,39,.10);
+  --txt:#1a1d26; --txt2:#5c6370; --txt3:#98a0ac;
+  --accent:#2456d6; --accent-dim:rgba(36,86,214,.10);
+  --err:#d4373e; --warn:#b57e10; --ok:#188650; --purple:#6d4fc4;
 }
 html,body{width:100%;height:100vh;overflow:hidden;background:var(--bg);
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
@@ -34,17 +36,17 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
   font-size:12.5px;color:var(--txt2);cursor:pointer;position:relative;
   transition:background .12s,color .12s;
 }
-.tab:hover{background:rgba(255,255,255,.045);color:var(--txt)}
+.tab:hover{background:rgba(17,24,39,.045);color:var(--txt)}
 .tab.active{background:var(--bg2);color:var(--txt)}
 .tab.active::after{content:'';position:absolute;left:8px;right:8px;bottom:0;height:2px;background:var(--accent);border-radius:2px}
 .tab .fav{width:14px;height:14px;flex:none;border-radius:3px;background-size:cover;background-position:center;opacity:.9}
-.tab .fav.blank{background:rgba(255,255,255,.1)}
-.tab .spin{width:13px;height:13px;flex:none;border:1.6px solid rgba(255,255,255,.2);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
+.tab .fav.blank{background:rgba(17,24,39,.1)}
+.tab .spin{width:13px;height:13px;flex:none;border:1.6px solid rgba(17,24,39,.2);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .tab .tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tab .cl{width:17px;height:17px;flex:none;border-radius:5px;display:flex;align-items:center;justify-content:center;color:var(--txt3);opacity:0;transition:opacity .12s,background .12s}
 .tab:hover .cl,.tab.active .cl{opacity:1}
-.tab .cl:hover{background:rgba(255,255,255,.12);color:var(--txt)}
+.tab .cl:hover{background:rgba(17,24,39,.12);color:var(--txt)}
 .tab .cl svg{width:10px;height:10px;stroke-width:2.4}
 #newtab{
   -webkit-app-region:no-drag;
@@ -52,7 +54,7 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
   border-radius:7px;background:transparent;border:none;color:var(--txt3);cursor:pointer;
   display:flex;align-items:center;justify-content:center;transition:background .12s,color .12s;
 }
-#newtab:hover{background:rgba(255,255,255,.08);color:var(--txt)}
+#newtab:hover{background:rgba(17,24,39,.08);color:var(--txt)}
 #newtab svg{width:15px;height:15px}
 
 /* ── 工具栏 ── */
@@ -62,22 +64,22 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 }
 .nb{width:30px;height:30px;flex:none;border:none;border-radius:8px;background:transparent;
   color:var(--txt2);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .12s,color .12s}
-.nb:hover:not(:disabled){background:rgba(255,255,255,.08);color:var(--txt)}
+.nb:hover:not(:disabled){background:rgba(17,24,39,.08);color:var(--txt)}
 .nb:disabled{opacity:.25;cursor:default}
 .nb svg{width:15px;height:15px}
 
-.urlwrap{flex:1 1 auto;min-width:140px;height:32px;background:rgba(255,255,255,.05);
+.urlwrap{flex:1 1 auto;min-width:140px;height:32px;background:rgba(17,24,39,.05);
   border:1px solid var(--line);border-radius:9px;display:flex;align-items:center;
   padding:0 11px;gap:7px;transition:border-color .15s,background .15s}
-.urlwrap:focus-within{border-color:var(--accent);background:rgba(255,255,255,.07)}
+.urlwrap:focus-within{border-color:var(--accent);background:rgba(17,24,39,.07)}
 .lock{flex:none;color:var(--txt3);display:flex}.lock svg{width:12px;height:12px}
 #url{flex:1;min-width:0;border:none;outline:none;background:transparent;color:var(--txt);
   font-size:13px;font-family:-apple-system,'SF Mono',monospace;text-overflow:ellipsis}
 #url::placeholder{color:var(--txt3)}
 
-.seg{display:flex;flex:none;background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:8px;overflow:hidden;height:30px}
+.seg{display:flex;flex:none;background:rgba(17,24,39,.05);border:1px solid var(--line);border-radius:8px;overflow:hidden;height:30px}
 .seg button{border:none;background:transparent;color:var(--txt2);cursor:pointer;font-size:12px;padding:0 9px;display:flex;align-items:center;gap:4px;transition:background .12s,color .12s}
-.seg button:hover{background:rgba(255,255,255,.06);color:var(--txt)}
+.seg button:hover{background:rgba(17,24,39,.06);color:var(--txt)}
 .seg button.on{background:var(--accent-dim);color:var(--accent)}
 .seg button svg{width:13px;height:13px}
 .seg .div{width:1px;background:var(--line)}
@@ -87,33 +89,33 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 .zoom .zv:hover{color:var(--txt)}
 
 .tb{flex:none;height:30px;padding:0 11px;border:1px solid var(--line);border-radius:8px;position:relative;
-  background:rgba(255,255,255,.04);color:var(--txt2);font-size:12px;cursor:pointer;
+  background:rgba(17,24,39,.04);color:var(--txt2);font-size:12px;cursor:pointer;
   display:flex;align-items:center;gap:5px;transition:background .12s,color .12s,border-color .12s}
-.tb:hover{background:rgba(255,255,255,.08);color:var(--txt)}
+.tb:hover{background:rgba(17,24,39,.08);color:var(--txt)}
 .tb svg{width:13px;height:13px}
 .tb.ico{padding:0 9px}
-.tb.ai{background:linear-gradient(135deg,rgba(157,123,255,.2),rgba(74,168,255,.18));border-color:rgba(157,123,255,.35);color:#c9b6ff}
-.tb.ai:hover{background:linear-gradient(135deg,rgba(157,123,255,.3),rgba(74,168,255,.26))}
-#brec.on{background:rgba(255,80,80,.2);border-color:rgba(255,80,80,.55);color:#ff8b8b}
-#brec.on #brecdot{display:inline;animation:recpulse 1.1s ease-in-out infinite;color:#ff5555;margin-right:3px}
+.tb.ai{background:rgba(36,86,214,.07);border-color:rgba(36,86,214,.30);color:#2456d6}
+.tb.ai:hover{background:rgba(36,86,214,.12)}
+#brec.on{background:rgba(229,72,77,.10);border-color:rgba(229,72,77,.5);color:#c03036}
+#brec.on #brecdot{display:inline;animation:recpulse 1.1s ease-in-out infinite;color:#e5484d;margin-right:3px}
 @keyframes recpulse{0%,100%{opacity:.35}50%{opacity:1}}
 /* 录制中「● 已录 N 步」常驻徽标:在 y<82 顶带,永不被页面视图遮盖;点击即停止 */
-#brecbadge{background:rgba(255,80,80,.2);border-color:rgba(255,80,80,.55);color:#ff8b8b;font-variant-numeric:tabular-nums;white-space:nowrap}
+#brecbadge{background:rgba(229,72,77,.10);border-color:rgba(229,72,77,.5);color:#c03036;font-variant-numeric:tabular-nums;white-space:nowrap}
 #brecbadge[hidden]{display:none}
-#brecbadge .dot{animation:recpulse 1.1s ease-in-out infinite;color:#ff5555;margin-right:2px}
-#brecbadge b{font-weight:700;color:#ffc2c2;margin:0 2px}
-.tb.on{background:var(--accent-dim);border-color:rgba(74,168,255,.3);color:var(--accent)}
+#brecbadge .dot{animation:recpulse 1.1s ease-in-out infinite;color:#e5484d;margin-right:2px}
+#brecbadge b{font-weight:700;color:#c03036;margin:0 2px}
+.tb.on{background:var(--accent-dim);border-color:rgba(36,86,214,.3);color:var(--accent)}
 .bdg{position:absolute;top:-5px;right:-5px;display:none;min-width:15px;height:15px;padding:0 4px;border-radius:8px;font-size:10px;font-weight:700;
   line-height:15px;text-align:center}
-.bdg.e{background:rgba(255,80,80,.9);color:#fff}
-.bdg.w{background:rgba(255,170,0,.9);color:#241500}
-.bdg.i{background:rgba(74,168,255,.85);color:#04203f}
+.bdg.e{background:rgba(212,55,62,.95);color:#fff}
+.bdg.w{background:rgba(217,154,43,.95);color:#241500}
+.bdg.i{background:rgba(36,86,214,.85);color:#04203f}
 
 /* ── 更多工具:折叠菜单 ── */
 .morewrap{position:relative;flex:none}
 .moremenu{position:absolute;top:calc(100% + 7px);right:0;z-index:60;min-width:212px;
   background:var(--bg2);border:1px solid var(--line);border-radius:11px;padding:6px;
-  box-shadow:0 10px 30px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:2px}
+  box-shadow:0 10px 30px rgba(16,24,40,.15);display:flex;flex-direction:column;gap:2px}
 .moremenu[hidden]{display:none}
 .mhead{font-size:10px;color:var(--txt3);padding:5px 9px 3px;letter-spacing:.04em}
 .mrow{display:flex;align-items:center;gap:9px;padding:3px 7px}
@@ -123,7 +125,7 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 .mitem{display:flex;align-items:center;gap:10px;width:100%;padding:8px 9px;position:relative;
   border:none;border-radius:8px;background:transparent;color:var(--txt2);
   font-size:12.5px;cursor:pointer;text-align:left;transition:background .12s,color .12s}
-.mitem:hover{background:rgba(255,255,255,.07);color:var(--txt)}
+.mitem:hover{background:rgba(17,24,39,.07);color:var(--txt)}
 .mitem.on{background:var(--accent-dim);color:var(--accent)}
 .mitem svg{width:15px;height:15px;flex:none}
 .mitem.ai{color:#c9b6ff}
@@ -134,13 +136,13 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 
 /* ── 浏览器设置抽屉（右侧滑出，覆盖 view 让出的 360px） ── */
 #settingsDrawer{position:absolute;top:0;right:0;bottom:0;width:348px;z-index:55;
-  background:var(--bg2);border-left:1px solid var(--line);box-shadow:-8px 0 28px rgba(0,0,0,.4);
+  background:var(--bg2);border-left:1px solid var(--line);box-shadow:-8px 0 28px rgba(16,24,40,.12);
   display:flex;flex-direction:column}
 #settingsDrawer[hidden]{display:none}
 .sd-hd{flex:none;height:44px;display:flex;align-items:center;justify-content:space-between;
   padding:0 14px;border-bottom:1px solid var(--line);font-size:13px;font-weight:600;color:var(--txt)}
 .sd-x{width:26px;height:26px;border:none;border-radius:7px;background:transparent;color:var(--txt3);cursor:pointer;display:flex;align-items:center;justify-content:center}
-.sd-x:hover{background:rgba(255,255,255,.08);color:var(--txt)}
+.sd-x:hover{background:rgba(17,24,39,.08);color:var(--txt)}
 .sd-x svg{width:13px;height:13px}
 .sd-body{flex:1;overflow-y:auto;padding:16px 14px}
 .sd-grp{margin-bottom:20px}
@@ -153,7 +155,7 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
   border-radius:7px;padding:4px 10px;cursor:pointer}
 .sd-chip:hover{border-color:var(--accent)}
 .sd-hint{font-size:10.5px;color:var(--txt3);line-height:1.55;margin-top:8px}
-.sd-hint code{background:rgba(255,255,255,.07);border-radius:4px;padding:0 4px;font-size:10px}
+.sd-hint code{background:rgba(17,24,39,.07);border-radius:4px;padding:0 4px;font-size:10px}
 .sd-save{display:flex;align-items:center;gap:10px;justify-content:flex-end;margin-top:4px}
 .sd-ok{font-size:11px;color:var(--ok);flex:1}
 .sd-btn{font-size:12px;font-weight:600;color:#fff;background:var(--accent);border:none;border-radius:8px;padding:7px 18px;cursor:pointer}
@@ -171,43 +173,43 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 
 /* 查找条 */
 #find{position:absolute;top:10px;right:18px;z-index:50;display:none;align-items:center;gap:6px;
-  background:#1a1c2e;border:1px solid var(--line);border-radius:10px;padding:5px 7px 5px 11px;
-  box-shadow:0 8px 28px rgba(0,0,0,.5)}
+  background:#ffffff;border:1px solid var(--line);border-radius:10px;padding:5px 7px 5px 11px;
+  box-shadow:0 8px 28px rgba(16,24,40,.15)}
 #find.show{display:flex}
 #find input{border:none;outline:none;background:transparent;color:var(--txt);font-size:12.5px;width:160px}
 #find .cnt{font-size:11px;color:var(--txt3);min-width:42px;text-align:center;font-variant-numeric:tabular-nums}
 #find .fb{width:24px;height:24px;border:none;border-radius:6px;background:transparent;color:var(--txt2);cursor:pointer;display:flex;align-items:center;justify-content:center}
-#find .fb:hover{background:rgba(255,255,255,.1);color:var(--txt)}
+#find .fb:hover{background:rgba(17,24,39,.1);color:var(--txt)}
 #find .fb svg{width:12px;height:12px}
 
 /* 元素拾取结果卡 */
-#pickcard{position:absolute;top:12px;left:14px;z-index:55;width:312px;background:#10131f;border:1px solid var(--line);
-  border-radius:12px;box-shadow:0 14px 44px rgba(0,0,0,.62);display:none;overflow:hidden}
+#pickcard{position:absolute;top:12px;left:14px;z-index:55;width:312px;background:#ffffff;border:1px solid var(--line);
+  border-radius:12px;box-shadow:0 14px 44px rgba(16,24,40,.18);display:none;overflow:hidden}
 #pickcard.show{display:block}
 .pk-hd{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line);font-size:12px;color:var(--txt2)}
 .pk-hd .tag{color:var(--accent);font-family:'SF Mono',monospace;font-weight:600}
 .pk-hd .x{margin-left:auto;width:20px;height:20px;border:none;background:transparent;color:var(--txt3);cursor:pointer;border-radius:5px;display:flex;align-items:center;justify-content:center}
-.pk-hd .x:hover{background:rgba(255,255,255,.1);color:var(--txt)}.pk-hd .x svg{width:11px;height:11px}
-.pk-sel{padding:9px 12px;font-family:'SF Mono',Menlo,monospace;font-size:11.5px;color:#cfe3ff;word-break:break-all;cursor:pointer;border-bottom:1px solid var(--line);background:rgba(74,168,255,.06)}
-.pk-sel:hover{background:rgba(74,168,255,.12)}
+.pk-hd .x:hover{background:rgba(17,24,39,.1);color:var(--txt)}.pk-hd .x svg{width:11px;height:11px}
+.pk-sel{padding:9px 12px;font-family:'SF Mono',Menlo,monospace;font-size:11.5px;color:#cfe3ff;word-break:break-all;cursor:pointer;border-bottom:1px solid var(--line);background:rgba(36,86,214,.06)}
+.pk-sel:hover{background:rgba(36,86,214,.12)}
 .pk-grid{padding:9px 12px;display:flex;flex-wrap:wrap;gap:5px 14px;font-size:11px;color:var(--txt2)}
 .pk-grid b{color:var(--txt);font-weight:600;font-variant-numeric:tabular-nums}
-.pk-box{margin:2px 12px 10px;border:1px dashed rgba(255,170,64,.4);border-radius:6px;padding:6px;font-family:'SF Mono',monospace;font-size:10px;color:var(--warn);text-align:center}
-.pk-box .inner{border:1px dashed rgba(61,220,132,.45);border-radius:4px;padding:5px;color:var(--ok);margin-top:3px}
-.pk-box .core{border:1px solid rgba(74,168,255,.5);border-radius:3px;padding:5px;color:var(--accent);margin-top:3px;font-variant-numeric:tabular-nums}
+.pk-box{margin:2px 12px 10px;border:1px dashed rgba(181,126,16,.45);border-radius:6px;padding:6px;font-family:'SF Mono',monospace;font-size:10px;color:var(--warn);text-align:center}
+.pk-box .inner{border:1px dashed rgba(24,134,80,.5);border-radius:4px;padding:5px;color:var(--ok);margin-top:3px}
+.pk-box .core{border:1px solid rgba(36,86,214,.5);border-radius:3px;padding:5px;color:var(--accent);margin-top:3px;font-variant-numeric:tabular-nums}
 .pk-act{display:flex;gap:6px;padding:9px 12px;border-top:1px solid var(--line)}
 
 /* toast:定位在 82px chrome 顶带内(fixed top:50px)—— 页面是原生 WebContentsView,盖不到这条带,toast 永远可见 */
 #toast{position:fixed;top:50px;left:50%;transform:translateX(-50%) translateY(-12px);z-index:70;
-  background:#1a1c2e;border:1px solid var(--line);border-radius:10px;padding:9px 16px;font-size:12.5px;color:var(--txt);
-  box-shadow:0 8px 28px rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;display:flex;align-items:center;gap:8px}
+  background:#ffffff;border:1px solid var(--line);border-radius:10px;padding:9px 16px;font-size:12.5px;color:var(--txt);
+  box-shadow:0 8px 28px rgba(16,24,40,.15);opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;display:flex;align-items:center;gap:8px}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 #toast .ok{color:var(--ok)}
 #toast .err{color:var(--err)}
 
 /* ── 底部面板（控制台 / 网络）── */
 #console{height:0;flex:none;overflow:hidden;display:flex;flex-direction:column;
-  background:#080910;border-top:1px solid var(--line);transition:height .14s ease}
+  background:#f7f8fa;border-top:1px solid var(--line);transition:height .14s ease}
 #console.open{height:248px}
 #chdr{height:34px;flex:none;display:flex;align-items:center;gap:8px;padding:0 11px;
   border-bottom:1px solid var(--line)}
@@ -215,37 +217,37 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 .dtab{border:none;background:transparent;color:var(--txt3);font-size:12px;cursor:pointer;padding:4px 10px;border-radius:7px;
   display:flex;align-items:center;gap:6px;transition:background .12s,color .12s}
 .dtab:hover{color:var(--txt2)}
-.dtab.on{background:rgba(255,255,255,.08);color:var(--txt)}
+.dtab.on{background:rgba(17,24,39,.08);color:var(--txt)}
 .tbadge{min-width:16px;height:15px;padding:0 4px;border-radius:8px;font-size:10px;line-height:15px;text-align:center;
-  background:rgba(255,255,255,.1);color:var(--txt2);font-variant-numeric:tabular-nums;display:none}
+  background:rgba(17,24,39,.1);color:var(--txt2);font-variant-numeric:tabular-nums;display:none}
 .tbadge.show{display:inline-block}
 .dsep{width:1px;height:16px;background:var(--line);flex:none}
 .cfilter,.nfilter{display:flex;gap:3px}
 .cfilter button,.nfilter button{border:none;background:transparent;color:var(--txt3);font-size:11px;cursor:pointer;
   padding:3px 8px;border-radius:6px;display:flex;align-items:center;gap:4px;transition:background .12s,color .12s}
-.cfilter button:hover,.nfilter button:hover{background:rgba(255,255,255,.06);color:var(--txt2)}
-.cfilter button.on,.nfilter button.on{background:rgba(255,255,255,.08);color:var(--txt)}
+.cfilter button:hover,.nfilter button:hover{background:rgba(17,24,39,.06);color:var(--txt2)}
+.cfilter button.on,.nfilter button.on{background:rgba(17,24,39,.08);color:var(--txt)}
 .cfilter .dot{width:6px;height:6px;border-radius:50%}
 .cfilter .dot.e{background:var(--err)}.cfilter .dot.w{background:var(--warn)}.cfilter .dot.l{background:var(--txt3)}
-#nsearch{height:22px;width:150px;border:1px solid var(--line);border-radius:6px;background:rgba(255,255,255,.05);
+#nsearch{height:22px;width:150px;border:1px solid var(--line);border-radius:6px;background:rgba(17,24,39,.05);
   color:var(--txt);font-size:11px;padding:0 8px;outline:none}
 #nsearch:focus{border-color:var(--accent)}
 .preserve{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--txt3);cursor:pointer}
 .preserve input{cursor:pointer}
 .csp{flex:1}
-.hb{border:none;background:rgba(255,255,255,.05);border-radius:6px;color:var(--txt3);font-size:11px;
+.hb{border:none;background:rgba(17,24,39,.05);border-radius:6px;color:var(--txt3);font-size:11px;
   cursor:pointer;padding:3px 9px;transition:background .12s,color .12s}
-.hb:hover{background:rgba(255,255,255,.1);color:var(--txt2)}
+.hb:hover{background:rgba(17,24,39,.1);color:var(--txt2)}
 
 #cbody,#nbody{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 #nbody{position:relative}
 #clist{flex:1;overflow-y:auto;padding:2px 0;font-family:'SF Mono',Menlo,monospace;font-size:11.5px}
 #clist::-webkit-scrollbar,#nlist::-webkit-scrollbar,.nd-body::-webkit-scrollbar{width:8px}
-#clist::-webkit-scrollbar-thumb,#nlist::-webkit-scrollbar-thumb,.nd-body::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:4px}
+#clist::-webkit-scrollbar-thumb,#nlist::-webkit-scrollbar-thumb,.nd-body::-webkit-scrollbar-thumb{background:rgba(17,24,39,.1);border-radius:4px}
 .ce{display:flex;align-items:baseline;gap:8px;padding:3px 12px;border-left:2px solid transparent;line-height:1.5}
-.ce:hover{background:rgba(255,255,255,.025)}
-.ce.l3{border-left-color:var(--err);color:#ff9b9b;background:rgba(255,80,80,.04)}
-.ce.l2{border-left-color:var(--warn);color:#ffcf6b}
+.ce:hover{background:rgba(17,24,39,.025)}
+.ce.l3{border-left-color:var(--err);color:#b3261e;background:rgba(229,72,77,.06)}
+.ce.l2{border-left-color:var(--warn);color:#8a6410}
 .ce.l1,.ce.l0{color:var(--txt2)}
 .ce .ic{flex:none;width:12px;font-size:10px;opacity:.8}
 .ce .ms{flex:1;min-width:0;word-break:break-all;white-space:pre-wrap}
@@ -253,13 +255,13 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 .cempty{color:var(--txt3);font-size:12px;text-align:center;padding:28px;font-family:-apple-system,sans-serif}
 
 /* 控制台 REPL 输入 + 求值回显 */
-#cevalrow{flex:none;display:flex;align-items:center;gap:7px;padding:5px 12px;border-top:1px solid var(--line);background:rgba(255,255,255,.02)}
+#cevalrow{flex:none;display:flex;align-items:center;gap:7px;padding:5px 12px;border-top:1px solid var(--line);background:rgba(17,24,39,.02)}
 .cevp{color:var(--accent);font-family:'SF Mono',monospace;font-weight:700;font-size:12px;flex:none}
 #ceval{flex:1;min-width:0;border:none;outline:none;background:transparent;color:var(--txt);font-family:'SF Mono',Menlo,monospace;font-size:11.5px}
 #ceval::placeholder{color:var(--txt3)}
 .ce.evin{color:var(--accent)}.ce.evin .ic{color:var(--accent)}
 .ce.evout{color:var(--txt)}.ce.evout .ic{color:var(--ok)}
-.ce.everr{color:#ff9b9b;background:rgba(255,80,80,.05);border-left-color:var(--err)}.ce.everr .ic{color:var(--err)}
+.ce.everr{color:#b3261e;background:rgba(229,72,77,.07);border-left-color:var(--err)}.ce.everr .ic{color:var(--err)}
 
 /* 网络列表 */
 #nhead,.nrow{display:grid;grid-template-columns:62px 56px 1fr 88px 70px 62px;gap:8px;align-items:center}
@@ -267,7 +269,7 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 #nhead .r{text-align:right}
 #nlist{flex:1;overflow-y:auto;font-family:'SF Mono',Menlo,monospace;font-size:11.5px}
 .nrow{padding:3px 12px;cursor:pointer;border-left:2px solid transparent}
-.nrow:hover{background:rgba(255,255,255,.04)}
+.nrow:hover{background:rgba(17,24,39,.04)}
 .nrow.sel{background:var(--accent-dim);border-left-color:var(--accent)}
 .nrow .st{font-variant-numeric:tabular-nums}
 .nrow .st.ok{color:var(--ok)}.nrow .st.redir{color:var(--txt2)}.nrow .st.err{color:var(--err)}.nrow .st.pend{color:var(--txt3)}
@@ -276,17 +278,17 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 .nrow .sz,.nrow .tm{color:var(--txt2);text-align:right;font-variant-numeric:tabular-nums}
 
 /* 网络详情抽屉 */
-#ndetail{position:absolute;top:0;right:0;bottom:0;width:56%;min-width:330px;background:#0c0e18;border-left:1px solid var(--line);
+#ndetail{position:absolute;top:0;right:0;bottom:0;width:56%;min-width:330px;background:#ffffff;border-left:1px solid var(--line);
   transform:translateX(101%);transition:transform .16s ease;display:flex;flex-direction:column;z-index:10}
 #ndetail.open{transform:none}
 .nd-hd{display:flex;align-items:center;gap:8px;padding:8px 11px;border-bottom:1px solid var(--line)}
 #ndtitle{flex:1;min-width:0;font-size:12px;font-family:'SF Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--txt)}
 .nd-hd .x{width:22px;height:22px;border:none;background:transparent;color:var(--txt3);cursor:pointer;border-radius:6px;display:flex;align-items:center;justify-content:center;flex:none}
-.nd-hd .x:hover{background:rgba(255,255,255,.1);color:var(--txt)}.nd-hd .x svg{width:12px;height:12px}
+.nd-hd .x:hover{background:rgba(17,24,39,.1);color:var(--txt)}.nd-hd .x svg{width:12px;height:12px}
 .nd-tabs{display:flex;gap:2px;padding:6px 11px 0;flex:none}
 .nd-tabs button{border:none;background:transparent;color:var(--txt3);font-size:11.5px;cursor:pointer;padding:4px 9px;border-radius:6px 6px 0 0}
 .nd-tabs button:hover{color:var(--txt2)}
-.nd-tabs button.on{background:rgba(255,255,255,.06);color:var(--txt)}
+.nd-tabs button.on{background:rgba(17,24,39,.06);color:var(--txt)}
 .nd-body{flex:1;overflow:auto;padding:9px 12px}
 .nd-row{display:flex;gap:10px;padding:2px 0;font-size:11px;font-family:'SF Mono',monospace;align-items:baseline}
 .nd-k{color:var(--txt3);flex:none;min-width:120px;max-width:160px;word-break:break-all}
@@ -304,13 +306,113 @@ body.ws #tabbar{padding-left:8px}
 body.ws #toast{left:calc(var(--wsleftw) + (100vw - var(--wsleftw))/2)}
 body.ws #toaststack{left:calc(var(--wsleftw) + 18px)}
 #wssplit{position:fixed;top:0;bottom:0;left:var(--wsleftw);width:6px;cursor:col-resize;background:var(--line);z-index:200;display:none}
-body.ws #wssplit{display:block}
+body.ws #wssplit{display:block;bottom:52px}
 #wssplit:hover,body.wsdrag #wssplit{background:var(--accent)}
 body.wsdrag{cursor:col-resize}
+
+/* ===== 录制与回放 · 白色设计系统(rr-*) =====
+   专业/简洁/去装饰:白底 + 发丝线分层,按钮三级制(实心主行动/描边次级/纯文字),
+   语义色只给状态(录制红/成功绿/警告琥珀),不做玻璃光效。独立于浏览器深色壳(模块页面自成一体)。 */
+#skillbar{position:fixed;left:0;right:0;bottom:0;height:52px;display:none;align-items:center;gap:10px;
+  padding:0 16px;background:#fff;border-top:1px solid #e5e7ec;z-index:210;-webkit-app-region:no-drag;
+  font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+body.ws #skillbar{display:flex}
+.sb-rec{display:flex;align-items:center;gap:7px;background:#e5484d;border:1px solid #e5484d;color:#fff;font-weight:600;
+  font-size:12.5px;border-radius:8px;padding:7px 15px;cursor:pointer}
+.sb-rec:hover{background:#d63d42;border-color:#d63d42}
+.sb-rec.on{background:#fff;border:1px solid #e5484d;color:#d63d42}
+.sb-rec .d{width:8px;height:8px;border-radius:50%;background:currentColor}
+.sb-rec.on .d{animation:sbpulse 1.1s infinite}
+@keyframes sbpulse{50%{opacity:.25}}
+.sb-btn{display:flex;align-items:center;gap:6px;background:#fff;border:1px solid #d9dde5;color:#3c4250;
+  border-radius:8px;padding:6.5px 13px;cursor:pointer;font-size:12.5px}
+.sb-btn:hover{border-color:#b9c0cc;color:#1a1d26}
+#sb-status{display:flex;align-items:center;gap:8px;font-size:12px;color:#5c6370;font-variant-numeric:tabular-nums;
+  min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#sb-status .ok{color:#188650} #sb-status .bad{color:#d4373e} #sb-status .warn{color:#b57e10}
+#sb-status .livedot{width:7px;height:7px;border-radius:50%;background:#e5484d;flex:none;animation:sbpulse 1.1s infinite}
+.sb-sp{flex:1;min-width:8px}
+.sb-edu{color:#b6bcc6;font-size:11px;white-space:nowrap}
+@media (max-width:1100px){.sb-edu{display:none}}
+
+/* 面板与列表 */
+.rr-panel{background:#fff;color:#1a1d26;font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;font-size:13px}
+.rr-head{display:flex;align-items:center;gap:10px;padding:13px 20px;border-bottom:1px solid #e9ebf0;flex:none}
+.rr-title{font-size:14.5px;font-weight:650;color:#1a1d26;white-space:nowrap}
+.rr-count{font-size:12px;color:#98a0ac;white-space:nowrap}
+.rr-search{flex:1;max-width:280px;margin-left:auto;display:flex;align-items:center;gap:7px;background:#f4f5f8;border:1px solid transparent;border-radius:8px;padding:5px 10px;color:#98a0ac}
+.rr-search:focus-within{border-color:#2456d6;background:#fff}
+.rr-search input{flex:1;min-width:0;border:none;outline:none;background:transparent;font:inherit;font-size:12.5px;color:#1a1d26}
+.rr-search input::placeholder{color:#b6bcc6}
+.rr-btn{background:#fff;border:1px solid #d9dde5;color:#3c4250;border-radius:7px;padding:5px 12px;cursor:pointer;font-size:12.5px;font-family:inherit;white-space:nowrap}
+.rr-btn:hover{border-color:#b9c0cc;background:#fafbfc}
+.rr-btn-pri{background:#2456d6;border:1px solid #2456d6;color:#fff;border-radius:7px;padding:5px 14px;cursor:pointer;font-size:12.5px;font-weight:600;font-family:inherit;white-space:nowrap}
+.rr-btn-pri:hover{background:#1e49b8;border-color:#1e49b8}
+.rr-x{background:none;border:none;color:#98a0ac;cursor:pointer;font-size:17px;line-height:1;padding:2px 4px;border-radius:6px}
+.rr-x:hover{color:#1a1d26;background:#f4f5f8}
+.rr-list{flex:1;overflow-y:auto;padding:2px 0 10px}
+.rr-list::-webkit-scrollbar{width:8px}
+.rr-list::-webkit-scrollbar-thumb{background:#d9dde5;border-radius:4px;border:2px solid #fff;background-clip:content-box}
+.rr-row{display:flex;align-items:center;gap:12px;padding:11px 20px;border-bottom:1px solid #f0f2f5}
+.rr-row:hover{background:#f8f9fb}
+.rr-main{flex:1;min-width:0}
+.rr-name{display:block;width:100%;border:none;background:transparent;font:inherit;font-size:13.5px;font-weight:600;color:#1a1d26;outline:none;padding:1px 4px;margin-left:-4px;border-radius:5px}
+.rr-name:hover,.rr-name:focus{background:#f1f3f7}
+.rr-meta{margin-top:2px;font-size:11.5px;color:#98a0ac;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rr-meta .ok{color:#188650}.rr-meta .bad{color:#d4373e}.rr-meta .warn{color:#b57e10}
+.rr-desc{margin-top:2px;font-size:12px;color:#5c6370;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rr-star{flex:none;border:none;background:none;color:#c6cbd4;font-size:15px;cursor:pointer;padding:2px;line-height:1}
+.rr-star:hover{color:#f5a623}.rr-star.on{color:#f5a623}
+.rr-acts{flex:none;display:flex;align-items:center;gap:7px}
+.rr-more{background:none;border:1px solid transparent;color:#98a0ac;border-radius:7px;width:28px;height:27px;cursor:pointer;font-size:15px;line-height:1}
+.rr-more:hover{border-color:#d9dde5;color:#3c4250}
+.rr-empty{margin:56px auto;max-width:340px;text-align:center}
+.rr-empty h4{margin:0 0 8px;font-size:14px;font-weight:650;color:#1a1d26}
+.rr-empty p{margin:0;font-size:12.5px;color:#98a0ac;line-height:1.7}
+/* ⋯ 菜单 */
+.rr-menu{position:fixed;z-index:10006;background:#fff;border:1px solid #e5e7ec;border-radius:9px;box-shadow:0 8px 28px rgba(16,24,40,.14);padding:4px;min-width:136px}
+.rr-menu button{display:block;width:100%;text-align:left;border:none;background:none;padding:7px 12px;font:inherit;font-size:12.5px;color:#3c4250;border-radius:6px;cursor:pointer}
+.rr-menu button:hover{background:#f4f5f8}
+.rr-menu button.danger{color:#d4373e}
+.rr-menu button.danger:hover{background:#fdf1f1}
+/* 弹层(保存/填参/编辑步骤/批量) */
+.rr-mask{position:fixed;inset:0;z-index:10002;background:rgba(15,18,26,.38);display:flex;align-items:flex-start;justify-content:center;padding-top:52px}
+/* 工作台模式:弹层只属于浏览器这一栏 —— 左边界跟随分隔条,不遮 Agent 对话 */
+body.ws .rr-mask{left:calc(var(--wsleftw) + 6px)}
+.rr-sheet{background:#fff;color:#1a1d26;border-radius:12px;box-shadow:0 16px 48px rgba(16,24,40,.22);width:530px;max-width:92vw;max-height:84vh;display:flex;flex-direction:column;font-size:13px;font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+.rr-sh{flex:none;padding:15px 18px 0}
+.rr-sh .t{font-size:14px;font-weight:650}
+.rr-sh .s{margin-top:2px;font-size:11.5px;color:#98a0ac;line-height:1.5}
+.rr-sb{flex:1;overflow-y:auto;padding:13px 18px;display:flex;flex-direction:column;gap:11px}
+.rr-sf{flex:none;display:flex;gap:8px;justify-content:flex-end;align-items:center;padding:12px 18px;border-top:1px solid #f0f2f5}
+.rr-label{display:block;font-size:12px;color:#5c6370;margin-bottom:4px}
+.rr-input,.rr-ta{width:100%;background:#fff;border:1px solid #d9dde5;border-radius:8px;padding:7px 10px;font:inherit;font-size:12.5px;color:#1a1d26;outline:none}
+.rr-input:focus,.rr-ta:focus{border-color:#2456d6;box-shadow:0 0 0 3px rgba(36,86,214,.12)}
+.rr-input::placeholder,.rr-ta::placeholder{color:#b6bcc6}
+.rr-ta{resize:vertical;line-height:1.55}
+.rr-hint{font-size:11.5px;color:#98a0ac;line-height:1.55}
+.rr-mono{font-family:ui-monospace,Consolas,monospace}
+.rr-ck{display:flex;align-items:center;gap:7px;font-size:12px;color:#5c6370;cursor:pointer}
+/* 参数勾选行 / 步骤编辑行 */
+.rr-prow{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f4f5f8}
+.rr-prow:last-child{border-bottom:none}
+.rr-srow{display:flex;align-items:center;gap:7px;padding:6px 8px;border:1px solid #eceef2;border-radius:8px;background:#fff}
+.rr-srow .ic{background:none;border:none;color:#98a0ac;cursor:pointer;font-size:13px;padding:0 3px;line-height:1}
+.rr-srow .ic:hover{color:#1a1d26}
+.rr-srow .ic:disabled{opacity:.3;cursor:default}
+.rr-srow .ic.del{color:#d4373e}
 </style>
 </head>
 <body>
 <div id="wssplit" title="拖动调整左右宽度"></div>
+<!-- 工作台底部技能条(仅 workspace 模式显示):录制 + 技能库 + 实况(Agent 过程在左侧卡片可见) -->
+<div id="skillbar">
+  <button class="sb-rec" id="sb-rec"><span class="d"></span><span id="sb-rectxt">录制</span></button>
+  <button class="sb-btn" id="sb-lib">技能库</button>
+  <div id="sb-status"></div>
+  <div class="sb-sp"></div>
+  <span class="sb-edu">录制与回放中,Agent 的整理、解析与自愈过程在左侧对话实时可见</span>
+</div>
 <div id="tabbar">
   <button id="newtab" title="新标签页 (⌘T)"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
 </div>
@@ -846,24 +948,97 @@ function chromeOverlay(key, w) {
 }
 function modalOverlay(on) { try { H.browserModalOverlay && H.browserModalOverlay(!!on) } catch {} }
 
+// 批量运行弹层:粘贴表格(首行=表头=参数名)→ 列映射预览 → 逐行独立回放。进度打到底部技能条实况。
+function bParse(txt){
+  const lines = String(txt||'').replace(/\r/g,'').split('\n').filter(l=>l.trim())
+  if (lines.length < 2) return { headers:[], rows:[] }
+  const sep = lines[0].includes('\t') ? '\t' : ','
+  const headers = lines[0].split(sep).map(s=>s.trim())
+  const rows = lines.slice(1).map(l => { const cs=l.split(sep); const o={}; headers.forEach((h,i)=>{ if(h) o[h]=(cs[i]||'').trim() }); return o })
+  return { headers, rows }
+}
+function openBatch(it){
+  const params = it.params || []
+  const ov = document.createElement('div')
+  ov.className = 'rr-mask'
+  ov.innerHTML = `<div class="rr-sheet">
+    <div class="rr-sh" style="display:flex;align-items:flex-start;gap:9px">
+      <div style="flex:1"><div class="t">批量运行 · ${esc(it.title||it.id)}</div>
+      <div class="s">从 Excel 整块复制、粘贴到下面:第一行是表头(表头=参数名),每行数据独立跑一遍技能。</div></div>
+      <button class="rr-x" id="b-x" title="关闭">✕</button>
+    </div>
+    <div class="rr-sb">
+      <textarea class="rr-ta rr-mono" id="b-data" spellcheck="false" placeholder="客户手机号&#9;金额&#10;13800001111&#9;8000&#10;13900002222&#9;12000" style="min-height:130px;font-size:12px"></textarea>
+      <div class="rr-mono" id="b-map" style="font-size:11.5px;line-height:1.7;background:#f7f8fa;border:1px solid #eceef2;border-radius:8px;padding:8px 11px;color:#5c6370">粘贴后这里显示:解析多少行 · 每列对到哪个参数</div>
+      <label class="rr-ck"><input id="b-stop" type="checkbox">某一行失败就中止(默认:跳过失败行继续)</label>
+    </div>
+    <div class="rr-sf">
+      <button class="rr-btn" id="b-cancel">取消</button>
+      <button class="rr-btn-pri" id="b-go">开始批量运行</button>
+    </div></div>`
+  document.body.appendChild(ov)
+  const close = () => ov.remove()
+  ov.querySelector('#b-x').onclick = close
+  ov.querySelector('#b-cancel').onclick = close
+  ov.addEventListener('click', e => { if (e.target === ov) close() })
+  ov.addEventListener('keydown', e => { if (e.key === 'Escape') close() })
+  const ta = ov.querySelector('#b-data'), map = ov.querySelector('#b-map')
+  const preview = () => {
+    const { headers, rows } = bParse(ta.value)
+    if (!rows.length) { map.textContent = '粘贴后这里显示:解析多少行 · 每列对到哪个参数'; return }
+    const parts = headers.filter(Boolean).map(h => {
+      const hit = params.some(p => p.label===h || p.key===h || (p.label && (h.includes(p.label)||p.label.includes(h))))
+      return hit ? '<span style="color:#188650">'+esc(h)+' ✓</span>' : '<span style="color:#b57e10">'+esc(h)+' 未匹配</span>'
+    })
+    map.innerHTML = '解析 <b>'+rows.length+'</b> 行 · 列映射:'+parts.join('&nbsp;&nbsp;')+(params.length?'<br>技能参数:'+params.map(p=>esc(p.label)).join('、'):'<br>该技能无参数 — 每行按原录制值跑')
+  }
+  ta.addEventListener('input', preview)
+  ov.querySelector('#b-go').onclick = async () => {
+    const { rows } = bParse(ta.value)
+    if (!rows.length) { showToast('<span class="err">⚠</span> 先粘贴数据(第一行=表头)'); return }
+    if (rows.length > 200) { showToast('<span class="err">⚠</span> 一次最多 200 行,请分批'); return }
+    const onError = ov.querySelector('#b-stop').checked ? 'stop' : 'skip'
+    close()
+    sbStatus('📊 批量「'+esc(it.title||it.id)+'」 0/'+rows.length+' …')
+    showToast('<span class="ok">📊</span> 批量运行中,共 ' + rows.length + ' 行…')
+    try {
+      const r = await H.skillsRunBatch({ id: it.id, dataset: rows, onError })
+      if (r && r.error) { showToast('<span class="err">⚠</span> '+r.error); sbStatus('<span class="bad">⚠ '+esc(r.error)+'</span>') }
+      else {
+        showToast((r.fail?'<span class="err">⚠</span> ':'<span class="ok">✓</span> ')+'批量完成:✓ '+r.pass+' / ✗ '+r.fail)
+        sbStatus((r.fail?'<span class="bad">':'<span class="ok">')+'📊 批量完成:✓ '+r.pass+' / ✗ '+r.fail+'</span>')
+      }
+    } catch(e){ showToast('<span class="err">⚠</span> '+e.message) }
+  }
+  setTimeout(()=>ta.focus(), 60)
+}
+// 批量逐行进度 → 底部技能条实况
+H.onSkillBatchProgress && H.onSkillBatchProgress((d) => {
+  sbStatus((d.ok?'':'<span class="bad">')+'📊 批量 行 '+d.row+'/'+d.total+' · ✓ '+d.pass+' / ✗ '+d.fail+(d.ok?'':' · '+esc(d.firstErr||'')+'</span>'))
+})
+
 // 技能库面板:抽屉式,从右滑入。一条录制即一个技能 —— 存了名字+参数的排前面,
 // 原始录制也在列表里,点「⚙ 存为技能」就地晋升。
 async function openRecMgr() {
   const prev = document.getElementById('recmgr'); if (prev) { prev.remove(); chromeOverlay('recmgr', 0); return }
   const items = await H.browserRecList()
-  const panel = document.createElement('div'); panel.id = 'recmgr'
-  panel.style.cssText = 'position:fixed;top:0;right:0;bottom:0;width:480px;z-index:10000;background:rgba(13,15,28,.97);border-left:1px solid var(--accent);display:flex;flex-direction:column;box-shadow:-10px 0 40px rgba(0,0,0,.55);font-family:inherit'
+  const panel = document.createElement('div'); panel.id = 'recmgr'; panel.className = 'rr-panel'
+  // 工作台模式:铺满【浏览器那一栏】(顶留标签/工具栏 82px,底留技能条 52px);独立浏览器:右侧 480 抽屉。
+  // 白色模块页(rr-* 设计系统),自成一体,不随浏览器深色壳。
+  if (WS) panel.style.cssText = 'position:fixed;top:82px;bottom:52px;left:calc(var(--wsleftw) + 6px);right:0;z-index:10000;display:flex;flex-direction:column;border-left:1px solid #e5e7ec'
+  else panel.style.cssText = 'position:fixed;top:0;right:0;bottom:0;width:480px;z-index:10000;display:flex;flex-direction:column;border-left:1px solid #e5e7ec;box-shadow:-12px 0 32px rgba(16,24,40,.18)'
   panel.innerHTML = `
-    <div style="padding:12px 14px 9px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line)">
-      <span style="font-weight:700;color:var(--txt);font-size:13.5px">🧰 技能库</span>
-      <span style="flex:1;color:var(--txt3);font-size:11px">${items.length} 条;⭐ 收藏置顶</span>
-      <button id="rm-import" title="导入技能 JSON(来自同事分享)" style="background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:6px;padding:3px 9px;cursor:pointer;font-size:11px">导入</button>
-      <button id="rm-folder" title="打开录制文件夹" style="background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:6px;padding:3px 9px;cursor:pointer;font-size:11px">系统</button>
-      <button id="rm-x" style="background:transparent;border:none;color:var(--txt3);cursor:pointer;font-size:18px;line-height:1">×</button>
+    <div class="rr-head">
+      <span class="rr-title">技能库</span>
+      <span class="rr-count" id="rm-count"></span>
+      <div class="rr-search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="rm-q" placeholder="搜索技能名或说明" spellcheck="false"></div>
+      <button class="rr-btn" id="rm-import" title="导入同事分享的技能 JSON">导入</button>
+      <button class="rr-btn" id="rm-folder" title="打开录制文件夹">文件夹</button>
+      <button class="rr-x" id="rm-x" title="关闭">✕</button>
     </div>
-    <div id="rm-list" style="flex:1;overflow:auto;padding:8px 10px"></div>`
+    <div id="rm-list" class="rr-list"></div>`
   document.body.appendChild(panel)
-  chromeOverlay('recmgr', 480)   // 面板 480px 宽,页面视图从右让出同宽,否则原生层盖死面板
+  chromeOverlay('recmgr', WS ? 99999 : 480)   // 工作台:浏览器视图收 0,技能库铺满右栏;独立:让出 480
   const closePanel = () => { panel.remove(); chromeOverlay('recmgr', 0) }   // 所有关闭路径统一走这里,漏一处页面就永久缩窄
   panel.querySelector('#rm-x').addEventListener('click', closePanel)
   panel.querySelector('#rm-folder').addEventListener('click', () => H.browserOpenRecDir())
@@ -874,86 +1049,82 @@ async function openRecMgr() {
     if (r && r.ok) { closePanel(); openRecMgr() }   // 重开刷新列表
   })
   const list = panel.querySelector('#rm-list')
-  if (!items.length) { list.innerHTML = '<div style="color:var(--txt3);font-size:12px;padding:20px;text-align:center;line-height:1.7">还没有技能 — 点 ⋯ 菜单里的 ● 录制,在页面上把操作跑一遍,点顶部「● 已录 N 步」停止后即可保存为技能</div>'; return }
   const fmtMs = (ms) => ms < 60000 ? Math.round(ms / 1000) + 's' : Math.round(ms / 60000) + 'min'
   const fmtTime = (ts) => { const d = new Date(ts); return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }
   const esc2 = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')   // 引号必转:值要进 value="…" 属性
-  for (const it of items) {
-    const row = document.createElement('div')
-    row.style.cssText = 'background:rgba(255,255,255,.03);border:1px solid ' + (it.skill ? 'rgba(74,168,255,.35)' : 'var(--line)') + ';border-radius:9px;padding:9px 11px;margin-bottom:8px;display:flex;flex-direction:column;gap:5px'
-    row.innerHTML = `
-      <div style="display:flex;align-items:center;gap:6px">
-        <button data-act="star" style="background:transparent;border:none;color:${it.starred ? '#ffd55a' : 'var(--txt3)'};cursor:pointer;font-size:14px;padding:0">${it.starred ? '⭐' : '☆'}</button>
-        <input data-act="title" value="${esc2(it.title || it.id)}" style="flex:1;background:transparent;border:none;outline:none;color:var(--txt);font-size:12.5px;font-weight:600;font-family:inherit;padding:1px 0" />
-        ${it.skill ? `<span style="color:var(--accent);font-size:10px;border:1px solid rgba(74,168,255,.4);border-radius:5px;padding:1px 6px;white-space:nowrap">⚡ 技能${it.paramCount ? ' · 参数×' + it.paramCount : ''}</span>` : ''}
-        <span style="color:var(--txt3);font-size:10.5px;font-family:ui-monospace,Consolas,monospace">${fmtTime(it.mtime)}</span>
+
+  // ⋯ 溢出菜单(单例,点外即关):次级操作全收这里,行上只留主行动
+  function rrMenu(anchor, acts) {
+    const old = document.getElementById('rr-menu'); if (old) old.remove()
+    const m = document.createElement('div'); m.id = 'rr-menu'; m.className = 'rr-menu'
+    for (const a of acts) {
+      const b = document.createElement('button'); b.textContent = a.label; if (a.danger) b.className = 'danger'
+      b.addEventListener('click', () => { m.remove(); a.fn() })
+      m.appendChild(b)
+    }
+    document.body.appendChild(m)
+    const r = anchor.getBoundingClientRect()
+    m.style.left = Math.max(8, Math.min(window.innerWidth - m.offsetWidth - 8, r.right - m.offsetWidth)) + 'px'
+    m.style.top = Math.min(window.innerHeight - m.offsetHeight - 8, r.bottom + 4) + 'px'
+    setTimeout(() => {
+      const off = (e) => { if (!m.contains(e.target)) { m.remove(); document.removeEventListener('mousedown', off, true) } }
+      document.addEventListener('mousedown', off, true)
+    }, 0)
+  }
+  // 技能文档:面板内嵌白页(不新开原生层),现生成保证与 JSON 同步
+  async function openDoc(it) {
+    const md = await H.browserRecSkillMd(it.id)
+    if (!md) { showToast('<span class="err">⚠</span> 生成文档失败'); return }
+    const dv = document.createElement('div')
+    dv.style.cssText = 'position:absolute;inset:0;z-index:5;background:#fff;display:flex;flex-direction:column'
+    dv.innerHTML = `
+      <div class="rr-head">
+        <button class="rr-btn" data-d="back">← 返回</button>
+        <span class="rr-title" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc2(it.title || it.id)} · 技能文档</span>
+        <button class="rr-btn" data-d="copy">复制</button>
       </div>
-      <div style="color:var(--txt3);font-size:10.5px;font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc2(it.startUrl) || '(无 URL)'}</div>
-      ${it.description ? `<div style="color:var(--txt2);font-size:11px">${esc2(it.description)}</div>` : ''}
-      ${it.expectation && it.expectation !== it.description ? `<div style="color:var(--txt2);font-size:11px;background:rgba(74,168,255,.07);border-left:2px solid var(--accent);padding:4px 8px;border-radius:0 6px 6px 0">📝 ${esc2(it.expectation)}</div>` : ''}
-      <div style="display:flex;align-items:center;gap:7px">
-        <span style="color:var(--txt3);font-size:10.5px">${it.eventCount} 步 · ${fmtMs(it.durationMs)}</span>
-        ${it.lastRun ? `<span style="font-size:10px;color:${it.lastRun.ok ? '#5dcf95' : '#ff8b8b'};border:1px solid ${it.lastRun.ok ? 'rgba(26,168,110,.4)' : 'rgba(226,66,74,.4)'};border-radius:5px;padding:0 5px" title="上次运行 ${fmtTime(it.lastRun.at)}">${it.lastRun.ok ? '✓ 上次成功' : '✗ 上次 ' + it.lastRun.fails + ' 步失败'}</span>` : ''}
-        <span style="flex:1"></span>
-        ${!it.skill ? `<button data-act="mkskill" style="background:transparent;border:1px solid rgba(74,168,255,.4);color:var(--accent);border-radius:6px;padding:3px 9px;cursor:pointer;font-size:11px">⚙ 存为技能</button>` : ''}
-        <button data-act="doc" title="技能文档(何时使用/所需输入/操作步骤/结果核验;保存为技能后 Agent 自动整理完善)" style="background:transparent;border:1px solid var(--line);color:var(--txt3);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">📄 文档</button>
-        <button data-act="edit" title="编辑步骤(删步/重排/改输入值)" style="background:transparent;border:1px solid var(--line);color:var(--txt3);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">✎ 步骤</button>
-        ${it.skill ? `<button data-act="export" title="导出技能 JSON(已剥离登录态,可分享)" style="background:transparent;border:1px solid var(--line);color:var(--txt3);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">导出</button>` : ''}
-        <button data-act="replay" style="background:rgba(26,168,110,.15);border:1px solid #1aa86e;color:#5dcf95;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px">▶ 运行</button>
-        <button data-act="del" style="background:transparent;border:1px solid var(--line);color:var(--txt3);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">删除</button>
+      <pre style="flex:1;overflow:auto;margin:0;padding:16px 20px;font-size:12px;line-height:1.7;white-space:pre-wrap;color:#3c4250;font-family:ui-monospace,Consolas,monospace;user-select:text"></pre>`
+    dv.querySelector('pre').textContent = md
+    dv.querySelector('[data-d="back"]').addEventListener('click', () => dv.remove())
+    dv.querySelector('[data-d="copy"]').addEventListener('click', () => { H.browserCopy(md); showToast('<span class="ok">✓</span> 已复制文档') })
+    panel.appendChild(dv)
+  }
+  // 一行 = 名称/说明/元信息 + 主行动(运行/批量 或 整理成技能)+ ⋯(文档/步骤/导出/删除)
+  function buildRow(it) {
+    const row = document.createElement('div'); row.className = 'rr-row'
+    const lr = it.lastRun
+    const meta = [
+      it.eventCount + ' 步',
+      fmtMs(it.durationMs || 0),
+      it.paramCount ? '参数 ' + it.paramCount : '',
+      it.gates ? '<span class="warn">待人工输入 ' + it.gates + '</span>' : '',
+      lr ? (lr.ok ? '<span class="ok">上次成功</span> · ' + fmtTime(lr.at) : '<span class="bad">上次 ' + lr.fails + ' 步失败</span> · ' + fmtTime(lr.at)) : '未运行过',
+    ].filter(Boolean).join(' · ')
+    row.innerHTML = `
+      <button class="rr-star ${it.starred ? 'on' : ''}" title="收藏置顶">${it.starred ? '★' : '☆'}</button>
+      <div class="rr-main">
+        <input class="rr-name" value="${esc2(it.title || it.id)}" spellcheck="false" title="${esc2(it.startUrl || '')}">
+        ${it.description ? `<div class="rr-desc">${esc2(it.description)}</div>` : ''}
+        <div class="rr-meta">${meta}</div>
+      </div>
+      <div class="rr-acts">
+        ${it.skill
+          ? `<button class="rr-btn-pri" data-act="replay">运行</button><button class="rr-btn" data-act="batch" title="粘贴表格数据(首行=表头=参数名),每行独立运行一遍">批量</button>`
+          : `<button class="rr-btn-pri" data-act="mkskill">整理成技能</button>`}
+        <button class="rr-more" data-act="more" title="更多操作">⋯</button>
       </div>`
-    list.appendChild(row)
     // 收藏 toggle
-    row.querySelector('[data-act="star"]').addEventListener('click', async () => {
+    row.querySelector('.rr-star').addEventListener('click', async (e) => {
       const nv = !it.starred; await H.browserRecUpdate(it.id, { starred: nv }); it.starred = nv
-      row.querySelector('[data-act="star"]').textContent = nv ? '⭐' : '☆'
-      row.querySelector('[data-act="star"]').style.color = nv ? '#ffd55a' : 'var(--txt3)'
+      e.currentTarget.textContent = nv ? '★' : '☆'; e.currentTarget.classList.toggle('on', nv)
     })
     // 标题改名 (blur 保存)
-    row.querySelector('[data-act="title"]').addEventListener('blur', async (e) => {
+    row.querySelector('.rr-name').addEventListener('blur', async (e) => {
       const nv = e.target.value.trim(); if (nv && nv !== (it.title || it.id)) { await H.browserRecUpdate(it.id, { title: nv }); it.title = nv; showToast('<span class="ok">✓</span> 已重命名') }
     })
-    // 存为技能(原始录制就地晋升:取整条录制 → 弹保存卡)
-    const mk = row.querySelector('[data-act="mkskill"]')
-    if (mk) mk.addEventListener('click', async () => {
-      const rec = await H.browserRecGet(it.id)
-      if (!rec) { showToast('<span class="err">⚠</span> 读取录制失败'); return }
-      closePanel()
-      saveAsSkill(rec)
-    })
-    // 技能文档:面板内嵌视图(不新开原生层,零布局纠缠),现生成保证与 JSON 同步
-    row.querySelector('[data-act="doc"]').addEventListener('click', async () => {
-      const md = await H.browserRecSkillMd(it.id)
-      if (!md) { showToast('<span class="err">⚠</span> 生成文档失败'); return }
-      const dv = document.createElement('div')
-      dv.style.cssText = 'position:absolute;inset:0;z-index:5;background:rgba(13,15,28,.99);display:flex;flex-direction:column'
-      dv.innerHTML = `
-        <div style="padding:10px 14px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line)">
-          <button data-d="back" style="background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:6px;padding:3px 9px;cursor:pointer;font-size:11px">← 返回</button>
-          <span style="flex:1;font-weight:700;color:var(--txt);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📄 ${esc2(it.title || it.id)}</span>
-          <button data-d="copy" style="background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:6px;padding:3px 9px;cursor:pointer;font-size:11px">复制</button>
-        </div>
-        <pre style="flex:1;overflow:auto;margin:0;padding:12px 16px;font-size:11.5px;line-height:1.65;white-space:pre-wrap;color:var(--txt2);font-family:ui-monospace,Consolas,monospace"></pre>`
-      dv.querySelector('pre').textContent = md
-      dv.querySelector('[data-d="back"]').addEventListener('click', () => dv.remove())
-      dv.querySelector('[data-d="copy"]').addEventListener('click', () => { H.browserCopy(md); showToast('<span class="ok">✓</span> 已复制文档') })
-      panel.style.position = 'fixed'   // 已是 fixed,确保 absolute 子层以面板为参照
-      panel.appendChild(dv)
-    })
-    // 编辑步骤(删步/重排/改 input 值)
-    row.querySelector('[data-act="edit"]').addEventListener('click', async () => {
-      const rec = await H.browserRecGet(it.id)
-      if (!rec) { showToast('<span class="err">⚠</span> 读取失败'); return }
-      editSteps(rec, () => { closePanel(); openRecMgr() })
-    })
-    // 导出(剥离登录态/快照的可分享 JSON,写到「下载」)
-    const ex = row.querySelector('[data-act="export"]')
-    if (ex) ex.addEventListener('click', async () => {
-      const r = await H.browserRecExport(it.id)
-      showToast(r && r.ok ? '<span class="ok">✓</span> 已导出到 下载/' + r.path.split(/[\\/]/).pop() + (r.inputValues ? '(含 ' + r.inputValues + ' 个录制输入值,密码已脱敏)' : '') : '<span class="err">⚠</span> 导出失败: ' + ((r && r.error) || ''))
-    })
-    // 运行:有参数先弹填参 popover,值按 stepIndex 注入后回放(可选环境地址切 dev/uat/prod)
-    row.querySelector('[data-act="replay"]').addEventListener('click', async () => {
+    // 运行:有参数先弹填参卡,值按 stepIndex 注入后回放(可选环境地址切 dev/uat/prod)
+    const rp = row.querySelector('[data-act="replay"]')
+    if (rp) rp.addEventListener('click', async () => {
       let values = null, baseUrl
       if (it.paramCount > 0) {
         const rec = await H.browserRecGet(it.id)
@@ -972,12 +1143,70 @@ async function openRecMgr() {
         } else showToast('<span class="err">⚠</span> 运行失败: ' + ((r && r.error) || ''))
       } catch (e) { showToast('<span class="err">⚠</span> ' + e.message) }
     })
-    // 删除
-    row.querySelector('[data-act="del"]').addEventListener('click', async () => {
-      if (!confirm('删除 "' + (it.title || it.id) + '"?')) return
-      if (await H.browserRecDelete(it.id)) { row.remove(); showToast('已删除') }
+    // 批量:粘贴表格数据(首行=表头=参数名),每行独立跑一遍
+    const bb = row.querySelector('[data-act="batch"]')
+    if (bb) bb.addEventListener('click', () => openBatch(it))
+    // 原始录制就地晋升:取整条录制 → 弹保存卡
+    const mk = row.querySelector('[data-act="mkskill"]')
+    if (mk) mk.addEventListener('click', async () => {
+      const rec = await H.browserRecGet(it.id)
+      if (!rec) { showToast('<span class="err">⚠</span> 读取录制失败'); return }
+      closePanel()
+      saveAsSkill(rec)
     })
+    // 双击行 = 运行(技能)/ 整理成技能(原始录制);点在按钮/输入框上不触发
+    row.addEventListener('dblclick', (e) => {
+      if (e.target.closest('button,input')) return
+      const act = row.querySelector('[data-act="replay"]') || row.querySelector('[data-act="mkskill"]')
+      if (act) act.click()
+    })
+    // ⋯:文档 / 编辑步骤 / 导出(仅技能)/ 删除
+    row.querySelector('[data-act="more"]').addEventListener('click', (e) => rrMenu(e.currentTarget, [
+      { label: '查看文档', fn: () => openDoc(it) },
+      { label: '编辑步骤', fn: async () => {
+        const rec = await H.browserRecGet(it.id)
+        if (!rec) { showToast('<span class="err">⚠</span> 读取失败'); return }
+        editSteps(rec, () => { closePanel(); openRecMgr() })
+      } },
+      ...(it.skill ? [{ label: '导出分享', fn: async () => {
+        const r = await H.browserRecExport(it.id)
+        showToast(r && r.ok ? '<span class="ok">✓</span> 已导出到 下载/' + r.path.split(/[\\/]/).pop() + (r.inputValues ? '(含 ' + r.inputValues + ' 个录制输入值,密码已脱敏)' : '') : '<span class="err">⚠</span> 导出失败: ' + ((r && r.error) || ''))
+      } }] : []),
+      { label: '删除', danger: true, fn: async () => {
+        if (!confirm('删除「' + (it.title || it.id) + '」?')) return
+        if (await H.browserRecDelete(it.id)) { row.remove(); showToast('已删除') }
+      } },
+    ]))
+    return row
   }
+  // 渲染:技能在前(收藏置顶已由后端排),原始录制归入小节;搜索过滤名称/说明
+  function render() {
+    const q = (panel.querySelector('#rm-q').value || '').trim().toLowerCase()
+    const match = (it) => !q || String(it.title || it.id).toLowerCase().includes(q) || String(it.description || '').toLowerCase().includes(q)
+    const skills = items.filter((it) => it.skill && match(it))
+    const raws = items.filter((it) => !it.skill && match(it))
+    panel.querySelector('#rm-count').textContent = skills.length + ' 个技能' + (raws.length ? ' · ' + raws.length + ' 条原始录制' : '')
+    list.innerHTML = ''
+    if (!items.length) {
+      list.innerHTML = '<div class="rr-empty"><h4>还没有技能</h4><p>点左下角「录制」,在页面上把一次操作完整走一遍;<br>停止后起个名字,Agent 会自动整理成可复用的技能。</p></div>'
+      return
+    }
+    if (!skills.length && !raws.length) { list.innerHTML = '<div class="rr-empty"><p>没有匹配「' + esc2(q) + '」的技能</p></div>'; return }
+    for (const it of skills) list.appendChild(buildRow(it))
+    if (raws.length) {
+      const cap = document.createElement('div')
+      cap.style.cssText = 'padding:16px 20px 4px;font-size:11.5px;color:#98a0ac'
+      cap.textContent = '原始录制(未整理成技能)'
+      list.appendChild(cap)
+      for (const it of raws) list.appendChild(buildRow(it))
+    }
+  }
+  panel.querySelector('#rm-q').addEventListener('input', render)
+  render()
+  // 键盘:进面板即可敲字搜索;Esc 关闭(焦点在面板内任意处都生效)
+  const qEl = panel.querySelector('#rm-q')
+  setTimeout(() => qEl.focus(), 60)
+  panel.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePanel() })
 }
 
 // 运行前填参数:一个极简 popover,每个参数一行(预填录制时默认值;密码参数用密码框)。
@@ -986,29 +1215,32 @@ function askParams(name, params) {
   return new Promise((resolve) => {
     const prev = document.getElementById('sk-params'); if (prev) prev.remove()
     const esc2 = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-    const ov = document.createElement('div'); ov.id = 'sk-params'
-    ov.style.cssText = 'position:fixed;top:48px;left:50%;transform:translateX(-50%);z-index:10001;background:rgba(15,17,32,.97);border:1px solid var(--accent);border-radius:11px;padding:13px 15px;box-shadow:0 10px 40px rgba(0,0,0,.45);min-width:400px;max-width:520px;color:var(--txt);font-size:13px'
-    ov.innerHTML = `
-      <div style="font-weight:600;margin-bottom:9px">▶ 运行「${esc2(name)}」— 填参数</div>
-      ${params.map((p, i) => `
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
-          <span style="width:110px;color:var(--txt2);font-size:12px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc2(p.label || p.key)}</span>
-          <input data-pk="${esc2(p.key)}" ${p.secret ? 'type="password"' : ''} value="${esc2(p.default != null ? p.default : '')}" style="flex:1;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:7px;padding:6px 9px;color:var(--txt);font-size:12.5px;font-family:inherit;outline:none" ${i === 0 ? 'autofocus' : ''} />
-        </div>`).join('')}
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
-        <span style="width:110px;color:var(--txt3);font-size:11.5px;text-align:right">环境地址(可选)</span>
-        <input id="skp-baseurl" placeholder="留空=录制环境;如 https://uat.example.com" style="flex:1;background:rgba(255,255,255,.04);border:1px dashed var(--line);border-radius:7px;padding:5px 9px;color:var(--txt2);font-size:11.5px;font-family:inherit;outline:none" />
+    const ov = document.createElement('div'); ov.id = 'sk-params'; ov.className = 'rr-mask'
+    ov.innerHTML = `<div class="rr-sheet" style="width:460px">
+      <div class="rr-sh"><div class="t">运行「${esc2(name)}」</div><div class="s">填写本次运行的参数;留空使用录制时的默认值。</div></div>
+      <div class="rr-sb">
+        ${params.map((p, i) => `
+          <div><label class="rr-label">${esc2(p.label || p.key)}${p.secret ? '(密码,必填)' : ''}</label>
+          <input class="rr-input" data-pk="${esc2(p.key)}" ${p.secret ? 'type="password"' : ''} value="${esc2(p.default != null ? p.default : '')}" ${i === 0 ? 'autofocus' : ''} /></div>`).join('')}
+        <div><label class="rr-label">环境地址(可选,留空=录制环境;切环境需先登录目标环境)</label>
+        <input class="rr-input" id="skp-baseurl" placeholder="https://uat.example.com" /></div>
       </div>
-      <div style="display:flex;gap:7px;justify-content:flex-end;margin-top:10px">
-        <button id="skp-cancel" style="background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:7px;padding:5px 12px;cursor:pointer;font-size:12px">取消</button>
-        <button id="skp-run" style="background:var(--accent);border:none;color:#fff;border-radius:7px;padding:5px 14px;cursor:pointer;font-size:12px;font-weight:600">▶ 运行</button>
-      </div>`
+      <div class="rr-sf">
+        <button class="rr-btn" id="skp-cancel">取消</button>
+        <button class="rr-btn-pri" id="skp-run">运行</button>
+      </div>
+    </div>`
     document.body.appendChild(ov)
     modalOverlay(true)   // 页面视图让位(高度压 0),否则原生层盖死填参卡
     const first = ov.querySelector('input'); if (first) first.focus()
     const done = (v) => { ov.remove(); modalOverlay(false); resolve(v) }   // 取消/运行/Escape 全走这里,保证恢复
     ov.querySelector('#skp-cancel').addEventListener('click', () => done(undefined))
     ov.querySelector('#skp-run').addEventListener('click', () => {
+      // 密码参数为空 → 拦下(回放到该步必失败,别让用户白等一整轮)
+      const secretKeys = new Set(params.filter((p) => p.secret).map((p) => p.key))
+      let bad = null
+      ov.querySelectorAll('input[data-pk]').forEach((inp) => { if (!bad && secretKeys.has(inp.dataset.pk) && !inp.value) bad = inp })
+      if (bad) { bad.style.borderColor = '#d4373e'; bad.focus(); return }
       const values = {}
       ov.querySelectorAll('input[data-pk]').forEach((inp) => { values[inp.dataset.pk] = inp.value })
       done({ values, baseUrl: ov.querySelector('#skp-baseurl').value.trim() || undefined })
@@ -1023,9 +1255,17 @@ $('brecmgr').addEventListener('click', openRecMgr)
 
 // 停止录制:brec 菜单项与顶带「● 已录 N 步」徽标共用。
 // 0 页面动作(只有主进程自加的初始 navigate)→ 警示并跳过保存卡,不产只有一步 navigate 的废技能
+// 录制态 UI 同步:⋯ 菜单里的 brec 按钮 与 底部技能条的 sb-rec 一起变
+function setRecUi(on){
+  $('brec').classList.toggle('on', !!on); $('brectxt').textContent = on ? '停止' : '录制'
+  const sb = $('sb-rec'); if (sb){ sb.classList.toggle('on', !!on); const t = $('sb-rectxt'); if (t) t.textContent = on ? '停止并保存' : '录制' }
+  if (!on) sbStatus('')
+}
+function sbStatus(html){ const s = $('sb-status'); if (s) s.innerHTML = html || '' }
+function isRecording(){ return $('brec').classList.contains('on') }
 async function stopRec() {
   const r = await H.browserRecStop()
-  $('brec').classList.remove('on'); $('brectxt').textContent = '录制'
+  setRecUi(false)
   $('brecbadge').hidden = true
   const n = (r && r.events && r.events.length) || 0
   if (r && r.ok && n <= 1) {
@@ -1035,27 +1275,28 @@ async function stopRec() {
   showToast('<span class="ok">✓</span> 已停止 · 共 ' + n + ' 个动作')
   if (r && r.ok && r.id) saveAsSkill(r)   // 弹"保存为技能"卡:命名 + 说明 + 勾选参数,录一次终身复用
 }
-
-// 录制 toggle: 红点闪烁,记录 click/input/key/scroll/nav 时间线
-$('brec').addEventListener('click', async () => {
-  const on = !$('brec').classList.contains('on')
-  if (on) {
-    const r = await H.browserRecStart()
-    if (!r || !r.ok) { showToast('<span class="err">⚠</span> 录制启动失败:' + ((r && r.error) || '未知')); return }
-    $('brec').classList.add('on'); $('brectxt').textContent = '停止'
-    $('brecbadge').hidden = false; $('brecn').textContent = '1'   // 主进程已入队初始 navigate
-    showToast('<span class="ok">●</span> 开始录制 — 复现完点顶部「● 已录 N 步」或菜单里的"停止"')
-  } else {
-    await stopRec()
-  }
-})
+async function startRec() {
+  // 技能库开着先收起:录制发生在浏览器里,得让页面可见可点
+  const rm = document.getElementById('recmgr'); if (rm) { rm.remove(); chromeOverlay('recmgr', 0) }
+  const r = await H.browserRecStart()
+  if (!r || !r.ok) { showToast('<span class="err">⚠</span> 录制启动失败:' + ((r && r.error) || '未知')); return }
+  setRecUi(true)
+  $('brecbadge').hidden = false; $('brecn').textContent = '1'   // 主进程已入队初始 navigate
+  showToast('<span class="ok">●</span> 开始录制 — 在浏览器把操作走一遍,回来点「■ 停止并保存」')
+}
+async function toggleRec(){ if (isRecording()) await stopRec(); else await startRec() }
+// 录制 toggle:⋯ 菜单项 / 顶带徽标 / 底部技能条 三处共用
+$('brec').addEventListener('click', toggleRec)
 $('brecbadge').addEventListener('click', stopRec)
+if ($('sb-rec')) $('sb-rec').addEventListener('click', toggleRec)
+if ($('sb-lib')) $('sb-lib').addEventListener('click', openRecMgr)
 
 // 「● 已录 N 步」实时计数:主进程每入队一个事件推一次
 H.onBrowserRecCount && H.onBrowserRecCount(({ n, done }) => {
   if (done) { $('brecbadge').hidden = true; return }
   $('brecbadge').hidden = false
   $('brecn').textContent = n
+  sbStatus('<span class="livedot"></span>录制中 · 已录 ' + n + ' 步 — 去右侧把操作走完')
 })
 // 「录制与回放」中心的遥控:停录走本壳自己的流程(弹保存卡)/ 给原始录制弹保存卡 / 同步录制按钮态
 H.onBrowserDoStopRec && H.onBrowserDoStopRec(() => stopRec())
@@ -1064,18 +1305,16 @@ H.onBrowserOpenSaveSkill && H.onBrowserOpenSaveSkill(async ({ id }) => {
   if (rec) saveAsSkill(rec)
   else showToast('<span class="err">⚠</span> 读取录制失败')
 })
-H.onBrowserRecUi && H.onBrowserRecUi(({ on }) => {
-  $('brec').classList.toggle('on', !!on)
-  $('brectxt').textContent = on ? '停止' : '录制'
-  if (on) $('brecbadge').hidden = false
-})
+H.onBrowserRecUi && H.onBrowserRecUi(({ on }) => { setRecUi(!!on); if (on) $('brecbadge').hidden = false })
+// 从「🎬 录制回放」入口进工作台 → 自动展开技能库(让用户一眼看到技能列表)
+H.onWsOpenSkills && H.onWsOpenSkills(() => { if (typeof openRecMgr === 'function') openRecMgr() })
 
 // 回放进度 HUD:chrome 顶带(82px 安全区)内显示「▶ 步 i/N · act」,与页内红框互补(红框看"点哪",HUD 看"进到哪/卡在哪")
 function ensureHud() {
   let p = document.getElementById('replayhud')
   if (!p) {
     p = document.createElement('div'); p.id = 'replayhud'
-    p.style.cssText = 'position:fixed;top:46px;right:12px;z-index:9998;background:rgba(15,17,32,.95);border:1px solid var(--line);border-radius:8px;padding:5px 11px;color:var(--txt);font-size:11.5px;font-family:ui-monospace,Consolas,monospace;box-shadow:0 6px 20px rgba(0,0,0,.4);pointer-events:none;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'
+    p.style.cssText = 'position:fixed;top:46px;right:12px;z-index:9998;background:#fff;border:1px solid #e5e7ec;border-radius:8px;padding:5px 11px;color:#3c4250;font-size:11.5px;font-family:ui-monospace,Consolas,monospace;box-shadow:0 4px 16px rgba(16,24,40,.14);pointer-events:none;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'
     document.body.appendChild(p)
   }
   return p
@@ -1087,12 +1326,12 @@ function clearReplayPause() { const b = document.getElementById('replaypause'); 
 function showReplayPause(d) {
   clearReplayPause()
   const b = document.createElement('div'); b.id = 'replaypause'
-  b.style.cssText = 'position:fixed;top:46px;left:50%;transform:translateX(-50%);z-index:10000;display:flex;align-items:center;gap:10px;background:rgba(214,163,45,.16);border:1.5px solid #d6a32d;border-radius:8px;padding:5px 8px 5px 12px;color:var(--txt);font-size:12px;box-shadow:0 6px 22px rgba(0,0,0,.45);pointer-events:auto;white-space:nowrap'
+  b.style.cssText = 'position:fixed;top:46px;left:50%;transform:translateX(-50%);z-index:10000;display:flex;align-items:center;gap:10px;background:#fffbeb;border:1px solid #f0c33c;border-radius:8px;padding:5px 8px 5px 12px;color:#6b4e0e;font-size:12px;box-shadow:0 4px 18px rgba(16,24,40,.16);pointer-events:auto;white-space:nowrap;font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif'
   const agentTip = d.agent ? '已通知 Agent 尝试解析;也可' : '——'
-  b.innerHTML = `<span style="font-size:13px">⏸</span><span>${d.agent ? '🤖 ' : ''}请在页面完成:<b style="color:#e6c25a">${String(d.hint || '需人工操作').replace(/</g,'&lt;')}</b> ${agentTip}填完自动继续,或点右侧</span>`
+  b.innerHTML = `<span style="font-size:13px">⏸</span><span>请在页面完成:<b style="color:#8a6410">${String(d.hint || '需人工操作').replace(/</g,'&lt;')}</b> ${agentTip}填完自动继续,或点右侧</span>`
   const btn = document.createElement('button')
-  btn.textContent = '继续 ▶'
-  btn.style.cssText = 'background:#d6a32d;border:none;color:#1a1400;font-weight:700;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px'
+  btn.textContent = '继续'
+  btn.style.cssText = 'background:#b57e10;border:none;color:#fff;font-weight:600;border-radius:6px;padding:4px 13px;cursor:pointer;font-size:12px'
   btn.addEventListener('click', () => { btn.disabled = true; btn.style.opacity = '.5'; btn.textContent = '继续中…'; H.browserReplayResume && H.browserReplayResume() })
   b.appendChild(btn)
   document.body.appendChild(b)
@@ -1103,15 +1342,16 @@ H.onBrowserSkillRefined && H.onBrowserSkillRefined((d) => {
   showToast('<span class="ok">🛠</span> 技能「' + esc(d.title) + '」已由 Agent 整理:' + esc((d.applied || []).join('、')))
 })
 H.onBrowserReplayProgress && H.onBrowserReplayProgress((d) => {
-  if (d.pause) { showReplayPause(d); return }             // 人机断点:显示可点的暂停横幅,等人现场操作
-  if (d.resume) { clearReplayPause(); return }            // 人填完/点继续 → 收横幅,回放续跑
+  if (d.pause) { showReplayPause(d); sbStatus('<span class="warn">⏸ ' + esc(d.hint || '需人工操作') + (d.agent ? ' · 🤖 Agent 解析中' : ' · 等你在页面输入') + '</span>'); return }
+  if (d.resume) { clearReplayPause(); sbStatus('▶ 已续跑…'); return }
   const p = ensureHud()
   clearTimeout(hudHideT)
   p.hidden = false
-  if (d.start) { p.style.borderColor = 'var(--line)'; p.textContent = '▶ ' + (d.title || '') + ' 0/' + d.total; return }
-  if (d.done) { clearReplayPause(); p.textContent = (d.fails ? '⚠ ' + d.fails + ' 步失败 / ' : '✓ 完成 ') + d.total + ' 步'; hudHideT = setTimeout(() => { p.hidden = true }, 4000); return }
+  if (d.start) { p.style.borderColor = '#e5e7ec'; p.textContent = '▶ ' + (d.title || '') + ' 0/' + d.total; sbStatus('▶ 回放「' + esc(d.title || '') + '」 0/' + d.total); return }
+  if (d.done) { clearReplayPause(); p.textContent = (d.fails ? '⚠ ' + d.fails + ' 步失败 / ' : '✓ 完成 ') + d.total + ' 步'; hudHideT = setTimeout(() => { p.hidden = true }, 4000); sbStatus(d.fails ? '<span class="bad">⚠ 回放完成,' + d.fails + ' 步失败</span>' : '<span class="ok">✓ 回放完成 ' + d.total + ' 步</span>'); return }
   p.textContent = '▶ 步 ' + d.i + '/' + d.total + ' · ' + d.act + (d.ok ? '' : ' ✗ ' + (d.err || ''))
-  p.style.borderColor = d.ok ? 'var(--line)' : '#e2424a'
+  p.style.borderColor = d.ok ? '#e5e7ec' : '#d4373e'
+  sbStatus('▶ 回放 步 ' + d.i + '/' + d.total + ' · ' + d.act + (d.ok === false ? ' <span class="bad">✗</span>' : ''))
 })
 
 // 验证结果浮卡:点 "验证" 后,除了发给 agent,也在右下角浮一张 PASS/SUSPICIOUS/FAIL 卡,
@@ -1167,29 +1407,33 @@ function saveAsSkill(rec) {
   // 录制里的输入/下拉步 = 参数候选(带原始下标 stepIndex,回放时按它注入);密码步录制即脱敏,默认勾成参数
   const inputSteps = (rec.events || []).map((ev, i) => ({ ev, i })).filter((x) => x.ev.act === 'input' || x.ev.act === 'select')
   const scrollCount = (rec.events || []).filter((ev) => ev.act === 'scroll').length
-  const ov = document.createElement('div'); ov.id = 'sk-save'
-  ov.style.cssText = 'position:fixed;top:48px;left:50%;transform:translateX(-50%);z-index:9999;background:rgba(15,17,32,.97);border:1px solid var(--accent);border-radius:11px;padding:13px 15px;box-shadow:0 10px 40px rgba(0,0,0,.45);min-width:480px;max-width:580px;color:var(--txt);font-size:13px;line-height:1.55'
-  ov.innerHTML = `
-    <div style="font-weight:600;margin-bottom:7px">⚡ 保存为技能 — 录一次,之后一键复用</div>
-    <input id="sk-name" value="${esc2(rec.title || '')}" placeholder="技能名(例:导出月度报表 / 查客户额度)" style="width:100%;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--txt);font-size:12.5px;font-family:inherit;outline:none;margin-bottom:7px" />
-    <textarea id="sk-desc" rows="2" placeholder="一句话:这条技能做什么 / 应该发生什么(例:点提交后应跳到结果页)" style="width:100%;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--txt);font-size:12.5px;font-family:inherit;outline:none;resize:vertical">${esc2(rec.description || rec.expectation || '')}</textarea>
-    ${inputSteps.length ? `
-      <div style="font-size:11.5px;color:var(--txt2);margin:8px 0 5px">录到 ${inputSteps.length} 个输入/下拉 — 勾选"每次运行时要改的"设为参数:</div>
-      <div id="sk-plist" style="max-height:170px;overflow:auto">
-        ${inputSteps.map((x) => `
-          <div style="display:flex;align-items:center;gap:7px;margin-bottom:5px">
-            <input type="checkbox" data-step="${x.i}" ${x.ev.secret ? 'checked' : ''} style="cursor:pointer" />
-            <input data-label="${x.i}" value="${x.ev.secret ? '密码' : ''}" placeholder="参数名(例:客户号)" style="width:130px;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:6px;padding:4px 7px;color:var(--txt);font-size:11.5px;font-family:inherit;outline:none" />
-            <span style="flex:1;color:var(--txt3);font-size:11px;font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc2(x.ev.sel)}">${x.ev.secret ? '••••(密码,已脱敏)' : (x.ev.act === 'select' ? '选了: ' + esc2(x.ev.text || x.ev.value || '(空)') : '录制值: ' + esc2(x.ev.value || '(空)'))}</span>
-          </div>`).join('')}
-      </div>` : ''}
-    <input id="sk-success" placeholder="成功标志(可选):CSS 选择器,或 text:页面应出现的文字" style="width:100%;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:8px;padding:6px 9px;color:var(--txt);font-size:11.5px;font-family:inherit;outline:none;margin-top:7px" />
-    <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
-      ${scrollCount ? `<label style="font-size:11.5px;color:var(--txt2);cursor:pointer;display:flex;align-items:center;gap:5px"><input id="sk-skipscroll" type="checkbox" checked style="cursor:pointer" />回放跳过 ${scrollCount} 个滚动步(懒加载页请取消)</label>` : ''}
-      <span style="flex:1"></span>
-      <button id="sk-skip" style="background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:7px;padding:5px 12px;cursor:pointer;font-size:12px">仅存录制</button>
-      <button id="sk-save-btn" style="background:var(--accent);border:none;color:#fff;border-radius:7px;padding:5px 13px;cursor:pointer;font-size:12px;font-weight:600">⚡ 保存技能</button>
-    </div>`
+  const ov = document.createElement('div'); ov.id = 'sk-save'; ov.className = 'rr-mask'
+  ov.innerHTML = `<div class="rr-sheet">
+    <div class="rr-sh"><div class="t">保存为技能</div><div class="s">录一次,之后一键复用;保存后 Agent 会自动整理步骤命名与成功判据。</div></div>
+    <div class="rr-sb">
+      <div><label class="rr-label">技能名</label>
+      <input class="rr-input" id="sk-name" value="${esc2(rec.title || '')}" placeholder="例:导出月度报表 / 查客户额度" /></div>
+      <div><label class="rr-label">说明(这条技能做什么 / 应该发生什么)</label>
+      <textarea class="rr-ta" id="sk-desc" rows="2" placeholder="例:点提交后应跳到结果页">${esc2(rec.description || rec.expectation || '')}</textarea></div>
+      ${inputSteps.length ? `
+        <div><label class="rr-label">录到 ${inputSteps.length} 个输入,勾选"每次运行都会变的"设为参数</label>
+        <div id="sk-plist" style="max-height:180px;overflow:auto">
+          ${inputSteps.map((x) => `
+            <div class="rr-prow">
+              <input type="checkbox" data-step="${x.i}" ${x.ev.secret ? 'checked' : ''} style="cursor:pointer" />
+              <input class="rr-input" data-label="${x.i}" value="${x.ev.secret ? '密码' : ''}" placeholder="参数名(例:客户号)" style="width:140px;padding:4px 8px;font-size:11.5px" />
+              <span class="rr-mono" style="flex:1;min-width:0;color:#98a0ac;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc2(x.ev.sel)}">${x.ev.secret ? '••••(密码,已脱敏)' : (x.ev.act === 'select' ? '选了: ' + esc2(x.ev.text || x.ev.value || '(空)') : '录制值: ' + esc2(x.ev.value || '(空)'))}</span>
+            </div>`).join('')}
+        </div></div>` : ''}
+      <div><label class="rr-label">成功标志(可选)</label>
+      <input class="rr-input" id="sk-success" placeholder="CSS 选择器,或 text:页面应出现的文字" /></div>
+    </div>
+    <div class="rr-sf">
+      ${scrollCount ? `<label class="rr-ck" style="margin-right:auto"><input id="sk-skipscroll" type="checkbox" checked />回放跳过 ${scrollCount} 个滚动步</label>` : ''}
+      <button class="rr-btn" id="sk-skip">仅存录制</button>
+      <button class="rr-btn-pri" id="sk-save-btn">保存技能</button>
+    </div>
+  </div>`
   document.body.appendChild(ov)
   modalOverlay(true)   // 页面视图让位(高度压 0),否则原生层盖死保存卡
   const nameInput = ov.querySelector('#sk-name'); nameInput.focus()
@@ -1197,7 +1441,7 @@ function saveAsSkill(rec) {
   ov.querySelector('#sk-skip').addEventListener('click', close)
   ov.querySelector('#sk-save-btn').addEventListener('click', async () => {
     const name = nameInput.value.trim()
-    if (!name) { nameInput.style.borderColor = '#e2424a'; nameInput.focus(); return }
+    if (!name) { nameInput.style.borderColor = '#d4373e'; nameInput.focus(); return }
     const desc = ov.querySelector('#sk-desc').value.trim()
     // 勾选的输入步 → params:{key,label,stepIndex,default,secret};key 用 p1/p2… 稳定短名
     const params = []
@@ -1214,8 +1458,10 @@ function saveAsSkill(rec) {
     const skipScroll = ov.querySelector('#sk-skipscroll')
     if (skipScroll) patch.skipSteps = skipScroll.checked ? rec.events.map((ev, i) => ev.act === 'scroll' ? i : -1).filter((i) => i >= 0) : []
     const okSave = await H.browserRecUpdate(rec.id, patch)
-    showToast(okSave ? '<span class="ok">⚡</span> 技能「' + name + '」已保存 — 技能库可一键运行,也可以让 Agent 按名字调用' : '<span class="err">⚠</span> 保存失败')
+    showToast(okSave ? '<span class="ok">✓</span> 技能「' + name + '」已保存,Agent 正在后台整理(完成会提示)' : '<span class="err">⚠</span> 保存失败')
     close()
+    // 一条流收尾:保存成功 → 回技能库,新技能立刻可见可跑(工作台模式)
+    if (okSave && WS && !document.getElementById('recmgr')) setTimeout(openRecMgr, 120)
   })
   ov.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) ov.querySelector('#sk-save-btn').click()
@@ -1234,38 +1480,37 @@ function editSteps(rec, onSaved) {
   const paramAt = {}; (rec.params || []).forEach((p) => { paramAt[p.stepIndex] = p.label || p.key })
   const skipSet = new Set(Array.isArray(rec.skipSteps) ? rec.skipSteps : [])
   let rows = evs.map((ev, i) => ({ srcIndex: i, ev, value: (ev.act === 'input' || ev.act === 'select') && !ev.secret ? (ev.value || '') : undefined }))
-  const ov = document.createElement('div'); ov.id = 'sk-edit'
-  ov.style.cssText = 'position:fixed;top:44px;left:50%;transform:translateX(-50%);z-index:10002;background:rgba(15,17,32,.98);border:1px solid var(--accent);border-radius:12px;padding:13px 15px;box-shadow:0 12px 44px rgba(0,0,0,.5);width:560px;max-width:94vw;max-height:82vh;display:flex;flex-direction:column;color:var(--txt);font-size:13px'
-  ov.innerHTML = `
-    <div style="font-weight:600;margin-bottom:4px">✎ 编辑步骤 · ${esc2(rec.title || rec.id)}</div>
-    <div style="font-size:11px;color:var(--txt3);margin-bottom:8px">删除噪声步、调顺序、改输入值。改动会同步到参数与跳过设置;密码步的值不可见不可改。</div>
-    <div id="se-list" style="flex:1;overflow:auto;display:flex;flex-direction:column;gap:5px;padding-right:2px"></div>
-    <div style="display:flex;gap:7px;justify-content:flex-end;margin-top:10px">
-      <button id="se-cancel" style="background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:7px;padding:5px 12px;cursor:pointer;font-size:12px">取消</button>
-      <button id="se-save" style="background:var(--accent);border:none;color:#fff;border-radius:7px;padding:5px 14px;cursor:pointer;font-size:12px;font-weight:600">保存步骤</button>
-    </div>`
+  const ov = document.createElement('div'); ov.id = 'sk-edit'; ov.className = 'rr-mask'
+  ov.innerHTML = `<div class="rr-sheet" style="width:580px">
+    <div class="rr-sh"><div class="t">编辑步骤 · ${esc2(rec.title || rec.id)}</div><div class="s">删除噪声步、调顺序、改输入值;改动会同步参数与跳过设置,密码步的值不可见不可改。</div></div>
+    <div id="se-list" class="rr-sb" style="gap:6px"></div>
+    <div class="rr-sf">
+      <button class="rr-btn" id="se-cancel">取消</button>
+      <button class="rr-btn-pri" id="se-save">保存步骤</button>
+    </div>
+  </div>`
   document.body.appendChild(ov)
   modalOverlay(true)   // 页面视图让位(高度压 0),否则原生层盖死编辑器左半
   const listEl = ov.querySelector('#se-list')
-  const actLabel = { navigate: '🌐 跳转', click: '👆 点击', input: '⌨ 输入', select: '▾ 下拉', check: '☑ 勾选', key: '⏎ 按键', submit: '📨 提交', scroll: '↕ 滚动' }
+  const actLabel = { navigate: '跳转', click: '点击', input: '输入', select: '下拉', check: '勾选', key: '按键', submit: '提交', scroll: '滚动' }
   function render() {
     listEl.innerHTML = ''
-    if (!rows.length) { listEl.innerHTML = '<div style="color:var(--txt3);text-align:center;padding:16px">已无步骤 — 至少保留一步</div>'; return }
+    if (!rows.length) { listEl.innerHTML = '<div style="color:#98a0ac;text-align:center;padding:18px;font-size:12.5px">已无步骤 — 至少保留一步</div>'; return }
     rows.forEach((r, idx) => {
       const ev = r.ev
       const d = document.createElement('div')
-      d.style.cssText = 'display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:8px;padding:5px 8px'
-      const tags = (paramAt[r.srcIndex] ? '<span style="color:var(--accent);font-size:10px">参数:' + esc2(paramAt[r.srcIndex]) + '</span>' : '') + (skipSet.has(r.srcIndex) ? '<span style="color:var(--txt3);font-size:10px">·跳过</span>' : '')
+      d.className = 'rr-srow'
+      const tags = (paramAt[r.srcIndex] ? '<span style="color:#2456d6;font-size:10.5px">参数:' + esc2(paramAt[r.srcIndex]) + '</span>' : '') + (skipSet.has(r.srcIndex) ? '<span style="color:#b6bcc6;font-size:10.5px"> ·跳过</span>' : '')
       const target = ev.act === 'navigate' ? esc2(ev.url) : (ev.fu ? '[iframe] ' : '') + esc2(ev.sel || '')
       const editable = (ev.act === 'input' || ev.act === 'select') && !ev.secret
       d.innerHTML = `
-        <span style="width:20px;color:var(--txt3);font-size:11px;text-align:right">${idx + 1}</span>
-        <span style="width:52px;font-size:11px;white-space:nowrap">${actLabel[ev.act] || ev.act}</span>
-        <span style="flex:1;min-width:0;font-size:11px;color:var(--txt2);font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${target}">${target}${tags ? ' ' + tags : ''}</span>
-        ${editable ? `<input data-v="${idx}" value="${esc2(ev.secret ? '' : r.value)}" placeholder="${ev.secret ? '密码(不可改)' : '值'}" style="width:110px;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:6px;padding:3px 6px;color:var(--txt);font-size:11px;font-family:inherit;outline:none" />` : (ev.secret ? '<span style="width:110px;font-size:10px;color:var(--txt3);text-align:center">密码·脱敏</span>' : '<span style="width:110px"></span>')}
-        <button data-up="${idx}" title="上移" ${idx === 0 ? 'disabled' : ''} style="background:transparent;border:none;color:var(--txt3);cursor:pointer;font-size:13px;padding:0 3px;${idx === 0 ? 'opacity:.3' : ''}">↑</button>
-        <button data-down="${idx}" title="下移" ${idx === rows.length - 1 ? 'disabled' : ''} style="background:transparent;border:none;color:var(--txt3);cursor:pointer;font-size:13px;padding:0 3px;${idx === rows.length - 1 ? 'opacity:.3' : ''}">↓</button>
-        <button data-del="${idx}" title="删除此步" style="background:transparent;border:none;color:#e2626a;cursor:pointer;font-size:13px;padding:0 3px">✕</button>`
+        <span style="width:20px;color:#b6bcc6;font-size:11px;text-align:right;font-variant-numeric:tabular-nums">${idx + 1}</span>
+        <span style="width:32px;font-size:11.5px;color:#3c4250;white-space:nowrap">${actLabel[ev.act] || ev.act}</span>
+        <span class="rr-mono" style="flex:1;min-width:0;font-size:11px;color:#98a0ac;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${target}">${target}${tags ? ' ' + tags : ''}</span>
+        ${editable ? `<input class="rr-input" data-v="${idx}" value="${esc2(ev.secret ? '' : r.value)}" placeholder="值" style="width:110px;padding:3px 7px;font-size:11px" />` : (ev.secret ? '<span style="width:110px;font-size:10.5px;color:#b6bcc6;text-align:center">密码·脱敏</span>' : '<span style="width:110px"></span>')}
+        <button class="ic" data-up="${idx}" title="上移" ${idx === 0 ? 'disabled' : ''}>↑</button>
+        <button class="ic" data-down="${idx}" title="下移" ${idx === rows.length - 1 ? 'disabled' : ''}>↓</button>
+        <button class="ic del" data-del="${idx}" title="删除此步">✕</button>`
       listEl.appendChild(d)
     })
     listEl.querySelectorAll('input[data-v]').forEach((inp) => inp.addEventListener('input', () => { rows[+inp.dataset.v].value = inp.value }))

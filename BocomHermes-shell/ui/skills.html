@@ -3,24 +3,27 @@
 <head>
 <meta charset="utf-8">
 <title>录制与回放</title>
+<!-- 启动即套用智能体当前主题(浅磨砂/墨玻璃/曜黑/纸白),避免首帧闪深色 -->
+<script>try { document.documentElement.dataset.theme = window.BocomHermes.getTheme() || 'dark' } catch (e) { document.documentElement.dataset.theme = 'dark' }</script>
+<link rel="stylesheet" href="glass.css">
 <style>
 /* 「🎬 录制与回放」中心 —— Codex Record & Replay 式一条流:录一遍 → 自动整理成技能 → 一键复用/批量跑。
-   窗口是 baseOpts 透明无框玻璃:body 透明,.app 画不透明圆角面板。深色定妆(与应用外壳一致,单主题是选择)。 */
+   颜色全部消费 glass.css 的设计令牌 → 跟随智能体主题四套皮肤切换;语义色(录制红/成功/警告)按需保持稳定。 */
 :root{
-  --bg:rgba(13,15,26,.97); --panel:rgba(255,255,255,.035); --panel2:rgba(255,255,255,.06);
-  --line:rgba(255,255,255,.09); --line2:rgba(255,255,255,.14);
-  --ink:rgba(255,255,255,.90); --ink2:rgba(255,255,255,.56); --ink3:rgba(255,255,255,.34);
-  --accent:#4aa8ff; --accent-dim:rgba(74,168,255,.14);
-  --rec:#ff5257; --rec-dim:rgba(255,82,87,.13);
-  --good:#2fc98a; --good-dim:rgba(47,201,138,.13);
-  --warn:#e0ad3e; --warn-dim:rgba(224,173,62,.13);
-  --crit:#ec5a62; --crit-dim:rgba(236,90,98,.13);
-  --mono:ui-monospace,"SF Mono","Cascadia Code",Consolas,monospace;
+  --bg:var(--glass-bg); --panel:var(--composer-bg); --float:var(--ai-bg);
+  --line:var(--glass-border); --line2:var(--composer-border);
+  --ink:var(--txt); --ink2:var(--txt2); --ink3:var(--txt3);
+  --accent-dim:var(--orb-bg); --accent-fg:var(--send-fg);
+  --hover:color-mix(in srgb, var(--txt) 8%, transparent);
+  --field:var(--composer-bg);
+  --rec:#ff4d52; --rec-dim:color-mix(in srgb,#ff4d52 14%,transparent);
+  --good:var(--green); --good-dim:color-mix(in srgb,var(--green) 16%,transparent);
+  --warn:#d99a2b; --warn-dim:color-mix(in srgb,#d99a2b 16%,transparent);
+  --crit:#e2545e; --crit-dim:color-mix(in srgb,#e2545e 15%,transparent);
 }
-*{box-sizing:border-box}
+body{padding:0!important}   /* 覆盖 glass.css 的 body{padding:24px}(我们要满铺) */
 html,body{margin:0;height:100%;background:transparent;overflow:hidden;
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
-  font-size:13px;color:var(--ink);-webkit-font-smoothing:antialiased;user-select:none}
+  font-family:var(--font);font-size:13px;color:var(--ink);-webkit-font-smoothing:antialiased;user-select:none}
 .app{height:100%;display:flex;flex-direction:column;background:var(--bg);
   border:1px solid var(--line);border-radius:14px;overflow:hidden;backdrop-filter:blur(24px)}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
@@ -37,7 +40,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .tbar .sp{flex:1}
 .wbtn{-webkit-app-region:no-drag;border:none;background:transparent;color:var(--ink3);cursor:pointer;
   width:34px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px}
-.wbtn:hover{background:var(--panel2);color:var(--ink)}
+.wbtn:hover{background:var(--hover);color:var(--ink)}
 .wbtn.x:hover{background:var(--crit-dim);color:var(--crit)}
 
 /* ── 录制英雄区:一屏一主 action ── */
@@ -45,7 +48,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .hero .hl{font-size:15.5px;font-weight:700;margin-bottom:2px}
 .hero .hs{color:var(--ink2);font-size:12px;margin-bottom:11px}
 .hero .row{display:flex;gap:9px}
-.hero input{flex:1;background:rgba(0,0,0,.25);border:1px solid var(--line);border-radius:9px;padding:9px 12px;
+.hero input{flex:1;background:var(--field);border:1px solid var(--line);border-radius:9px;padding:9px 12px;
   color:var(--ink);font-size:12.5px;font-family:var(--mono);outline:none}
 .hero input::placeholder{color:var(--ink3);font-family:inherit}
 .hero input:focus{border-color:var(--accent)}
@@ -76,7 +79,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 /* ── 列表 ── */
 .list{flex:1;overflow-y:auto;padding:6px 16px 90px}
 .list::-webkit-scrollbar{width:9px}
-.list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:5px;border:2px solid transparent;background-clip:content-box}
+.list::-webkit-scrollbar-thumb{background:var(--scroll);border-radius:5px;border:2px solid transparent;background-clip:content-box}
 .sk{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px}
 .sk:hover{border-color:var(--line2)}
 .sk .r1{display:flex;align-items:center;gap:8px}
@@ -84,31 +87,31 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .star.on{color:#ffd55a}
 .sk .name{flex:1;min-width:80px;background:transparent;border:none;outline:none;color:var(--ink);
   font-size:14px;font-weight:650;font-family:inherit;padding:1px 2px;border-radius:5px}
-.sk .name:hover,.sk .name:focus{background:rgba(255,255,255,.05)}
+.sk .name:hover,.sk .name:focus{background:var(--hover)}
 .chip{flex:none;font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:999px;
   border:1px solid var(--line);color:var(--ink2);white-space:nowrap}
-.chip.gate{color:var(--warn);border-color:rgba(224,173,62,.4);background:var(--warn-dim)}
+.chip.gate{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 45%,transparent);background:var(--warn-dim)}
 .sk .desc{color:var(--ink2);font-size:12px;margin:5px 0 0 24px;line-height:1.5}
 .sk .r3{display:flex;align-items:center;gap:8px;margin:9px 0 0 24px}
 .last{font-family:var(--mono);font-size:11px;color:var(--ink3)}
 .last .ok{color:var(--good)} .last .bad{color:var(--crit)}
 .sk .sp{flex:1}
-.btn-run{display:flex;align-items:center;gap:6px;background:var(--accent);border:none;color:#08111f;
+.btn-run{display:flex;align-items:center;gap:6px;background:var(--accent);border:none;color:var(--accent-fg);
   font-weight:700;font-size:12.5px;border-radius:8px;padding:7px 16px;cursor:pointer;flex:none}
 .btn-run:hover{filter:brightness(1.1)}
 .btn-run:disabled{opacity:.45;cursor:default}
 .btn-sec{background:transparent;border:1px solid var(--line);color:var(--ink2);border-radius:8px;
   padding:6.5px 12px;cursor:pointer;font-size:12px;flex:none}
-.btn-sec:hover{border-color:rgba(74,168,255,.5);color:var(--accent)}
+.btn-sec:hover{border-color:color-mix(in srgb,var(--accent) 50%,transparent);color:var(--accent)}
 .btn-more{background:transparent;border:1px solid var(--line);color:var(--ink3);border-radius:8px;
   width:32px;height:31px;cursor:pointer;font-size:15px;line-height:1;flex:none}
 .btn-more:hover{color:var(--ink);border-color:var(--line2)}
 /* ⋯ 弹出菜单 */
-.pop{position:fixed;z-index:60;background:#161927;border:1px solid var(--line2);border-radius:10px;
+.pop{position:fixed;z-index:60;background:var(--float);border:1px solid var(--line2);border-radius:10px;
   padding:5px;min-width:150px;box-shadow:0 14px 40px rgba(0,0,0,.5)}
 .pop button{display:flex;width:100%;align-items:center;gap:8px;background:transparent;border:none;
   color:var(--ink2);font-size:12.5px;padding:8px 11px;border-radius:7px;cursor:pointer;text-align:left}
-.pop button:hover{background:var(--panel2);color:var(--ink)}
+.pop button:hover{background:var(--hover);color:var(--ink)}
 .pop button.danger:hover{background:var(--crit-dim);color:var(--crit)}
 
 /* 原始录制(未整理)折叠区 */
@@ -132,14 +135,14 @@ details.raws[open] summary::before{transform:rotate(90deg)}
 
 /* ── 底部:实况条 + 教学页脚 ── */
 .dock{position:absolute;left:0;right:0;bottom:0;padding:10px 16px 12px;display:flex;flex-direction:column;gap:8px;
-  background:linear-gradient(180deg,transparent,rgba(10,12,22,.92) 38%);pointer-events:none}
-.status{pointer-events:auto;display:none;align-items:center;gap:10px;background:#141828;border:1px solid var(--line2);
+  background:linear-gradient(180deg,transparent,var(--float) 45%);pointer-events:none}
+.status{pointer-events:auto;display:none;align-items:center;gap:10px;background:var(--float);border:1px solid var(--line2);
   border-radius:10px;padding:9px 14px;font-size:12.5px;box-shadow:0 10px 30px rgba(0,0,0,.4)}
 .status.show{display:flex}
 .status .ic{flex:none}
 .status .tx{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.status.pause{border-color:rgba(224,173,62,.55);background:rgba(38,32,16,.95)}
-.status.err{border-color:rgba(236,90,98,.5)}
+.status.pause{border-color:var(--warn)}
+.status.err{border-color:var(--crit)}
 .status .go{pointer-events:auto;background:transparent;border:1px solid var(--line);color:var(--ink2);
   border-radius:7px;padding:4px 10px;cursor:pointer;font-size:11.5px;white-space:nowrap}
 .status .go:hover{color:var(--ink);border-color:var(--line2)}
@@ -150,7 +153,7 @@ details.raws[open] summary::before{transform:rotate(90deg)}
 .ovl{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center}
 .ovl.show{display:flex}
 .sheet{width:min(560px,calc(100vw - 60px));max-height:calc(100vh - 90px);display:flex;flex-direction:column;
-  background:#141828;border:1px solid var(--line2);border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.55)}
+  background:var(--float);border:1px solid var(--line2);border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.55)}
 .sheet .sh{flex:none;display:flex;align-items:center;gap:9px;padding:13px 16px;border-bottom:1px solid var(--line)}
 .sheet .sh .t{flex:1;font-weight:700;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sheet .sh .x{background:transparent;border:none;color:var(--ink3);cursor:pointer;font-size:17px;line-height:1}
@@ -158,12 +161,12 @@ details.raws[open] summary::before{transform:rotate(90deg)}
 .sheet .sb{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:11px}
 .sheet .sf{flex:none;display:flex;gap:9px;justify-content:flex-end;padding:12px 16px;border-top:1px solid var(--line)}
 .fld label{display:block;color:var(--ink2);font-size:11.5px;margin-bottom:4px}
-.fld input,.fld textarea{width:100%;background:rgba(0,0,0,.25);border:1px solid var(--line);border-radius:8px;
+.fld input,.fld textarea{width:100%;background:var(--field);border:1px solid var(--line);border-radius:8px;
   padding:8px 11px;color:var(--ink);font-size:12.5px;font-family:var(--mono);outline:none}
 .fld input:focus,.fld textarea:focus{border-color:var(--accent)}
 .fld textarea{min-height:130px;resize:vertical;line-height:1.55}
 .hint{color:var(--ink3);font-size:11.5px;line-height:1.5}
-.map{font-family:var(--mono);font-size:11.5px;line-height:1.7;background:rgba(0,0,0,.2);border:1px solid var(--line);
+.map{font-family:var(--mono);font-size:11.5px;line-height:1.7;background:var(--field);border:1px solid var(--line);
   border-radius:8px;padding:8px 11px;color:var(--ink2)}
 .map .y{color:var(--good)} .map .n{color:var(--warn)}
 .ck{display:flex;align-items:center;gap:7px;color:var(--ink2);font-size:12px;cursor:pointer}
@@ -172,7 +175,7 @@ pre.doc{margin:0;font-family:var(--mono);font-size:11.5px;line-height:1.65;white
 .bp .y{color:var(--good)} .bp .n{color:var(--crit)}
 
 /* toast */
-#toast{position:fixed;left:50%;bottom:64px;transform:translateX(-50%);z-index:70;background:#181c2e;
+#toast{position:fixed;left:50%;bottom:64px;transform:translateX(-50%);z-index:70;background:var(--float);
   border:1px solid var(--line2);border-radius:10px;padding:8px 16px;font-size:12.5px;box-shadow:0 12px 34px rgba(0,0,0,.5);
   display:none;max-width:76vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #toast .ok{color:var(--good)} #toast .err{color:var(--crit)}
@@ -256,6 +259,8 @@ pre.doc{margin:0;font-family:var(--mono);font-size:11.5px;line-height:1.65;white
 <script>
 const H = window.BocomHermes
 const $ = (id) => document.getElementById(id)
+// 跟随智能体主题实时切换(浅磨砂/墨玻璃/曜黑/纸白)
+H.onTheme && H.onTheme((t) => { document.documentElement.dataset.theme = t })
 const esc = (s) => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
 let toastT = null
 function toast(html){ const t = $('toast'); t.innerHTML = html; t.style.display = 'block'; clearTimeout(toastT); toastT = setTimeout(() => t.style.display = 'none', 3800) }

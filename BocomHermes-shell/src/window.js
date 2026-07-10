@@ -462,19 +462,11 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   }
 
   // 「🎬 录制与回放」中心:录制/技能的一级入口(与浏览器/邮件中心同级,进托盘菜单)。
-  // 页面 ui/skills.html —— Codex Record & Replay 式一条流:录一遍 → 自动整理成技能 → 一键复用/批量跑。
-  // 执行引擎不在这窗口里:录制/回放仍发生在内嵌浏览器,这里是发起与总览面;进度经 skillsNotify 中继过来。
-  function createSkillCenter() {
-    if (S.skillsWin && !S.skillsWin.isDestroyed()) { S.skillsWin.show(); S.skillsWin.focus(); return }
-    const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
-    const W = Math.min(880, sw - 80), Hh = Math.min(820, sh - 80)
-    const sx = Math.round((sw - W) / 2), sy = Math.round((sh - Hh) / 2)
-    S.skillsWin = new BrowserWindow(baseOpts({ width: W, height: Hh, x: sx, y: sy, skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 640, minHeight: 520 }))
-    S.skillsWin.on('closed', () => { S.skillsWin = null })
-    S.skillsWin.loadFile(path.join(__dirname, '..', 'ui', 'skills.html'), { query: orbAnchorFor(sx, sy, W, Hh) })
-  }
-  // 往「录制与回放」中心推事件(窗口没开就丢弃 —— 它只是视图,不是状态源)
-  function skillsNotify(ch, d) { const w = S.skillsWin; if (w && !w.isDestroyed()) { try { w.webContents.send(ch, d || {}) } catch {} } }
+  // 「🎬 录制与回放」= 带 Agent 工作流面板的工作台(方案 B):不再是独立窗,直接进「调试工作台」
+  // (左 Agent 卡片 + 右浏览器 + 底部技能条),这样录制/回放时 Agent 的整理/解析/自愈全程可见。
+  function createSkillCenter() { createWorkspace('', { skills: true }) }
+  // 事件中继:工作台窗(S.browser.win)与 Agent 卡片都在同一窗口体系,skillsNotify 直接推给工作台壳
+  function skillsNotify(ch, d) { const w = S.browser && S.browser.win; if (w && !w.isDestroyed()) { try { w.webContents.send(ch, d || {}) } catch {} } }
 
   function toggleInput() { toggleOrbInput() }
 
@@ -537,8 +529,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         text = `技能回放第 ${req.step} 步的元素找不到了(页面可能改版/动态 id)。这步意图:${req.ask}\n`
           + `原选择器:${req.sel}${req.origAlt ? '(备选:' + req.origAlt + ')' : ''}\n所在页面:${req.url}\n\n`
           + `当前页可交互元素(tag #id '文本' name):\n${req.candidates || '(未采集到)'}\n\n`
-          + `请从上面挑出对应目标元素,调用 MCP 工具 skill_relocate(gateId="${req.gateId}", selector="一个能唯一定位它的 CSS 选择器")。\n`
-          + `优先用稳定锚点(语义 id/name/属性/文本);拿不准就用 skill_relocate 传你最有把握的一个,回放会立即用它续跑。`
+          + `请挑出对应目标元素,调用 MCP 工具 skill_relocate(gateId="${req.gateId}", selector="…")。selector 必须是下面两种之一:\n`
+          + `  1) 合法的原生 CSS 选择器(document.querySelector 能跑的):如 #id、input[name="x"]、.a > .b:nth-of-type(2)。\n`
+          + `  2) 按可见文本匹配用本系统专用写法 __text__:tag|文本(如 __text__:button|确定)。\n`
+          + `【严禁】:has-text()/:contains()/xpath —— 这些原生 querySelector 不认,会失败。优先用稳定锚点(语义 id/name/属性/文本),给一个你最有把握的。`
       } else {
         disp = `⏸ 回放暂停·步 ${req.step}:需要「${req.ask}」`
         text = `技能回放暂停在第 ${req.step} 步,需要一个运行时值:「${req.ask}」\n`
@@ -1469,6 +1463,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   // ── 浏览器 IPC ───────────────────────────────────────────────────────────
   const brWC = () => { const t = brActive(); return t && !t.view.webContents.isDestroyed() ? t.view.webContents : null }
   ipcMain.handle('open-browser', (_e, url) => createWorkspace(url))
+  ipcMain.handle('open-skill-center', () => createSkillCenter())   // 悬浮球「🎬 录制回放」
   // 分隔条拖动：start=临时分离内容视图让 chrome 独占鼠标事件；end=落定宽度并复位视图
   ipcMain.on('browser-split', (_e, arg) => {
     const b = S.browser

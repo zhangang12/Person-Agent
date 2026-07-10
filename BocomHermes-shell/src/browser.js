@@ -14,6 +14,7 @@
 module.exports = function initBrowser(ctx) {
   const { S, session, log, path, fs, app, BrowserWindow, WebContentsView, oc, ensureOrbAlive, forgetBusy, wireRecToTab, brSendRecCount, cdpConsoleLevel, fmtRO, fmtException } = ctx
   const BR_TOP_H = 82   // 标签栏 38 + 工具栏 44
+  const BR_SKILLBAR_H = 52   // 工作台底部技能控制条高度(录制/技能库/运行 + 实况)
   const SPLIT_GUTTER = 6   // 工作台模式左右分隔条宽度
   const BR_DEVICES = {
     desktop: { label: '桌面',      w: 0,   h: 0,    dpr: 0, touch: false },
@@ -40,14 +41,15 @@ module.exports = function initBrowser(ctx) {
     const [cw, ch] = b.win.getContentSize()
     const leftW = b.leftW || 0                 // 工作台模式：左侧 Agent 会话占的宽度
     const G = leftW ? SPLIT_GUTTER : 0
-    if (b.cardView && !b._dragging) { try { b.cardView.setBounds({ x: 0, y: 0, width: Math.max(0, leftW), height: ch }) } catch {} }
+    const skillH = b.mode === 'workspace' ? BR_SKILLBAR_H : 0   // 工作台底部技能控制条(HTML chrome 层)—— 原生视图给它让出高度
+    if (b.cardView && !b._dragging) { try { b.cardView.setBounds({ x: 0, y: 0, width: Math.max(0, leftW), height: Math.max(0, ch - skillH) }) } catch {} }
     const tab = brActive(); if (!tab) return
     if (b._dragging) return                     // 拖动分隔条时内容视图临时分离，跳过布局
     const rx = leftW + G                         // 右侧浏览器内容区左边界
     // ⋯ 更多菜单 / 设置抽屉 / 通用 chrome 浮层(技能库/验证卡)打开 → 网页层从右让出一条,否则原生层会盖住 HTML 浮层
     const menuW = Math.max(b.settingsOpen ? 360 : 0, b.menuOpen ? 248 : 0, b.chromeOverlayW | 0)
     const rw = Math.max(0, cw - rx - menuW)
-    const areaH = Math.max(0, ch - BR_TOP_H - b.consoleH)
+    const areaH = Math.max(0, ch - BR_TOP_H - b.consoleH - skillH)
     // 模态卡(保存技能/填参数)打开 → 页面视图高度压 0 整体让位(页面 JS 仍在跑),关闭时恢复
     if (b.modalOpen) { tab.view.setBounds({ x: rx, y: BR_TOP_H, width: rw, height: 0 }); return }
     const d = tab.device
@@ -589,9 +591,9 @@ module.exports = function initBrowser(ctx) {
       titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
       trafficLightPosition: { x: 13, y: 12 },
       // Windows: 用 overlay 把系统三键(最小化/最大化/关闭)染成深色，融进自绘标签栏(高 38px)
-      titleBarOverlay: process.platform === 'win32' ? { color: '#0b0c16', symbolColor: '#cfd3e3', height: 38 } : undefined,
+      titleBarOverlay: process.platform === 'win32' ? { color: '#f3f4f7', symbolColor: '#3c4250', height: 38 } : undefined,   // 浅色外壳:三键区随白灰系
       autoHideMenuBar: true,
-      backgroundColor: '#0b0c16',
+      backgroundColor: '#f3f4f7',
       webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false },
     })
     b.win = win; b.tabs = []; b.activeId = null; b.consoleH = 0
@@ -609,17 +611,18 @@ module.exports = function initBrowser(ctx) {
 
   // ── 调试工作台：左 Agent 会话 + 右 内嵌浏览器（并排单窗口）────────────────────
   // 复用上面整套标签机制（newTab/activateTab/brLayout…），区别仅在于 b.leftW>0 + 一个左侧 cardView。
-  function createWorkspace(initialUrl) {
+  function createWorkspace(initialUrl, opts) {
     const b = S.browser
-    if (b.win && !b.win.isDestroyed()) { b.win.focus(); if (initialUrl) newTab(initialUrl); return }
+    const openSkills = !!(opts && opts.skills)
+    if (b.win && !b.win.isDestroyed()) { b.win.focus(); if (initialUrl) newTab(initialUrl); if (openSkills) { try { b.win.webContents.send('ws-open-skills') } catch {} } return }
     const win = new BrowserWindow({
       width: 1500, height: 940, minWidth: 1040, minHeight: 620,
-      title: 'BocomHermes · 调试工作台',
+      title: openSkills ? 'BocomHermes · 录制回放工作台' : 'BocomHermes · 调试工作台',
       titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
       trafficLightPosition: { x: 13, y: 12 },
-      titleBarOverlay: process.platform === 'win32' ? { color: '#0b0c16', symbolColor: '#cfd3e3', height: 38 } : undefined,
+      titleBarOverlay: process.platform === 'win32' ? { color: '#f3f4f7', symbolColor: '#3c4250', height: 38 } : undefined,   // 浅色外壳:三键区随白灰系
       autoHideMenuBar: true,
-      backgroundColor: '#0b0c16',
+      backgroundColor: '#f3f4f7',
       webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false },
     })
     b.win = win; b.tabs = []; b.activeId = null; b.consoleH = 0; b.seq = 0
@@ -663,6 +666,8 @@ module.exports = function initBrowser(ctx) {
       win.webContents.send('browser-split-set', b.leftW)
       brLayout()
       newTab(initialUrl || '')
+      // 从「录制回放」入口进来 → 右栏直接落地技能库(满栏白页,一眼看到能跑什么;点运行/录制才切回浏览器)
+      if (openSkills) win.webContents.send('ws-open-skills')
     })
   }
 

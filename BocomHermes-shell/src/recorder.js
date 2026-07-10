@@ -176,6 +176,9 @@ module.exports = function initRecorder(ctx) {
     try { resolveBus.clear(gateId) } catch {}
     sendProg({ resume: true, i: i + 1 })
     if (!newSel) return null
+    // 容错:LLM 常给非原生 CSS 的 :has-text("X") / :contains("X") / tag:has-text('X') → 转成本系统的 __text__:tag|X(selExpr 支持)
+    const ht = newSel.match(/^\s*([a-z][\w-]*)?\s*:(?:has-text|contains)\(\s*["']?(.+?)["']?\s*\)\s*$/i)
+    if (ht) newSel = '__text__:' + (ht[1] || '*').toLowerCase() + '|' + ht[2].trim()
     const r = await tryCand(newSel, 2000)
     if (r) { log('replay self-heal 步 ' + (i + 1) + ' Agent 重定位命中: ' + newSel); return { ok: true, how: 'agent', sel: newSel } }
     log('replay self-heal 步 ' + (i + 1) + ' Agent 给的选择器仍未命中: ' + newSel)

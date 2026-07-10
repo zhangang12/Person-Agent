@@ -140,6 +140,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   onOutboxUpdated: (cb) => ipcRenderer.on('outbox-updated', () => cb()),
   // 内嵌浏览器
   openBrowser:          (url) => ipcRenderer.invoke('open-browser', url),
+  openSkillCenter:      ()    => ipcRenderer.invoke('open-skill-center'),   // 悬浮球「🎬 录制回放」入口
   browserNavigate:      (url) => ipcRenderer.invoke('browser-navigate', url),
   browserMenuOverlay:   (on)  => ipcRenderer.send('browser-menu-overlay', !!on),
   browserSettingsOverlay: (on) => ipcRenderer.send('browser-settings-overlay', !!on),
@@ -198,6 +199,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   onBrowserDoStopRec:   (cb)  => ipcRenderer.on('browser-do-stop-rec', () => cb()),           // 中心叫浏览器走自己的停录流(弹保存卡)
   onBrowserOpenSaveSkill: (cb) => ipcRenderer.on('browser-open-save-skill', (_e, d) => cb(d)), // 中心叫浏览器给原始录制弹保存卡
   onBrowserRecUi:       (cb)  => ipcRenderer.on('browser-rec-ui', (_e, d) => cb(d)),          // 中心发起录制 → 浏览器按钮态同步
+  onWsOpenSkills:       (cb)  => ipcRenderer.on('ws-open-skills', () => cb()),                // 工作台从「录制回放」入口进来 → 展开技能库
   browserRecEditSteps:  (id, keep) => ipcRenderer.invoke('browser-rec-edit-steps', { id, keep }),
   onBrowserVerifyResult:(cb)  => ipcRenderer.on('wf-verify-result', (_e, p) => cb(p)),
   browserHistory:       ()    => ipcRenderer.sendSync('get-browser-history'),

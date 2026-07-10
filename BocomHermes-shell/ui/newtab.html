@@ -4,34 +4,33 @@
 <meta charset="utf-8">
 <title>新标签页</title>
 <style>
+/* 浅色新标签页(去 AI 化):白灰底、无光球无霓虹,信息就是信息 */
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%;background:#0b0c16;color:rgba(255,255,255,.9);
-  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:34px;
-  background-image:radial-gradient(circle at 50% 38%,rgba(74,168,255,.07),transparent 55%)}
-.logo{display:flex;flex-direction:column;align-items:center;gap:14px}
-.orb{width:64px;height:64px;border-radius:50%;
-  background:radial-gradient(circle at 42% 30%,rgba(100,140,220,.12),transparent 45%),radial-gradient(circle at 50% 50%,#0a0a14,#020208);
-  box-shadow:-12px 0 26px rgba(0,230,255,.5),14px 0 26px rgba(60,80,255,.45),0 0 50px rgba(0,160,255,.1)}
-.brand{font-size:15px;letter-spacing:.04em;color:rgba(255,255,255,.5)}
+html,body{height:100%;background:#f3f4f7;color:#1a1d26;
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:32px}
+.logo{display:flex;flex-direction:column;align-items:center;gap:10px}
+.orb{display:none}
+.brand{font-size:14px;letter-spacing:.03em;color:#98a0ac;font-weight:600}
 
-.searchwrap{width:440px;max-width:80vw}
-#s{width:100%;height:46px;border-radius:12px;border:1px solid rgba(255,255,255,.1);
-  background:rgba(255,255,255,.05);color:rgba(255,255,255,.9);font-size:14px;padding:0 18px;outline:none}
-#s:focus{border-color:#4aa8ff;background:rgba(255,255,255,.07)}
-#s::placeholder{color:rgba(255,255,255,.3)}
+.searchwrap{width:460px;max-width:80vw}
+#s{width:100%;height:44px;border-radius:10px;border:1px solid #d9dde5;
+  background:#fff;color:#1a1d26;font-size:14px;padding:0 16px;outline:none;
+  box-shadow:0 1px 2px rgba(16,24,40,.05)}
+#s:focus{border-color:#2456d6;box-shadow:0 0 0 3px rgba(36,86,214,.12)}
+#s::placeholder{color:#b6bcc6}
 
 .sec{width:560px;max-width:86vw}
-.sec h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:11px;font-weight:600}
+.sec h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#98a0ac;margin-bottom:10px;font-weight:600}
 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-.card{display:flex;align-items:center;gap:11px;padding:13px 14px;border-radius:12px;
-  background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);
-  text-decoration:none;color:inherit;transition:background .14s,border-color .14s,transform .14s}
-.card:hover{background:rgba(255,255,255,.08);border-color:rgba(74,168,255,.35);transform:translateY(-1px)}
-.ic{width:34px;height:34px;flex:none;border-radius:9px;display:flex;align-items:center;justify-content:center;
-  font-size:15px;font-weight:700;color:#fff}
-.nm{font-size:13px;font-weight:600;line-height:1.2}
-.pt{font-size:11px;color:rgba(255,255,255,.4);font-family:'SF Mono',monospace}
+.card{display:flex;align-items:center;gap:11px;padding:12px 13px;border-radius:10px;
+  background:#fff;border:1px solid #e5e7ec;
+  text-decoration:none;color:inherit;transition:border-color .14s,box-shadow .14s}
+.card:hover{border-color:#b9c0cc;box-shadow:0 2px 8px rgba(16,24,40,.08)}
+.ic{width:32px;height:32px;flex:none;border-radius:8px;display:flex;align-items:center;justify-content:center;
+  font-size:14px;font-weight:700;color:#fff}
+.nm{font-size:13px;font-weight:600;line-height:1.2;color:#1a1d26}
+.pt{font-size:11px;color:#98a0ac;font-family:ui-monospace,Consolas,monospace}
 </style>
 </head>
 <body data-bocom-chrome="newtab">
@@ -48,7 +47,7 @@ html,body{height:100%;background:#0b0c16;color:rgba(255,255,255,.9);
     <a class="card" href="http://localhost:8080"><span class="ic" style="background:#42b883">Vu</span><div><div class="nm">Vue CLI</div><div class="pt">localhost:8080</div></div></a>
     <a class="card" href="http://localhost:4200"><span class="ic" style="background:#dd0031">A</span><div><div class="nm">Angular</div><div class="pt">localhost:4200</div></div></a>
     <a class="card" href="http://localhost:8000"><span class="ic" style="background:#306998">8k</span><div><div class="nm">Python / 通用</div><div class="pt">localhost:8000</div></div></a>
-    <a class="card" href="http://localhost:4096"><span class="ic" style="background:#4aa8ff">OC</span><div><div class="nm">opencode serve</div><div class="pt">localhost:4096</div></div></a>
+    <a class="card" href="http://localhost:4096"><span class="ic" style="background:#2456d6">OC</span><div><div class="nm">opencode serve</div><div class="pt">localhost:4096</div></div></a>
   </div>
 </div>
 
