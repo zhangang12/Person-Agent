@@ -12,12 +12,19 @@
   .hbtn { border: none; background: transparent; color: var(--txt3); cursor: pointer; padding: 3px; border-radius: 6px; display: flex; }
   .hbtn:hover { color: var(--txt); background: var(--composer-bg); }
   .stop { font-size: 11px; color: var(--diff-del); background: transparent; border: 1px solid var(--diff-del); border-radius: 7px; padding: 3px 10px; cursor: pointer; }
-  .goal { flex: none; font-size: 12px; color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 9px; padding: 7px 10px; line-height: 1.45; }
+  /* 统一滚动条:细滚动条 + 主题色,四个可滚区域(goal/graph/detail/mon/feed)共用一套,
+     标准 scrollbar-* 属性打底(Chromium 121+ 原生支持),::-webkit-scrollbar 兜底旧内核。 */
+  .scrollable { scrollbar-width: thin; scrollbar-color: var(--scroll) transparent; }
+  .scrollable::-webkit-scrollbar { width: 7px; height: 7px; }
+  .scrollable::-webkit-scrollbar-track { background: transparent; }
+  .scrollable::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  .scrollable::-webkit-scrollbar-thumb:hover { background: var(--txt3); }
 
-  /* DAG 图 */
-  #graph { flex: 1 1 55%; min-height: 130px; overflow: auto; border: .5px solid var(--composer-border); border-radius: 10px; background: var(--composer-bg); }
-  #graph::-webkit-scrollbar, #feed::-webkit-scrollbar { width: 7px; height: 7px; }
-  #graph::-webkit-scrollbar-thumb, #feed::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  /* goal 设上限:极长目标文本此前会把 graph/feed 挤到 0 高度(内容消失、看着像"没有滚动条") */
+  .goal { flex: none; font-size: 12px; color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 9px; padding: 7px 10px; line-height: 1.45; max-height: 18%; overflow-y: auto; -webkit-user-select: text; user-select: text; }
+
+  /* DAG 图:min-height 兜底,面板整体收窄时至少留一屏可滚区域,不会被压到 0 */
+  #graph { flex: 1 1 55%; min-height: 110px; overflow: auto; border: .5px solid var(--composer-border); border-radius: 10px; background: var(--composer-bg); }
   .node rect { fill: var(--ai-bg); stroke: var(--composer-border); stroke-width: 1.2; }
   .node .nid { font: 600 10px var(--mono); fill: var(--txt2); }
   .node .ng { font: 11.5px var(--font); fill: var(--txt); }
@@ -36,7 +43,8 @@
   .detail .dh { font-weight: 600; margin-bottom: 3px; }
   .detail .dout { color: var(--txt2); font-size: 11px; }
 
-  #feed { flex: 1 1 45%; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
+  /* feed 留个下限:detail/mon 都撑满时 feed(最终成果/审批/报错都在这)不该被压到看不见 */
+  #feed { flex: 1 1 45%; min-height: 90px; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
   .banner { font-size: 12px; padding: 7px 10px; border-radius: 9px; }
   .banner.run { background: var(--composer-bg); color: var(--txt2); }
   .banner.done { background: rgba(10,157,110,.12); color: var(--green); }
@@ -71,11 +79,11 @@
       <button id="max" class="hbtn nodrag" title="最大化/还原"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></button>
       <button id="x" class="hbtn nodrag" title="关闭"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
-    <div id="goal" class="goal nodrag"></div>
-    <div id="graph" class="nodrag"></div>
-    <div id="detail" class="detail nodrag"></div>
-    <div id="mon" class="nodrag" style="flex:none;max-height:34%;overflow-y:auto;display:flex;flex-direction:column;gap:3px"></div>
-    <div id="feed" class="feed nodrag"></div>
+    <div id="goal" class="goal scrollable nodrag"></div>
+    <div id="graph" class="scrollable nodrag"></div>
+    <div id="detail" class="detail scrollable nodrag"></div>
+    <div id="mon" class="scrollable nodrag" style="flex:none;max-height:34%;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:3px"></div>
+    <div id="feed" class="feed scrollable nodrag"></div>
   </div>
 </div>
 <script src="rich.js"></script>
