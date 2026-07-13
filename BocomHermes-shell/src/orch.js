@@ -50,18 +50,26 @@ module.exports = function initOrch(S, { ipcMain, oc, orch, log, app, path, fs })
       // 判据换成"空转":只要会话还有任何流活动(工具调用/文本增量,si.lastAt 由 session.js 打点),再慢也一直等;
       // 连续 IDLE_MS 一个事件都没有 = 黑洞(会话卡死/网关黑洞),才掐掉判超时 → 编排层照常走重试/重规划。
       // 不设的代价:一个黑洞任务会让整个 DAG 永远不结束,用户只能手动停止 —— 这就是"超时"存在的唯一理由。
-      const IDLE_MS = 1200000   // 20 分钟空转才判死(容得下网关一次 15 分钟的重试风暴)
+      const IDLE_MS = 1200000          // 常规:20 分钟空转才判死(容得下慢网关一次 15 分钟重试风暴)
+      const IDLE_MS_HOTREAD = 360000   // 高读会话:6 分钟 —— 读了一大堆文件又彻底安静,几乎必是上下文被撑爆、模型调用卡死(不是"慢"),快判快重试(可调)
       const started = Date.now()
       let watchdog = null
       const idleDeath = new Promise((_, rej) => {
         watchdog = setInterval(() => {
           const si = S.sessionInfo.get(sid)
           const last = (si && si.lastAt) || started
-          if (Date.now() - last > IDLE_MS) {
+          // 该会话各上下文单元里读得最多的一个:高读=溢出嫌疑大,缩短空转容忍。还在读/还在出文本的会一直刷新 lastAt → 不会被误杀,只杀"读一堆后彻底安静"的卡死会话
+          let reads = 0
+          if (si && si.readStat) for (const rs of si.readStat.values()) if (rs.parts && rs.parts.size > reads) reads = rs.parts.size
+          const idleLimit = reads >= 60 ? IDLE_MS_HOTREAD : IDLE_MS
+          if (Date.now() - last > idleLimit) {
             clearInterval(watchdog); watchdog = null
             try { oc.abort(serve, sid) } catch {}
-            log('wf 空转看门狗:会话 ' + sid + '(' + ((meta && meta.kind || 'work') + ':' + (meta && meta.id || '')) + ')连续 ' + Math.round(IDLE_MS / 60000) + ' 分钟无任何活动,已中止')
-            rej(new Error('任务超时(连续 ' + Math.round(IDLE_MS / 60000) + ' 分钟无任何活动,已中止会话)'))
+            const why = reads >= 60
+              ? '读了 ' + reads + ' 个文件后连续 ' + Math.round(idleLimit / 60000) + ' 分钟无响应(疑似上下文被撑爆、模型调用卡死)'
+              : '连续 ' + Math.round(idleLimit / 60000) + ' 分钟无任何活动'
+            log('wf 空转看门狗:会话 ' + sid + '(' + ((meta && meta.kind || 'work') + ':' + (meta && meta.id || '')) + ')' + why + ',已中止')
+            rej(new Error('任务超时(' + why + ',已中止会话)'))
           }
         }, 20000)
       })
