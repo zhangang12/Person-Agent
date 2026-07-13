@@ -88,7 +88,8 @@ module.exports = function initOrch(S, { ipcMain, oc, orch, log, app, path, fs })
       const goalFull = dir ? goal + '\n(工作目录:' + dir + ' —— 子任务应用工具在此目录内核实,不要访问其它项目)' : goal
       const res = await orch.orchestrate(goalFull, {
         // taskTimeoutMs:0 = 不按墙钟杀(内网网关慢是常态,慢≠死);超时判定改由 run() 的空转看门狗负责
-        run, signal: ac.signal, maxConcurrency: 2, maxRounds: 4, maxTasks: 16, maxBatch: 5, taskTimeoutMs: 0, review: true, onBeforeBatch,
+        run, signal: ac.signal, maxConcurrency: 2, maxRounds: 4, maxTasks: 16, maxBatch: 5, maxRoundsCeil: 8, maxTasksCeil: 32, taskTimeoutMs: 0, review: true, onBeforeBatch,
+        // maxRounds/maxTasks=规划器没自估时的默认;规划器给了 budget 就动态调整,夹在 maxRoundsCeil/maxTasksCeil(8轮/32Agent)内 —— 复杂任务放得开、简单任务早收,不再被固定 4/16 框死
         onPlan: (round, plan) => send('plan', { round, done: plan.done, note: plan.note || '', tasks: plan.tasks.map((t) => ({ id: t.id, role: t.role, goal: t.goal, deps: t.deps })) }),
         onTaskStart: (t) => send('task', { id: t.id, status: 'running' }),
         // 产出随事件带给前端(截 2500):点 DAG 节点即可看该任务的实际产出,不用等最终汇总;ms=耗时给时间线
@@ -98,6 +99,8 @@ module.exports = function initOrch(S, { ipcMain, oc, orch, log, app, path, fs })
         onReduce: (info) => { try { log('wf 分层汇总:各子任务正文合计 ' + info.totalChars + ' 字 > 预算,拆 ' + info.groups + ' 册分别成稿再拼终稿(护上下文)') } catch {} },
         // 汇总后复核:独立复核员挑问题 → 据问题修订;通过则不改。落日志(意见全文进存档 res.review)
         onReview: (info) => { try { log('wf 汇总后复核:' + (info.passed ? '通过,原稿即终稿' : '发现问题,已据此修订终稿')) } catch {} },
+        // 动态规模:规划器按复杂度自估这单要几轮/几个 Agent(夹在安全上限内),不再固定 4/16
+        onScale: (info) => { try { log('wf 动态规模:规划器估这单约 ' + info.rounds + ' 轮 / ' + info.tasks + ' 个 Agent' + (info.complexity ? ' —— ' + info.complexity : '')) } catch {} },
       })
       // 成果落盘存档:关窗不丢、可追溯、Agent 经 workflow_result 取回全文继续用
       let archive = null

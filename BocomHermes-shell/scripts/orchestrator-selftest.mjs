@@ -178,6 +178,31 @@ const trivialRun = async (p, m) => m.kind === 'plan' ? '{"tasks":[],"done":true}
 const rtv = await orchestrate('几点了', { run: trivialRun })
 ok(rtv.done && rtv.tasks.length === 0 && rtv.rounds === 1, '简单目标第1轮即 done、不拆任务')
 
+console.log('动态规模(规划器按复杂度自估 budget → 突破固定默认 / 夹在安全上限 / 简单早收):')
+let sawScale = null
+const scaleRun = async (p, m) => {
+  if (m.kind === 'plan') return m.round < 6
+    ? '{"budget":{"rounds":6,"tasks":20},"tasks":[{"id":"t' + m.round + '","role":"x","goal":"G"}],"done":false}'
+    : '{"tasks":[],"done":true}'
+  if (m.kind === 'reduce') return 'R'
+  return 'out'
+}
+const rScale = await orchestrate('复杂多模块分析', { run: scaleRun, maxRounds: 4, maxTasks: 16, taskTimeoutMs: 0, stallBudget: 99, onScale: (i) => { sawScale = i } })
+ok(rScale.rounds >= 6, '规划器自估 6 轮 → 突破默认 maxRounds=4(实际=' + rScale.rounds + ')')
+ok(sawScale && sawScale.rounds === 6, 'onScale 回调收到动态规模(6 轮)')
+
+const hugeRun = async (p, m) => m.kind === 'plan'
+  ? '{"budget":{"rounds":99,"tasks":999},"tasks":[{"id":"h' + m.round + '","role":"x","goal":"G"}],"done":false}'
+  : (m.kind === 'reduce' ? 'R' : 'out')
+const rHuge = await orchestrate('狮子大开口', { run: hugeRun, maxRoundsCeil: 8, maxTasksCeil: 20, taskTimeoutMs: 0, stallBudget: 99 })
+ok(rHuge.rounds <= 8, '规划器估 99 轮被安全上限 8 夹住(实际=' + rHuge.rounds + ')')
+
+const simpleBudgetRun = async (p, m) => m.kind === 'plan'
+  ? (m.round === 1 ? '{"budget":{"rounds":1,"tasks":1},"tasks":[{"id":"s","role":"x","goal":"G"}],"done":false}' : '{"tasks":[],"done":true}')
+  : (m.kind === 'reduce' ? 'R' : 'out')
+const rSimple = await orchestrate('简单', { run: simpleBudgetRun, maxRounds: 4, taskTimeoutMs: 0 })
+ok(rSimple.rounds <= 2, '规划器自估 1 轮 → 早收(不硬跑满默认 4 轮,实际=' + rSimple.rounds + ')')
+
 console.log('超时元数据下传 + 耗时回调 + 规划旁白:')
 let seenTimeoutMs = null, seenDoneMs = null, seenNote = ''
 const metaRun = async (p, m) => {

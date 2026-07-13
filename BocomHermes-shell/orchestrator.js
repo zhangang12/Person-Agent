@@ -97,19 +97,19 @@ function buildPlanPrompt(goal, doneSummary, ledger, maxBatch) {
     '已完成子任务及结果摘要：\n' + doneSummary,
     '',
     '规划原则(务必遵守)：',
-    '1. 按复杂度伸缩：简单目标不要拆，给 1 个任务、甚至直接 done；只有复杂且可分解的才多拆。',
-    '2. 拆解必须"划算"——每个子任务要么换来真并行(彼此独立、能同时跑)，要么换来独立视角(如实现方 vs 挑刺评审)；否则合并成一个，别为拆而拆。',
-    '3. role 为这个子任务"现编"一句话人设(贴着任务本身，不要套通用头衔)。',
-    '4. 看账本与上轮结果、按真实发现规划下一批，不要一次排满；够了就 done:true。',
-    '5. 子任务都能用工具读代码/查库——让它们去核实，别靠猜。',
-    '6. 上轮有 error/timeout 的任务：判断是换方案重派、拆小一点、还是绕开；不要原样重复失败任务。',
-    '7. 目标要能落地：涉及代码/配置的子任务，goal 里点到文件或模块级（下游拿到就能动手）。',
-    '8. 高风险产出(代码改动/关键结论)：后续轮安排【独立验证/评审】任务交叉校验，不要让产出方自证。',
-    '9. 你(规划器)自己别深读：轻量勘察结构就够(glob/grep、至多读几个入口/关键文件了解全貌)，深读与核实一律交给子任务在它们各自独立的上下文里做。绝不要为了"想清楚怎么拆"就派探索子agent去通读整个目录 / 几百个文件 —— 那会把你规划器的上下文撑爆、计划反而拍脑袋。规划器的职责是"决定谁去读什么"，不是自己把什么都读完。',
+    '1. 【先估规模,按复杂度伸缩】先判断整个总目标的复杂度,估算大概需要几轮、总共几个子任务(Agent),写进 budget 字段——规模由你按目标定,不是固定的:简单目标 1 个 Agent、1 轮甚至直接 done;复杂的多模块分析才多轮多 Agent。后续轮若发现比预想更复杂/更简单,可在 budget 里上调或下调(系统会夹在安全上限内)。',
+    '2. 【模块化 MECE】每个子任务对应一个边界清晰、彼此不重叠的模块 / 职责,这一批合起来对总目标做到"不遗漏、不重复"。拆解要"划算":要么换真并行(彼此独立能同时跑),要么换独立视角(实现方 vs 挑刺评审);否则合并,别为拆而拆。',
+    '3. 【连贯推进】用账本(ledger)把已确认事实 / 未决问题串起来,每一轮都基于上一轮的真实结果往前走——不另起炉灶、不重复已做过的、不丢上一轮的线索;够了就 done:true。',
+    '4. role 为这个子任务"现编"一句话人设(贴着任务本身,不要套通用头衔)。',
+    '5. 子任务都能用工具读代码/查库——让它们去核实,别靠猜。',
+    '6. 上轮有 error/timeout 的任务:判断是换方案重派、拆小一点、还是绕开;不要原样重复失败任务。',
+    '7. 目标要能落地:涉及代码/配置的子任务,goal 里点到文件或模块级(下游拿到就能动手)。',
+    '8. 高风险产出(代码改动/关键结论):后续轮安排【独立验证/评审】任务交叉校验,不要让产出方自证。',
+    '9. 【控上下文】你(规划器)自己别深读:轻量勘察结构就够(glob/grep、至多读几个入口/关键文件了解全貌),深读与核实一律交给子任务在各自独立上下文里做,绝不派探索子agent通读整个目录/几百个文件把你自己撑爆;同时给每个子任务的范围也要收敛(看哪个模块、产出什么),别派范围过宽的任务让它自己读爆。',
     '',
-    `只输出 JSON(下一批 <=${maxBatch} 个任务)，不要解释 / markdown / <think>：`,
-    '{"ledger":{"facts":["据已完成结果更新的已确认事实"],"open":["仍未决的问题"],"assumptions":["未证实的假设"]},"note":"一句话说人话：本轮为什么这么拆(或为什么收尾)","tasks":[{"id":"短id","role":"现编的一句话人设","goal":"具体做什么","deps":["同批依赖id，可空"]}],"done":false}',
-    '若目标已可收尾、无需更多子任务，输出：{"ledger":{...},"note":"收尾理由","tasks":[],"done":true}',
+    `只输出 JSON(本轮新增 <=${maxBatch} 个任务;budget 是你对【整个目标】的规模估计,不是本轮),不要解释 / markdown / <think>：`,
+    '{"budget":{"rounds":预计总轮次,"tasks":预计总子任务数},"ledger":{"facts":["据已完成结果更新的已确认事实"],"open":["仍未决的问题"],"assumptions":["未证实的假设"]},"note":"一句话说人话:本轮为什么这么拆、规模为什么这么估(或为什么收尾)","tasks":[{"id":"短id","role":"现编的一句话人设","goal":"具体做什么","deps":["同批依赖id,可空"]}],"done":false}',
+    '若目标已可收尾、无需更多子任务,输出:{"budget":{...},"ledger":{...},"note":"收尾理由","tasks":[],"done":true}',
   ].join('\n')
 }
 function buildWorkPrompt(task, ctx, goal) {
@@ -220,7 +220,9 @@ async function planOnce(run, goal, doneSummary, ledger, knownIds, opts) {
       const nextLedger = (j.ledger && typeof j.ledger === 'object')
         ? { facts: arr(j.ledger.facts), open: arr(j.ledger.open), assumptions: arr(j.ledger.assumptions) }
         : ledger
-      return { tasks: sanitizePlan(j.tasks, knownIds), done: !!j.done, ledger: nextLedger, note: typeof j.note === 'string' ? j.note.slice(0, 200) : '' }   // note=规划器叙事(一句话思路),UI 当旁白展示
+      const budget = (j.budget && typeof j.budget === 'object')   // 规划器按复杂度自估的【整目标】规模:轮次/Agent 数;编排层据此动态设上限(夹在安全区间内)
+        ? { rounds: Math.round(+j.budget.rounds) || 0, tasks: Math.round(+j.budget.tasks) || 0 } : null
+      return { tasks: sanitizePlan(j.tasks, knownIds), done: !!j.done, ledger: nextLedger, note: typeof j.note === 'string' ? j.note.slice(0, 200) : '', budget }   // note=规划器叙事(一句话思路),UI 当旁白展示
     }
   }
   throw new Error('Planner 未产出合法任务图(JSON)')
@@ -265,10 +267,11 @@ function runDag(run, batch, results, opts) {
 async function orchestrate(goal, options) {
   const opts = {
     maxConcurrency: 3, maxRounds: 4, maxTasks: 20, maxBatch: 6, parseRetries: 2,
+    maxRoundsCeil: 8, maxTasksCeil: 32,   // 动态规模的【安全上限】:规划器按复杂度自估 budget,编排层夹在 [1, ceil] 内 —— 复杂任务能放大到这里,但不失控
     taskTimeoutMs: 180000, taskRetries: 1, maxElapsedMs: 0, stallBudget: 2, signal: null,
     reduceBudgetChars: 60000, reduceRetries: 1,   // 汇总:正文总量超预算走分层;终稿给 1 次重试(汇总失败=整单没成果,别一抖就废)
     review: false,   // 汇总后复核:核心默认关(导出 API/脚本向后兼容);产品端 src/orch.js 打开
-    onPlan: null, onTaskStart: null, onTaskDone: null, onTaskError: null, onRound: null, onReduce: null, onReview: null,
+    onPlan: null, onTaskStart: null, onTaskDone: null, onTaskError: null, onRound: null, onReduce: null, onReview: null, onScale: null,
     ...options, goal,
   }
   if (typeof opts.run !== 'function') throw new Error('orchestrate 需要 opts.run(prompt, meta)')
@@ -276,14 +279,20 @@ async function orchestrate(goal, options) {
   const t0 = Date.now()
   let round = 0, total = 0, done = false, unmet = [], stopped = null, stall = 0
   let ledger = { facts: [], open: [], assumptions: [] }       // 任务账本：跨轮累积，replan 据此(Magentic-One 思路)
-  while (round < opts.maxRounds) {
+  let effRounds = opts.maxRounds, effTasks = opts.maxTasks     // 动态规模:初值=默认;规划器给了 budget 就据此调整(夹在 [1, maxRoundsCeil/maxTasksCeil]),不再被固定数框死
+  while (round < effRounds) {
     if (aborted(opts)) { stopped = 'aborted'; break }
     if (opts.maxElapsedMs && Date.now() - t0 > opts.maxElapsedMs) { stopped = 'time-budget'; break }
     round++; opts._round = round
     const plan = await planOnce(opts.run, goal, summarize(results), ledger, [...results.keys()], opts)
     ledger = plan.ledger || ledger
+    if (plan.budget) {   // 规划器按复杂度自估规模 → 动态调本次运行的轮次/Agent 上限(夹在安全区间[1,ceil]);后续轮可上调/下调
+      if (plan.budget.rounds > 0) effRounds = Math.min(opts.maxRoundsCeil, Math.max(1, plan.budget.rounds))
+      if (plan.budget.tasks > 0) effTasks = Math.min(opts.maxTasksCeil, Math.max(1, plan.budget.tasks))
+      opts.onScale && opts.onScale({ round, rounds: effRounds, tasks: effTasks, complexity: plan.note || '' })
+    }
     if (plan.done || plan.tasks.length === 0) { opts.onPlan && opts.onPlan(round, { ...plan, tasks: [] }); done = true; break }   // 收尾轮:不播任务(done+非空 tasks 时那些任务不会执行,播出去=UI 幽灵节点)
-    const room = Math.max(0, opts.maxTasks - total)
+    const room = Math.max(0, effTasks - total)
     if (room === 0) { opts.onPlan && opts.onPlan(round, { ...plan, tasks: [], plannedTotal: plan.tasks.length }); stopped = 'task-budget'; break }
     let batch = plan.tasks.slice(0, room)
     // onPlan 只播【实际排程的批】:plan.tasks 可能被任务预算截断,播全量会让 UI 出现永不执行的幽灵 pending 节点
@@ -303,7 +312,7 @@ async function orchestrate(goal, options) {
     const okThisRound = batch.filter((t) => { const x = results.get(t.id); return x && x.status === 'ok' }).length
     stall = okThisRound > 0 ? 0 : stall + 1
     if (stall >= opts.stallBudget) { stopped = 'stalled'; break }
-    if (total >= opts.maxTasks) { stopped = 'task-budget'; break }
+    if (total >= effTasks) { stopped = 'task-budget'; break }
   }
   let final = '', reviewNote = ''
   if (!aborted(opts)) {
