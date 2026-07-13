@@ -201,14 +201,20 @@
     el.innerHTML = '<summary><span class="g">○</span><span class="lbl"></span><span class="meta"></span></summary>'
       + '<div class="body"><div class="tools"></div><div class="out" hidden></div></div>'
     it = { el, gEl: el.querySelector('.g'), lblEl: el.querySelector('.lbl'), metaEl: el.querySelector('.meta'),
-           toolsEl: el.querySelector('.tools'), outEl: el.querySelector('.out'), calls: new Map(), count: 0, t0: 0, doneAt: 0, status: 'pend' }
+           toolsEl: el.querySelector('.tools'), outEl: el.querySelector('.out'), calls: new Map(), count: 0, reads: 0, t0: 0, doneAt: 0, status: 'pend' }
     it.lblEl.textContent = label || key
     items.set(key, it); feed.appendChild(el); scrollFeed(false)
     return it
   }
   function wfMeta(it) {
     const secs = it.t0 ? Math.round(((it.doneAt || Date.now()) - it.t0) / 1000) + 's' : ''
-    it.metaEl.textContent = (it.count ? it.count + ' 次调用' + (secs ? ' · ' : '') : '') + secs
+    // 查子Agent:该执行体读文件累计;越界(≥60)红字提示可能撑爆上下文
+    const rd = it.reads ? (it.reads >= 60 ? '<span style="color:var(--diff-del);font-weight:600">📄 ' + it.reads + '</span>' : '📄 ' + it.reads) : ''
+    const parts = []
+    if (it.count) parts.push(it.count + ' 次调用')
+    if (rd) parts.push(rd)
+    if (secs) parts.push(secs)
+    it.metaEl.innerHTML = parts.join(' · ')
   }
   function wfStatus(key, status, label) {
     const it = wfItem(key, label)
@@ -221,9 +227,10 @@
     wfMeta(it)
     return it
   }
-  function wfTool(key, label, toolName, status, input, callId) {
+  function wfTool(key, label, toolName, status, input, callId, readN) {
     const it = wfItem(key, label)
     if (it.status === 'pend') wfStatus(key, 'run')
+    if (readN) it.reads = readN
     let line = it.calls.get(callId)
     if (!line) { line = document.createElement('div'); it.toolsEl.appendChild(line); it.calls.set(callId, line); it.count++ }
     const fin = /complet|success|done|finish|ok/i.test(status), err = /error|fail|deny|reject/i.test(status)
@@ -236,7 +243,7 @@
   window.BocomHermes.onStream((p) => {
     const t = p.tag || {}; if (t.scope !== 'wf') return
     const base = String(t.id || 'task')
-    const topLabel = t.kind === 'plan' ? '规划器 · 第 ' + (t.round || '?') + ' 轮' : t.kind === 'reduce' ? '汇总' : null   // worker 顶层名由 plan 事件定(id·goal),流事件不覆盖
+    const topLabel = t.kind === 'plan' ? '规划器 · 第 ' + (t.round || '?') + ' 轮' : t.kind === 'reduce' ? '汇总' : t.kind === 'review' ? '汇总后复核' : t.kind === 'revise' ? '据复核修订' : null   // worker 顶层名由 plan 事件定(id·goal),流事件不覆盖
     const key = p.sub ? base + '/' + (p.agentId || '_') : base
     const name = p.sub ? ((topLabel || base) + ' ▸ ' + (p.agentName || '子agent')) : topLabel
     const it = wfItem(key, name || undefined)
@@ -246,7 +253,7 @@
       if (fin && p.taskChild) wfStatus(key + '/' + p.taskChild, /error|fail|deny|reject/i.test(p.status || '') ? 'err' : 'ok', p.taskDesc)
       return
     }
-    wfTool(key, name || undefined, p.text, p.status || '', p.input, p.partID || '_')
+    wfTool(key, name || undefined, p.text, p.status || '', p.input, p.partID || '_', p.readN || 0)
   })
 
   // 进度横幅:单条常驻,随事件滚动更新(第 x 轮 · 运行中 k · 完成 m/n),不再是静态"正在规划…"

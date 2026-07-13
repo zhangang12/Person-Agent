@@ -26,7 +26,7 @@ const arr = (x) => Array.isArray(x) ? x.map((v) => String(v)).filter(Boolean) : 
 const summarize = (results) => {
   const arr = [...results.values()]
   if (!arr.length) return '（暂无）'
-  return arr.map((r) => `- [${r.task.id}] ${r.task.goal}（${r.status}）\n  摘要：${tailClip(r.output, 280)}`).join('\n')
+  return arr.map((r) => `- [${r.task.id}] ${r.task.goal}（${r.status}）\n  摘要：${tailClip(r.output, 600)}`).join('\n')   // 尾部 600:容得下完整【交接】段(3-5 行),规划器据此拆下一批 —— 太短(如 280)会截掉交接、让规划变笨
 }
 const aborted = (opts) => !!(opts.signal && opts.signal.aborted)
 
@@ -105,6 +105,7 @@ function buildPlanPrompt(goal, doneSummary, ledger, maxBatch) {
     '6. 上轮有 error/timeout 的任务：判断是换方案重派、拆小一点、还是绕开；不要原样重复失败任务。',
     '7. 目标要能落地：涉及代码/配置的子任务，goal 里点到文件或模块级（下游拿到就能动手）。',
     '8. 高风险产出(代码改动/关键结论)：后续轮安排【独立验证/评审】任务交叉校验，不要让产出方自证。',
+    '9. 你(规划器)自己别深读：轻量勘察结构就够(glob/grep、至多读几个入口/关键文件了解全貌)，深读与核实一律交给子任务在它们各自独立的上下文里做。绝不要为了"想清楚怎么拆"就派探索子agent去通读整个目录 / 几百个文件 —— 那会把你规划器的上下文撑爆、计划反而拍脑袋。规划器的职责是"决定谁去读什么"，不是自己把什么都读完。',
     '',
     `只输出 JSON(下一批 <=${maxBatch} 个任务)，不要解释 / markdown / <think>：`,
     '{"ledger":{"facts":["据已完成结果更新的已确认事实"],"open":["仍未决的问题"],"assumptions":["未证实的假设"]},"note":"一句话说人话：本轮为什么这么拆(或为什么收尾)","tasks":[{"id":"短id","role":"现编的一句话人设","goal":"具体做什么","deps":["同批依赖id，可空"]}],"done":false}',
@@ -119,14 +120,94 @@ function buildWorkPrompt(task, ctx, goal) {
     '总目标：' + goal,
     '你的子任务：' + task.goal,
     ctx ? '可参考的上游结果：\n' + ctx : '',
-    '请完成这个子任务并直接给出结果。务必用你的工具读代码 / 查库去核实，不要凭空猜测。',
-    '结尾必须有一节「【交接】」：用 3-5 行要点写清 关键结论 / 产出位置(文件路径、命令、数据) / 给下游的提醒 —— 下游任务与规划器主要看这一节。',
+    '请交付一份【完整、可直接使用】的成果，不是提要。要求：',
+    '· 用你的工具读代码 / 查库去核实，不要凭空猜测；结论要贴出证据(文件路径、函数/表名、代码片段、命令、数据)。',
+    '· 读文件要克制：先 grep/glob 定位，再只读相关文件与相关段落；别为"求全"通读整目录 / 几百个文件 —— 读越多你的上下文越会被撑爆，产出反而变薄变乱。确需大范围勘察，就派一个【边界清晰的聚焦子任务/子agent】(只看什么、只产出什么)在独立上下文里做，别把几百个文件糊进自己的上下文。',
+    '· 该给代码就给可运行的代码/改动，该给设计就给带取舍的完整方案，该给分析就给有依据的结构化结论 —— 把事情写透，别只写一句"结论是 X"。',
+    '· 篇幅服务于说清楚：宁可详实、可落地，也不要为了简短丢细节。这份【正文】会被最终汇总完整读取，是你真正的产出。',
+    '结尾另起一节「【交接】」：3-5 行要点，只作【规划器 / 后续任务】的快速索引 —— 关键结论 / 产出位置(文件路径、命令、数据) / 给下游的提醒。交接是索引，不能替代上面的正文。',
   ].filter(Boolean).join('\n')
 }
 function buildReducePrompt(goal, results, ledger) {
   const parts = [...results.values()].map((r) => `## [${r.task.id}] ${r.task.goal}\n${r.output}`).join('\n\n')
   const open = ledger && arr(ledger.open).length ? '\n\n仍未决 / 待澄清(请在结尾单列，不要藏掉)：\n- ' + arr(ledger.open).join('\n- ') : ''
-  return ['总目标：' + goal, '以下是各子任务产出，请汇总成一份连贯、完整、去重的最终成果(有冲突要点明，不要简单拼接)。保留各任务给出的文件路径/命令/数据等可执行细节，结论先行：', parts + open].join('\n\n')
+  return [
+    '总目标：' + goal,
+    '下面是各子任务的完整产出。请据此【撰写最终成果】—— 这是用户直接阅读、并据以行动的成品，不是给别人看的会议纪要。要求：',
+    '· 这是"写成品"不是"做摘要"：把各子任务的实质内容整合成一份连贯、完整、可直接落地的交付物，正文展开写透，不要压成要点提要。',
+    '· 保留全部可执行细节：文件路径、函数/表名、代码片段、命令、配置、数据、数字，一个都不能因"精简"而丢；该带的代码/方案原样带上。',
+    '· 整合而非拼接：消除重复、合并同类；子任务之间有冲突或分歧要明确点出并给判断，不要藏。',
+    '· 结构清晰：先给结论 / TL;DR，再按主题用小标题展开完整内容；需要时用列表、表格、代码块。',
+    '· 若发现关键结论未核实、或产出之间有明显空白，可用工具读代码 / 查库补齐后再下笔 —— 但要克制：只按需读关键文件，别为补空白又通读一堆文件把自己的上下文也撑爆；你的职责是产出成品，不是重新探索。',
+    '',
+    '各子任务产出：',
+    parts + open,
+  ].join('\n')
+}
+// ---- 汇总(长度感知,保护汇总会话自己的上下文)----
+// 正文总量在预算内 → 单次成稿(与原行为一致)。超预算 → 分层:按预算分组,每组各自只看【本组全文】合成一份"分册稿"(不丢细节),
+// 再把各分册稿拼成终稿。避免十几份厚正文一次性灌爆汇总会话 → 又被压回摘要(那正是"探索很细、产出很薄"的一个根)。每层都走 buildReducePrompt(写成品,不做摘要)。
+async function synthesize(run, goal, results, ledger, opts) {
+  const entries = [...results.values()]
+  const total = entries.reduce((n, r) => n + ((r.output && r.output.length) || 0), 0)
+  const budget = opts.reduceBudgetChars > 0 ? opts.reduceBudgetChars : 60000
+  const retries = opts.reduceRetries >= 0 ? opts.reduceRetries : 1
+  if (entries.length <= 1 || total <= budget) return await runGuarded(run, buildReducePrompt(goal, results, ledger), { kind: 'reduce' }, opts, retries)
+  const groups = []; let cur = [], curN = 0
+  for (const r of entries) {
+    const c = (r.output && r.output.length) || 0
+    if (cur.length && curN + c > budget) { groups.push(cur); cur = []; curN = 0 }   // 贪心装箱:每箱正文量不超预算
+    cur.push(r); curN += c
+  }
+  if (cur.length) groups.push(cur)
+  opts.onReduce && opts.onReduce({ tier: 'split', groups: groups.length, totalChars: total })
+  const drafts = []
+  for (let i = 0; i < groups.length; i++) {
+    const gMap = new Map(groups[i].map((r) => [r.task.id, r]))
+    const d = await runGuarded(run, buildReducePrompt(goal, gMap, null), { kind: 'reduce', part: i + 1 }, opts, retries)   // 分册稿:未决项(ledger.open)留到终稿单列,不每册重复
+    drafts.push({ task: { id: 'seg' + (i + 1), goal: '分册合成稿 ' + (i + 1) + '/' + groups.length }, output: String(d || ''), status: 'ok' })
+  }
+  return await runGuarded(run, buildReducePrompt(goal, new Map(drafts.map((d) => [d.task.id, d])), ledger), { kind: 'reduce', part: 'final' }, opts, retries)
+}
+
+// ---- 汇总后复核:独立复核员对照总目标与子任务原始产出审终稿,挑真问题;有问题则据此修订,通过则原样留(不为改而改)。----
+// 保护:复核/修订任一步失败或空产出、或修订稿异常缩水(疑似又压成摘要) → 一律退回已成稿,绝不把成果搞没或搞薄。
+function buildReviewPrompt(goal, results, draft) {
+  const refs = [...results.values()].map((r) => `- [${r.task.id}] ${r.task.goal}（${r.status}）\n  要点：${tailClip(r.output, 600)}`).join('\n')
+  return [
+    '你是最终成果的【复核员】。对照总目标与各子任务要点，审下面这份【待复核成果】，只挑真问题。',
+    '总目标：' + goal,
+    '逐条查(有就写 问题 + 具体位置 + 怎么补;整体达标就只回一行"通过")：',
+    '· 遗漏：子任务里有、但成果漏掉的关键结论 / 文件路径 / 命令 / 数据 / 代码。',
+    '· 没依据：成果里的结论在子任务里找不到支撑(疑似编造)——可用工具抽查关键点是否属实，但别通读一堆文件把自己上下文撑爆。',
+    '· 矛盾：子任务的分歧被含糊带过、未消解。',
+    '· 太浅：该展开的地方只有一句话、缺可落地细节。',
+    '',
+    '各子任务要点(依据)：\n' + refs,
+    '',
+    '待复核成果：\n' + draft,
+  ].join('\n')
+}
+function buildRevisePrompt(goal, draft, review) {
+  return [
+    '总目标：' + goal,
+    '下面是一份【最终成果】和复核员挑出的【问题清单】。请据清单把成果修订好，输出【修订后的完整最终成果】。',
+    '要求：逐条落实问题(补齐遗漏、删掉没依据的、消解矛盾、写深太浅处)；其余正确内容【原样保留，不得删减或压缩】；仍是可直接用的成品，结论先行、结构清晰、保留全部可执行细节。',
+    '',
+    '【问题清单】：\n' + review,
+    '',
+    '【最终成果(待修订)】：\n' + draft,
+  ].join('\n')
+}
+async function reviewAndRevise(run, goal, results, draft, opts) {
+  const retries = opts.reduceRetries >= 0 ? opts.reduceRetries : 1
+  const review = String(await runGuarded(run, buildReviewPrompt(goal, results, draft), { kind: 'review' }, opts, retries) || '')
+  const passed = /^\s*(通过|pass\b)/i.test(review.trim()) || review.trim().length < 8   // 复核员开头判"通过"(或空产出)→ 视为达标,不修订
+  opts.onReview && opts.onReview({ passed, review })
+  if (passed) return { final: draft, review, passed: true }
+  const revised = String(await runGuarded(run, buildRevisePrompt(goal, draft, review), { kind: 'revise' }, opts, retries) || '').trim()
+  if (!revised || revised.length < draft.length * 0.4) return { final: draft, review, passed: false }   // 空产出 / 异常缩水 → 退回原稿,别把成品搞没或压回摘要
+  return { final: revised, review, passed: false }
 }
 
 // ---- 规划一轮（容错解析 + 重试 + 净化）----
@@ -185,7 +266,9 @@ async function orchestrate(goal, options) {
   const opts = {
     maxConcurrency: 3, maxRounds: 4, maxTasks: 20, maxBatch: 6, parseRetries: 2,
     taskTimeoutMs: 180000, taskRetries: 1, maxElapsedMs: 0, stallBudget: 2, signal: null,
-    onPlan: null, onTaskStart: null, onTaskDone: null, onTaskError: null, onRound: null,
+    reduceBudgetChars: 60000, reduceRetries: 1,   // 汇总:正文总量超预算走分层;终稿给 1 次重试(汇总失败=整单没成果,别一抖就废)
+    review: false,   // 汇总后复核:核心默认关(导出 API/脚本向后兼容);产品端 src/orch.js 打开
+    onPlan: null, onTaskStart: null, onTaskDone: null, onTaskError: null, onRound: null, onReduce: null, onReview: null,
     ...options, goal,
   }
   if (typeof opts.run !== 'function') throw new Error('orchestrate 需要 opts.run(prompt, meta)')
@@ -222,9 +305,17 @@ async function orchestrate(goal, options) {
     if (stall >= opts.stallBudget) { stopped = 'stalled'; break }
     if (total >= opts.maxTasks) { stopped = 'task-budget'; break }
   }
-  let final = ''
-  if (!aborted(opts)) { try { final = await runGuarded(opts.run, buildReducePrompt(goal, results, ledger), { kind: 'reduce' }, opts, 0) } catch (e) { final = '(汇总失败：' + (e && e.message || e) + ')' } }
-  return { goal, rounds: round, done, stopped, tasks: [...results.values()], unmet, ledger, final, elapsedMs: Date.now() - t0 }
+  let final = '', reviewNote = ''
+  if (!aborted(opts)) {
+    let draft = ''
+    try { draft = await synthesize(opts.run, goal, results, ledger, opts) } catch (e) { draft = '(汇总失败：' + (e && e.message || e) + ')' }
+    final = draft
+    // 汇总后复核:独立复核员挑问题 → 据问题修订(通过则不改)。复核/修订失败绝不丢掉已成稿(退回 draft)。
+    if (opts.review && draft && !/^\(汇总失败/.test(draft) && !aborted(opts)) {
+      try { const rr = await reviewAndRevise(opts.run, goal, results, draft, opts); final = rr.final; reviewNote = rr.review } catch (e) { final = draft }
+    }
+  }
+  return { goal, rounds: round, done, stopped, tasks: [...results.values()], unmet, ledger, final, review: reviewNote, elapsedMs: Date.now() - t0 }
 }
 
 // ---- 生产适配：一次 run = 一个 opencode 会话发一条消息取回文本 ----

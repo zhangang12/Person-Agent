@@ -29,6 +29,7 @@
     '.subbox .aln-ic { color: var(--txt3); flex: none; }',
     '.subbox .aln-t { font-weight: 600; flex: none; }',
     '.subbox .aln-g { color: var(--txt3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
+    '.subbox .areads { color: var(--txt3); } .subbox .areads.warn { color: var(--diff-del); font-weight: 600; }',   // 查子Agent:读文件累计;越界(≥60)标红提示可能撑爆上下文
   ].join('\n')
   let cssInjected = false
   function injectCss() {
@@ -66,7 +67,7 @@
       if (a) { if (name && name !== '子agent') { const h = a.box.querySelector('.subname'); if (h && h.textContent !== name) h.textContent = name } return a }
       const box = document.createElement('details'); box.className = 'subbox'   // 默认收起:表头 + 最新一条(紧凑视图),点开看全部工具
       box.innerHTML = '<summary><div class="ahead"><span class="aico">🔍</span><span class="subname">' + esc(name || '子agent') + '</span>'
-        + '<span class="subhint"><span class="acount">0</span> 次调用 · <span class="aelapsed">0s</span><span class="astat"> · 探索中…</span></span></div>'
+        + '<span class="subhint"><span class="acount">0</span> 次调用 · <span class="aelapsed">0s</span><span class="areads"></span><span class="astat"> · 探索中…</span></span></div>'
         + '<div class="alatest">↳ 准备中…</div></summary>'
         + '<div class="subwrap"><div class="alist"></div></div>'
       a = { box, list: box.querySelector('.alist'), latest: box.querySelector('.alatest'), calls: new Map(), count: 0, t0: Date.now(), done: false }
@@ -77,7 +78,7 @@
       if (!timer) timer = setInterval(tick, 1000)
       return a
     }
-    function tool(key, name, toolName, status, input, callId) {
+    function tool(key, name, toolName, status, input, callId, readN) {
       const a = ensure(key, name)
       let line = a.calls.get(callId)
       if (!line) {
@@ -89,6 +90,7 @@
       const html = '<span class="aln-ic">↳</span><span class="aln-t">' + esc(toolName) + '</span><span class="aln-g">' + esc(toolTarget(input)) + '</span>'
       line.className = 'aline' + cls; line.innerHTML = html
       if (a.latest) { a.latest.className = 'alatest' + cls; a.latest.innerHTML = html }   // 表头下"最新一条"(收起时可见)
+      if (readN) { const rd = a.box.querySelector('.areads'); if (rd) { rd.textContent = ' · 📄 ' + readN; rd.classList.toggle('warn', readN >= 60) } }   // 查子Agent:该单元读文件累计,越界标红
       const e = a.box.querySelector('.aelapsed'); if (e) e.textContent = fmtElapsed(Date.now() - a.t0)
       host.scrollTop = host.scrollHeight
     }
@@ -122,7 +124,7 @@
         if (fin && p.taskChild) inst.done(m.key + '/' + p.taskChild, p.status || '', p.taskDesc)
         return
       }
-      inst.tool(m.key, m.name, p.text, p.status || '', p.input, p.partID || '_')
+      inst.tool(m.key, m.name, p.text, p.status || '', p.input, p.partID || '_', p.readN || 0)
     })
   }
 

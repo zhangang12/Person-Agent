@@ -106,6 +106,63 @@ const redRun = async (p, m) => {
 await orchestrate('汇总未决', { run: redRun, maxRounds: 2 })
 ok(reducePrompt.includes('谁来定计息口径'), '账本未决项被带进 reduce(不藏掉)')
 
+console.log('长文档分层汇总(正文超预算 → 分册成稿 + 拼终稿，护汇总上下文):')
+let reduceCalls = 0, finalStitchPrompt = ''
+const bigRun = async (p, m) => {
+  if (m.kind === 'plan') return m.round === 1
+    ? '{"ledger":{"open":["X 口径待定"]},"tasks":[{"id":"a","role":"r","goal":"A"},{"id":"b","role":"r","goal":"B"},{"id":"c","role":"r","goal":"C"}],"done":false}'
+    : '{"tasks":[],"done":true}'
+  if (m.kind === 'reduce') { reduceCalls++; if (m.part === 'final') { finalStitchPrompt = p; return 'STITCHED' } return 'DRAFT' }
+  return 'x'.repeat(50)   // 每个 worker 正文 50 字，3 个=150 > 预算 100 → 触发分层
+}
+const rBig = await orchestrate('大目标', { run: bigRun, maxRounds: 2, taskTimeoutMs: 0, reduceBudgetChars: 100 })
+ok(reduceCalls >= 3, '超预算触发分层：分册稿 + 终稿共多次 reduce（实际=' + reduceCalls + '）')
+ok(rBig.final === 'STITCHED', '返回终稿拼合结果（非某一分册）')
+ok(finalStitchPrompt.includes('X 口径待定'), '账本未决项仍进入终稿（分层不丢未决项）')
+const smallRun = async (p, m) => m.kind === 'plan' ? (m.round === 1 ? '{"tasks":[{"id":"a","role":"r","goal":"A"}],"done":false}' : '{"tasks":[],"done":true}') : (m.kind === 'reduce' ? 'ONE' : 'tiny')
+const rSmall = await orchestrate('小目标', { run: smallRun, maxRounds: 2, taskTimeoutMs: 0 })
+ok(rSmall.final === 'ONE', '正文在预算内：仍单次成稿(行为不变)')
+
+console.log('汇总后复核(独立复核→挑问题→修订;通过则不改;缩水兜底;默认关):')
+let sawReview = false, sawRevise = false
+const revRun = async (p, m) => {
+  if (m.kind === 'plan') return m.round === 1 ? '{"tasks":[{"id":"a","role":"r","goal":"A"}],"done":false}' : '{"tasks":[],"done":true}'
+  if (m.kind === 'reduce') return '这是一份足够长的汇总初稿'.repeat(3)
+  if (m.kind === 'review') { sawReview = true; return '问题1：X 结论没依据；问题2：Y 段太浅' }
+  if (m.kind === 'revise') { sawRevise = true; return '这是修订后的更完整成果'.repeat(3) }
+  return 'out'
+}
+const rRev = await orchestrate('复核修订', { run: revRun, maxRounds: 2, taskTimeoutMs: 0, review: true })
+ok(sawReview && sawRevise, '复核发现问题 → 触发修订')
+ok(rRev.final.startsWith('这是修订后'), '最终成果=修订稿(非原汇总稿)')
+ok(rRev.review.includes('没依据'), '复核意见回传(存档留痕)')
+
+let revised2 = false
+const passRun = async (p, m) => {
+  if (m.kind === 'plan') return m.round === 1 ? '{"tasks":[{"id":"a","role":"r","goal":"A"}],"done":false}' : '{"tasks":[],"done":true}'
+  if (m.kind === 'reduce') return '已达标的成果'
+  if (m.kind === 'review') return '通过'
+  if (m.kind === 'revise') { revised2 = true; return 'X' }
+  return 'out'
+}
+const rPass = await orchestrate('复核通过', { run: passRun, maxRounds: 2, taskTimeoutMs: 0, review: true })
+ok(!revised2 && rPass.final === '已达标的成果', '复核通过 → 不修订,原稿即终稿(不为改而改)')
+
+let revised3 = false
+const shrinkRun = async (p, m) => {
+  if (m.kind === 'plan') return m.round === 1 ? '{"tasks":[{"id":"a","role":"r","goal":"A"}],"done":false}' : '{"tasks":[],"done":true}'
+  if (m.kind === 'reduce') return '这是很长的初稿'.repeat(20)
+  if (m.kind === 'review') return '问题：这份初稿太长，请精简重写'
+  if (m.kind === 'revise') { revised3 = true; return '删到只剩一句' }
+  return 'out'
+}
+const rShrink = await orchestrate('缩水兜底', { run: shrinkRun, maxRounds: 2, taskTimeoutMs: 0, review: true })
+ok(revised3 && rShrink.final.startsWith('这是很长的初稿'), '修订稿异常缩水(<40%) → 退回原稿(防又压成摘要)')
+
+const defRun = async (p, m) => m.kind === 'plan' ? (m.round === 1 ? '{"tasks":[{"id":"a","role":"r","goal":"A"}],"done":false}' : '{"tasks":[],"done":true}') : (m.kind === 'reduce' ? 'R' : (m.kind === 'review' ? '不该被调用' : 'out'))
+const rDef = await orchestrate('默认不复核', { run: defRun, maxRounds: 2, taskTimeoutMs: 0 })
+ok(rDef.final === 'R' && rDef.review === '', '核心默认关复核 → final=汇总稿、无复核意见(向后兼容)')
+
 console.log('停滞计数(连续无进展即收手，不空转):')
 const stallRun = async (p, m) => {
   if (m.kind === 'plan') return '{"tasks":[{"id":"z","role":"r","goal":"Z"}],"done":false}'   // 永远还想拆

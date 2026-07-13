@@ -80,12 +80,16 @@ module.exports = function initOrch(S, { ipcMain, oc, orch, log, app, path, fs })
       const goalFull = dir ? goal + '\n(工作目录:' + dir + ' —— 子任务应用工具在此目录内核实,不要访问其它项目)' : goal
       const res = await orch.orchestrate(goalFull, {
         // taskTimeoutMs:0 = 不按墙钟杀(内网网关慢是常态,慢≠死);超时判定改由 run() 的空转看门狗负责
-        run, signal: ac.signal, maxConcurrency: 2, maxRounds: 4, maxTasks: 16, maxBatch: 5, taskTimeoutMs: 0, onBeforeBatch,
+        run, signal: ac.signal, maxConcurrency: 2, maxRounds: 4, maxTasks: 16, maxBatch: 5, taskTimeoutMs: 0, review: true, onBeforeBatch,
         onPlan: (round, plan) => send('plan', { round, done: plan.done, note: plan.note || '', tasks: plan.tasks.map((t) => ({ id: t.id, role: t.role, goal: t.goal, deps: t.deps })) }),
         onTaskStart: (t) => send('task', { id: t.id, status: 'running' }),
         // 产出随事件带给前端(截 2500):点 DAG 节点即可看该任务的实际产出,不用等最终汇总;ms=耗时给时间线
         onTaskDone: (t, out, st, ms) => send('task', { id: t.id, status: 'ok', chars: (out || '').length, ms: ms || 0, output: String(out || '').slice(0, 2500) }),
         onTaskError: (t, err, st, ms) => send('task', { id: t.id, status: st || 'error', ms: ms || 0, error: String(err && err.message || err) }),
+        // 汇总正文超预算 → 分层成稿(保护汇总会话上下文,别让十几份厚正文灌爆它又被压回摘要);落日志让用户看见这一步
+        onReduce: (info) => { try { log('wf 分层汇总:各子任务正文合计 ' + info.totalChars + ' 字 > 预算,拆 ' + info.groups + ' 册分别成稿再拼终稿(护上下文)') } catch {} },
+        // 汇总后复核:独立复核员挑问题 → 据问题修订;通过则不改。落日志(意见全文进存档 res.review)
+        onReview: (info) => { try { log('wf 汇总后复核:' + (info.passed ? '通过,原稿即终稿' : '发现问题,已据此修订终稿')) } catch {} },
       })
       // 成果落盘存档:关窗不丢、可追溯、Agent 经 workflow_result 取回全文继续用
       let archive = null
@@ -96,7 +100,7 @@ module.exports = function initOrch(S, { ipcMain, oc, orch, log, app, path, fs })
         const slug = String(goal).slice(0, 24).replace(/[\\/:*?"<>|\s]+/g, '_') || 'wf'
         archive = path.join(dirW, stamp + '_' + rid + '_' + slug + '.md')
         const taskLines = res.tasks.map((r) => `- [${r.task.id} · ${r.task.role}] ${r.task.goal}(${r.status}${r.ms ? ' · ' + Math.round(r.ms / 1000) + 's' : ''})`).join('\n')
-        fs.writeFileSync(archive, `# 工作流:${goal}\n\n- id:${rid} · 轮次:${res.rounds} · 用时:${Math.round((res.elapsedMs || 0) / 1000)}s${res.stopped ? ' · 提前收尾:' + res.stopped : ''}\n\n## 子任务\n${taskLines || '(无)'}\n\n## 最终成果\n\n${res.final || '(无)'}\n`)
+        fs.writeFileSync(archive, `# 工作流:${goal}\n\n- id:${rid} · 轮次:${res.rounds} · 用时:${Math.round((res.elapsedMs || 0) / 1000)}s${res.stopped ? ' · 提前收尾:' + res.stopped : ''}\n\n## 子任务\n${taskLines || '(无)'}\n\n## 最终成果\n\n${res.final || '(无)'}\n${res.review ? '\n## 复核意见(据此已修订上面的成果)\n\n' + res.review + '\n' : ''}`)
       } catch (e2) { log('wf archive err: ' + e2.message) }
       Object.assign(reg, { status: res.stopped === 'aborted' ? 'aborted' : 'done', final: String(res.final || ''), archive, rounds: res.rounds, elapsedMs: res.elapsedMs })
       send('final', { final: res.final, stopped: res.stopped, done: res.done, rounds: res.rounds, elapsedMs: res.elapsedMs, unmet: res.unmet, archive })
