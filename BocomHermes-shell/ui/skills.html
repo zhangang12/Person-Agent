@@ -91,6 +91,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .chip{flex:none;font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:999px;
   border:1px solid var(--line);color:var(--ink2);white-space:nowrap}
 .chip.gate{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 45%,transparent);background:var(--warn-dim)}
+.chip.pw{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,transparent);background:var(--accent-dim);cursor:default}
 .sk .desc{color:var(--ink2);font-size:12px;margin:5px 0 0 24px;line-height:1.5}
 .sk .r3{display:flex;align-items:center;gap:8px;margin:9px 0 0 24px}
 .last{font-family:var(--mono);font-size:11px;color:var(--ink3)}
@@ -254,6 +255,18 @@ pre.doc{margin:0;font-family:var(--mono);font-size:11.5px;line-height:1.65;white
   <div class="sb"><pre class="doc" id="dBody"></pre></div>
 </div></div>
 
+<!-- 下载后编排弹层 -->
+<div class="ovl" id="ovlPw"><div class="sheet">
+  <div class="sh"><span class="t" id="pwTitle">🔀 下载后编排</span><button class="x" data-x="ovlPw">✕</button></div>
+  <div class="sb">
+    <div class="hint">这个技能<b>回放会导出/下载文件</b>时,填一句话说明<b>拿下载的文件做什么</b> —— 技能跑完会自动把文件交给<b>动态工作流</b>处理(在「工作台」窗口可视化跑,成果自动存档)。</div>
+    <div class="fld"><label>对下载的文件做什么(人话目标)</label>
+      <textarea id="pwGoal" placeholder="例:把导出的用户反馈表逐条归类,统计高频问题,产出一份 Markdown 分析报告" spellcheck="false"></textarea></div>
+    <div class="hint">💡 文件的本地路径会自动接在目标后面,工作流的子 Agent 会先读文件再干活。留空并点「关闭编排」= 取消。</div>
+  </div>
+  <div class="sf"><button class="ghost" id="pwClear">关闭编排</button><button class="ghost" data-x="ovlPw">取消</button><button class="btn-run" id="pwSave">保存</button></div>
+</div></div>
+
 <div id="toast"></div>
 
 <script>
@@ -353,6 +366,7 @@ function skillCard(it){
       <span class="chip">${it.eventCount} 步</span>
       ${it.paramCount ? `<span class="chip">参数 ${it.paramCount}</span>` : ''}
       ${it.gates ? `<span class="chip gate" title="回放到这步会暂停,等你现场输入(如验证码)">⏸ 人工 ${it.gates}</span>` : ''}
+      ${it.postWorkflow ? `<span class="chip pw" title="回放导出/下载文件后,自动对文件跑动态工作流:&#10;${esc(it.postWorkflow.goal)}">🔀 下载后编排</span>` : ''}
     </div>
     ${it.description ? `<div class="desc">${esc(it.description)}</div>` : ''}
     <div class="r3">
@@ -391,6 +405,7 @@ function openMore(anchor, it){
   const r = anchor.getBoundingClientRect()
   popEl = document.createElement('div'); popEl.className = 'pop'
   popEl.innerHTML = `
+    <button data-m="pw">🔀 下载后编排…</button>
     <button data-m="doc">📄 查看技能文档</button>
     <button data-m="exp">📤 导出分享</button>
     <button data-m="del" class="danger">🗑 删除技能</button>`
@@ -398,6 +413,7 @@ function openMore(anchor, it){
   const pw = popEl.offsetWidth
   popEl.style.left = Math.max(8, Math.min(window.innerWidth - pw - 8, r.right - pw)) + 'px'
   popEl.style.top = Math.min(window.innerHeight - popEl.offsetHeight - 8, r.bottom + 6) + 'px'
+  popEl.querySelector('[data-m="pw"]').addEventListener('click', () => { closePop(); openPw(it) })
   popEl.querySelector('[data-m="doc"]').addEventListener('click', async () => {
     closePop()
     const md = await H.browserRecSkillMd(it.id)
@@ -449,7 +465,7 @@ async function runSkill(it, values, baseUrl){
   try{
     const r = await H.skillsRun({ id: it.id, params: values || undefined, baseUrl })
     if (r && r.error) showStatus('err', '⚠ ' + r.error, true)
-    else if (r && r.ok) showStatus('done', '✓ 「' + (it.title || it.id) + '」运行成功', true)
+    else if (r && r.ok) showStatus('done', '✓ 「' + (it.title || it.id) + '」运行成功' + (r.workflow && r.workflow.started ? ' → 已对下载文件启动工作流编排(见「工作台」窗口)' : ''), true)
     else showStatus('err', '⚠ 运行完成但有失败 — ' + String((r && r.report) || '').split('\n')[0], true)
   } catch(e){ showStatus('err', '⚠ ' + e.message, true) }
   runningId = null
@@ -505,6 +521,26 @@ H.onSkillBatchProgress && H.onSkillBatchProgress((d) => {
   showStatus(d.ok ? 'run' : 'err', `📊 批量 行 ${d.row}/${d.total} · ✓ ${d.pass} / ✗ ${d.fail}${d.ok ? '' : ' · ' + (d.firstErr || '')}`)
 })
 
+// ── 下载后编排:配一句话,技能跑完把下载文件交给动态工作流 ────────────────────────
+let pwIt = null
+function openPw(it){
+  pwIt = it
+  $('pwTitle').textContent = '🔀 下载后编排 · ' + (it.title || it.id)
+  $('pwGoal').value = (it.postWorkflow && it.postWorkflow.goal) || ''
+  $('ovlPw').classList.add('show')
+  setTimeout(() => $('pwGoal').focus(), 60)
+}
+async function savePw(goal){
+  if (!pwIt) return
+  const ok = await H.browserRecUpdate(pwIt.id, { postWorkflow: goal ? { goal } : null })
+  $('ovlPw').classList.remove('show')
+  toast(ok ? (goal ? '<span class="ok">✓</span> 已设置「下载后编排」' : '<span class="ok">✓</span> 已关闭「下载后编排」') : '<span class="err">⚠</span> 保存失败')
+  pwIt = null
+  if (ok) load()
+}
+$('pwSave').addEventListener('click', () => savePw($('pwGoal').value.trim()))
+$('pwClear').addEventListener('click', () => savePw(''))
+
 // ── 实况条:回放进度 / 人机断点 / 完成(任何窗口发起的回放都在这里可见)──────────
 let stT = null
 function showStatus(kind, text, autohide){
@@ -521,6 +557,7 @@ H.onBrowserReplayProgress && H.onBrowserReplayProgress((d) => {
   if (d.start) { showStatus('run', '▶ ' + (d.title || '回放') + ' 0/' + d.total); return }
   if (d.pause) { showStatus('pause', (d.heal ? '🔧 ' : '⏸ ') + (d.hint || '需人工操作') + (d.agent ? ' · 已通知 Agent' : '') + ' — 请到浏览器窗口完成'); return }
   if (d.resume) { showStatus('run', '▶ 已续跑…'); return }
+  if (d.waitDownload) { showStatus('run', '⏳ 等下载完成,准备交给工作流…'); return }
   if (d.done) { showStatus(d.fails ? 'err' : 'done', d.fails ? '⚠ 完成,' + d.fails + ' 步失败' : '✓ 回放完成 ' + d.total + ' 步', true); load(); return }
   showStatus(d.ok === false ? 'err' : 'run', '▶ 步 ' + d.i + '/' + d.total + ' · ' + d.act + (d.ok === false ? ' ✗ ' + (d.err || '') : ''))
 })

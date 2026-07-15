@@ -1348,6 +1348,7 @@ H.onBrowserSkillRefined && H.onBrowserSkillRefined((d) => {
 H.onBrowserReplayProgress && H.onBrowserReplayProgress((d) => {
   if (d.pause) { showReplayPause(d); sbStatus(d.takeover ? '<span class="warn">🤖 Agent 接管执行中 — 过程见左侧对话</span>' : '<span class="warn">⏸ ' + esc(d.hint || '需人工操作') + (d.agent ? ' · Agent 解析中' : ' · 等你在页面输入') + '</span>'); return }
   if (d.resume) { clearReplayPause(); sbStatus('▶ 已续跑…'); return }
+  if (d.waitDownload) { const q = ensureHud(); clearTimeout(hudHideT); q.hidden = false; q.style.borderColor = '#e5e7ec'; q.textContent = '⏳ 等下载完成…'; sbStatus('⏳ 等下载完成,准备交给工作流…'); return }
   const p = ensureHud()
   clearTimeout(hudHideT)
   p.hidden = false

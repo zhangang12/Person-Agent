@@ -107,13 +107,22 @@ app.whenReady().then(() => {
     const name = item.getFilename()
     const savePath = path.join(app.getPath('downloads'), name)
     item.setSavePath(savePath)
+    // 下载登记表:回放引擎据此「等下载落地并取回文件路径」——「下载后编排」技能的输入来源,与浏览器 UI 的进度提示解耦。
+    // 滚动上限 40 条;at=发起时刻(回放按 at≥回放起点圈定本次产生的下载),state 收敛到 completed/failed。
+    const rec = { id, name, savePath, bytes: total, at: Date.now(), state: 'progressing', doneAt: 0 }
+    if (!Array.isArray(S.downloads)) S.downloads = []
+    S.downloads.push(rec); if (S.downloads.length > 40) S.downloads.shift()
     const target = S.browser && S.browser.win && !S.browser.win.isDestroyed() ? S.browser.win.webContents : null
     const send = (kind, extra) => { if (target && !target.isDestroyed()) target.send('browser-download', { id, name, total, savePath, kind, ...extra }) }
     send('start')
     item.on('updated', (_x, state) => {
-      if (state === 'progressing') send('progress', { received: item.getReceivedBytes(), paused: item.isPaused() })
+      if (state === 'progressing') { try { rec.bytes = item.getReceivedBytes() || rec.bytes } catch {} ; send('progress', { received: item.getReceivedBytes(), paused: item.isPaused() }) }
     })
-    item.once('done', (_x, state) => send(state === 'completed' ? 'done' : 'fail', { state }))
+    item.once('done', (_x, state) => {
+      rec.state = state === 'completed' ? 'completed' : 'failed'; rec.doneAt = Date.now()
+      if (state === 'completed') { try { rec.bytes = item.getReceivedBytes() || rec.bytes } catch {} }
+      send(state === 'completed' ? 'done' : 'fail', { state })
+    })
   })
 
   initAudit(S, { app, path, fs, ipcMain, log })   // 先于 initWindow:S.audit 供各埋点处调用

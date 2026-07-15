@@ -8,7 +8,7 @@ const emailSummarySeen = require('./email-summary-seen')
 const initOutbox = require('./outbox')
 const db = require('./db')
 const { extractMeeting } = require('./meeting-extract')
-const { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, markHumanGates, upgradeToSkill, skillMd, applyRefinePatch, rowToParamValues, relocateSelectors, takeoverDigest } = require('./recorder-core')
+const { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, markHumanGates, upgradeToSkill, skillMd, composePostWorkflowGoal, applyRefinePatch, rowToParamValues, relocateSelectors, takeoverDigest } = require('./recorder-core')
 const initRecorder = require('./recorder')
 const { cdpConsoleLevel, fmtRO, fmtException, resolveFrame } = require('./cdp-format')
 const initMail = require('./mail')
@@ -1886,7 +1886,24 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     if (replay.after.errs.length) lines.push('回放后控制台报错 ' + replay.after.errs.length + ' 条: ' + replay.after.errs.slice(0, 3).map((x) => x.msg).join(' | '))
     if (replay.after.bad.length) lines.push('网络/业务异常 ' + replay.after.bad.length + ' 条: ' + replay.after.bad.slice(0, 3).map((b) => (b.biz ? '200·' + b.biz : (b.status || b.state)) + ' ' + b.url).join(' | '))
     lines.push('结束页面: ' + (replay.after.url || '?'))
-    return { ok, pass: ok, report: lines.join('\n'), stepReport: replay.stepReport }
+    // 下载后编排:技能配了 postWorkflow 且本次捕获到下载文件 → 把文件接进动态工作流(工作台窗口自动跑、DAG 可视、成果自动存档)。
+    // 网关挂了也不影响 —— 文件已在本地,工作流窗口自会报错;批跑不走这条(见 skillRunBatch,循环编排属"运行计划"不进单次技能)。
+    let workflow = null
+    const dls = Array.isArray(replay.downloads) ? replay.downloads : []
+    if (ok && rec.postWorkflow && rec.postWorkflow.goal) {
+      if (dls.length) {
+        try {
+          const wfGoal = composePostWorkflowGoal(hit.name, rec.postWorkflow.goal, dls)
+          const wfId = spawnWorkflow(wfGoal)
+          workflow = { started: true, files: dls, id: wfId }
+          lines.push('→ 已对下载的 ' + dls.length + ' 个文件启动「工作流编排」(见「工作台」窗口,成果自动存档): ' + dls.map((p) => String(p).split(/[\\/]/).pop()).join('、'))
+          try { S.audit && S.audit('skill', '技能「' + hit.name + '」触发下载后编排', { files: dls.map((p) => String(p).split(/[\\/]/).pop()), goal: String(rec.postWorkflow.goal).slice(0, 120), wfId }) } catch {}
+        } catch (e) { lines.push('⚠ 下载后编排启动失败: ' + e.message) }
+      } else {
+        lines.push('⚠ 该技能配了「下载后编排」,但本次没捕获到下载文件 —— 请确认导出/下载步骤成功(工作流未启动)')
+      }
+    }
+    return { ok, pass: ok, report: lines.join('\n'), stepReport: replay.stepReport, downloads: dls, workflow }
   }
   // 批量跑技能(relay /skill/run-batch,Phase 5·数据集循环,设计文档第 6 节):
   // dataset 每行 = {参数label/key: 值} = 一次独立运行(独立参数注入/独立结果);循环在技能外,技能保持线性。
@@ -2025,6 +2042,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
           paramCount: (j.params || []).length,
           params: (j.params || []).map((p) => ({ key: p.key, label: p.label || p.key, secret: !!p.secret, default: p.default != null ? String(p.default) : '' })),   // 「录制与回放」中心:填参/批跑映射预览用
           gates: (j.events || []).filter((e) => e && e.human).length,   // 人机断点数(验证码等,卡片上提示"回放会暂停等人")
+          postWorkflow: (j.postWorkflow && j.postWorkflow.goal) ? { goal: String(j.postWorkflow.goal) } : null,   // 下载后编排:配了就在卡片上出 chip + ⋯ 里可编辑
           startUrl: j.startUrl || '',
           expectation: j.expectation || '',
           eventCount: (j.events || []).length,
@@ -2123,6 +2141,11 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       const allowed = ['title', 'starred', 'expectation', 'description', 'params', 'skill']   // events 不进白名单,保持只读
       for (const k of allowed) if (k in patch) j[k] = patch[k]
       // 形状校验后才放行的字段(坏形状直接丢弃,不落盘)
+      if ('postWorkflow' in patch) {   // 下载后编排:{goal:人话目标};传 null/空目标 = 清除
+        const pw = patch.postWorkflow
+        if (pw && typeof pw.goal === 'string' && pw.goal.trim() && pw.goal.trim().length <= 2000) j.postWorkflow = { goal: pw.goal.trim() }
+        else delete j.postWorkflow
+      }
       if ('skipSteps' in patch) {
         const n = (j.events || []).length
         j.skipSteps = Array.isArray(patch.skipSteps) ? patch.skipSteps.filter((x) => Number.isInteger(x) && x >= 0 && x < n) : []

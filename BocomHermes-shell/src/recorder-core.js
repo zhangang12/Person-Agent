@@ -585,8 +585,23 @@ function skillMd(rec) {
   if (rec.success && rec.success.value) L.push('- 成功标志:' + (rec.success.kind === 'text' ? '页面出现文本' : '页面出现元素') + '「' + rec.success.value + '」')
   if (rec.expectation && rec.expectation !== rec.description) L.push('- 期望:' + rec.expectation)
   L.push('- 回放后自动核对:步骤成功率 + 控制台报错 + 网络/业务异常(diffReport)')
+  if (rec.postWorkflow && rec.postWorkflow.goal) L.push('', '## 下载后编排', '回放导出/下载文件后,自动把文件交给动态工作流处理:', '> ' + String(rec.postWorkflow.goal).slice(0, 300))
   if (rec.skillNotes) L.push('', '## 注意事项(决策点/隐藏偏好)', rec.skillNotes)   // Agent 精修补的"Codex 式"决策点说明
   return L.join('\n')
+}
+
+// 「下载后编排」目标合成(纯函数):技能回放把文件导出/下载到本地后,把文件绝对路径接进动态工作流目标文本。
+// template=用户填的人话目标(如"把导出的用户反馈表做成分析报告");files=本次回放捕获到的下载文件绝对路径数组。
+// 值全是文件路径(业务产物,非机密),可安全进模型;显式要求子任务用读取/表格解析工具打开,别臆测。
+function composePostWorkflowGoal(skillName, template, files) {
+  const tpl = String(template == null ? '' : template).trim()
+  if (!tpl) return ''
+  const list = (Array.isArray(files) ? files : []).map((f) => String(f == null ? '' : f).trim()).filter(Boolean)
+  if (!list.length) return tpl
+  return tpl
+    + '\n\n【输入文件】由技能「' + String(skillName || '').slice(0, 60) + '」运行时导出/下载到本地,请先读取这些文件再完成上面的目标:\n'
+    + list.map((f) => '- ' + f).join('\n')
+    + '\n(以上是绝对路径的本地文件;用读取/表格解析等工具打开其内容,不要凭空臆测。)'
 }
 
 // ── Phase 4·编译时 Agent:精修补丁应用(纯函数)────────────────────────────────
@@ -693,7 +708,7 @@ function rowToParamValues(params, row) {
   return { values, unmatched }
 }
 
-module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, applyRefinePatch, rowToParamValues, relocateSelectors, takeoverDigest }
+module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, composePostWorkflowGoal, applyRefinePatch, rowToParamValues, relocateSelectors, takeoverDigest }
 
 // ── 纯文件 IO 工厂:window.js 注入 { app, fs, path, execSync } 后解构使用 ────────
 // 这些函数从 window.js 原样搬入,只把对 app/fs/path/execSync 的引用改为工厂参数(名字不变)。

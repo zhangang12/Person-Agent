@@ -459,6 +459,7 @@ module.exports = function initRecorder(ctx) {
     for (const p of (rec.params || [])) { const e2 = rec.events[p.stepIndex]; if (e2 && e2.value != null) paramValues[p.key] = String(e2.value) }
     let redirectFast = false   // 导航被重定向(如登录缓存直落主页)→ 元素步快速失败,把时间留给锚点跳段
     let takeoverInfo = null    // 流程级接管结果 { from, status, note }
+    const dlBase = Date.now()  // 下载登记基线:本次回放起点 —— 收尾时按 at≥dlBase 圈定"本次产生的下载"(见循环后采集)
     for (let i = 0; i < rec.events.length; i++) {
       const ev = rec.events[i]
       // 跳过步(如滚动噪声)必须推占位条目并更新 lastT —— diffReport/verifyFix/skillRun 全按 stepReport 长度对齐计数
@@ -562,6 +563,28 @@ module.exports = function initRecorder(ctx) {
       if (ev.act === 'click' || ev.act === 'submit' || ev.act === 'key' || ev.act === 'select' || ev.act === 'check' || ev.act === 'navigate') await waitNetIdle(tab, 300, 3000)
       else await sleep(fast ? 50 : 120)
     }
+    // 下载后编排的输入采集:回放跑完文件常常还没落地(导出是异步的)。若本次回放期间触发了下载(S.downloads 里 at≥dlBase),
+    // 或技能配了「下载后编排」(必然期待一次导出)→ 等下载全部落定再收尾,把已完成的绝对路径交给上层(skillRun 据此起工作流)。
+    // 纯确定性轮询,零 LLM;硬等(postWorkflow)最长 90s,自动模式(仅探到下载才等)最长 30s、4s 内无下载起头就判定"非下载技能"不空等。
+    let downloads = []
+    try {
+      const expectDl = !!(rec.postWorkflow && rec.postWorkflow.goal)
+      const mine = () => (Array.isArray(S.downloads) ? S.downloads : []).filter((d) => d && d.at >= dlBase)
+      if (expectDl || mine().length) {
+        const deadline = Date.now() + (expectDl ? 90000 : 30000)
+        sendProg({ i: rec.events.length, total: rec.events.length, act: 'download', ok: true, waitDownload: true })
+        while (Date.now() < deadline) {
+          const m = mine()
+          const pending = m.filter((d) => d.state === 'progressing')
+          if (m.length && !pending.length) break                          // 本次下载全部落定(成功或失败)
+          if (!expectDl && !m.length && Date.now() - dlBase > 4000) break  // 自动模式:4s 内没任何下载起头 → 这不是下载技能,不空等
+          await sleep(800)
+        }
+        downloads = mine().filter((d) => d.state === 'completed').map((d) => d.savePath)
+        if (downloads.length) log('replay downloads: 捕获 ' + downloads.length + ' 个下载文件(' + downloads.map((p) => String(p).split(/[\\/]/).pop()).join(', ') + ')')
+        else if (expectDl) log('replay downloads: 技能配了「下载后编排」但本次未捕获到已完成的下载(导出是否成功?)')
+      }
+    } catch (e) { log('replay download wait err: ' + e.message) }
     sendProg({ done: true, fails: stepReport.filter((s) => !s.ok).length, total: stepReport.length })
     await sleep(fast ? 600 : 1800)    // 播完再等异步报错/请求浮现
     const after = {
@@ -587,7 +610,7 @@ module.exports = function initRecorder(ctx) {
     const hitInfo = cov ? coverageHits(cov, changedFiles) : []
     // 自愈回写:换环境(_baseSwapped)不写(DOM 可能不同);仅对有 id 的技能持久化修正后的选择器,下次直接命中
     if (healed.length && rec.id && !rec._baseSwapped && typeof persistHeal === 'function') { try { persistHeal(rec.id, healed) } catch (e) { log('persistHeal err: ' + e.message) } }
-    return { ok: true, stepReport, after, changedFiles, hitInfo, covOn, cascadeFrom, totalSteps: rec.events.length, success: successRes, dialogs, baseSwapped: !!rec._baseSwapped, healed, takeover: takeoverInfo }
+    return { ok: true, stepReport, after, changedFiles, hitInfo, covOn, cascadeFrom, totalSteps: rec.events.length, success: successRes, dialogs, baseSwapped: !!rec._baseSwapped, healed, takeover: takeoverInfo, downloads }
   }
 
   return { injectRecorder, waitNetIdle, waitForEl, highlightTarget, execStep, startCoverage, stopCoverage, checkAssertions, replayRec }
