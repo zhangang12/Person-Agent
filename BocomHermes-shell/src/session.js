@@ -36,6 +36,61 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
     return `<项目背景>\n${anchor}${body}</项目背景>\n\n`
   }
 
+  // ── 作答技能库(指令型:slash 选中后把方法论指令预置到消息前 → 提升产出质量;区别于录制回放技能)──
+  // 存成可编辑的 .md(userData/answer-skills/),内网团队能把自己的规范沉淀进去;首次运行写入内置默认技能。
+  const skillsDir = path.join(require('electron').app.getPath('userData'), 'answer-skills')
+  const DEFAULT_SKILLS = {
+    'frontend-ui': `---
+name: 前端UI设计
+desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含、响应式、排版讲究)
+---
+你现在按【前端UI设计】技能作答。当需求涉及任何页面 / 文档 / 报表 / 看板的 HTML 呈现时,产出必须达到"可直接汇报、交付"的水准,严格遵守:
+
+【产出形态】
+- 单文件、自包含:所有 CSS / JS 内联;不引用任何外部 CDN、字体、图片、脚本链接(内网打不开)。要图标用内联 SVG 或 emoji,要图表用内联 <svg> 或纯 CSS,要图片用占位色块或 data URI。
+- 直接给【完整可运行】的 HTML(从 <!doctype html> 到 </html>),不要给片段、不要给"你可以这样写"的骨架。
+
+【视觉与排版】(这是质量关键,别偷懒)
+- 信息层级分明:标题 / 小标题 / 正文 / 次要信息在字号、字重、颜色上清晰分层;留白充足,不拥挤。
+- 版式:正文限定最大宽度(约 720–960px)居中;分区用卡片(圆角、细边框、克制阴影);统一间距刻度(4 / 8 / 12 / 16 / 24)。
+- 配色:一套克制的中性色 + 一个主色;正文对比度达 WCAG AA;默认浅色,并用 @media (prefers-color-scheme: dark) 适配深色,两种都不难看。
+- 字体:系统字体栈(-apple-system, "Segoe UI", "Microsoft YaHei", sans-serif),中文清晰可读;行高 1.5–1.7。
+- 响应式:相对单位 + flex / grid;窄屏不破版;宽内容(表格 / 代码 / 图)各自套 overflow-x:auto 内部滚动,页面本身永不横向滚动。
+
+【结构与内容】
+- 语义化标签(header / main / section / article / table / figure / footer),不是一堆 div。
+- 表格:有表头、斑马纹或行 hover、数字右对齐、可横向滚动。
+- 该有的都要有:标题区 → 概览/结论先行 → 分节正文 → 必要的图表/表格 → 页脚(来源、时间)。内容写实、写全,禁止 Lorem / 占位文字。
+
+【交付前自检】(过一遍再给)
+- 浅色 + 深色都好看;窄屏不破版;零外链;标签语义正确;信息层级一眼看懂;浏览器打开即用。
+
+若需求不涉及 HTML 呈现,就正常作答,不必强行套 HTML。`,
+  }
+  function ensureDefaultSkills() {
+    try {
+      fs.mkdirSync(skillsDir, { recursive: true })
+      for (const [id, body] of Object.entries(DEFAULT_SKILLS)) {
+        const p = path.join(skillsDir, id + '.md')
+        if (!fs.existsSync(p)) fs.writeFileSync(p, body, 'utf8')   // 只在缺失时写:用户改过的不覆盖
+      }
+    } catch {}
+  }
+  function parseSkill(file, text) {
+    let name = file.replace(/\.md$/i, ''), desc = '', body = text
+    const m = text.match(/^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/)   // 复用记忆库那套 frontmatter
+    if (m) { body = m[2]; const nm = m[1].match(/name:\s*(.+)/); const dm = m[1].match(/desc:\s*(.+)/); if (nm) name = nm[1].trim(); if (dm) desc = dm[1].trim() }
+    return { id: file.replace(/\.md$/i, ''), name, desc, body: body.trim() }
+  }
+  function loadSkills() {
+    ensureDefaultSkills()
+    const out = []
+    try { for (const f of fs.readdirSync(skillsDir)) if (/\.md$/i.test(f)) { try { out.push(parseSkill(f, fs.readFileSync(path.join(skillsDir, f), 'utf8'))) } catch {} } } catch {}
+    return out
+  }
+  ipcMain.handle('skills-list', () => loadSkills().map(({ id, name, desc }) => ({ id, name, desc })))
+  ipcMain.handle('skills-open-dir', () => { try { ensureDefaultSkills(); shell.openPath(skillsDir) } catch {} ; return true })
+
   // ── 事件路由（所有 serve 共用，按 sessionId 路由到对应卡）─────────────────
   function onPermission({ sessionId, requestId, tool, detail }) {
     const si = S.sessionInfo.get(sessionId); if (!si) return
@@ -265,13 +320,16 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
   })
 
   ipcMain.handle('card-send', async (e, arg) => {
-    const { text, files } = (typeof arg === 'string') ? { text: arg } : (arg || {})   // 兼容老调用(纯字符串)与新 {text, files}
+    const { text, files, skill } = (typeof arg === 'string') ? { text: arg } : (arg || {})   // 兼容老调用(纯字符串)与新 {text, files, skill}
     const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
     if (!si) throw new Error('session not ready')
     // 首条消息：静默注入项目上下文前缀（用户看到原文，Serve 收到"背景+原文"）
     const ctxPrefix = S.firstMsgCtx.get(sessionId) || ''
     if (ctxPrefix) { S.firstMsgCtx.delete(sessionId); log('inject project context (' + ctxPrefix.length + ' chars) for ' + sessionId) }
-    const msg = ctxPrefix ? ctxPrefix + (text || '') : (text || '')
+    // 作答技能：选中的技能把方法论指令静默预置到用户原文前（用户气泡仍显示原文）
+    let skillPrefix = ''
+    if (skill) { const sk = loadSkills().find((s) => s.id === skill); if (sk) { skillPrefix = '<作答技能:' + sk.name + '>\n' + sk.body + '\n</作答技能>\n\n'; log('inject skill 「' + sk.name + '」(' + sk.body.length + ' chars) for ' + sessionId) } }
+    const msg = ctxPrefix + skillPrefix + (text || '')
     S.sentPrompt.set(sessionId, text || ''); S.streamBuf.delete(sessionId)
     touchHistory(sessionId)
     let model = si.model || S.settings.model || null

@@ -225,6 +225,7 @@
 
   // ── Tab ──
   function showTab(which) {
+    currentTab = which
     $('viewInbox').hidden = which !== 'inbox'
     $('viewOutbox').hidden = which !== 'outbox'
     $('viewTodos').hidden = which !== 'todos'
@@ -245,21 +246,42 @@
 
   // ── 收件箱列表（默认拉最近 30 天全部邮件，支持多选后批量 AI 摘要）──
   let inboxLoaded = false, onlyUnread = false, loading = false, emails = [], curMsgId = null
+  let currentTab = 'inbox', nextCursor = null, totalMatched = 0, lastLoadAt = 0   // 分页游标 / 命中总数 / 上次加载时刻(自动刷新节流)
   const selected = new Set()   // 多选的 messageId
   async function loadInbox() {
     if (loading) return
-    loading = true; inboxLoaded = true
+    loading = true; inboxLoaded = true; lastLoadAt = Date.now()
     $('mlist').innerHTML = '<div class="empty">加载中… <span class="spin"></span></div>'
     try {
-      const r = await H.mailList({ onlyUnseen: onlyUnread, days: onlyUnread ? 7 : 30, limit: 60 })
+      const r = await H.mailList({ onlyUnseen: onlyUnread, days: onlyUnread ? 7 : 30, limit: 80, cursor: 0 })
       if (!r || r.ok === false) throw new Error((r && r.error) || '拉取失败')
       emails = r.emails || []
+      nextCursor = (r.nextCursor != null) ? r.nextCursor : null
+      totalMatched = r.totalMatched || emails.length
       renderList(); updateSelBar()
     } catch (err) {
       $('mlist').innerHTML = '<div class="empty">✗ ' + esc((err && err.message) || '拉取失败') + '<br><a id="goCfg" style="color:var(--accent);cursor:pointer">去设置检查 IMAP</a></div>'
       const g = $('goCfg'); if (g) g.addEventListener('click', () => showTab('settings'))
     } finally { loading = false }
   }
+  // 分页:加载下一页并追加(用后端 nextCursor)—— 修"显示不全",更早的邮件也翻得出来
+  async function loadMore() {
+    if (loading || nextCursor == null) return
+    loading = true; lastLoadAt = Date.now()
+    const btn = $('loadMore'); if (btn) { btn.textContent = '加载中…'; btn.disabled = true }
+    try {
+      const r = await H.mailList({ onlyUnseen: onlyUnread, days: onlyUnread ? 7 : 30, limit: 80, cursor: nextCursor })
+      if (r && r.ok !== false) {
+        emails = emails.concat(r.emails || [])
+        nextCursor = (r.nextCursor != null) ? r.nextCursor : null
+        totalMatched = r.totalMatched || totalMatched
+        renderList()
+      }
+    } catch (e) {} finally { loading = false }
+  }
+  // 进窗口就自动加载最新(不必手动刷)—— 修"每次进去空的、要手动刷新才有"
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && currentTab === 'inbox' && !loading) loadInbox() })   // 从隐藏被显示=用户进来了,直接给最新(不节流)
+  window.addEventListener('focus', () => { if (currentTab === 'inbox' && !loading && Date.now() - lastLoadAt > 3000) loadInbox() })   // 仅切前台:3s 内不重复,防抖
   function visibleEmails() {
     const q = $('search').value.trim().toLowerCase()
     return emails.filter((e) => !q || (e.from + ' ' + e.subject).toLowerCase().includes(q))
@@ -267,7 +289,8 @@
   function renderList() {
     const list = visibleEmails()
     if (!list.length) { $('mlist').innerHTML = '<div class="empty">' + (onlyUnread ? '没有未读邮件 📭' : '近 30 天没有邮件 📭') + '</div>'; return }
-    $('mlist').innerHTML = list.map((e) => {
+    const searching = !!$('search').value.trim()
+    let html = list.map((e) => {
       const att = (e.attachments || 0) > 0 ? ' <span class="att">📎' + e.attachments + '</span>' : ''
       const mid = esc(e.messageId)
       const on = selected.has(e.messageId)
@@ -276,6 +299,11 @@
         + '<div class="mbody"><div class="r1"><span class="from">' + esc(fromName(e.from)) + '</span><span class="date">' + esc(fmtDate(e.date)) + '</span></div>'
         + '<div class="subj">' + esc(e.subject || '(无主题)') + att + '</div></div></div>'
     }).join('')
+    // 底部:没搜索时显示"加载更多 / 共 N 封"(修显示不全 —— 让更早的邮件也翻得出来、并知道总共多少)
+    if (!searching && nextCursor != null) html += '<div style="padding:9px 4px 5px;text-align:center"><button id="loadMore" style="font-size:12px;color:var(--accent);background:transparent;border:.5px solid var(--composer-border);border-radius:8px;padding:5px 16px;cursor:pointer">加载更多 · 共 ' + totalMatched + ' 封，已显示 ' + emails.length + '</button></div>'
+    else if (!searching && totalMatched) html += '<div style="padding:8px 4px;text-align:center;font-size:11px;color:var(--txt3)">共 ' + totalMatched + ' 封</div>'
+    $('mlist').innerHTML = html
+    const lm = $('loadMore'); if (lm) lm.addEventListener('click', loadMore)
   }
   function updateSelBar() {
     const n = selected.size
@@ -419,7 +447,7 @@
     reader.innerHTML = '<div class="rhead"><div class="rsubj">✨ 今日邮件摘要</div><div class="rmeta">' + new Date().toLocaleDateString('zh-CN') + '</div></div><div class="rscroll"><div id="aiSlot"></div></div>'
     let list = []
     try {
-      const r = await H.mailList({ onlyUnseen: false, days: 2, limit: 30 })
+      const r = await H.mailList({ onlyUnseen: false, days: 2, limit: 30, live: true })   // 今日摘要要正文预览 → 走实时,不读缓存
       list = (r && r.emails) || []
     } catch (e) {}
     if (!list.length) { $('aiSlot').innerHTML = '<div class="empty">近 2 天没有邮件</div>'; return }

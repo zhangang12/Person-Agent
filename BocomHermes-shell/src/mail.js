@@ -70,6 +70,7 @@ module.exports = function initMail(ctx) {
     S.idleWatcher = email.createIdleWatcher(imap, {
       log,
       onNew: (n) => {
+        try { S.syncMailCache && S.syncMailCache({ full: false }) } catch {}   // 新邮件即时拉进本地缓存(下次进收件箱就有,不用等 5 分钟定时)
         // 球绿色脉冲 + 通知;点击通知=打开邮件中心(收件箱默认只看未读 → 新邮件自然置顶)
         try { sendOrbState && sendOrbState('done') } catch {}
         notifyMail('📬 新邮件', (n > 1 ? n + ' 封新邮件到达' : '有新邮件到达') + ' — 点击打开邮件中心',
@@ -373,6 +374,43 @@ module.exports = function initMail(ctx) {
   // 加载 mail-cache(metadata 持久化,跨会话引用 msgId)+ 启动时 prune 30 天前
   S.mailCache = mailCache.load(app.getPath('userData'))
   try { mailCache.prune(app.getPath('userData'), null, log) } catch (e) { log('mail-cache prune err: ' + e.message) }
+
+  // ── 本地邮箱同步(存量一次拉满 + 定时/新邮件拉增量;UI 读本地缓存,不再每次进窗口全量重拉)──
+  let mailSyncing = false, lastSyncAt = 0
+  async function syncMailCache(opts) {
+    opts = opts || {}
+    const imap = S.settings.imap
+    if (!imap || !imap.host || !imap.user || !imap.passEncrypted) return { synced: 0, error: 'IMAP 未配置' }
+    if (mailSyncing) return { synced: 0, skipped: true }
+    mailSyncing = true
+    const userData = app.getPath('userData')
+    const full = !!opts.full
+    const days = full ? 30 : 2         // 存量:近 30 天拉满;增量:近 2 天(够覆盖两次同步间隔)
+    const maxPages = full ? 6 : 1      // 存量最多翻 6 页(≈360 封),增量一页够
+    let added = 0
+    try {
+      let cursor = 0
+      for (let page = 0; page < maxPages; page++) {
+        const r = await email.fetchUnread(imap, { onlyUnseen: false, days, limit: 60, cursor, folder: 'INBOX' })
+        for (const em of (r.emails || [])) {
+          if (em.error || !em.messageId) continue
+          const isNew = !S.mailCache.has(em.messageId)
+          S.mailCache.set(em.messageId, { messageId: em.messageId, uid: em.uid, folder: em.folder || 'INBOX', from: em.from, subject: em.subject, date: em.date, attCount: (em.attachments || []).length, savedAt: Date.now() })
+          if (isNew) { mailCache.put(userData, em); added++; try { maybeSuggestMeeting(em) } catch {} }   // 磁盘只追加新的(不重复 append 撑大 jsonl);会议识别只对新邮件
+        }
+        if (r.nextCursor == null) break
+        cursor = r.nextCursor
+      }
+      lastSyncAt = Date.now()
+      if (added || full) log('mail-sync ' + (full ? '存量' : '增量') + ': +' + added + ' 新, 本地共 ' + S.mailCache.size + ' 封')
+      return { synced: added, total: S.mailCache.size, at: lastSyncAt }
+    } catch (e) { log('mail-sync err: ' + e.message); return { synced: added, error: e.message } }
+    finally { mailSyncing = false }
+  }
+  // 启动:缓存空→拉存量;之后每 5 分钟拉增量。IDLE 新邮件也会即时触发一次增量(见 onNew)
+  setTimeout(() => { syncMailCache({ full: S.mailCache.size === 0 }).catch(() => {}) }, 5000)
+  setInterval(() => { syncMailCache({ full: false }).catch(() => {}) }, 5 * 60 * 1000)
+  S.syncMailCache = syncMailCache   // 供 IDLE onNew / 手动同步调用
   // 启动时 prune "已整理"集合 30 天前的条目
   try { emailSummarySeen.prune(app.getPath('userData'), null, log) } catch (e) { log('email-seen prune err: ' + e.message) }
 
@@ -447,22 +485,38 @@ module.exports = function initMail(ctx) {
     const imap = S.settings.imap
     if (!imap || !imap.host || !imap.user || !imap.passEncrypted) throw new Error('IMAP 未配置（去「设置」填写收件服务器）')
     const o = opts || {}
-    const r = await email.fetchUnread(imap, {
-      onlyUnseen: o.onlyUnseen === true,                 // 默认拉全部(不限未读)；只有显式要未读才加 UNSEEN
-      days: Math.max(1, Math.min(+o.days || 30, 90)),    // 默认近 30 天，上限 90
-      limit: Math.max(1, Math.min(+o.limit || 50, 100)), // 默认 50，上限 100
-      folder: o.folder || 'INBOX',
-    })
-    // 轻量会议识别(仅 subject+摘要,召回率低于整理卡路径;去重靠 msgId,重复调用无害)
-    for (const e of (r.emails || [])) { if (!e.error) maybeSuggestMeeting(e) }
+    // 只看未读 / 显式 live(如今日摘要要正文预览):走实时拉取(本地缓存不含已读状态与正文)
+    if (o.onlyUnseen === true || o.live === true) {
+      const r = await email.fetchUnread(imap, {
+        onlyUnseen: o.onlyUnseen === true,
+        days: Math.max(1, Math.min(+o.days || 30, 90)),
+        limit: Math.max(1, Math.min(+o.limit || 50, 100)),
+        cursor: Math.max(0, +o.cursor || 0),
+        folder: o.folder || 'INBOX',
+      })
+      for (const e of (r.emails || [])) { if (!e.error) maybeSuggestMeeting(e) }
+      return {
+        ok: true, totalMatched: r.totalMatched || 0, nextCursor: r.nextCursor != null ? r.nextCursor : null,
+        emails: (r.emails || []).filter((e) => !e.error).map((e) => ({
+          from: e.from || '', subject: e.subject || '', date: e.date || '',
+          messageId: e.messageId || '', attachments: (e.attachments || []).length,
+          preview: (e.bodySummary || e.body || '').replace(/\s+/g, ' ').slice(0, 300),
+        })),
+      }
+    }
+    // 默认:读本地缓存(秒开、全量);缓存空→先拉存量,否则后台拉增量(不阻塞 UI)。这就是"一次拉存量 + 定时拉增量 + 读本地"
+    if (!S.mailCache || S.mailCache.size === 0) await syncMailCache({ full: true })
+    else syncMailCache({ full: false }).catch(() => {})
+    const folder = o.folder || 'INBOX'
+    const all = [...S.mailCache.values()].filter((m) => (m.folder || 'INBOX') === folder)
+      .sort((a, b) => (b.uid || 0) - (a.uid || 0) || (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0))   // UID 倒序(新在前),同 UID 退回日期
+    const cursor = Math.max(0, +o.cursor || 0), limit = Math.max(1, Math.min(+o.limit || 80, 200))
+    const page = all.slice(cursor, cursor + limit)
     return {
-      ok: true,
-      totalMatched: r.totalMatched || 0,
-      emails: (r.emails || []).filter((e) => !e.error).map((e) => ({
-        from: e.from || '', subject: e.subject || '', date: e.date || '',
-        messageId: e.messageId || '', attachments: (e.attachments || []).length,
-        preview: (e.bodySummary || e.body || '').replace(/\s+/g, ' ').slice(0, 300),
-      })),
+      ok: true, cached: true, syncedAt: lastSyncAt,
+      totalMatched: all.length,
+      nextCursor: all.length > cursor + limit ? cursor + limit : null,
+      emails: page.map((m) => ({ from: m.from || '', subject: m.subject || '', date: m.date || '', messageId: m.messageId || '', attachments: m.attCount || 0, preview: '' })),
     }
   })
   return { effectiveSmtp, effectiveOb, startIdleWatcher }

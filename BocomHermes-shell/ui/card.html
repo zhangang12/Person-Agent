@@ -49,6 +49,20 @@
   .model-menu .mi .mn { font-size: 13px; color: var(--txt); }
   .model-menu .mi .mp { font-size: 10.5px; color: var(--txt3); }
   .model-menu .mhint { padding: 8px 10px; font-size: 12px; color: var(--txt3); }
+  /* 作答技能:slash 菜单(浮在输入框上方) + 当前技能胶囊 */
+  .skill-menu { position: absolute; left: 12px; right: 12px; bottom: 52px; z-index: 90; max-height: 260px; overflow-y: auto; background: var(--glass-bg); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border: 1px solid var(--composer-border); border-radius: 12px; padding: 5px; box-shadow: 0 10px 34px rgba(0,0,0,.28); }
+  .skill-menu[hidden] { display: none; }
+  .skill-menu::-webkit-scrollbar { width: 6px; } .skill-menu::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  .skill-menu .si { padding: 7px 10px; border-radius: 8px; cursor: pointer; display: flex; flex-direction: column; gap: 1px; }
+  .skill-menu .si:hover, .skill-menu .si.sel { background: var(--composer-bg); }
+  .skill-menu .si .sn { font-size: 13px; color: var(--txt); font-weight: 600; }
+  .skill-menu .si .sd { font-size: 10.5px; color: var(--txt3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .skill-menu .sfoot { padding: 7px 10px; font-size: 11px; color: var(--accent); cursor: pointer; border-top: .5px solid var(--composer-border); margin-top: 3px; }
+  .skill-menu .snone { padding: 8px 10px; font-size: 12px; color: var(--txt3); }
+  .skill-bar { padding: 0 2px 5px; }
+  .skill-bar[hidden] { display: none; }
+  .skill-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--accent); background: rgba(74,168,255,.1); border: .5px solid var(--accent); border-radius: 999px; padding: 3px 6px 3px 10px; }
+  .skill-chip .sx { cursor: pointer; opacity: .7; display: inline-flex; padding: 1px; border-radius: 50%; font-size: 12px; line-height: 1; } .skill-chip .sx:hover { opacity: 1; background: rgba(74,168,255,.2); }
   /* 拖拽 / 粘贴 附件 */
   .att-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 2px 6px; }
   .att-row:empty { display: none; }
@@ -183,7 +197,31 @@
   .toolbox .tsec.e pre { color: var(--diff-del); }
   .toolbox.wf { border-color: var(--accent); background: rgba(74,168,255,.08); }
   .toolbox.wf .tn { color: var(--accent); font-family: inherit; }
-  /* 子agent过程组(.subbox)样式已抽到共享组件 agentmon.js（首次 create 时注入 <style>），四窗统一 */
+  /* 子agent富容器(可"进入"):折叠块,点开=看它的 思考 + 完整工具(入参/结果,复用 .toolbox) + 产出,对齐主 Agent */
+  .subagent { align-self: flex-start; max-width: 92%; background: var(--composer-bg); border: .5px solid var(--composer-border); border-left: 3px solid var(--c-think); border-radius: 0 11px 11px 0; margin: 3px 0; overflow: hidden; }
+  .subagent > summary { cursor: pointer; padding: 6px 11px; list-style: none; display: flex; align-items: center; gap: 7px; user-select: none; }
+  .subagent > summary::-webkit-details-marker { display: none; }
+  .subagent .sa-chev { flex: none; color: var(--txt3); transition: transform .15s; }
+  .subagent[open] .sa-chev { transform: rotate(90deg); }
+  .subagent .sa-ic { flex: none; }
+  .subagent .sa-name { font-size: 12.5px; font-weight: 600; color: var(--c-think); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .subagent .sa-meta { margin-left: auto; flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--txt3); font-variant-numeric: tabular-nums; }
+  .subagent.done .sa-meta { color: var(--green); } .subagent.err .sa-meta { color: var(--diff-del); }
+  .subagent .sa-body { padding: 2px 10px 8px 14px; display: flex; flex-direction: column; gap: 3px; }
+  .subagent .sa-reason { font-size: 12px; color: var(--txt2); white-space: pre-wrap; line-height: 1.55; max-height: 200px; overflow-y: auto; border-left: 2px solid var(--c-think); padding: 2px 9px; opacity: .92; }
+  .subagent .sa-reason::-webkit-scrollbar { width: 5px; } .subagent .sa-reason::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  .subagent .sa-out { font-size: 13px; color: var(--txt); line-height: 1.5; overflow-wrap: anywhere; margin-top: 3px; padding-top: 4px; border-top: .5px dashed var(--composer-border); }
+  /* 子agent紧凑组(.subbox)样式仍在共享组件 agentmon.js(reqflow/reqplan 用);本卡已改用上面的 .subagent 富容器 */
+  /* 体验感:滚动守卫的"跳到最新"悬浮键 + AI 回答悬停复制 */
+  .card { position: relative; }
+  .jumpbtn { position: absolute; left: 50%; bottom: 64px; transform: translateX(-50%); z-index: 8; display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--txt); background: var(--glass-bg); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border: .5px solid var(--composer-border); border-radius: 999px; padding: 5px 12px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.2); }
+  .jumpbtn:hover { border-color: var(--accent); color: var(--accent); }
+  .jumpbtn[hidden] { display: none; }
+  .msg.ai { position: relative; }
+  .msg.ai .copybtn { position: absolute; top: 4px; right: 4px; opacity: 0; transition: opacity .12s, color .12s, border-color .12s; background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 6px; padding: 3px; color: var(--txt3); cursor: pointer; display: inline-flex; line-height: 0; }
+  .msg.ai:hover .copybtn { opacity: .8; }
+  .msg.ai .copybtn:hover { opacity: 1; color: var(--txt); border-color: var(--accent); }
+  .msg.ai .copybtn.ok { color: var(--green); border-color: var(--green); opacity: 1; }
 </style>
 </head>
 <body>
@@ -203,10 +241,12 @@
       <button id="x" class="hbtn nodrag" title="关闭" aria-label="关闭"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <div id="modelMenu" class="model-menu nodrag" hidden></div>
+    <div id="skillMenu" class="skill-menu nodrag" hidden></div>
     <div id="feed" class="feed nodrag"></div>
     <div id="quick" class="quick nodrag"></div>
     <div id="attRow" class="att-row nodrag"></div>
     <div id="dropHint" class="drop-hint">松手上传 — 文档解析成文本，图片走多模态识别</div>
+    <div id="skillBar" class="skill-bar nodrag" hidden></div>
     <div class="composer nodrag">
       <textarea id="ci" rows="1" placeholder="继续对话…（Enter 发送，Shift+Enter 换行）"></textarea>
       <button id="send" class="send" aria-label="发送"></button>
@@ -225,7 +265,6 @@
   </div>
 </div>
 <script src="rich.js"></script>
-<script src="agentmon.js"></script>
 <script>
   window.BocomHermes.onTheme((t) => { document.documentElement.dataset.theme = t })
 
@@ -320,6 +359,17 @@
   // 不再监听全局 project-changed 重绘 —— 全局项目只是"新卡默认",本卡标签唯一真相源是 cardInit/cardReinit 回包
   const feed = document.getElementById('feed'), st = document.getElementById('st')
   const ci = document.getElementById('ci'), send = document.getElementById('send')
+  // 体验感:滚动守卫 —— 只有贴着底部(≤80px)才跟随流式内容;用户上翻看历史时不被硬拽,离底则弹"跳到最新"
+  const nearBottom = () => feed.scrollHeight - feed.scrollTop - feed.clientHeight < 80
+  const jumpBtn = document.createElement('button'); jumpBtn.className = 'jumpbtn'; jumpBtn.hidden = true
+  jumpBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>最新'
+  jumpBtn.addEventListener('click', () => { feed.scrollTop = feed.scrollHeight; jumpBtn.hidden = true })
+  ;(document.querySelector('.card') || document.body).appendChild(jumpBtn)
+  feed.addEventListener('scroll', () => { jumpBtn.hidden = nearBottom() })
+  function scrollFeed(force) {
+    if (force || nearBottom()) { feed.scrollTop = feed.scrollHeight; jumpBtn.hidden = true }
+    else jumpBtn.hidden = false   // 离底又来了新内容 → 提示有更新
+  }
   const quick = document.getElementById('quick')
 
   // 工作台内嵌：隐藏自带窗口控件（由工作台窗口的系统边框负责），不自动发首条消息
@@ -399,7 +449,7 @@
   function addNote(text, tone) {
     if (tone === 'user') { addMsg(text, 'me'); return }
     const d = document.createElement('div'); d.className = 'note' + (tone === 'muted' ? ' muted' : '')
-    d.textContent = text; feed.appendChild(d); feed.scrollTop = feed.scrollHeight
+    d.textContent = text; feed.appendChild(d); scrollFeed()
   }
   try { window.BocomHermes.onCardInject(({ text, disp }) => injectMessage(text, disp)) } catch {}
   try { window.BocomHermes.onCardNote(({ text, tone }) => addNote(text, tone)) } catch {}
@@ -414,9 +464,17 @@
   function addMsg(text, who) {
     const d = document.createElement('div')
     d.className = 'msg ' + (who === 'me' ? 'me' : 'ai')
-    if (who === 'ai') d.innerHTML = renderMarkdown(text); else d.textContent = text
-    feed.appendChild(d); feed.scrollTop = feed.scrollHeight
+    if (who === 'ai') { d.dataset.raw = text || ''; d.innerHTML = renderMarkdown(text); if (text) addCopyBtn(d) } else d.textContent = text
+    feed.appendChild(d); scrollFeed(true)   // 新消息=离散动作,强制到底(流式增量才守卫)
     return d
+  }
+  // AI 回答悬停右上角一键复制(复制原文,不是渲染后的 HTML)
+  function addCopyBtn(el) {
+    if (el._copied) return; el._copied = true
+    const b = document.createElement('button'); b.className = 'copybtn'; b.title = '复制'
+    b.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
+    b.addEventListener('click', (e) => { e.stopPropagation(); try { navigator.clipboard.writeText(el.dataset.raw || el.textContent || '') } catch {} b.classList.add('ok'); setTimeout(() => b.classList.remove('ok'), 1200) })
+    el.appendChild(b)
   }
   function showPermission(requestId, tool, detail) {
     const box = document.createElement('div'); box.className = 'perm'
@@ -430,7 +488,7 @@
     const reply = (d) => { window.BocomHermes.permissionReply(requestId, d); box.remove() }
     ok.onclick = () => reply('once'); al.onclick = () => reply('always'); no.onclick = () => reply('reject')
     box.append(t, ok, al, no)
-    feed.appendChild(box); feed.scrollTop = feed.scrollHeight
+    feed.appendChild(box); scrollFeed(true)   // 权限提示需被看到,强制到底
   }
   window.BocomHermes.onPermission(({ requestId, tool, detail }) => showPermission(requestId, tool, detail))
 
@@ -475,7 +533,7 @@
       + '<span class="ts2">· ' + stt + '</span></summary>'
       + (inStr ? '<div class="tsec"><span class="tsl">入参</span><pre>' + esc(inStr.slice(0, 4000)) + '</pre></div>' : '')
       + (outStr ? '<div class="tsec' + (data.error ? ' e' : '') + '"><span class="tsl">' + (data.error ? '错误' : '结果') + '</span><pre>' + esc(outStr.slice(0, 20000)) + '</pre></div>' : '')
-    feed.scrollTop = feed.scrollHeight
+    scrollFeed()
   }
   // 流式渲染按帧合并：高频 token 事件下，一帧内多次事件只跑一次 renderMarkdown + innerHTML，
   // 消除"回答越长越卡"的 O(n²) 抖动（每帧最多渲一次，视觉无差）。
@@ -492,27 +550,59 @@
       curAnswer.innerHTML = renderMarkdown(answerParts ? joinParts(answerParts) : '')
       _needAnswer = false
     }
-    feed.scrollTop = feed.scrollHeight
+    scrollFeed()
   }
   function scheduleFlush() { if (!_flushQueued) { _flushQueued = true; requestAnimationFrame(flushStream) } }
 
-  // ── 子agent过程视图(对齐 opencode TUI)：共享组件 AgentMon(ui/agentmon.js) ──
-  // opencode 用 task 起多个子agent并行干活,主进程把子会话事件路由回本卡(带 agentId=子会话ID)。
-  // 每个子agent一组(组key=agentId):🔍 描述 · N 次调用 · 耗时 · 状态;组内实时列出它的工具调用(↳ 工具 目标)。
-  // 组插在当前回答气泡之前;before() 返回 null 时组件退回 appendChild(与原 ensureAgent 插入行为一致)。
-  const mon = AgentMon.create({ host: feed, before: () => (curAnswer && curAnswer.parentNode === feed) ? curAnswer : null })
+  // ── 子agent富容器(可"进入"):每个 agentId 一个折叠块,点开=看它的【思考 + 完整工具(入参/结果)+ 产出】,和主 Agent 一样详实 ──
+  // opencode 用 task 起子agent并行干活,主进程把子会话事件路由回本卡(sub=true,带 agentId)。工具直接复用主 Agent 的 renderTool(container=本块工具区)。
+  const subAgents = new Map()   // agentId -> { el, name, meta, reason, tools, out, reasonParts, outParts, toolIds, count, t0, doneAt, done }
+  let _saTick = null
+  const saMeta = (s) => (s.count ? s.count + ' 次调用 · ' : '') + Math.max(0, Math.round(((s.done ? s.doneAt : Date.now()) - s.t0) / 1000)) + 's' + (s.done ? '' : ' · 运行中')
+  function saTick() { let run = false; for (const s of subAgents.values()) if (!s.done) { run = true; s.meta.textContent = saMeta(s) } if (!run && _saTick) { clearInterval(_saTick); _saTick = null } }
+  function subAgent(agentId, name) {
+    let s = subAgents.get(agentId)
+    if (s) { if (name && name !== '子agent' && s.name.textContent !== name) s.name.textContent = name; return s }
+    const el = document.createElement('details'); el.className = 'subagent'; el.open = true   // 默认展开 —— 直接看到它的思考/工具/产出全程(想收起可手动折叠)
+    el.innerHTML = '<summary><svg class="sa-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg><span class="sa-ic">🔍</span><span class="sa-name"></span><span class="sa-meta">运行中…</span></summary>'
+      + '<div class="sa-body"><div class="sa-reason" hidden></div><div class="sa-tools"></div><div class="sa-out" hidden></div></div>'
+    if (curAnswer && curAnswer.parentNode === feed) feed.insertBefore(el, curAnswer); else feed.appendChild(el)
+    s = { el, name: el.querySelector('.sa-name'), meta: el.querySelector('.sa-meta'), reason: el.querySelector('.sa-reason'), tools: el.querySelector('.sa-tools'), out: el.querySelector('.sa-out'), reasonParts: new Map(), outParts: new Map(), toolIds: new Set(), count: 0, t0: Date.now(), doneAt: 0, done: false }
+    s.name.textContent = name || '子agent'
+    subAgents.set(agentId, s)
+    if (!_saTick) _saTick = setInterval(saTick, 1000)
+    scrollFeed()
+    return s
+  }
+  function subAgentDone(agentId, status, name) {
+    const s = subAgents.get(agentId); if (!s || s.done) return
+    if (name) s.name.textContent = name
+    s.done = true; s.doneAt = Date.now()
+    const err = /error|fail|deny|reject/i.test(status || '')
+    s.el.classList.toggle('done', !err); s.el.classList.toggle('err', err)
+    s.meta.textContent = saMeta(s)   // 收尾只置状态,【不折叠】—— 思考/工具/产出的过程留着可回看(修"结果出来后压缩成空白框")
+  }
 
   window.BocomHermes.onStream(({ kind, text, partID, status, input, output, title, error, sub, agentId, agentName, taskChild, taskDesc }) => {
-    if (sub) {                                            // 子agent活动 → 归到对应子agent组
-      mon.ensure(agentId || '_', agentName)               // 任何活动(含思考)都让组立刻出现,不等首个工具
-      if (kind === 'tool') mon.tool(agentId || '_', agentName, text, status || '', input, partID || '_')
-      return                                              // reasoning/text 只用于建组;紧凑视图不展开全文(父reasoning已单独显示)
+    if (sub) {                                            // 子agent活动 → 进它自己的富容器(思考/工具/产出),点开可"进入"看全程
+      const s = subAgent(agentId || '_', agentName)
+      if (kind === 'tool') {
+        if (partID && !s.toolIds.has(partID)) { s.toolIds.add(partID); s.count++ }
+        s.meta.textContent = saMeta(s)
+        renderTool(partID || '_', text, status || '', { input, output, title, error }, { container: s.tools, sub: true })   // 复用主 Agent 富工具块:入参+结果,默认折叠
+      } else if (kind === 'reasoning') {                  // 子agent思考(过去被丢弃)→ 进思考区
+        s.reason.hidden = false; s.reasonParts.set(partID || '_', text)
+        s.reason.textContent = joinParts(s.reasonParts); s.reason.scrollTop = s.reason.scrollHeight
+      } else {                                            // 子agent文本产出(过去被丢弃)→ 进产出区
+        s.out.hidden = false; s.outParts.set(partID || '_', text); s.out.innerHTML = renderMarkdown(joinParts(s.outParts))
+      }
+      return
     }
     if (kind === 'tool') {
-      if (text === 'task') {                              // 父会话的 task 工具 = 一个子agent组的标签/收尾
+      if (text === 'task') {                              // 父会话的 task 工具 = 起/收一个子agent
         const gid = taskChild || ''
         const fin = /complet|success|done|finish|error|fail|deny|reject/i.test(status || '')
-        if (gid && mon.has(gid)) { if (fin) mon.done(gid, status || '', taskDesc || '') }
+        if (gid && subAgents.has(gid)) { if (fin) subAgentDone(gid, status || '', taskDesc || '') }
         else if (fin) renderTool(partID || '_', 'task', status || '', { input, output, title, error })   // 子路由没拿到 → 退回普通工具块显示结果
         return
       }
@@ -533,20 +623,21 @@
   async function turn(text, target, files) {
     const ai = target || addMsg('', 'ai')
     const PH = target ? '运行中…' : '思考中…'; ai.textContent = PH
-    curAnswer = ai; curReason = null; answerParts = new Map(); reasonParts = new Map(); mon.clear(); setBusy(true)
+    curAnswer = ai; curReason = null; answerParts = new Map(); reasonParts = new Map(); subAgents.clear(); if (_saTick) { clearInterval(_saTick); _saTick = null }; setBusy(true)
     let ok = true
     try {
-      const reply = await window.BocomHermes.cardSend(text, files)
+      const reply = await window.BocomHermes.cardSend(text, files, activeSkill && activeSkill.id)
       // POST 空 body 的 serve（内网 bocomcode）：reply 可能为空，用流式累积的文本兜底，绝不丢已收到的答案
       const finalText = reply || (answerParts ? joinParts(answerParts) : '')
       if (finalText) ai.innerHTML = renderMarkdown(finalText)
       else if (!ai.textContent.trim() || ai.textContent === PH) ai.textContent = '（无文本输出）'
+      if (!target && finalText) { ai.dataset.raw = finalText; addCopyBtn(ai) }   // 答完挂复制按钮(流式中不挂,免被逐帧重渲染冲掉)
       // 思考过程答完保持展开(用户要看得见过程);可手动点标题折叠
     } catch (e) {
       ok = false
       if (!target) ai.className = 'msg ai err'
       ai.textContent = '⚠ ' + (e.message || e)
-    } finally { curAnswer = null; setBusy(false); feed.scrollTop = feed.scrollHeight; maybeDrain() }
+    } finally { for (const [id, s] of subAgents) if (!s.done) subAgentDone(id, 'done'); curAnswer = null; setBusy(false); scrollFeed(); maybeDrain() }
     return ok
   }
   // 输入框自增高（1~约5 行）
@@ -597,8 +688,44 @@
   }
 
   send.addEventListener('click', () => { if (busy) window.BocomHermes.cardAbort(); else submit() })
-  ci.addEventListener('input', autoGrow)
-  ci.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } })
+  // ── 作答技能:composer 输入 "/" 弹菜单,↑↓ 选、Enter 挂载(把方法论指令静默预置到消息前);当前技能显示为胶囊,✕ 卸载 ──
+  const skillMenu = document.getElementById('skillMenu'), skillBar = document.getElementById('skillBar')
+  let activeSkill = null, skillList = null, skillItems = [], skillSel = 0
+  async function getSkills() { if (!skillList) { try { skillList = await window.BocomHermes.skillsList() } catch { skillList = [] } } return skillList }
+  const skillMenuOpen = () => !skillMenu.hidden
+  function hideSkillMenu() { skillMenu.hidden = true; skillItems = [] }
+  async function openSkillMenu(query) {
+    const all = await getSkills()
+    const q = (query || '').toLowerCase().trim()
+    const list = q ? all.filter((s) => (s.name + ' ' + (s.desc || '') + ' ' + s.id).toLowerCase().includes(q)) : all
+    skillItems = list; skillSel = 0
+    skillMenu.innerHTML = (list.length
+      ? list.map((s, i) => '<div class="si' + (i === 0 ? ' sel' : '') + '" data-i="' + i + '"><span class="sn">' + esc(s.name) + '</span>' + (s.desc ? '<span class="sd">' + esc(s.desc) + '</span>' : '') + '</div>').join('')
+      : '<div class="snone">没有匹配的技能</div>')
+      + '<div class="sfoot">＋ 管理技能库(编辑 / 新增 .md)</div>'
+    skillMenu.hidden = false
+    skillMenu.querySelectorAll('.si').forEach((el) => el.addEventListener('mousedown', (ev) => { ev.preventDefault(); chooseSkill(skillItems[+el.dataset.i]) }))
+    const foot = skillMenu.querySelector('.sfoot'); if (foot) foot.addEventListener('mousedown', (ev) => { ev.preventDefault(); try { window.BocomHermes.skillsOpenDir() } catch {} hideSkillMenu() })
+  }
+  function moveSkillSel(d) { if (!skillItems.length) return; skillSel = (skillSel + d + skillItems.length) % skillItems.length; skillMenu.querySelectorAll('.si').forEach((el, i) => el.classList.toggle('sel', i === skillSel)) }
+  function chooseSkill(sk) { if (!sk) return; activeSkill = sk; ci.value = ''; autoGrow(); hideSkillMenu(); renderSkillChip(); ci.focus() }
+  function renderSkillChip() {
+    if (!activeSkill) { skillBar.hidden = true; skillBar.innerHTML = ''; return }
+    skillBar.hidden = false
+    skillBar.innerHTML = '<span class="skill-chip">⚡ 技能:' + esc(activeSkill.name) + '<span class="sx" title="卸载技能">✕</span></span>'
+    skillBar.querySelector('.sx').addEventListener('click', () => { activeSkill = null; renderSkillChip() })
+  }
+  ci.addEventListener('input', () => { autoGrow(); const v = ci.value; if (v[0] === '/') openSkillMenu(v.slice(1)); else if (skillMenuOpen()) hideSkillMenu() })
+  ci.addEventListener('keydown', (e) => {
+    if (skillMenuOpen()) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); moveSkillSel(1); return }
+      if (e.key === 'ArrowUp') { e.preventDefault(); moveSkillSel(-1); return }
+      if (e.key === 'Escape') { e.preventDefault(); hideSkillMenu(); return }
+      if (e.key === 'Enter') { e.preventDefault(); if (skillItems.length) chooseSkill(skillItems[skillSel]); else { hideSkillMenu(); submit() } return }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() }
+  })
+  document.addEventListener('mousedown', (e) => { if (skillMenuOpen() && !skillMenu.contains(e.target) && e.target !== ci) hideSkillMenu() })
 
   // 快捷指令：常用追问的模板（在这个数组里增删即可迭代）
   const QUICK = [
@@ -692,7 +819,7 @@
       const ok = await turn(p, out.querySelector('.routbody'))
       if (ok) { btn.textContent = '已运行 ✓'; btn.classList.add('done') }
       else { btn.innerHTML = orig; btn.disabled = false }
-      feed.scrollTop = feed.scrollHeight
+      scrollFeed()
     },
   })
 
@@ -714,7 +841,7 @@
         } else {
           addMsg('（原对话已不在引擎中，已为你新开一段，标题：' + title + '）', 'ai')
         }
-        setBusy(false); feed.scrollTop = feed.scrollHeight
+        setBusy(false); scrollFeed()
       } else if (embedded) {
         setBusy(false)
         addMsg('我是你的调试助手。在右侧浏览器复现问题后点「发给 Agent」，我会拿到控制台报错、网络异常和页面结构来定位；也可以直接在下面提问。', 'ai')
