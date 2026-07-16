@@ -222,6 +222,26 @@
   .msg.ai:hover .copybtn { opacity: .8; }
   .msg.ai .copybtn:hover { opacity: 1; color: var(--txt); border-color: var(--accent); }
   .msg.ai .copybtn.ok { color: var(--green); border-color: var(--green); opacity: 1; }
+  /* Claude Code 式状态行:忙时钉在输入框上方 —— 耗时 + 正在跑的工具 + Esc 提示;完成短显 ✓ 耗时 */
+  .statusline { flex: none; display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--txt2); padding: 1px 4px 0; min-width: 0; }
+  .statusline[hidden] { display: none; }
+  .statusline .sl-spin { flex: none; display: inline-flex; color: var(--accent); }
+  .statusline .sl-main { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .statusline .sl-tool { font-family: var(--mono); color: var(--accent); }
+  .statusline .sl-time { flex: none; font-variant-numeric: tabular-nums; color: var(--txt3); }
+  .statusline .sl-esc { flex: none; color: var(--txt3); border: .5px solid var(--composer-border); border-radius: 5px; padding: 0 5px; font-size: 10px; }
+  .statusline.ok { color: var(--green); }
+  /* 排队中的消息气泡(Claude Code 式 queueing):半透明 + ⏳ 角标,发出时恢复 */
+  .msg.me.queued { opacity: .55; }
+  .qtag { font-size: 10px; color: var(--txt3); margin-left: 6px; }
+  /* 工具行紧凑化:折叠时 summary 即一行摘要(⏺ 名称 · 目标 · 状态 · 输出量) */
+  .toolbox .tsum { color: var(--txt3); flex: none; font-size: 10.5px; }
+  /* todowrite → 勾选清单(对齐 Claude Code 的 todo 列表) */
+  .todoline { display: flex; align-items: baseline; gap: 7px; padding: 2px 0; font-size: 12px; color: var(--txt2); line-height: 1.45; }
+  .todoline .tstat { flex: none; font-size: 11px; }
+  .todoline.done { color: var(--txt3); text-decoration: line-through; text-decoration-color: var(--composer-border); }
+  .todoline.doing { color: var(--txt); font-weight: 600; }
+  .todoline.doing .tstat { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -234,6 +254,7 @@
       <span id="proj" class="proj"></span>
       <span id="model" class="proj modelchip nodrag" title="选择模型（仅影响本卡）">默认模型</span>
       <span id="hb" class="hb" title="引擎保活心跳检测中…"><i class="hb-dot"></i><span class="hb-txt">保活</span></span>
+      <button id="bverbose" class="hbtn nodrag" title="过程详情：开=每个工具自动展开入参/结果；关=紧凑一行摘要(点击单个可展开)" aria-label="过程详情"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="3.5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="3.5" cy="18" r="1.2" fill="currentColor" stroke="none"/></svg></button>
       <button id="bprobe" class="hbtn nodrag" title="保活心跳日志（看 POST /heartbeat 的报文）" aria-label="保活日志"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5 7 5-14 2.5 7H21"/></svg></button>
       <button id="pin" class="hbtn nodrag" title="置顶" aria-label="置顶"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l-1.2 5.2L17 12v2H7v-2l3.2-2.8z"/><path d="M12 14v6"/></svg></button>
       <button id="max" class="hbtn nodrag" title="最大化 / 还原" aria-label="最大化"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></button>
@@ -247,6 +268,7 @@
     <div id="attRow" class="att-row nodrag"></div>
     <div id="dropHint" class="drop-hint">松手上传 — 文档解析成文本，图片走多模态识别</div>
     <div id="skillBar" class="skill-bar nodrag" hidden></div>
+    <div id="statusline" class="statusline nodrag" hidden></div>
     <div class="composer nodrag">
       <textarea id="ci" rows="1" placeholder="继续对话…（Enter 发送 · Shift+Enter 换行 · / 挂载作答技能 · ↑ 翻输入历史）"></textarea>
       <button id="send" class="send" aria-label="发送"></button>
@@ -321,6 +343,10 @@
 
   // Markdown 渲染 + 富结果块识别已抽到 ui/rich.js（window.Rich）。
   const renderMarkdown = (md) => window.Rich.renderMarkdown(md)
+  // HTML 转义 —— 主脚本必须自带一份:此前唯一的定义在上面探活抽屉的 IIFE 里(函数作用域,不外泄),
+  // 主脚本里所有 esc() 调用(工具日志/模型菜单/技能菜单)运行时都是 TypeError: esc is not a function ——
+  // 工具块 createElement 成功进了 DOM、innerHTML 赋值时炸掉,剩一个空白框(vm 桩自测 card:ui:test 抓的就是这类雷)
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
   const params = new URLSearchParams(location.search)
   const title = params.get('title') || '新对话'
@@ -437,13 +463,64 @@
   const SPIN = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" style="color:var(--accent);animation:spin 1s linear infinite"><path d="M12 3a9 9 0 1 0 9 9"/></svg>'
   const DONE = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="color:var(--green)"><path d="M4 12l5 5L20 6"/></svg>'
   let busy = false
-  function setBusy(b) { busy = b; st.innerHTML = b ? SPIN : DONE; send.innerHTML = b ? STOP : ARROW; quick.classList.toggle('hidden', b); try { window.BocomHermes.reportBusy(b) } catch {} }
+  // 运行中的工具登记表:状态行据此显示"正在跑什么"。必须declare在 setBusy 之前 —— setBusy(false) 在定义处立即执行,
+  // 若它声明在后面就是 TDZ ReferenceError,整张卡直接白屏(卡片自测的 vm 桩就是抓这种雷的)。
+  const runningTools = new Map()   // partID → 摘要文本
+  // Claude Code 式状态行:忙时实时显示【正在跑什么 + 已耗时 + Esc 中断】,完成短显 ✓ 耗时。
+  // 挂在 setBusy 上:所有进入/退出忙态的路径(turn/切项目/boot)自然带上状态行,不用逐处埋点。
+  const sl = document.getElementById('statusline')
+  let turnT0 = 0, slTimer = null, slHideTimer = null
+  function paintStatus() {
+    if (!busy || !turnT0) return
+    const secs = Math.floor((Date.now() - turnT0) / 1000)
+    let act = '思考中'
+    if (runningTools.size) {
+      const last = [...runningTools.values()].pop()
+      act = '<span class="sl-tool">' + esc(last) + '</span>' + (runningTools.size > 1 ? '（共 ' + runningTools.size + ' 个工具在跑）' : '')
+    }
+    sl.classList.remove('ok')
+    sl.innerHTML = '<span class="sl-spin">✻</span><span class="sl-main">' + act + '</span><span class="sl-time">' + secs + 's</span><span class="sl-esc">Esc 中断</span>'
+    sl.hidden = false
+  }
+  function setBusy(b) {
+    busy = b; st.innerHTML = b ? SPIN : DONE; send.innerHTML = b ? STOP : ARROW; quick.classList.toggle('hidden', b); try { window.BocomHermes.reportBusy(b) } catch {}
+    if (b) {
+      turnT0 = Date.now(); runningTools.clear(); clearTimeout(slHideTimer)
+      paintStatus(); if (!slTimer) slTimer = setInterval(paintStatus, 500)
+    } else {
+      if (slTimer) { clearInterval(slTimer); slTimer = null }
+      runningTools.clear()
+      if (turnT0) {   // 有过一轮 → 短显 ✓ 耗时再隐藏;boot 期间的 setBusy(false) 没有 turnT0,不闪一下
+        const secs = Math.round((Date.now() - turnT0) / 1000)
+        sl.classList.add('ok'); sl.innerHTML = '✓ 完成 · ' + secs + 's'; sl.hidden = false
+        clearTimeout(slHideTimer); slHideTimer = setTimeout(() => { sl.hidden = true }, 3500)
+        turnT0 = 0
+      } else sl.hidden = true
+    }
+  }
   setBusy(false)
+  // Esc 中断(Claude Code 肌肉记忆)。优先级:关记忆弹层 > 关模型菜单 >(技能菜单由输入框自己处理)> 中断本轮
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return
+    const mp = document.getElementById('memPop'); if (mp) { mp.remove(); return }
+    if (!menuEl.hidden) { menuEl.hidden = true; return }
+    if (skillMenuOpen()) return
+    if (busy) {
+      try { window.BocomHermes.cardAbort() } catch {}
+      sl.classList.remove('ok'); sl.innerHTML = '<span class="sl-spin">✻</span><span class="sl-main">正在停止…（等引擎收尾，几秒内结束）</span>'; sl.hidden = false
+    }
+  })
 
   // 工作台：右侧浏览器一键把调试上下文注入这个会话（会话忙/未就绪时排队，逐条发送）
   let cardReady = false
   const pendingInjects = []
-  function maybeDrain() { if (cardReady && !busy && pendingInjects.length) { const n = pendingInjects.shift(); if (n.disp) addMsg(n.disp, 'me'); turn(n.text) } }
+  function maybeDrain() {
+    if (!cardReady || busy || !pendingInjects.length) return
+    const n = pendingInjects.shift()
+    if (n.el) { n.el.classList.remove('queued'); const q = n.el.querySelector('.qtag'); if (q) q.remove() }   // 排队气泡转正:去掉半透明和 ⏳
+    else if (n.disp) addMsg(n.disp, 'me')
+    turn(n.text, null, n.files)
+  }
   function injectMessage(text, disp) { pendingInjects.push({ text, disp }); maybeDrain() }
   // 分诊 / 进度提示行（不是一轮对话，只是过程播报）
   function addNote(text, tone) {
@@ -511,13 +588,43 @@
   const TOOL_LABEL = { run_workflow: '升格 → 动态工作流' }
   const TOOL_ICON = { run_workflow: '🚀', bash: '▶', shell: '▶', read: '📖', write: '✍', edit: '✏', patch: '✏', grep: '🔎', glob: '🔎', list: '📁', ls: '📁', webfetch: '🌐', fetch: '🌐', task: '🤖', todowrite: '☑', todoread: '☑' }
   const fmtInput = (v) => { if (v == null) return ''; if (typeof v === 'string') return v; try { return JSON.stringify(v, null, 2) } catch { return String(v) } }
+  // 过程详情开关(Claude Code 的 verbose):关=工具紧凑一行摘要(默认,免刷屏),开=每个工具自动展开入参/结果。记住偏好。
+  let verbose = false; try { verbose = localStorage.getItem('cardVerbose') === '1' } catch {}
+  const verboseBtn = document.getElementById('bverbose')
+  function paintVerbose() { verboseBtn.classList.toggle('on', verbose) }
+  verboseBtn.addEventListener('click', () => {
+    verbose = !verbose; try { localStorage.setItem('cardVerbose', verbose ? '1' : '0') } catch {}
+    paintVerbose()
+    document.querySelectorAll('.toolbox').forEach((el) => { el.open = verbose })   // 立即作用于已有块,所见即所得
+    addNote(verbose ? '过程详情已开启：工具自动展开入参/结果' : '已切换紧凑模式：工具折叠为一行摘要，点击可展开', 'muted')
+  })
+  paintVerbose()
+  // todowrite 的入参 → 勾选清单(对齐 Claude Code 的 todo 列表);形状不符则退回普通 JSON 显示
+  function todoHtml(input) {
+    const todos = input && Array.isArray(input.todos) ? input.todos : null
+    if (!todos || !todos.length) return null
+    const line = (t) => {
+      const txt = String((t && (t.content || t.text || t.title)) || '').trim(); if (!txt) return ''
+      const s = String((t && t.status) || '')
+      const done = /complet/i.test(s), doing = /progress|doing/i.test(s), cancel = /cancel/i.test(s)
+      const mark = done ? '☒' : doing ? '◐' : cancel ? '⊘' : '☐'
+      return '<div class="todoline' + (done || cancel ? ' done' : doing ? ' doing' : '') + '"><span class="tstat">' + mark + '</span><span>' + esc(txt) + '</span></div>'
+    }
+    const rows = todos.map(line).filter(Boolean)
+    if (!rows.length) return null
+    const doneN = todos.filter((t) => /complet/i.test(String(t && t.status || ''))).length
+    return { rows: rows.join(''), meta: doneN + '/' + todos.length }
+  }
   function renderTool(partID, name, status, data, opts) {
     data = data || {}; opts = opts || {}
     const isWf = name === 'run_workflow'
+    const isTodo = /^todo(write|read)$/i.test(String(name))
     let el = toolEls.get(partID)
     if (!el) {
       el = document.createElement('details'); el.className = 'toolbox' + (isWf ? ' wf' : '') + (opts.sub ? ' subtool' : '')
-      el.open = !opts.sub                                   // 子agent的工具默认折叠,免刷屏;父会话工具默认展开
+      // 紧凑模式(默认):折叠成一行摘要,点开看入参/结果 —— 对齐 Claude Code;verbose 开着才自动展开。
+      // todo 清单例外:它就是给人盯进度的,始终展开。
+      el.open = isTodo || (verbose && !opts.sub)
       const host = opts.container || feed
       if (opts.container) host.appendChild(el)
       else if (curAnswer && curAnswer.parentNode === feed) feed.insertBefore(el, curAnswer)
@@ -530,12 +637,22 @@
     const icon = isWf ? '🚀' : (TOOL_ICON[String(name).toLowerCase()] || '⚙')
     const inStr = fmtInput(data.input)
     const outStr = data.error ? String(data.error) : (data.output != null ? String(data.output) : '')
+    const todo = isTodo ? todoHtml(data.input) : null
+    // 摘要行自带信息量:完成后标注输出量(点开之前就知道有多少东西),对齐 Claude Code 的 "⎿ 120 lines"
+    const sum = todo ? ('待办 ' + todo.meta) : ((done && !err && outStr) ? ('⎿ ' + (outStr.length > 999 ? (outStr.length / 1000).toFixed(1) + 'k 字' : outStr.length + ' 字')) : '')
     el.innerHTML =
       '<summary><span class="ti">' + icon + '</span><span class="tn">' + esc(TOOL_LABEL[name] || name) + '</span>'
       + (data.title ? '<span class="tt">' + esc(String(data.title).slice(0, 200)) + '</span>' : '')
+      + (sum ? '<span class="tsum">' + esc(sum) + '</span>' : '')
       + '<span class="ts2">· ' + stt + '</span></summary>'
-      + (inStr ? '<div class="tsec"><span class="tsl">入参</span><pre>' + esc(inStr.slice(0, 4000)) + '</pre></div>' : '')
-      + (outStr ? '<div class="tsec' + (data.error ? ' e' : '') + '"><span class="tsl">' + (data.error ? '错误' : '结果') + '</span><pre>' + esc(outStr.slice(0, 20000)) + '</pre></div>' : '')
+      + (todo
+        ? '<div class="tsec">' + todo.rows + '</div>'
+        : (inStr ? '<div class="tsec"><span class="tsl">入参</span><pre>' + esc(inStr.slice(0, 4000)) + '</pre></div>' : '')
+          + (outStr ? '<div class="tsec' + (data.error ? ' e' : '') + '"><span class="tsl">' + (data.error ? '错误' : '结果') + '</span><pre>' + esc(outStr.slice(0, 20000)) + '</pre></div>' : ''))
+    // 状态行登记:运行中登记(带子agent名),完成/出错注销
+    const slName = String(name) + (data.title ? '(' + String(data.title).slice(0, 40) + ')' : '') + (opts.sub && opts.agentName ? ' @' + opts.agentName : '')
+    if (done || err) runningTools.delete(partID); else runningTools.set(partID, slName)
+    paintStatus()
     scrollFeed()
   }
   // 流式渲染按帧合并：高频 token 事件下，一帧内多次事件只跑一次 renderMarkdown + innerHTML，
@@ -592,7 +709,7 @@
       if (kind === 'tool') {
         if (partID && !s.toolIds.has(partID)) { s.toolIds.add(partID); s.count++ }
         s.meta.textContent = saMeta(s)
-        renderTool(partID || '_', text, status || '', { input, output, title, error }, { container: s.tools, sub: true })   // 复用主 Agent 富工具块:入参+结果,默认折叠
+        renderTool(partID || '_', text, status || '', { input, output, title, error }, { container: s.tools, sub: true, agentName })   // 复用主 Agent 富工具块:入参+结果,默认折叠;agentName 给状态行标注"谁在跑"
       } else if (kind === 'reasoning') {                  // 子agent思考(过去被丢弃)→ 进思考区
         s.reason.hidden = false; s.reasonParts.set(partID || '_', text)
         s.reason.textContent = joinParts(s.reasonParts); s.reason.scrollTop = s.reason.scrollHeight
@@ -701,16 +818,25 @@
 
   function submit() {
     const v = ci.value.trim()
-    if ((!v && !pendingAtts.length) || busy) return
+    if (!v && !pendingAtts.length) return
     if (v) { if (sentHistory[sentHistory.length - 1] !== v) sentHistory.push(v); if (sentHistory.length > 50) sentHistory.shift() }
     histIdx = -1; histDraft = ''
     const docRefs = pendingAtts.filter((a) => a.kind === 'doc').map((a) => '- ' + a.path + '（' + a.name + '）').join('\n')
     const docNote = docRefs ? '【用户拖入了文档，需要时用 read_document 工具读取其内容】\n' + docRefs : ''
     const images = pendingAtts.filter((a) => a.kind === 'image').map((a) => ({ mime: a.mime, url: a.dataUrl, filename: a.name }))
     const full = [docNote, v].filter(Boolean).join('\n\n')
+    const dispText = (v || (images.length ? '(图片)' : '(文档)')) + (pendingAtts.length ? '  📎' + pendingAtts.length : '')
     ci.value = ''; autoGrow()
-    addMsg((v || (images.length ? '(图片)' : '(文档)')) + (pendingAtts.length ? '  📎' + pendingAtts.length : ''), 'me')
     pendingAtts.length = 0; renderAtts()
+    const el = addMsg(dispText, 'me')
+    // 忙时排队(Claude Code 式 queueing):以前 busy 直接 return,打好的字连附件一起被吞,连个提示都没有。
+    // 现在气泡立即上屏(半透明 + ⏳),本轮一结束按序自动发出(复用注入队列 maybeDrain)。
+    if (busy || !cardReady) {
+      el.classList.add('queued')
+      const q = document.createElement('span'); q.className = 'qtag'; q.textContent = '⏳ 排队中，本轮结束后发出'; el.appendChild(q)
+      pendingInjects.push({ text: full || '(见附件)', files: images, el })
+      return
+    }
     turn(full || '(见附件)', null, images)
   }
 
