@@ -289,6 +289,10 @@
       }
       if (!graphEl.hidden) draw()
       refreshBanner()
+    } else if (ev.type === 'plan-failed') {
+      // 规划器挂了但前面几轮有成果:编排层收手去汇总。必须说出来 —— 否则用户只看到"轮次莫名其妙少了几轮"
+      plannerNote('⚠ 第 ' + ev.round + ' 轮规划失败：' + (ev.error || '') + ' —— 不再往下拆，直接用已完成的子任务成果汇总（成果不丢）')
+      refreshBanner('规划器失败，正在用已有成果汇总…')
     } else if (ev.type === 'plan-approve') {
       const box = document.createElement('div'); box.className = 'approve'
       const t = document.createElement('div'); t.className = 't'
@@ -356,7 +360,7 @@
       for (const [k, it] of items) if (it.status === 'run' || it.status === 'pend') wfStatus(k, 'ok')
       const secs = ev.elapsedMs ? Math.round(ev.elapsedMs / 1000) + 's' : ''
       const okN = [...tasks.values()].filter((t) => t.status === 'ok').length
-      const b = banner('done', '完成 · ' + ev.rounds + ' 轮 · ' + okN + '/' + tasks.size + ' 任务成功 · ' + secs + (ev.stopped ? ' · 提前收尾(' + ev.stopped + ')' : '') + (ev.unmet && ev.unmet.length ? ' · 未满足依赖:' + ev.unmet.join(',') : ''))
+      const b = banner('done', '完成 · ' + ev.rounds + ' 轮 · ' + okN + '/' + tasks.size + ' 任务成功 · ' + secs + (ev.stopped ? ' · 提前收尾(' + (STOP_WHY[ev.stopped] || ev.stopped) + ')' : '') + (ev.unmet && ev.unmet.length ? ' · 未满足依赖:' + ev.unmet.join(',') : ''))
       const cp = document.createElement('button')   // 最终成果一键复制(拿去贴文档/邮件)
       cp.textContent = '复制成果'
       cp.style.cssText = 'margin-left:8px;font-size:11px;color:var(--accent);background:transparent;border:1px solid var(--accent);border-radius:6px;padding:1px 8px;cursor:pointer'

@@ -91,6 +91,8 @@ module.exports = function initOrch(S, { ipcMain, oc, orch, log, app, path, fs })
         run, signal: ac.signal, maxConcurrency: 2, maxRounds: 4, maxTasks: 16, maxBatch: 5, maxRoundsCeil: 8, maxTasksCeil: 32, taskTimeoutMs: 0, review: true, onBeforeBatch,
         // maxRounds/maxTasks=规划器没自估时的默认;规划器给了 budget 就动态调整,夹在 maxRoundsCeil/maxTasksCeil(8轮/32Agent)内 —— 复杂任务放得开、简单任务早收,不再被固定 4/16 框死
         onPlan: (round, plan) => send('plan', { round, done: plan.done, note: plan.note || '', tasks: plan.tasks.map((t) => ({ id: t.id, role: t.role, goal: t.goal, deps: t.deps })) }),
+        // 规划器重试完仍挂:已有成果 → 编排层收手去汇总(不再连坐丢光)。这里要让用户看见"为什么没继续拆下去",别静默少跑几轮
+        onPlanError: (round, err) => { try { log('wf 规划器第 ' + round + ' 轮失败:' + String(err && err.message || err) + ' —— 已有成果,收手汇总(不丢已跑完的子任务)'); send('plan-failed', { round, error: String(err && err.message || err) }) } catch {} },
         onTaskStart: (t) => send('task', { id: t.id, status: 'running' }),
         // 产出随事件带给前端(截 2500):点 DAG 节点即可看该任务的实际产出,不用等最终汇总;ms=耗时给时间线
         onTaskDone: (t, out, st, ms) => send('task', { id: t.id, status: 'ok', chars: (out || '').length, ms: ms || 0, output: String(out || '').slice(0, 2500) }),

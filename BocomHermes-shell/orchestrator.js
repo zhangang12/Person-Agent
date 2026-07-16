@@ -29,6 +29,20 @@ const summarize = (results) => {
   return arr.map((r) => `- [${r.task.id}] ${r.task.goal}（${r.status}）\n  摘要：${tailClip(r.output, 600)}`).join('\n')   // 尾部 600:容得下完整【交接】段(3-5 行),规划器据此拆下一批 —— 太短(如 280)会截掉交接、让规划变笨
 }
 const aborted = (opts) => !!(opts.signal && opts.signal.aborted)
+// 等一个【外部才能解决】的 promise(人审)时必须能被 abort 打断:宿主的审批 promise 只由"用户点按钮"解决,
+// 可用户点的偏偏是「停止」—— 它就永远不 resolve,整个编排卡死在那一行:run() 的 finally 不执行、
+// 会话/注册表全泄漏、ipcMain.handle 永不回复。核心不能假设宿主是 abort-aware 的,自己兜。
+function awaitAbortable(p, opts) {
+  if (!opts.signal) return Promise.resolve(p)
+  if (opts.signal.aborted) return Promise.resolve({ abort: true })
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const fin = (fn, v) => { if (settled) return; settled = true; try { opts.signal.removeEventListener('abort', onAbort) } catch {} ; fn(v) }
+    const onAbort = () => fin(resolve, { abort: true })
+    opts.signal.addEventListener('abort', onAbort, { once: true })
+    Promise.resolve(p).then((v) => fin(resolve, v), (e) => fin(reject, e))
+  })
+}
 
 // 超时包装：ms<=0 不限时
 function withTimeout(p, ms) {
@@ -39,11 +53,19 @@ function withTimeout(p, ms) {
   })
 }
 // 带超时 + 重试 的一次运行
+// 空产出一律当失败:底层轮询在黑洞会话上可能静默返回空串(见 opencode.js waitAssistantText),
+// 不拦的话这里会把它记成 status:'ok' 的空任务 —— 不重试、不报错,空白照样进下游上下文和最终汇总。
+// 宁可重试一次再判 error(规划器看得见 error 会重派/绕开),也不要一个假装成功的空壳。
 async function runGuarded(run, prompt, meta, opts, retries) {
   let lastErr
   for (let i = 0; i <= retries; i++) {
     if (aborted(opts)) throw new Error('已中止')
-    try { return await withTimeout(Promise.resolve(run(prompt, { ...meta, attempt: i, signal: opts.signal, timeoutMs: opts.taskTimeoutMs })), opts.taskTimeoutMs) }   // timeoutMs 下传:生产 run 据此在编排超时后掐掉底层会话(否则僵尸生成 + 重试双跑)
+    try {
+      const out = await withTimeout(Promise.resolve(run(prompt, { ...meta, attempt: i, signal: opts.signal, timeoutMs: opts.taskTimeoutMs })), opts.taskTimeoutMs)   // timeoutMs 下传:生产 run 据此在编排超时后掐掉底层会话(否则僵尸生成 + 重试双跑)
+      // 措辞注意:别在这句里写"超时"二字 —— 下游按 /超时|timeout/ 分类状态,会把空产出误归成 timeout
+      if (!String(out == null ? '' : out).trim()) throw new Error('空产出(会话一个字都没吐,多半是网关黑洞或底层静默返回)')
+      return out
+    }
     catch (e) { lastErr = e; if (aborted(opts)) throw e }
   }
   throw lastErr
@@ -112,7 +134,7 @@ function buildPlanPrompt(goal, doneSummary, ledger, maxBatch) {
     '若目标已可收尾、无需更多子任务,输出:{"budget":{...},"ledger":{...},"note":"收尾理由","tasks":[],"done":true}',
   ].join('\n')
 }
-function buildWorkPrompt(task, ctx, goal) {
+function buildWorkPrompt(task, ctx, goal, depFail) {
   const known = ROLE_PROMPTS[task.role]
   const roleHint = known || ('你现在的角色：' + task.role + '。请完全代入这个角色的视角与职责。')
   return [
@@ -120,6 +142,8 @@ function buildWorkPrompt(task, ctx, goal) {
     '总目标：' + goal,
     '你的子任务：' + task.goal,
     ctx ? '可参考的上游结果：\n' + ctx : '',
+    // 上游失败必须明说:不说的话下游只会看见一段"(error：网关502)"当成上游产出,然后照着编 —— 这正是"产出看着完整、实则臆造"的一个根
+    depFail ? '【上游失败告知】你依赖的上游任务 ' + depFail + ' 未能产出结果。请注意：\n· 不要臆造它们本该给出的内容,也不要把这句话当成它们的产出。\n· 能靠你自己的工具核实补上的部分,就自己去核实并照常交付。\n· 确实依赖上游、你补不了的部分,在成果里明确写清"缺少上游 X,本节未覆盖",不要糊过去。' : '',
     '请交付一份【完整、可直接使用】的成果，不是提要。要求：',
     '· 用你的工具读代码 / 查库去核实，不要凭空猜测；结论要贴出证据(文件路径、函数/表名、代码片段、命令、数据)。',
     '· 读文件要克制：先 grep/glob 定位，再只读相关文件与相关段落；别为"求全"通读整目录 / 几百个文件 —— 读越多你的上下文越会被撑爆，产出反而变薄变乱。确需大范围勘察，就派一个【边界清晰的聚焦子任务/子agent】(只看什么、只产出什么)在独立上下文里做，别把几百个文件糊进自己的上下文。',
@@ -147,27 +171,59 @@ function buildReducePrompt(goal, results, ledger) {
 // ---- 汇总(长度感知,保护汇总会话自己的上下文)----
 // 正文总量在预算内 → 单次成稿(与原行为一致)。超预算 → 分层:按预算分组,每组各自只看【本组全文】合成一份"分册稿"(不丢细节),
 // 再把各分册稿拼成终稿。避免十几份厚正文一次性灌爆汇总会话 → 又被压回摘要(那正是"探索很细、产出很薄"的一个根)。每层都走 buildReducePrompt(写成品,不做摘要)。
-async function synthesize(run, goal, results, ledger, opts) {
-  const entries = [...results.values()]
-  const total = entries.reduce((n, r) => n + ((r.output && r.output.length) || 0), 0)
-  const budget = opts.reduceBudgetChars > 0 ? opts.reduceBudgetChars : 60000
-  const retries = opts.reduceRetries >= 0 ? opts.reduceRetries : 1
-  if (entries.length <= 1 || total <= budget) return await runGuarded(run, buildReducePrompt(goal, results, ledger), { kind: 'reduce' }, opts, retries)
+const outLen = (r) => (r.output && r.output.length) || 0
+// 单份正文就超预算时,装箱救不了它(那一箱=它自己,照样一次性灌爆汇总会话)。先按预算把它切片,
+// 每片当成一个独立待汇总条目进分册层 —— 切片优先落在段落边界,别把代码块/表格从中腰斩。
+function splitOversized(entries, budget) {
+  const out = []
+  for (const r of entries) {
+    const s = String(r.output == null ? '' : r.output)
+    if (s.length <= budget) { out.push(r); continue }
+    const n = Math.ceil(s.length / budget)
+    let at = 0
+    for (let i = 0; i < n && at < s.length; i++) {
+      let end = Math.min(s.length, at + budget)
+      if (end < s.length) {
+        const br = s.lastIndexOf('\n\n', end)
+        if (br > at + budget * 0.6) end = br    // 段落边界回退:只在还剩 60% 以上时才让步,免得切出一堆碎片
+      }
+      out.push({ task: { id: r.task.id + '#' + (i + 1), goal: r.task.goal + '(第 ' + (i + 1) + '/' + n + ' 片正文)' }, output: s.slice(at, end), status: r.status })
+      at = end
+    }
+  }
+  return out
+}
+function packByBudget(entries, budget) {
   const groups = []; let cur = [], curN = 0
   for (const r of entries) {
-    const c = (r.output && r.output.length) || 0
+    const c = outLen(r)
     if (cur.length && curN + c > budget) { groups.push(cur); cur = []; curN = 0 }   // 贪心装箱:每箱正文量不超预算
     cur.push(r); curN += c
   }
   if (cur.length) groups.push(cur)
-  opts.onReduce && opts.onReduce({ tier: 'split', groups: groups.length, totalChars: total })
-  const drafts = []
-  for (let i = 0; i < groups.length; i++) {
-    const gMap = new Map(groups[i].map((r) => [r.task.id, r]))
-    const d = await runGuarded(run, buildReducePrompt(goal, gMap, null), { kind: 'reduce', part: i + 1 }, opts, retries)   // 分册稿:未决项(ledger.open)留到终稿单列,不每册重复
-    drafts.push({ task: { id: 'seg' + (i + 1), goal: '分册合成稿 ' + (i + 1) + '/' + groups.length }, output: String(d || ''), status: 'ok' })
+  return groups
+}
+async function synthesize(run, goal, results, ledger, opts) {
+  const budget = opts.reduceBudgetChars > 0 ? opts.reduceBudgetChars : 60000
+  const retries = opts.reduceRetries >= 0 ? opts.reduceRetries : 1
+  let entries = [...results.values()]
+  // 逐层收敛:超预算就切片+装箱,每箱各自成一份分册稿;分册稿合计仍超预算就再来一层。
+  // 每一次 run 的输入都被夹在预算内 —— 终稿那次也是。层数封顶 3,防病态情况(模型每次都吐超长稿)空转。
+  for (let level = 0; level < 3; level++) {
+    const total = entries.reduce((n, r) => n + outLen(r), 0)
+    if (total <= budget) break
+    const groups = packByBudget(splitOversized(entries, budget), budget)
+    opts.onReduce && opts.onReduce({ tier: 'split', groups: groups.length, totalChars: total, level: level + 1 })
+    const drafts = []
+    for (let i = 0; i < groups.length; i++) {
+      const gMap = new Map(groups[i].map((r) => [r.task.id, r]))
+      const d = await runGuarded(run, buildReducePrompt(goal, gMap, null), { kind: 'reduce', part: i + 1, level: level + 1 }, opts, retries)   // 分册稿:未决项(ledger.open)留到终稿单列,不每册重复
+      drafts.push({ task: { id: 'seg' + (level + 1) + '_' + (i + 1), goal: '分册合成稿 ' + (i + 1) + '/' + groups.length }, output: String(d || ''), status: 'ok' })
+    }
+    entries = drafts
   }
-  return await runGuarded(run, buildReducePrompt(goal, new Map(drafts.map((d) => [d.task.id, d])), ledger), { kind: 'reduce', part: 'final' }, opts, retries)
+  const fin = new Map(entries.map((r) => [r.task.id, r]))
+  return await runGuarded(run, buildReducePrompt(goal, fin, ledger), { kind: 'reduce', part: 'final' }, opts, retries)
 }
 
 // ---- 汇总后复核:独立复核员对照总目标与子任务原始产出审终稿,挑真问题;有问题则据此修订,通过则原样留(不为改而改)。----
@@ -202,7 +258,11 @@ function buildRevisePrompt(goal, draft, review) {
 async function reviewAndRevise(run, goal, results, draft, opts) {
   const retries = opts.reduceRetries >= 0 ? opts.reduceRetries : 1
   const review = String(await runGuarded(run, buildReviewPrompt(goal, results, draft), { kind: 'review' }, opts, retries) || '')
-  const passed = /^\s*(通过|pass\b)/i.test(review.trim()) || review.trim().length < 8   // 复核员开头判"通过"(或空产出)→ 视为达标,不修订
+  // 达标判定只认【短首行里的"通过"】。不能只看 /^通过/ ——「通过阅读子任务产出,发现三处遗漏…」也以"通过"开头,
+  // 那是介词不是结论,按老写法会把一份挑出真问题的复核当成达标直接跳过修订。反过来「复核结果:通过」也得认。
+  const first = (review.trim().split('\n')[0] || '').trim()
+  const passed = review.trim().length < 8 ||
+    (first.length <= 20 && /(通过|pass)/i.test(first) && !/(不|未|没)通过|不合格|问题/.test(first))
   opts.onReview && opts.onReview({ passed, review })
   if (passed) return { final: draft, review, passed: true }
   const revised = String(await runGuarded(run, buildRevisePrompt(goal, draft, review), { kind: 'revise' }, opts, retries) || '').trim()
@@ -211,10 +271,17 @@ async function reviewAndRevise(run, goal, results, draft, opts) {
 }
 
 // ---- 规划一轮（容错解析 + 重试 + 净化）----
+// 同一个循环兜两种失败:①出了话但不是合法 JSON ②这次 run 直接抛(网关黑洞/空转判死)。
+// ②以前不重试、直接把异常甩出 planOnce → orchestrate 整个抛 → 已跑完的子任务成果全丢。内网网关抖动是常态,规划器同样值得重试。
 async function planOnce(run, goal, doneSummary, ledger, knownIds, opts) {
   const base = buildPlanPrompt(goal, doneSummary, ledger, opts.maxBatch)
+  let lastErr = null, threw = false
   for (let i = 0; i <= opts.parseRetries; i++) {
-    const text = await runGuarded(run, i === 0 ? base : base + '\n\n（上次未输出合法 JSON，请严格只输出 JSON 对象）', { kind: 'plan', round: opts._round }, opts, 0)
+    const suffix = i === 0 ? '' : (threw ? '\n\n（上次调用被中断，请直接给出 JSON 结果，减少探索性步骤）' : '\n\n（上次未输出合法 JSON，请严格只输出 JSON 对象）')
+    let text
+    try { text = await runGuarded(run, base + suffix, { kind: 'plan', round: opts._round, attemptOfPlan: i }, opts, 0) }
+    catch (e) { if (aborted(opts)) throw e; lastErr = e; threw = true; continue }
+    threw = false
     const j = extractJson(text)
     if (j && Array.isArray(j.tasks)) {
       const nextLedger = (j.ledger && typeof j.ledger === 'object')
@@ -225,7 +292,7 @@ async function planOnce(run, goal, doneSummary, ledger, knownIds, opts) {
       return { tasks: sanitizePlan(j.tasks, knownIds), done: !!j.done, ledger: nextLedger, note: typeof j.note === 'string' ? j.note.slice(0, 200) : '', budget }   // note=规划器叙事(一句话思路),UI 当旁白展示
     }
   }
-  throw new Error('Planner 未产出合法任务图(JSON)')
+  throw lastErr || new Error('Planner 未产出合法任务图(JSON)')
 }
 
 // ---- 执行一批：拓扑就绪 + 并发上限 + 中止 + 死锁不挂死 ----
@@ -245,9 +312,15 @@ function runDag(run, batch, results, opts) {
         if (!(t.deps || []).every((d) => results.has(d))) continue
         pending.delete(id); active++
         opts.onTaskStart && opts.onTaskStart(t)
-        const ctx = (t.deps || []).filter((d) => results.has(d)).map((d) => `【${d}】\n${tailClip(results.get(d).output, 800)}`).join('\n\n')   // 尾部截取:上游【交接】段在结尾,不被截丢
+        // 依赖"已完成"只代表跑过,不代表成了:失败的上游只有一句错误串,绝不能混进【可参考的上游结果】当素材,
+        // 否则下游拿"(error：网关502)"当上游产出照写。改成:成功的进上下文,失败的单独告知(见 buildWorkPrompt)。
+        const seen = (t.deps || []).filter((d) => results.has(d))
+        const ctx = seen.filter((d) => results.get(d).status === 'ok')
+          .map((d) => `【${d}】\n${tailClip(results.get(d).output, 800)}`).join('\n\n')   // 尾部截取:上游【交接】段在结尾,不被截丢
+        const bad = seen.filter((d) => results.get(d).status !== 'ok')
+        const depFail = bad.length ? bad.map((d) => d + '(' + results.get(d).status + ')').join('、') : ''
         const t0 = Date.now()
-        runGuarded(run, buildWorkPrompt(t, ctx, opts.goal), { kind: 'work', role: t.role, id: t.id }, opts, opts.taskRetries)
+        runGuarded(run, buildWorkPrompt(t, ctx, opts.goal, depFail), { kind: 'work', role: t.role, id: t.id }, opts, opts.taskRetries)
           .then((out) => { const ms = Date.now() - t0; results.set(t.id, { task: t, output: out, status: 'ok', ms }); opts.onTaskDone && opts.onTaskDone(t, out, 'ok', ms) })
           .catch((e) => {
             const ms = Date.now() - t0
@@ -271,7 +344,7 @@ async function orchestrate(goal, options) {
     taskTimeoutMs: 180000, taskRetries: 1, maxElapsedMs: 0, stallBudget: 2, signal: null,
     reduceBudgetChars: 60000, reduceRetries: 1,   // 汇总:正文总量超预算走分层;终稿给 1 次重试(汇总失败=整单没成果,别一抖就废)
     review: false,   // 汇总后复核:核心默认关(导出 API/脚本向后兼容);产品端 src/orch.js 打开
-    onPlan: null, onTaskStart: null, onTaskDone: null, onTaskError: null, onRound: null, onReduce: null, onReview: null, onScale: null,
+    onPlan: null, onTaskStart: null, onTaskDone: null, onTaskError: null, onRound: null, onReduce: null, onReview: null, onScale: null, onPlanError: null,
     ...options, goal,
   }
   if (typeof opts.run !== 'function') throw new Error('orchestrate 需要 opts.run(prompt, meta)')
@@ -284,7 +357,16 @@ async function orchestrate(goal, options) {
     if (aborted(opts)) { stopped = 'aborted'; break }
     if (opts.maxElapsedMs && Date.now() - t0 > opts.maxElapsedMs) { stopped = 'time-budget'; break }
     round++; opts._round = round
-    const plan = await planOnce(opts.run, goal, summarize(results), ledger, [...results.keys()], opts)
+    // 规划器重试完仍挂(网关黑洞/始终不出 JSON):已有成果就【收手去汇总】,绝不连坐 —— 以前这里直接抛,
+    // 第 3 轮规划器一挂,前两轮十几个 Agent 跑出的厚正文全丢:不汇总、不存档、UI 只剩一行 error。
+    let plan
+    try { plan = await planOnce(opts.run, goal, summarize(results), ledger, [...results.keys()], opts) }
+    catch (e) {
+      if (aborted(opts)) { stopped = 'aborted'; break }
+      opts.onPlanError && opts.onPlanError(round, e)
+      if (results.size === 0) throw e            // 第一轮就挂 = 真的一点成果都没有,照旧抛给上层报错
+      round--; stopped = 'plan-failed'; break    // round-- :这一轮没排出任何任务,不该计入轮次
+    }
     ledger = plan.ledger || ledger
     if (plan.budget) {   // 规划器按复杂度自估规模 → 动态调本次运行的轮次/Agent 上限(夹在安全区间[1,ceil]);后续轮可上调/下调
       if (plan.budget.rounds > 0) effRounds = Math.min(opts.maxRoundsCeil, Math.max(1, plan.budget.rounds))
@@ -297,8 +379,8 @@ async function orchestrate(goal, options) {
     let batch = plan.tasks.slice(0, room)
     // onPlan 只播【实际排程的批】:plan.tasks 可能被任务预算截断,播全量会让 UI 出现永不执行的幽灵 pending 节点
     opts.onPlan && opts.onPlan(round, { ...plan, tasks: batch, plannedTotal: plan.tasks.length })
-    if (opts.onBeforeBatch) {                                  // 人审检查点：批准/编辑/中止
-      const d = await opts.onBeforeBatch(round, batch)
+    if (opts.onBeforeBatch) {                                  // 人审检查点：批准/编辑/中止（等待期间可被 abort 打断，见 awaitAbortable）
+      const d = await awaitAbortable(opts.onBeforeBatch(round, batch), opts)
       if (aborted(opts) || (d && d.abort)) { stopped = 'aborted'; break }
       if (d && Array.isArray(d.tasks)) batch = sanitizePlan(d.tasks, [...results.keys()])
       if (!batch.length) { done = true; break }               // 一个都不批 → 收尾

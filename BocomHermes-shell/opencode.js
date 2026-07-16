@@ -283,21 +283,31 @@ function pickTurnText(list) {
   const la = asst[asst.length - 1]
   const laText = extractText(la)
   const laDone = !!(la?.info?.time?.completed || la?.info?.finish)
-  return { done: laDone && !!laText, text, laDone, laText }   // 收尾 = 最后一条 assistant 已完成【且带文本】
+  // sig=活动指纹(助手消息数:总 part 数:已出文本长度)。它变了 = 这个回合还在推进(工具在跑 / 文本在长)。
+  // 轮询据此判"空转多久",而不是看墙钟:一个埋头调工具十几分钟、期间一个字都不吐的任务是【慢】不是【死】,不该被砍。
+  const nParts = asst.reduce((n, m) => n + (((m?.parts ?? m?.data?.parts ?? m?.info?.parts) || []).length || 0), 0)
+  return { done: laDone && !!laText, text, laDone, laText, sig: asst.length + ':' + nParts + ':' + text.length }   // 收尾 = 最后一条 assistant 已完成【且带文本】
 }
-async function waitAssistantText(info, sessionId, maxMs = 600000) {
+// maxMs=绝对上限(防永久 hang);idleMs=空转上限(sig 一直不动才算空转)。
+// 超时【抛错,不再返回空串】:返回 '' 会让上层无法区分"黑洞会话"和"跑完了没话说" —— 编排层照单全收记成
+// status:'ok' 的空产出:不重试、不报错,空白直接流进下游上下文与最终汇总(这正是"任务全绿、成果很薄"的一条根)。
+// 已经吐了半截文本的,返回半截(有总比无强);一个字都没有的,抛错让上层重试/报错。
+async function waitAssistantText(info, sessionId, maxMs = 1800000, idleMs = 600000) {
   const t0 = Date.now()
-  let prev = '', stable = 0, doneNoTextTicks = 0
-  while (Date.now() - t0 < maxMs) {
+  let prev = '', stable = 0, doneNoTextTicks = 0, sig = '', lastMove = Date.now(), lastErr = null
+  while (Date.now() - t0 < maxMs && Date.now() - lastMove < idleMs) {
     await sleep(700)
-    let raw; try { raw = await api(info.base, 'GET', `/session/${sessionId}/message`) } catch { continue }
+    let raw; try { raw = await api(info.base, 'GET', `/session/${sessionId}/message`); lastErr = null } catch (e) { lastErr = e; continue }   // 留住最后一个错:serve 挂掉时上层才有的可查(否则=10 分钟静默 + 空结果)
     const list = Array.isArray(raw) ? raw : (raw && raw.data) || []
     const r = pickTurnText(list)
+    if (r.sig !== sig) { sig = r.sig; lastMove = Date.now() }               // 还在推进 → 续命,不按墙钟砍慢任务
     if (r.done) return r.text                                              // 最后一条已完成且带文本 → 收
     if (r.text && r.text === prev) { if (++stable >= 3) return r.text } else { stable = 0; prev = r.text }   // 无完成标记的 serve:文本稳定 ~2s
     if (r.laDone && !r.laText) { if (++doneNoTextTicks >= 42) return r.text } else { doneNoTextTicks = 0 }   // 兜底:真以无文本工具收尾(罕见),~30s 无续写才放弃
   }
-  return prev
+  if (prev) return prev
+  const why = Date.now() - t0 >= maxMs ? '超过绝对上限 ' + Math.round(maxMs / 60000) + ' 分钟' : '连续 ' + Math.round(idleMs / 60000) + ' 分钟无任何进展'
+  throw new Error('等待回复超时(' + why + ',serve 未产出任何文本' + (lastErr ? ';最后一次取消息失败:' + (lastErr.message || lastErr) : '') + ')')
 }
 async function sendMessage(info, sessionId, text, model, files, onNote) {
   const parts = []

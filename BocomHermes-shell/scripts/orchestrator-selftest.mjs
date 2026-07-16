@@ -218,5 +218,125 @@ ok(typeof seenDoneMs === 'number' && seenDoneMs >= 0, 'onTaskDone 第 4 参带 m
 ok(seenNote === '先勘察再动手', '规划器 note 旁白透出(UI 叙事行用)')
 ok(rMeta.done, '流程正常收尾')
 
+console.log('规划器中途挂掉不连坐(已有成果 → 收手汇总,不是整单丢光):')
+let planErrRound = 0, reducedWith = ''
+const planDieRun = async (p, m) => {
+  if (m.kind === 'plan') {
+    if (m.round === 1) return '{"tasks":[{"id":"a","role":"r","goal":"A"},{"id":"b","role":"r","goal":"B"}],"done":false}'
+    throw new Error('任务超时(连续 20 分钟无任何活动,已中止会话)')   // 第2轮起规划器进网关黑洞,重试也救不回
+  }
+  if (m.kind === 'reduce') { reducedWith = p; return 'FINAL' }
+  return '厚正文-' + m.id
+}
+const rPlanDie = await orchestrate('目标', { run: planDieRun, maxRounds: 4, taskTimeoutMs: 0, parseRetries: 1, onPlanError: (round) => { planErrRound = round } })
+ok(rPlanDie.final === 'FINAL', '规划器挂了仍走到汇总(以前:orchestrate 整个抛,成果全丢)')
+ok(rPlanDie.tasks.length === 2 && rPlanDie.tasks.every((t) => t.status === 'ok'), '第1轮的 2 份成果完整保住')
+ok(reducedWith.includes('厚正文-a') && reducedWith.includes('厚正文-b'), '两份正文都进了汇总输入')
+ok(rPlanDie.stopped === 'plan-failed', 'stopped=plan-failed(存档/UI 能说清为什么没往下拆)')
+ok(rPlanDie.rounds === 1, '没排出任务的那轮不计入轮次(实际=' + rPlanDie.rounds + ')')
+ok(planErrRound === 2, 'onPlanError 报出失败轮次(UI 据此提示)')
+let planCalls = 0
+const planFlapRun = async (p, m) => {
+  if (m.kind === 'plan') { planCalls++; if (planCalls === 1) throw new Error('网关抖了一下'); return m.round === 1 ? '{"tasks":[{"id":"a","role":"r","goal":"A"}],"done":false}' : '{"tasks":[],"done":true}' }
+  return m.kind === 'reduce' ? 'R' : 'out'
+}
+const rFlap = await orchestrate('抖', { run: planFlapRun, maxRounds: 2, taskTimeoutMs: 0, parseRetries: 2 })
+ok(rFlap.tasks.length === 1, '规划器 run 抛错也会重试(不只重试"JSON 不合法"),抖一下不整单报废')
+let firstRoundThrew = null
+try { await orchestrate('首轮就挂', { run: async (p, m) => { if (m.kind === 'plan') throw new Error('网关全挂'); return 'x' }, maxRounds: 2, taskTimeoutMs: 0, parseRetries: 0 }) }
+catch (e) { firstRoundThrew = e.message }
+ok(/网关全挂/.test(firstRoundThrew || ''), '第一轮就挂(一点成果都没有)→ 照旧抛错给上层,不假装成功')
+
+console.log('空产出不冒充成功(黑洞会话静默返回空串):')
+let emptyTries = 0
+const emptyRun = async (p, m) => {
+  if (m.kind === 'plan') return m.round === 1 ? '{"tasks":[{"id":"e","role":"r","goal":"E"}],"done":false}' : '{"tasks":[],"done":true}'
+  if (m.kind === 'reduce') return 'R'
+  emptyTries++; return '   '   // 底层轮询在黑洞会话上静默返回空白
+}
+const rEmpty = await orchestrate('空产出', { run: emptyRun, maxRounds: 2, taskTimeoutMs: 0, taskRetries: 1 })
+const eTask = rEmpty.tasks.find((t) => t.task.id === 'e')
+ok(eTask.status === 'error', '空产出判 error(以前:status=ok 的空壳,不重试不报错)')
+ok(emptyTries === 2, '空产出会重试(实际重试次数=' + (emptyTries - 1) + ')')
+ok(/空产出/.test(eTask.output), '错误信息说清是空产出,不是含糊的失败')
+let recovered = 0
+const emptyThenOkRun = async (p, m) => {
+  if (m.kind === 'plan') return m.round === 1 ? '{"tasks":[{"id":"e","role":"r","goal":"E"}],"done":false}' : '{"tasks":[],"done":true}'
+  if (m.kind === 'reduce') return 'R'
+  return ++recovered === 1 ? '' : '重试后拿到的真产出'
+}
+const rRec = await orchestrate('空后恢复', { run: emptyThenOkRun, maxRounds: 2, taskTimeoutMs: 0, taskRetries: 1 })
+ok(rRec.tasks[0].output === '重试后拿到的真产出', '首次空、重试拿到真产出 → 记 ok')
+
+console.log('上游失败不当素材喂给下游:')
+let bPrompt = ''
+const depFailRun = async (p, m) => {
+  if (m.kind === 'plan') return m.round === 1 ? '{"tasks":[{"id":"a","role":"r","goal":"抓数据"},{"id":"b","role":"r","goal":"据a写报告","deps":["a"]}],"done":false}' : '{"tasks":[],"done":true}'
+  if (m.kind === 'reduce') return 'R'
+  if (m.id === 'a') throw new Error('网关 502')
+  bPrompt = p; return 'B产出'
+}
+await orchestrate('上游失败', { run: depFailRun, taskRetries: 0, taskTimeoutMs: 0, maxRounds: 2 })
+ok(!/【a】/.test(bPrompt), '失败的上游不进【可参考的上游结果】(以前把"(error：网关502)"当上游产出喂下去)')
+ok(/上游失败告知/.test(bPrompt) && /a\(error\)/.test(bPrompt), '改为显式告知下游:上游 a 失败了')
+ok(/不要臆造/.test(bPrompt), '明确要求别臆造上游本该给的内容(治"看着完整、实则编造")')
+let cPrompt = ''
+const mixRun = async (p, m) => {
+  if (m.kind === 'plan') return m.round === 1 ? '{"tasks":[{"id":"a","role":"r","goal":"A"},{"id":"b","role":"r","goal":"B"},{"id":"c","role":"r","goal":"C","deps":["a","b"]}],"done":false}' : '{"tasks":[],"done":true}'
+  if (m.kind === 'reduce') return 'R'
+  if (m.id === 'a') throw new Error('挂了')
+  if (m.id === 'c') { cPrompt = p; return 'C' }
+  return 'B的正文'
+}
+await orchestrate('混合', { run: mixRun, taskRetries: 0, taskTimeoutMs: 0, maxRounds: 2, maxConcurrency: 2 })
+ok(/【b】[\s\S]*B的正文/.test(cPrompt) && !/【a】/.test(cPrompt), '一成一败:成功的照常进上下文,只有失败的被摘出去单独告知')
+
+console.log('分层汇总兜住"单份正文就超预算"(装箱对它无能为力):')
+const seen = []
+const oneHugeRun = async (p, m) => {
+  if (m.kind === 'plan') return m.round === 1 ? '{"tasks":[{"id":"a","role":"r","goal":"A"},{"id":"b","role":"r","goal":"B"}],"done":false}' : '{"tasks":[],"done":true}'
+  if (m.kind === 'reduce') { seen.push(p.length); return 'D' }
+  return m.id === 'a' ? 'x'.repeat(1000) : '短'   // 单份 1000 > 预算 200:切片前"那一箱=它自己",照样灌爆
+}
+await orchestrate('单份巨型', { run: oneHugeRun, maxRounds: 2, taskTimeoutMs: 0, reduceBudgetChars: 200 })
+const worst = Math.max(...seen)
+ok(worst < 1000, '没有任何一次 reduce 吃进整份 1000 字巨型正文(最大一次=' + worst + ')')
+const onlyHugeRun = async (p, m) => {
+  if (m.kind === 'plan') return m.round === 1 ? '{"tasks":[{"id":"a","role":"r","goal":"A"}],"done":false}' : '{"tasks":[],"done":true}'
+  if (m.kind === 'reduce') { seen2.push(p.length); return 'D' }
+  return 'y'.repeat(1000)
+}
+let seen2 = []
+await orchestrate('独苗巨型', { run: onlyHugeRun, maxRounds: 2, taskTimeoutMs: 0, reduceBudgetChars: 200 })
+ok(Math.max(...seen2) < 1000, '只有一个子任务、但它自己就超预算 → 也切片(以前 entries.length<=1 直接放行灌爆)')
+
+console.log('复核"通过"判定不被中文介词骗到:')
+let revisedCalled = false
+const prepRun = (review) => async (p, m) => {
+  if (m.kind === 'plan') return m.round === 1 ? '{"tasks":[{"id":"a","role":"r","goal":"A"}],"done":false}' : '{"tasks":[],"done":true}'
+  if (m.kind === 'reduce') return '初稿'
+  if (m.kind === 'review') return review
+  if (m.kind === 'revise') { revisedCalled = true; return '修订稿(足够长足够长足够长足够长足够长足够长足够长足够长)' }
+  return 'out'
+}
+revisedCalled = false
+const rPrep = await orchestrate('介词', { run: prepRun('通过阅读各子任务产出,我发现三处关键遗漏:\n1. 缺少表结构\n2. 没有回滚方案\n3. 结论无依据'), maxRounds: 2, taskTimeoutMs: 0, review: true })
+ok(revisedCalled && rPrep.final !== '初稿', '"通过阅读…发现三处遗漏"是介词不是结论 → 必须触发修订(以前 /^通过/ 命中,挑出的问题被整个跳过)')
+revisedCalled = false
+const rColon = await orchestrate('冒号', { run: prepRun('复核结果：通过'), maxRounds: 2, taskTimeoutMs: 0, review: true })
+ok(!revisedCalled && rColon.final === '初稿', '"复核结果：通过"仍认作达标,不做无谓修订')
+
+console.log('人审等待可被中止(不再永久卡死):')
+const acWait = new AbortController()
+let finallyRan = false
+const waitRun = async (p, m) => m.kind === 'plan' ? '{"tasks":[{"id":"a","role":"r","goal":"A"}],"done":false}' : (m.kind === 'reduce' ? 'R' : 'out')
+const pWait = orchestrate('人审', { run: waitRun, signal: acWait.signal, maxRounds: 2, taskTimeoutMs: 0,
+  onBeforeBatch: () => new Promise(() => {}) })   // 宿主的审批 promise 只由"用户点批准"解决 —— 用户点的却是「停止」
+  .then((r) => { finallyRan = true; return r })
+setTimeout(() => acWait.abort(), 120)
+const rWait = await Promise.race([pWait, sleep(3000).then(() => 'HUNG')])
+ok(rWait !== 'HUNG' && finallyRan, '审批卡挂着时点停止 → 编排立刻收手(以前永久 hang,run 的 finally 不执行、会话与注册表全泄漏)')
+ok(rWait.stopped === 'aborted', '收手原因=aborted')
+
 console.log(`\n小结：${pass} 通过 / ${fail} 失败`)
 process.exit(fail ? 1 : 0)
