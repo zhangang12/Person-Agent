@@ -230,5 +230,26 @@ await (async () => {
   srv.close()
 })()
 
+;(() => {
+  console.log('用例15:normalizeMessages —— 续接回放不带注入前缀,历史思考链一并带回')
+  const { normalizeMessages, stripInjected, splitThink } = oc.__test
+  // 首条用户消息在发送时被拼上 <个人记忆>/<项目背景>/<作答技能>;serve 历史存全文,回放展示必须剥掉
+  const injected = '<个人记忆>\n我是信贷后端\n</个人记忆>\n\n<项目背景>\n当前项目工作目录：C:/x\n</项目背景>\n\n<作答技能:前端UI设计>\n方法论若干\n</作答技能>\n\n帮我看这个报错'
+  const msgs = normalizeMessages([
+    { info: { role: 'user' }, parts: [{ type: 'text', text: injected }] },
+    { info: { role: 'assistant' }, parts: [{ type: 'reasoning', text: '先查日志再定位' }, { type: 'text', text: '结论是配置错了' }] },
+    { info: { role: 'user' }, parts: [{ type: 'text', text: '第二个问题' }] },
+    { info: { role: 'assistant' }, parts: [{ type: 'text', text: '<think>这轮的思考混在正文里</think>第二轮答案' }] },
+  ])
+  ok('用户气泡只剩原文(注入前缀全剥掉)', msgs[0].role === 'user' && msgs[0].text === '帮我看这个报错', msgs[0] && msgs[0].text)
+  ok('剥离只认标记块,不误伤正文', stripInjected('正文里聊到 <个人记忆> 这个词但没闭合') === '正文里聊到 <个人记忆> 这个词但没闭合')
+  ok('reasoning part 的历史思考带回', msgs[1].reasoning === '先查日志再定位', msgs[1] && msgs[1].reasoning)
+  ok('正文里的 <think> 也拆进思考、正文只剩答案', msgs[3].reasoning === '这轮的思考混在正文里' && msgs[3].text === '第二轮答案', msgs[3])
+  ok('每条助手消息各带各的思考(不是只有最后一轮)', !!(msgs[1].reasoning && msgs[3].reasoning))
+  // splitThink 边界
+  ok('未闭合 <think>(流式中途/被截断)也拆得出', splitThink('<think>想到一半就断了').think === '想到一半就断了')
+  ok('无 think 原样返回', splitThink('普通正文').rest === '普通正文' && splitThink('普通正文').think === '')
+})()
+
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

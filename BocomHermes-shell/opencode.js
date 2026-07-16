@@ -377,14 +377,45 @@ async function sessionExists(info, sid) {
   try { const list = await api(info.base, 'GET', '/session'); const arr = Array.isArray(list) ? list : (list && list.data) || []; return arr.some((s) => sidOf(s) === sid) } catch { return false }
 }
 // 重连用：取会话历史消息，归一成 [{role,text}]；端点形态不定，逐个尝试，失败返回 []
+// 注入前缀剥离(仅展示层):首条用户消息在发送时被静默拼上 <个人记忆>/<项目背景>/<作答技能> 背景块,
+// serve 的历史里存的是全文 —— 续接回放时不剥掉,这坨提示词会原样出现在用户自己的气泡里。只影响显示,不碰 serve 数据。
+function stripInjected(t) {
+  return String(t == null ? '' : t)
+    .replace(/<个人记忆>[\s\S]*?<\/个人记忆>\s*/g, '')
+    .replace(/<项目背景>[\s\S]*?<\/项目背景>\s*/g, '')
+    .replace(/<作答技能:[^>\n]{0,120}>[\s\S]*?<\/作答技能>\s*/g, '')
+    .trim()
+}
+// 从正文里拆 <think> 段(这个网关的模型思考常以 <think> 混在 text 里,不走标准 reasoning part):
+// think=思考全文(容忍未闭合——流式中途/被截断),rest=去掉思考后的正文
+function splitThink(s) {
+  let t = String(s == null ? '' : s), think = []
+  t = t.replace(/<think>([\s\S]*?)<\/think>/gi, (_, c) => { if (c.trim()) think.push(c.trim()); return '' })
+  const open = t.search(/<think>/i)
+  if (open >= 0) { const c = t.slice(open).replace(/^<think>/i, '').trim(); if (c) think.push(c); t = t.slice(0, open) }
+  return { think: think.join('\n'), rest: t.replace(/<\/?think>/gi, '').trim() }
+}
 function normalizeMessages(r) {
   const list = Array.isArray(r) ? r : (Array.isArray(r && r.messages) ? r.messages : (Array.isArray(r && r.data) ? r.data : null))
   if (!list) return null
   const out = []
   for (const m of list) {
     const role = (m && m.info && m.info.role) || (m && m.role) || (m && m.data && m.data.info && m.data.info.role)
-    const text = extractText(m)
-    if (text && (role === 'user' || role === 'assistant')) out.push({ role, text })
+    if (role !== 'user' && role !== 'assistant') continue
+    if (role === 'user') {
+      const text = stripInjected(extractText(m))
+      if (text) out.push({ role, text })
+      continue
+    }
+    // 助手消息:思考链一并带回(历史每条的思考要能回看,不是只有最后一轮)。
+    // 两个来源:①标准 reasoning/thinking part ②text 里内联的 <think>;拆出后正文只留答案
+    const parts = m?.parts ?? m?.data?.parts ?? m?.info?.parts ?? []
+    const rparts = Array.isArray(parts) ? parts.filter((p) => p && (p.type === 'reasoning' || p.type === 'thinking'))
+      .map((p) => (typeof p.text === 'string' && p.text) || (typeof p.reasoning === 'string' && p.reasoning) || (typeof p.content === 'string' && p.content) || '')
+      .filter(Boolean).join('\n') : ''
+    const st = splitThink(extractText(m))
+    const reasoning = [rparts, st.think].filter(Boolean).join('\n')
+    if (st.rest || reasoning) out.push({ role, text: st.rest, reasoning })
   }
   return out
 }
@@ -648,4 +679,4 @@ function retireIfOrphan(info, inUseBases) {
 }
 
 module.exports = { ensureServe, createSession, sendMessage, listModels, abort, replyPermission, sessionExists, getMessages, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, AUTO_ALLOW,
-  __test: { dispatch, waitAssistantText, extractText, pickTurnText, abortedSince, abortedSids } }
+  __test: { dispatch, waitAssistantText, extractText, pickTurnText, abortedSince, abortedSids, normalizeMessages, stripInjected, splitThink } }

@@ -349,7 +349,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     let skillPrefix = ''
     if (skill) { const sk = loadSkills().find((s) => s.id === skill); if (sk) { skillPrefix = '<作答技能:' + sk.name + '>\n' + sk.body + '\n</作答技能>\n\n'; log('inject skill 「' + sk.name + '」(' + sk.body.length + ' chars) for ' + sessionId) } }
     const msg = ctxPrefix + skillPrefix + (text || '')
-    S.sentPrompt.set(sessionId, text || ''); S.streamBuf.delete(sessionId)
+    S.sentPrompt.set(sessionId, msg); S.streamBuf.delete(sessionId)   // 存【实际发出的全文】(含注入前缀):回显过滤比对的是 serve 收到的东西 —— 只存原文的话,带前缀的回显漏网,整坨背景提示词会打进对话流
     touchHistory(sessionId)
     let model = si.model || S.settings.model || null
     const fileArr = Array.isArray(files) ? files : []

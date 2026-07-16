@@ -62,7 +62,7 @@ const bocom = new Proxy({}, {
     if (key === 'getSettings') return () => ({})
     if (key === 'getDropPath') return () => ''
     if (key === 'cardInit') return async () => ({ sessionId: 's1', project: 'demo', dir: 'C:/demo', model: null, reattached: false })
-    if (key === 'cardSend') return async () => '好的,已完成。'
+    if (key === 'cardSend') return async () => { await new Promise((r) => setTimeout(r, 60)); return '好的,已完成。' }   // 留 60ms 流式窗口:测试在 turn 进行中喂 onStream 事件
     if (key === 'listModels') return async () => []
     return async () => null
   },
@@ -95,7 +95,7 @@ const sandbox = new Proxy(base, {
 })
 
 console.log('用例1:主脚本立即执行路径(TDZ / 未定义全局 一票否决)')
-const tail = '\n;__export({ submit, maybeDrain, pendingInjects, toolEls, sl, _setReady: (v) => { cardReady = v }, _setBusy: setBusy, _busy: () => busy, ci: document.getElementById("ci") })'
+const tail = '\n;__export({ submit, maybeDrain, pendingInjects, toolEls, sl, turnFn: turn, _setReady: (v) => { cardReady = v }, _setBusy: setBusy, _busy: () => busy, ci: document.getElementById("ci") })'
 let bootErr = null
 try { vm.runInNewContext(main + tail, sandbox, { timeout: 8000 }) } catch (e) { bootErr = e }
 ok('立即执行不抛(曾抓到 runningTools TDZ 白屏)', !bootErr, bootErr && bootErr.message)
@@ -160,6 +160,38 @@ exported._setBusy(false)
 exported.maybeDrain()
 await new Promise((r) => setTimeout(r, 30))
 ok('本轮结束 drain:队列清空、气泡转正', exported.pendingInjects.length === qBefore && !qi.el.classList.contains('queued'))
+
+console.log('用例7:思考链不被结果压缩 —— <think> 混在文本流里也分流进思考块,收尾不覆盖')
+{
+  // 模拟这个网关的真实形态:思考以 <think> 混在 text 流里(不走 reasoning part);cardSend 桩留 60ms 流式窗口
+  exported._setReady(true)
+  await new Promise((r) => setTimeout(r, 90))   // 让用例6 排队 drain 的那轮先收尾:turn 的流式态是全局的,重叠会互相踩
+  const feedEl = byId.get('feed')
+  const base = feedEl.children.length           // 只数本用例之后新增的块,不受前面用例残留干扰
+  const reasonsIn = () => feedEl.children.slice(base).filter((c) => c && c.className === 'reason')
+  const turnP = exported.turnFn('触发一轮')
+  await new Promise((r) => setTimeout(r, 5))
+  cbs.onStream({ kind: 'text', text: '<think>我先想想这个问题', partID: 'tx1' })   // 流式中途:未闭合
+  await new Promise((r) => setTimeout(r, 30))
+  const mid = reasonsIn()
+  ok('流式中途未闭合的 <think> 已进思考块(不挤在答案气泡)', mid.length === 1 && /我先想想这个问题/.test(mid[0].querySelector('.body').textContent), mid.length)
+  cbs.onStream({ kind: 'text', text: '<think>我先想想这个问题</think>答案第一段', partID: 'tx1' })
+  await new Promise((r) => setTimeout(r, 30))
+  await turnP   // cardSend 桩返回 '好的,已完成。'(最终正文) → 收尾替换答案气泡
+  const after = reasonsIn()
+  ok('收尾后思考块仍在对话流里(不被最终正文覆盖掉)', after.length === 1, after.length)
+  ok('思考块内容完整保留', after.length === 1 && /我先想想这个问题/.test(after[0].querySelector('.body').textContent))
+  ok('思考块答完保持展开(不自动折叠)', after.length === 1 && after[0].open === true)
+  // 再跑一轮:新一轮有自己的思考块,上一轮的不被动
+  const turn2 = exported.turnFn('再来一轮')
+  await new Promise((r) => setTimeout(r, 5))
+  cbs.onStream({ kind: 'reasoning', text: '第二轮走标准 reasoning part', partID: 'rz2' })
+  await new Promise((r) => setTimeout(r, 30))
+  await turn2
+  const two = reasonsIn()
+  ok('历史每轮各有各的思考块(第一轮的仍在)', two.length === 2, two.length)
+  ok('两路来源都接得住(① reasoning part ② 文本内联 <think>)', two.length === 2 && /第二轮走标准/.test(two[1].querySelector('.body').textContent))
+}
 
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

@@ -668,17 +668,34 @@
   }
   // 流式渲染按帧合并：高频 token 事件下，一帧内多次事件只跑一次 renderMarkdown + innerHTML，
   // 消除"回答越长越卡"的 O(n²) 抖动（每帧最多渲一次，视觉无差）。
-  // 思考过程 = opencode 原生 reasoning part；不自己解析 <think>/<ask>，按 opencode 原生来。
+  // 思考来源有两路,都要接:①opencode 原生 reasoning part ②这个网关的模型常把 <think> 混在【文本流】里 ——
+  // 只认① 的话,②在流式时挤在答案气泡里、收尾被最终正文一盖就"消失"了(用户视角:思考出完结果就被压缩)。
+  // 拆 <think>(容忍未闭合,流式中途就是未闭合态):think 进思考块,rest 才是答案正文
+  function splitThink(s) {
+    let t = String(s == null ? '' : s), think = []
+    t = t.replace(/<think>([\s\S]*?)<\/think>/gi, (_, c) => { if (c.trim()) think.push(c.trim()); return '' })
+    const open = t.search(/<think>/i)
+    if (open >= 0) { const c = t.slice(open).replace(/^<think>/i, '').trim(); if (c) think.push(c); t = t.slice(0, open) }
+    return { think: think.join('\n'), rest: t.replace(/<\/?think>/gi, '').trim() }
+  }
+  function ensureReason() {
+    if (!curReason && curAnswer && curAnswer.parentNode === feed) curReason = makeReason(curAnswer)
+    return curReason
+  }
+  function paintReason(extraThink) {
+    const body = [reasonParts ? joinParts(reasonParts) : '', extraThink || ''].filter(Boolean).join('\n')
+    if (!body) return
+    const r = ensureReason(); if (!r) return
+    r.body.textContent = body
+    r.body.scrollTop = r.body.scrollHeight
+  }
   let _flushQueued = false, _needAnswer = false, _needReason = false
   function flushStream() {
     _flushQueued = false
-    if (_needReason && curReason) {
-      curReason.body.textContent = reasonParts ? joinParts(reasonParts) : ''
-      curReason.body.scrollTop = curReason.body.scrollHeight
-      _needReason = false
-    }
+    const st = splitThink(answerParts ? joinParts(answerParts) : '')
+    if (_needReason || st.think) { paintReason(st.think); _needReason = false }
     if (_needAnswer && curAnswer) {
-      curAnswer.innerHTML = renderMarkdown(answerParts ? joinParts(answerParts) : '')
+      if (st.rest) curAnswer.innerHTML = renderMarkdown(st.rest)   // 纯思考阶段(rest 还空着)不清占位符,气泡不闪空白
       _needAnswer = false
     }
     scrollFeed()
@@ -742,8 +759,7 @@
     }
     const key = partID || '_'
     if (kind === 'reasoning') {
-      if (!curReason && curAnswer && curAnswer.parentNode === feed) curReason = makeReason(curAnswer)
-      if (curReason && reasonParts) { reasonParts.set(key, text); _needReason = true; scheduleFlush() }
+      if (reasonParts) { reasonParts.set(key, text); _needReason = true; scheduleFlush() }   // 思考块由 paintReason 惰性建,这里只记数据
     } else if (curAnswer && answerParts) {
       answerParts.set(key, text); _needAnswer = true; scheduleFlush()
     }
@@ -759,25 +775,33 @@
     try {
       const reply = await window.BocomHermes.cardSend(text, files, activeSkill && activeSkill.id)
       // POST 空 body 的 serve（内网 bocomcode）：reply 可能为空，用流式累积的文本兜底，绝不丢已收到的答案
-      const finalText = reply || (answerParts ? joinParts(answerParts) : '')
+      const raw = reply || (answerParts ? joinParts(answerParts) : '')
+      // 收尾也过 splitThink:serve 的最终正文可能仍夹着 <think>,更关键的是【不许覆盖思考】——
+      // 以前直接 renderMarkdown(finalText) 一盖,流式期间攒在答案里的思考随替换消失(用户视角:出完结果思考被压缩)。
+      // 思考归思考块(收尾时把最终版思考补写进去,块保持展开、永远留在对话流里),正文归气泡。
+      const st = splitThink(raw)
+      if (st.think) paintReason(st.think)
+      const finalText = st.rest
       if (finalText) ai.innerHTML = renderMarkdown(finalText)
+      else if (st.think) ai.textContent = '（本轮只有思考过程，见上方思考块）'
       else if (!ai.textContent.trim() || ai.textContent === PH) ai.textContent = '（无文本输出）'
       if (!target && finalText) { ai.dataset.raw = finalText; addCopyBtn(ai) }   // 答完挂复制按钮(流式中不挂,免被逐帧重渲染冲掉)
-      // 思考过程答完保持展开(用户要看得见过程);可手动点标题折叠
+      // 思考块答完【不折叠不移除】:历史每一轮的思考链路都留在对话流里可回看;想收起手动点标题
     } catch (e) {
       ok = false
-      // 半截答案是用户的,错误不许覆盖它:流式可能已经收了几千字,再"⚠ 引擎连接中断"一盖全没了。
-      // 有半截 → 保留半截 + 错误另起一行 note;真的一个字没有 → 才把气泡改成错误。
-      const partial = answerParts ? joinParts(answerParts).trim() : ''
-      if (partial) {
-        ai.innerHTML = renderMarkdown(partial)
-        if (!target) { ai.dataset.raw = partial; addCopyBtn(ai) }
+      // 半截答案是用户的,错误不许覆盖它:流式可能已经收了几千字,再"引擎连接中断"一盖全没了。
+      // 有半截 → 保留半截 + 错误另起一行 note;真的一个字没有 → 才把气泡改成错误。半截里的思考同样分流进思考块。
+      const pst = splitThink(answerParts ? joinParts(answerParts) : '')
+      if (pst.think) paintReason(pst.think)
+      if (pst.rest) {
+        ai.innerHTML = renderMarkdown(pst.rest)
+        if (!target) { ai.dataset.raw = pst.rest; addCopyBtn(ai) }
         addNote('回合中断：' + (e.message || e) + '（以上是中断前已收到的部分回答）', 'muted')
       } else {
         if (!target) ai.className = 'msg ai err'
         ai.textContent = '出错：' + (e.message || e)
       }
-    } finally { for (const [id, s] of subAgents) if (!s.done) subAgentDone(id, 'done'); curAnswer = null; setBusy(false); scrollFeed(); maybeDrain() }
+    } finally { for (const [id, s] of subAgents) if (!s.done) subAgentDone(id, 'done'); curAnswer = null; curReason = null; setBusy(false); scrollFeed(); maybeDrain() }
     return ok
   }
   // 输入框自增高（1~约5 行）
@@ -1028,7 +1052,17 @@
       cardReady = true
       if (sid) {
         if (r.reattached) {
-          if (r.messages && r.messages.length) r.messages.forEach((m) => addMsg(m.text, m.role === 'user' ? 'me' : 'ai'))
+          if (r.messages && r.messages.length) r.messages.forEach((m) => {
+            // 历史思考链随消息一起回放(normalizeMessages 带回 reasoning):每一轮的思考都在,不是只有最后一轮。
+            // 历史块默认折叠(几十轮全展开会淹没对话),点标题即展开 —— "能看到"是底线,展不展开由人定
+            if (m.role === 'assistant' && m.reasoning) {
+              const d = document.createElement('details'); d.className = 'reason'
+              d.innerHTML = '<summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>思考过程</summary><div class="body"></div>'
+              d.querySelector('.body').textContent = m.reasoning
+              feed.appendChild(d)
+            }
+            if (m.text) addMsg(m.text, m.role === 'user' ? 'me' : 'ai')
+          })
           else addMsg('（历史消息未能载入，可直接继续这段对话）', 'ai')
         } else {
           addMsg('（原对话已不在引擎中，已为你新开一段，标题：' + title + '）', 'ai')
