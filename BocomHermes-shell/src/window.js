@@ -8,7 +8,7 @@ const emailSummarySeen = require('./email-summary-seen')
 const initOutbox = require('./outbox')
 const db = require('./db')
 const { extractMeeting } = require('./meeting-extract')
-const { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, markHumanGates, upgradeToSkill, skillMd, composePostWorkflowGoal, applyRefinePatch, rowToParamValues, relocateSelectors, takeoverDigest } = require('./recorder-core')
+const { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, markHumanGates, upgradeToSkill, skillMd, composePostWorkflowGoal, applyRefinePatch, rowToParamValues, relocateSelectors, takeoverDigest, redactRec } = require('./recorder-core')
 const initRecorder = require('./recorder')
 const { cdpConsoleLevel, fmtRO, fmtException, resolveFrame } = require('./cdp-format')
 const initMail = require('./mail')
@@ -886,7 +886,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const rec = (S.browser.lastRec && S.browser.lastRec.tabId === tab.id) ? S.browser.lastRec
       : (S.browser.lastRec || null)   // tabId 未必存(早期 rec 没记) → 拿就用
     const tl = rec ? formatTimeline(rec.events) : '(本次未录制操作 — 想让 Agent 自动验证修复,先按"录制"复现一次)'
-    const recRef = rec ? evdSave(bundleId, 'recording', JSON.stringify(rec, null, 2)) : ''
+    // redactRec:证据包是交给 Agent 读的,不能带登录态。上面 skillRun 那条"严禁序列化内存里的 rec"的禁令(见 writeLastRun 注释)
+    // 对这里同样成立,而这里以前正是直接 stringify 了 S.browser.lastRec —— 无参数技能上 applyParams 返回同一引用,
+    // replayRec 又把 preState 塞进 events[i]._restorePreState → 会话 cookie 明文进证据文件。磁盘录制本体不动(回放要靠它恢复登录态)。
+    const recRef = rec ? evdSave(bundleId, 'recording', JSON.stringify(redactRec(rec), null, 2)) : ''
 
     // 页面级捕获:fetch/XHR 全量(解决 CDP 拿不到响应体)+ alert/confirm/prompt + 错误模态/Toast
     let pageCap = { net: [], dialogs: [], errModals: [] }
@@ -1844,6 +1847,9 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   async function skillRun(a) {
     const want = String((a && (a.name || a.id)) || '').trim()
     if (!want) return { error: '缺少 name(技能名)' }
+    // 批跑是逐行调 replayRec,行与行之间那把回放锁是松开的 —— 不在这儿拦一道,UI/Agent 发起的单跑会插进两行中间,
+    // 与批跑抢同一个标签页(replayRec 的互斥只覆盖单行)
+    if (S.browser._batchRunning) return { error: '正在批量跑技能,等它结束再发起单次运行' }
     const all = skillList()
     let hit = all.find((s) => s.name === want || s.id === want)
     if (!hit) {   // 模糊匹配只在无歧义时用:「导出报表」不能悄悄跑成「导出报表-测试」
@@ -1883,7 +1889,8 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     const humans = replay.stepReport.filter((s) => s.human || s.liveGate)
     const HOW = { manual: '人工点继续', auto: '自动检测填入', 'auto-nav': '自动检测页面跳转', 'auto-gone': '自动检测验证消失', agent: 'Agent 给值', timeout: '⚠ 等了 5 分钟没人管(该步未处理即继续)' }
     for (const h of humans) {
-      if (h.liveGate) lines.push('· 步 ' + h.i + ' 回放时冒出「' + h.liveGate.hint + '」(录制时没有)→ 已等人过关后重试成功(' + (HOW[h.liveGate.how] || h.liveGate.how) + ')')
+      // liveGate 现在拦到就留痕(不管重试成没成)—— 失败那条恰恰是"没人管干等 5 分钟"的路,必须照实说
+      if (h.liveGate) lines.push('· 步 ' + h.i + ' 回放时冒出「' + h.liveGate.hint + '」(录制时没有)→ ' + (h.liveGate.ok ? '已等人过关后重试成功' : '等人处理后重试仍失败') + '(' + (HOW[h.liveGate.how] || h.liveGate.how) + ')')
       else lines.push('· 步 ' + h.i + ' 人机断点 → ' + (HOW[h.how] || h.how))
     }
     if (humans.some((h) => h.how === 'timeout' || (h.liveGate && h.liveGate.how === 'timeout'))) lines.push('⚠ 有人机断点超时未处理,结果可能不可信')

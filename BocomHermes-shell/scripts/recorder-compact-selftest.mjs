@@ -4,7 +4,7 @@
 // 另加合成边界用例:不跨元素误并、不误删两次真实点击、无按钮表单的 Enter 保留、survivors+dropped 可还原。
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
-const { compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, composePostWorkflowGoal, applyRefinePatch, rowToParamValues, relocateSelectors, selExpr, takeoverDigest } = require('../src/recorder-core.js')
+const { compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, composePostWorkflowGoal, applyRefinePatch, rowToParamValues, relocateSelectors, selExpr, takeoverDigest, applyParams, redactRec } = require('../src/recorder-core.js')
 
 let pass = 0, fail = 0
 function ok(name, cond, extra) {
@@ -352,6 +352,27 @@ console.log('用例16:composePostWorkflowGoal —— 下载后编排目标合成
   const md = skillMd({ id: 'r', title: '导出反馈', events: [{ act: 'click', sel: '#exp', text: '导出' }], postWorkflow: { goal: '做成分析报告' } })
   ok('skillMd 含"下载后编排"段 + 目标', md.includes('## 下载后编排') && md.includes('做成分析报告'))
   ok('未配 postWorkflow → skillMd 无该段', !skillMd({ id: 'r', events: [{ act: 'click', sel: '#b', text: '导出' }] }).includes('## 下载后编排'))
+}
+
+// ── 用例17:redactRec —— 交出去的副本不带登录态(证据包给 Agent 读) ─────────────────
+{
+  console.log('用例17:redactRec(证据副本抹登录态,磁盘录制本体不动)')
+  const secret = { cookies: [{ name: 'JSESSIONID', value: 'ABC123' }, { name: 'token', value: 'xyz' }], local: '{"jwt":"eyJhbG"}', session: '{"sid":"s-1"}', origin: 'https://bank.example.com' }
+  const rec = { id: 'r1', startUrl: 'https://bank.example.com/x', preState: JSON.parse(JSON.stringify(secret)),
+    events: [{ act: 'navigate', url: 'https://bank.example.com/x', _restorePreState: JSON.parse(JSON.stringify(secret)) }, { act: 'click', sel: '#go' }] }
+  const red = redactRec(rec)
+  const dump = JSON.stringify(red)
+  ok('preState.cookies 值不再出现在副本里', !dump.includes('ABC123') && !dump.includes('xyz'))
+  ok('localStorage/sessionStorage 值也抹掉', !dump.includes('eyJhbG') && !dump.includes('s-1'))
+  ok('events[]._restorePreState 同样抹掉(replayRec 会把 preState 塞进去)', !JSON.stringify(red.events).includes('ABC123'))
+  ok('抹去后仍看得出有几条 cookie(留可读线索,不是凭空消失)', /已抹去 2 条 cookie/.test(dump))
+  ok('origin 保留(非机密,Agent 排查要用)', red.preState.origin === 'https://bank.example.com')
+  ok('业务字段原样保留', red.id === 'r1' && red.events.length === 2 && red.events[1].sel === '#go')
+  ok('原对象没被改坏(只动副本)', rec.preState.cookies[0].value === 'ABC123' && rec.events[0]._restorePreState.cookies.length === 2)
+  ok('无 preState 的录制不炸', JSON.stringify(redactRec({ id: 'r2', events: [{ act: 'click' }] })) === JSON.stringify({ id: 'r2', events: [{ act: 'click' }] }))
+  // applyParams 无参数时返回同一引用 —— 正是这条让 replayRec 的 preState 污染顺着 lastRec 传到证据序列化点
+  const noParam = { id: 'r3', events: [{ act: 'click', sel: '#a' }] }
+  ok('applyParams 无参数返回同一引用(证据副本必须自己 redact,不能指望它隔离)', applyParams(noParam, {}) === noParam)
 }
 
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)

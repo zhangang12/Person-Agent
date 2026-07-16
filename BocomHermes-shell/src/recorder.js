@@ -97,26 +97,35 @@ module.exports = function initRecorder(ctx) {
     // 自动续跑判定(三路,治"只认值≥4位"的老毛病 —— 滑块/扫码/点选这类【无值】验证以前只能手点「继续」):
     //  ① 值填够且稳定 1.2s(经典验证码)  ② 见过的 gate 元素消失/隐藏了(滑块拖过、弹窗关了 = 人已通过)
     //  ③ 页面跳走了(扫码登录/填完即提交)。②要求"先见过"——一开始就没有的元素不算通过,避免误判续跑。
+    // ③ 只比 origin+path,不比 query/hash:SPA 在断点期间 replaceState 清个 ?from=、补个 ?redirect=,或动一下 hash,
+    // 按完整 URL 比就成了"页面跳走了" → 人还没输码就续跑,下一步提交空表单(报告还显示"自动检测页面跳转",看着一切正常)。
+    // 真正过关的跳转(扫码登录成功/填完即提交)都会换 path,照样认得出。
+    const navKey = (s) => { try { const x = new URL(s); return x.origin + x.pathname } catch { return String(s || '') } }
     const auto = (async () => {
       let lastV = null, stableAt = 0, seen = false
-      let url0 = ''; try { url0 = wc.getURL() } catch {}
+      let url0 = ''; try { url0 = navKey(wc.getURL()) } catch {}
       const t0 = Date.now()
       while (!done && Date.now() - t0 < 300000) {   // 最长 5 分钟
         await sleep(500)
-        let u = ''; try { u = wc.getURL() } catch {}
+        let u = ''; try { u = navKey(wc.getURL()) } catch {}
         if (url0 && u && u !== url0) return { how: 'auto-nav' }   // ③ 页面跳走 = 这关过了
         let st = null
         try {
+          // fill=这个元素到底【装不装得下值】(input/textarea 有 .value;富文本框 isContentEditable)。
+          // 只有装得下值的才配走 ① 值稳定。以前对任意元素拿 innerText 兜底,滑块/刷脸是 div:没有 .value → 取到
+          // innerText="向右滑动完成验证" —— 静态文案天生稳定 → 横幅刚弹出 ~2.7s 就自动续跑,人还没碰滑块,
+          // 下一步必失败。行为类断点(滑块/人脸/扫码)本就【无值可等】,只能靠 ②元素消失 / ③页面跳走 / 人点「继续」。
           st = await fr.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return {gone:1};
             var r=__el.getBoundingClientRect();var s=getComputedStyle(__el);
             var vis=!!(r.width||r.height)&&s.visibility!=='hidden'&&s.display!=='none';
-            return {gone:0,vis:vis?1:0,v:String((__el.value!=null?__el.value:__el.innerText)||'')}})()`, true)
+            var ce=__el.isContentEditable===true;var hasV=__el.value!=null;
+            return {gone:0,vis:vis?1:0,fill:(hasV||ce)?1:0,v:String((hasV?__el.value:(ce?__el.innerText:''))||'')}})()`, true)
         } catch {}
         if (!st) continue
         if (st.gone || !st.vis) { if (seen) return { how: 'auto-gone' }; continue }   // ② 见过又没了 = 人做完了
         seen = true
         const v = String(st.v || '')
-        if (v.trim().length >= 4) {   // ① 经典验证码:值稳定即续跑
+        if (st.fill && v.trim().length >= 4) {   // ① 经典验证码:值稳定即续跑(仅限真能装值的字段)
           if (v === lastV) { if (!stableAt) stableAt = Date.now(); else if (Date.now() - stableAt >= 1200) return { how: 'auto' } }
           else { lastV = v; stableAt = 0 }
         }
@@ -471,7 +480,17 @@ module.exports = function initRecorder(ctx) {
   // (置 S.browser.noCache,由 browser.js 的 did-start-navigation 钩子消费 —— 复用工具栏那个 toggle 的同一条路,不另造)。
   // 为什么要包一层:回放中途抛异常也必须还原用户原本的 toggle 状态,否则"禁用缓存"会悄悄常开,之后每次导航都清缓存。
   // 注意只清 HTTP 缓存,不碰 cookie/localStorage —— 那是 preState 的活(回放前【恢复】登录态,方向相反,清了就白登了)。
+  // 回放互斥:一个标签页同时只能有一场回放。两个 replayRec 并发会一起驱动 brActive() 的【同一个标签页】,
+  // 互相点对方的页面 —— 而 skillRun 既开放给 UI 又开放给 MCP relay,以前谁都没拦(_batchRunning 只挡批跑对批跑)。
+  // 这把锁顺带根治 noCache 的并发踩踏:prev 存的是共享全局的瞬时值,并发时 A 存 false、B 存到 A 刚写的 true →
+  // A 还原 false(B 中途静默失去禁用缓存)、B 还原 true → 「禁用缓存」永久卡死为开,正是上面那段注释想避免的"悄悄常开"。
   async function replayRec(rec, opts = {}) {
+    if (S.browser._replayBusy) return { ok: false, error: '已有回放在跑(同一个标签页不能同时跑两场),等它结束再发起' }
+    S.browser._replayBusy = true
+    try { return await replayNoCacheWrap(rec, opts) }
+    finally { S.browser._replayBusy = false }
+  }
+  async function replayNoCacheWrap(rec, opts) {
     const on = !!(rec && rec.noCache)
     if (!on) return await replayRecInner(rec, opts)
     const prev = S.browser.noCache
@@ -568,7 +587,11 @@ module.exports = function initRecorder(ctx) {
           log('replay live-gate: 步 ' + (i + 1) + ' 前页面出现「' + lg.hint + '」(录制时没有)→ 暂停等人工')
           const how = await awaitHumanGate(wc, { act: 'input', sel: lg.sel || ev.sel, selAlt: [], human: true, humanHint: lg.hint + '(回放时出现的验证,录制时没有)' }, i, sendProg)
           r = await execStep(wc, ev, tab, { waitMs: 3000 })
-          if (r.ok) { liveGateInfo = { hint: lg.hint, how }; consecutiveFails = 0 }
+          // 留痕【不看重试成没成】:以前只在 r.ok 时记,可"没人管、干等 5 分钟 timeout"恰恰是重试失败那条路 ——
+          // 于是报告里那句"⚠ 有人机断点超时未处理"永远不触发,只剩一句"selector not found",
+          // 只字不提引擎刚为这步等了 5 分钟人。失败的断点才是最该告诉用户的。
+          liveGateInfo = { hint: lg.hint, how, ok: !!r.ok }
+          if (r.ok) consecutiveFails = 0
         }
       }
       // 混合执行·噪声层①:找不到先向前探锚点 —— 若后续某步的目标已在当前页,说明中间段已被
@@ -595,7 +618,7 @@ module.exports = function initRecorder(ctx) {
         if (h && h.ok) { r = { ok: true }; healHow = h.how; healed.push({ ei: i, sel: h.sel, selAlt: [] }) }
       }
       const entry = { i: i + 1, act: ev.act, sel: ev.sel || ev.url || '', ok: r.ok, err: r.err || '' }
-      if (liveGateInfo) entry.liveGate = liveGateInfo   // 回放时冒出的验证:已等人过关并重试成功
+      if (liveGateInfo) entry.liveGate = liveGateInfo   // 回放时冒出的验证:拦过就留痕(ok=过关后重试成没成)
       if (r.retried) entry.retried = true
       if (healHow) { entry.healed = healHow; entry.sel = healed[healed.length - 1].sel }
       if (r.secret) entry.secret = true

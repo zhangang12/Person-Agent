@@ -722,7 +722,22 @@ function rowToParamValues(params, row) {
   return { values, unmatched }
 }
 
-module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, composePostWorkflowGoal, applyRefinePatch, rowToParamValues, relocateSelectors, takeoverDigest }
+// 把录制里的登录态抹掉,专供【要交出去的副本】(证据包/给 Agent 看的 JSON)。
+// 磁盘上的 recordings/<id>.json 必须留着真 preState —— 那是回放前恢复登录态的原料,抹了技能就跑不动;
+// 但交给模型的证据副本不需要 cookie,留着就是明文外泄。两个方向,别混为一谈。
+// 为什么 events 也要扫:replayRec 会把整个 preState 塞进 events[i]._restorePreState,
+// 而 applyParams 在【无参数技能】上返回的是同一个对象引用 → 这份污染会顺着 S.browser.lastRec 一路传到证据序列化点。
+function redactRec(rec) {
+  if (!rec || typeof rec !== 'object') return rec
+  const c = JSON.parse(JSON.stringify(rec))
+  const mask = (ps) => ps && typeof ps === 'object'
+    ? { cookies: '(已抹去 ' + ((ps.cookies && ps.cookies.length) || 0) + ' 条 cookie)', local: '(已抹去 localStorage)', session: '(已抹去 sessionStorage)', origin: ps.origin || '' }
+    : ps
+  if (c.preState) c.preState = mask(c.preState)
+  for (const ev of (Array.isArray(c.events) ? c.events : [])) if (ev && ev._restorePreState) ev._restorePreState = mask(ev._restorePreState)
+  return c
+}
+module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, composePostWorkflowGoal, applyRefinePatch, rowToParamValues, relocateSelectors, takeoverDigest, redactRec }
 
 // ── 纯文件 IO 工厂:window.js 注入 { app, fs, path, execSync } 后解构使用 ────────
 // 这些函数从 window.js 原样搬入,只把对 app/fs/path/execSync 的引用改为工厂参数(名字不变)。
