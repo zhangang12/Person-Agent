@@ -297,6 +297,9 @@ async function waitAssistantText(info, sessionId, maxMs = 1800000, idleMs = 6000
   let prev = '', stable = 0, doneNoTextTicks = 0, sig = '', lastMove = Date.now(), lastErr = null
   while (Date.now() - t0 < maxMs && Date.now() - lastMove < idleMs) {
     await sleep(700)
+    // 本次等待期间会话被 abort(用户点「停止」/看门狗收割)→ 别再傻等 serve 自然收尾(它可能永远不标 completed,
+    // 一等就是 idleMs=10 分钟,用户点了停止卡片却一直转圈)。宽限 ~3s 让 abort 后的收尾文本落进消息,然后有啥收啥。
+    if (abortedSince(sessionId, t0) && Date.now() - abortedSids.get(sessionId) > 2800) return prev
     let raw; try { raw = await api(info.base, 'GET', `/session/${sessionId}/message`); lastErr = null } catch (e) { lastErr = e; continue }   // 留住最后一个错:serve 挂掉时上层才有的可查(否则=10 分钟静默 + 空结果)
     const list = Array.isArray(raw) ? raw : (raw && raw.data) || []
     const r = pickTurnText(list)
@@ -310,6 +313,7 @@ async function waitAssistantText(info, sessionId, maxMs = 1800000, idleMs = 6000
   throw new Error('等待回复超时(' + why + ',serve 未产出任何文本' + (lastErr ? ';最后一次取消息失败:' + (lastErr.message || lastErr) : '') + ')')
 }
 async function sendMessage(info, sessionId, text, model, files, onNote) {
+  const tSend = Date.now()   // 本次发送起点:降级/快收的"被中止"判断都只认【这之后】的 abort,不吃历史账
   const parts = []
   if (text != null && text !== '') parts.push({ type: 'text', text })
   for (const f of (files || [])) {                          // 图片/文档 = file part(mime + data URL,实测格式)
@@ -328,7 +332,9 @@ async function sendMessage(info, sessionId, text, model, files, onNote) {
   } catch (e) {
     // serve 的 zod 校验不认我们的模型字段形状(4xx)→ 去掉模型重发一次并让用户看见,
     // 而不是整条消息发不出去;其它错误原样上抛
-    if (withModel && /->\s*4\d\d/.test(String(e && e.message || '')) && !abortedSids.has(sessionId)) {   // 已中止的会话不重发(防二次僵尸)
+    // "已中止不重发"只认【本次发送之后】的 abort:以前用 has(sid) 判,而 sid 从不按会话删 ——
+    // 用户点过一次停止,该会话此后【永久】失去 4xx 降级重发,下一条消息直接把裸 4xx 甩给渲染端。
+    if (withModel && /->\s*4\d\d/.test(String(e && e.message || '')) && !abortedSince(sessionId, tSend)) {
       if (onNote) { try { onNote('serve 拒绝了模型指定(' + (model.name || model.modelID) + '),本条已用默认模型发送') } catch {} }
       const d2 = extractText(await api(info.base, 'POST', `/session/${sessionId}/message`, { parts: body.parts }))
       return d2 || await waitAssistantText(info, sessionId)
@@ -355,12 +361,15 @@ async function listModels(info) {
 }
 // 已中止会话登记:sendMessage 的"4xx 去模型重发"降级分支绝不能对刚被 abort 的会话重发
 // (abort 会让在飞 POST 以 4xx 收尾 → 降级分支把全量 prompt 灌回死会话 = 无人收割的二次僵尸)。
-const abortedSids = new Set()
+const abortedSids = new Map()   // sid → 最近一次 abort 的时间戳。Map 而非 Set:判断要带时间(见 sendMessage 降级 / waitAssistantText 快收)
 async function abort(info, sessionId) {
-  abortedSids.add(sessionId)
+  abortedSids.set(sessionId, Date.now())
   if (abortedSids.size > 500) abortedSids.clear()   // 粗粒度防涨:sid 全局唯一,清空只影响极老会话的降级判断
   try { await api(info.base, 'POST', `/session/${sessionId}/abort`) } catch {}
 }
+// 「这次等待期间被 abort 了吗」:时间戳必须晚于本次等待的起点 —— 只看 has() 会把"上一轮点过停止"的会话
+// 永久判成已中止(sid 从不按会话删),那正是"点过一次停止,该会话此后永久失去 4xx 降级重发"的根。
+const abortedSince = (sessionId, t0) => { const at = abortedSids.get(sessionId); return at != null && at >= t0 }
 
 // 重连用：会话是否还在（直接 GET 取不到就扫列表；未知路由会回 SPA HTML→JSON.parse 抛错→走兜底）
 async function sessionExists(info, sid) {
@@ -639,4 +648,4 @@ function retireIfOrphan(info, inUseBases) {
 }
 
 module.exports = { ensureServe, createSession, sendMessage, listModels, abort, replyPermission, sessionExists, getMessages, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, AUTO_ALLOW,
-  __test: { dispatch, waitAssistantText, extractText, pickTurnText } }
+  __test: { dispatch, waitAssistantText, extractText, pickTurnText, abortedSince, abortedSids } }

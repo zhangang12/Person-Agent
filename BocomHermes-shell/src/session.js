@@ -340,7 +340,11 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     if (!si) throw new Error('session not ready')
     // 首条消息：静默注入项目上下文前缀（用户看到原文，Serve 收到"背景+原文"）
     const ctxPrefix = S.firstMsgCtx.get(sessionId) || ''
-    if (ctxPrefix) { S.firstMsgCtx.delete(sessionId); log('inject project context (' + ctxPrefix.length + ' chars) for ' + sessionId) }
+    if (ctxPrefix) {
+      S.firstMsgCtx.delete(sessionId); log('inject project context (' + ctxPrefix.length + ' chars) for ' + sessionId)
+      // 后台动作可视化:注入了什么背景要让用户在对话里看得见(一行灰字),不能只躺在日志里
+      try { if (!e.sender.isDestroyed()) e.sender.send('card-note', { text: '已随首条消息注入背景：个人记忆 + 项目上下文（' + ctxPrefix.length + ' 字）', tone: 'muted' }) } catch {}
+    }
     // 作答技能：选中的技能把方法论指令静默预置到用户原文前（用户气泡仍显示原文）
     let skillPrefix = ''
     if (skill) { const sk = loadSkills().find((s) => s.id === skill); if (sk) { skillPrefix = '<作答技能:' + sk.name + '>\n' + sk.body + '\n</作答技能>\n\n'; log('inject skill 「' + sk.name + '」(' + sk.body.length + ' chars) for ' + sessionId) } }

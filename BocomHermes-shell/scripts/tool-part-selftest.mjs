@@ -182,5 +182,53 @@ const textPart = (t) => ({ type: 'text', text: t })
   ok('subagent=false', t && t.subagent === false, t && t.subagent)
 })()
 
+;(() => {
+  console.log('用例13:abortedSince —— "被中止"只认本次发送之后的 abort(治"点过一次停止,该会话永久失去 4xx 降级重发")')
+  const { abortedSince, abortedSids } = oc.__test
+  const sid = 'ses_abtest'
+  abortedSids.delete(sid)
+  ok('从没 abort 过 → false', abortedSince(sid, Date.now() - 1000) === false)
+  const abortAt = Date.now()
+  abortedSids.set(sid, abortAt)   // 模拟 abort 记账(不发真 HTTP)
+  ok('本次发送(t0 早于 abort)期间被中止 → true', abortedSince(sid, abortAt - 5000) === true)
+  ok('abort 之后才发起的新一次发送 → false(历史账不吃)', abortedSince(sid, abortAt + 1) === false)
+  ok('同一毫秒(t0===abortAt)算被中止(边界含)', abortedSince(sid, abortAt) === true)
+  abortedSids.delete(sid)
+})()
+
+// 用例14:waitAssistantText 被 abort 后 ~3s 快收(以前:serve 不标 completed 就干等满 idleMs,点了停止卡片转圈 10 分钟)
+await (async () => {
+  console.log('用例14:waitAssistantText 中止快收(假 serve 永不收尾,只有半截文本)')
+  const { waitAssistantText, abortedSids } = oc.__test
+  const http = await import('node:http')
+  // 假 serve:GET /session/:id/message 永远回"未完成的半截回答"(无 completed 标记,文本不再变 → 但拍 3 稳定收尾会先触发,
+  // 所以文本每次都变一点,模拟"还在生成中被停止")
+  let n = 0
+  const srv = http.createServer((req, res) => {
+    n++
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify([
+      { info: { role: 'user' }, parts: [{ type: 'text', text: '问题' }] },
+      { info: { role: 'assistant' }, parts: [{ type: 'text', text: '半截回答' + '.'.repeat(n) }] },
+    ]))
+  })
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r))
+  const base = 'http://127.0.0.1:' + srv.address().port
+  const sid = 'ses_fastabort'
+  abortedSids.delete(sid)
+  const t0 = Date.now()
+  setTimeout(() => abortedSids.set(sid, Date.now()), 900)   // 0.9s 后模拟用户点「停止」
+  const out = await Promise.race([
+    waitAssistantText({ base }, sid, 60000, 60000),
+    new Promise((r) => setTimeout(() => r('__HUNG__'), 12000)),
+  ])
+  const ms = Date.now() - t0
+  ok('没挂死(12s 内返回,实际 ' + ms + 'ms)', out !== '__HUNG__')
+  ok('停止后 ~3s 宽限即收尾(<8s)', ms < 8000, ms)
+  ok('返回的是已收到的半截文本(不丢)', /^半截回答/.test(String(out)), String(out).slice(0, 20))
+  abortedSids.delete(sid)
+  srv.close()
+})()
+
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

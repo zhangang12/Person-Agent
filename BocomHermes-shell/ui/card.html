@@ -248,7 +248,7 @@
     <div id="dropHint" class="drop-hint">松手上传 — 文档解析成文本，图片走多模态识别</div>
     <div id="skillBar" class="skill-bar nodrag" hidden></div>
     <div class="composer nodrag">
-      <textarea id="ci" rows="1" placeholder="继续对话…（Enter 发送，Shift+Enter 换行）"></textarea>
+      <textarea id="ci" rows="1" placeholder="继续对话…（Enter 发送 · Shift+Enter 换行 · / 挂载作答技能 · ↑ 翻输入历史）"></textarea>
       <button id="send" class="send" aria-label="发送"></button>
     </div>
 
@@ -459,6 +459,9 @@
     feed.innerHTML = ''
     curAnswer = null; curReason = null; answerParts = null; reasonParts = null
     pendingInjects.length = 0
+    // toolEls/subAgents 也得清:feed 清空后它们攥的全是 detached DOM —— 旧引用既是内存泄漏,
+    // 撞上同 partID 时 renderTool 还会去更新一个不在页面上的节点(工具日志"凭空消失")
+    toolEls.clear(); subAgents.clear(); if (_saTick) { clearInterval(_saTick); _saTick = null }
   }
 
   function addMsg(text, who) {
@@ -623,7 +626,7 @@
   async function turn(text, target, files) {
     const ai = target || addMsg('', 'ai')
     const PH = target ? '运行中…' : '思考中…'; ai.textContent = PH
-    curAnswer = ai; curReason = null; answerParts = new Map(); reasonParts = new Map(); subAgents.clear(); if (_saTick) { clearInterval(_saTick); _saTick = null }; setBusy(true)
+    curAnswer = ai; curReason = null; answerParts = new Map(); reasonParts = new Map(); subAgents.clear(); toolEls.clear(); if (_saTick) { clearInterval(_saTick); _saTick = null }; setBusy(true)   // toolEls 跨轮清:上一轮的工具块已定格在 feed 里,Map 只清引用防无限涨
     let ok = true
     try {
       const reply = await window.BocomHermes.cardSend(text, files, activeSkill && activeSkill.id)
@@ -635,8 +638,17 @@
       // 思考过程答完保持展开(用户要看得见过程);可手动点标题折叠
     } catch (e) {
       ok = false
-      if (!target) ai.className = 'msg ai err'
-      ai.textContent = '⚠ ' + (e.message || e)
+      // 半截答案是用户的,错误不许覆盖它:流式可能已经收了几千字,再"⚠ 引擎连接中断"一盖全没了。
+      // 有半截 → 保留半截 + 错误另起一行 note;真的一个字没有 → 才把气泡改成错误。
+      const partial = answerParts ? joinParts(answerParts).trim() : ''
+      if (partial) {
+        ai.innerHTML = renderMarkdown(partial)
+        if (!target) { ai.dataset.raw = partial; addCopyBtn(ai) }
+        addNote('⚠ 回合中断：' + (e.message || e) + '（以上是中断前已收到的部分回答）', 'muted')
+      } else {
+        if (!target) ai.className = 'msg ai err'
+        ai.textContent = '⚠ ' + (e.message || e)
+      }
     } finally { for (const [id, s] of subAgents) if (!s.done) subAgentDone(id, 'done'); curAnswer = null; setBusy(false); scrollFeed(); maybeDrain() }
     return ok
   }
@@ -674,9 +686,24 @@
     for (const it of items) { if (it.kind === 'file' && /^image\//.test(it.type)) { const f = it.getAsFile(); if (f) { e.preventDefault(); await addFile(f) } } }
   })
 
+  // 输入历史:↑/↓ 翻已发送的消息(仅当光标在首/末行,不打断多行编辑;正在翻时再输入即退出翻阅态)
+  const sentHistory = []
+  let histIdx = -1, histDraft = ''
+  function histNav(d) {
+    if (!sentHistory.length) return false
+    if (histIdx === -1) { if (d > 0) return false; histDraft = ci.value; histIdx = sentHistory.length - 1 }
+    else { histIdx += d }
+    if (histIdx >= sentHistory.length) { histIdx = -1; ci.value = histDraft }
+    else { histIdx = Math.max(0, histIdx); ci.value = sentHistory[histIdx] }
+    autoGrow(); ci.setSelectionRange(ci.value.length, ci.value.length)
+    return true
+  }
+
   function submit() {
     const v = ci.value.trim()
     if ((!v && !pendingAtts.length) || busy) return
+    if (v) { if (sentHistory[sentHistory.length - 1] !== v) sentHistory.push(v); if (sentHistory.length > 50) sentHistory.shift() }
+    histIdx = -1; histDraft = ''
     const docRefs = pendingAtts.filter((a) => a.kind === 'doc').map((a) => '- ' + a.path + '（' + a.name + '）').join('\n')
     const docNote = docRefs ? '【用户拖入了文档，需要时用 read_document 工具读取其内容】\n' + docRefs : ''
     const images = pendingAtts.filter((a) => a.kind === 'image').map((a) => ({ mime: a.mime, url: a.dataUrl, filename: a.name }))
@@ -691,11 +718,13 @@
   // ── 作答技能:composer 输入 "/" 弹菜单,↑↓ 选、Enter 挂载(把方法论指令静默预置到消息前);当前技能显示为胶囊,✕ 卸载 ──
   const skillMenu = document.getElementById('skillMenu'), skillBar = document.getElementById('skillBar')
   let activeSkill = null, skillList = null, skillItems = [], skillSel = 0
-  async function getSkills() { if (!skillList) { try { skillList = await window.BocomHermes.skillsList() } catch { skillList = [] } } return skillList }
+  async function getSkills(force) { if (force || !skillList) { try { skillList = await window.BocomHermes.skillsList() } catch { skillList = skillList || [] } } return skillList }
   const skillMenuOpen = () => !skillMenu.hidden
   function hideSkillMenu() { skillMenu.hidden = true; skillItems = [] }
   async function openSkillMenu(query) {
-    const all = await getSkills()
+    // 从隐藏→打开的那一下强制重拉:用户刚在"管理技能库"里改了 md,回来就能看到新内容(以前缓存永不失效,要重开卡)。
+    // 打开后逐字过滤仍用缓存 —— 别让每敲一个键都打一次 IPC 读磁盘。
+    const all = await getSkills(skillMenu.hidden)
     const q = (query || '').toLowerCase().trim()
     const list = q ? all.filter((s) => (s.name + ' ' + (s.desc || '') + ' ' + s.id).toLowerCase().includes(q)) : all
     skillItems = list; skillSel = 0
@@ -723,8 +752,15 @@
       if (e.key === 'Escape') { e.preventDefault(); hideSkillMenu(); return }
       if (e.key === 'Enter') { e.preventDefault(); if (skillItems.length) chooseSkill(skillItems[skillSel]); else { hideSkillMenu(); submit() } return }
     }
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); return }
+    // ↑/↓ 翻输入历史:只在光标位于首/末行时接管(多行编辑中的正常移动不受影响)
+    if (e.key === 'ArrowUp' && ci.selectionStart === ci.selectionEnd && !ci.value.slice(0, ci.selectionStart).includes('\n')) {
+      if (histNav(-1)) e.preventDefault()
+    } else if (e.key === 'ArrowDown' && histIdx !== -1 && ci.selectionStart === ci.selectionEnd && !ci.value.slice(ci.selectionEnd).includes('\n')) {
+      if (histNav(1)) e.preventDefault()
+    }
   })
+  ci.addEventListener('input', () => { histIdx = -1 })   // 翻到某条后一编辑即退出翻阅态(编辑的是副本,不改历史)
   document.addEventListener('mousedown', (e) => { if (skillMenuOpen() && !skillMenu.contains(e.target) && e.target !== ci) hideSkillMenu() })
 
   // 快捷指令：常用追问的模板（在这个数组里增删即可迭代）
@@ -755,14 +791,33 @@
   })
   quick.appendChild(diffBtn)
 
-  // 记忆管理命令：/memory 打开编辑弹窗
+  // 记忆管理:内联编辑弹层。不能用 window.prompt() —— Electron 渲染进程不实现它,一调就抛
+  // "prompt() is and will not be supported",这个按钮点了毫无反应(而且异常还没人接)。
   const memBtn = document.createElement('button'); memBtn.className = 'qchip'; memBtn.textContent = '📌 我的记忆'; memBtn.title = '查看 / 编辑个人记忆（每张新卡会自动注入）'
   memBtn.addEventListener('click', async () => {
-    const cur = await window.BocomHermes.memoryRead()
-    const next = prompt('个人记忆（新卡自动注入，留空清除）：', cur)
-    if (next === null) return
-    await window.BocomHermes.memoryWrite(next)
-    addMsg('✓ 记忆已更新，下一张新卡起生效。', 'ai')
+    if (document.getElementById('memPop')) return
+    let cur = ''
+    try { cur = (await window.BocomHermes.memoryRead()) || '' } catch (e) { addNote('读取记忆失败：' + (e.message || e), 'muted'); return }
+    const pop = document.createElement('div'); pop.id = 'memPop'
+    pop.style.cssText = 'position:absolute;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35);border-radius:14px;'
+    const box = document.createElement('div')
+    box.style.cssText = 'width:86%;max-width:520px;background:var(--glass-bg);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border:1px solid var(--composer-border);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;box-shadow:0 10px 34px rgba(0,0,0,.3);'
+    const ttl2 = document.createElement('div'); ttl2.textContent = '📌 个人记忆（每张新卡自动注入，留空即清除）'; ttl2.style.cssText = 'font-size:12.5px;font-weight:600;color:var(--txt);'
+    const ta = document.createElement('textarea'); ta.value = cur; ta.placeholder = '例如：我是信贷系统后端开发，回答优先给 Java 示例…'
+    ta.style.cssText = 'height:150px;resize:vertical;background:var(--composer-bg);border:.5px solid var(--composer-border);border-radius:8px;color:var(--txt);font-size:12.5px;font-family:var(--font);padding:8px;outline:none;line-height:1.5;'
+    const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;'
+    const cancel = document.createElement('button'); cancel.className = 'rbtn-ghost'; cancel.textContent = '取消'
+    const save = document.createElement('button'); save.className = 'rbtn-primary'; save.textContent = '保存'
+    cancel.addEventListener('click', () => pop.remove())
+    pop.addEventListener('click', (e) => { if (e.target === pop) pop.remove() })
+    save.addEventListener('click', async () => {
+      save.disabled = true; save.textContent = '保存中…'
+      try { await window.BocomHermes.memoryWrite(ta.value); pop.remove(); addNote('✓ 记忆已更新，下一张新卡起生效。', 'muted') }
+      catch (e) { save.disabled = false; save.textContent = '保存'; addNote('保存记忆失败：' + (e.message || e), 'muted') }
+    })
+    row.append(cancel, save); box.append(ttl2, ta, row); pop.appendChild(box)
+    ;(document.querySelector('.card') || document.body).appendChild(pop)
+    ta.focus()
   })
   quick.appendChild(memBtn)
 
