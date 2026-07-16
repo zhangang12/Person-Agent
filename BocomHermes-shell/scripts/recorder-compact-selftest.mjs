@@ -4,7 +4,7 @@
 // 另加合成边界用例:不跨元素误并、不误删两次真实点击、无按钮表单的 Enter 保留、survivors+dropped 可还原。
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
-const { compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, composePostWorkflowGoal, applyRefinePatch, rowToParamValues, relocateSelectors, selExpr, takeoverDigest, applyParams, redactRec } = require('../src/recorder-core.js')
+const { compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, composePostWorkflowGoal, applyRefinePatch, rowToParamValues, relocateSelectors, selExpr, findElExpr, anchorExpr, takeoverDigest, applyParams, redactRec } = require('../src/recorder-core.js')
 
 let pass = 0, fail = 0
 function ok(name, cond, extra) {
@@ -373,6 +373,41 @@ console.log('用例16:composePostWorkflowGoal —— 下载后编排目标合成
   // applyParams 无参数时返回同一引用 —— 正是这条让 replayRec 的 preState 污染顺着 lastRec 传到证据序列化点
   const noParam = { id: 'r3', events: [{ act: 'click', sel: '#a' }] }
   ok('applyParams 无参数返回同一引用(证据副本必须自己 redact,不能指望它隔离)', applyParams(noParam, {}) === noParam)
+}
+
+// ── 用例18:anchorExpr —— 探锚点的举证责任比执行一步高得多,不许拿弱候选当"整段可跳过"的证据 ──
+{
+  console.log('用例18:anchorExpr(探锚点严格匹配,防静默跳过真实业务步还报 PASS)')
+  // 模拟页面:一个无关的弹窗"确定"按钮 + 一个真锚点
+  const page = (html) => {
+    const els = []
+    for (const m of html.matchAll(/<(\w+)([^>]*)>([^<]*)</g)) els.push({ tag: m[1], attrs: m[2], text: m[3] })
+    return els
+  }
+  const runExpr = (expr, els) => {   // 极简求值:只认 querySelectorAll(tag) + innerText 比较这条路径
+    const m = expr.match(/querySelectorAll\("(\w+)"\)/)
+    if (!m) return { kind: 'css', sel: (expr.match(/querySelector\("([^"]+)"\)/) || [])[1] }
+    const txtM = [...expr.matchAll(/t===("(?:[^"\\]|\\.)*")/g)].map((x) => JSON.parse(x[1]))
+    const pfxM = [...expr.matchAll(/t\.indexOf\(("(?:[^"\\]|\\.)*")\)===0/g)].map((x) => JSON.parse(x[1]))
+    const hit = els.filter((e) => e.tag === m[1]).find((e) => txtM.includes(e.text.trim()) || pfxM.some((p) => e.text.trim().indexOf(p) === 0))
+    return { kind: 'text', tag: m[1], exact: txtM, prefix: pfxM, hit: hit || null }
+  }
+  const els = page('<button class="modal-ok">确定</button><button class="submit">确定转账</button>')
+  // 老路:findElExpr 把 selAlt 的 __text__ 前缀匹配 OR 进来
+  const loose = runExpr(findElExpr('#nonexistent-anchor', ['__text__:button|确定']), els)
+  ok('复现:findElExpr 的 __text__ 是前缀匹配 → 无关的"确定转账"也能命中', loose.prefix.includes('确定') && !!loose.hit)
+  // 新路:anchorExpr 只认主选择器
+  const strictCss = runExpr(anchorExpr({ sel: '#real-anchor', selAlt: ['__text__:button|确定'] }), els)
+  ok('anchorExpr 丢掉 selAlt,只认主选择器', strictCss.kind === 'css' && strictCss.sel === '#real-anchor')
+  ok('anchorExpr 表达式里不含任何 selAlt 候选', !anchorExpr({ sel: '#a', selAlt: ['__text__:button|确定', 'div > input:nth-of-type(2)'] }).includes('确定'))
+  // 主选择器本身是 __text__ 时:要求全等,不许前缀
+  const strictTxt = runExpr(anchorExpr({ sel: '__text__:button|确定' }), els)
+  ok('主选择器是 __text__ → 只全等匹配,不许前缀', strictTxt.exact.includes('确定') && strictTxt.prefix.length === 0)
+  ok('全等匹配下"确定转账"不再冒充"确定"锚点', strictTxt.hit && strictTxt.hit.text === '确定')
+  ok('nth-of-type 兜底路径当主选择器时照常用(那是录制选出的最强候选)', anchorExpr({ sel: 'div.form > input:nth-of-type(2)' }).includes('querySelector('))
+  ok('无 sel → null(不当锚点)', anchorExpr({ sel: '' }) === 'null' && anchorExpr({}) === 'null' && anchorExpr(null) === 'null')
+  ok('残缺伪选择器 → null 而非拼出坏表达式', anchorExpr({ sel: '__text__:button' }) === 'null' && anchorExpr({ sel: '__label__:' }) === 'null')
+  ok('注入面:选择器全程 JSON.stringify', anchorExpr({ sel: '__text__:button|a")||(1&&document.body' }).includes('\\"'))
 }
 
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)

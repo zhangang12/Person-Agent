@@ -235,6 +235,30 @@
     return tryList || 'null'
   }
 
+  // 探锚点专用的【严格】找元素表达式 —— 不能复用 findElExpr。
+  // 两件事的举证责任完全不同:【执行】一步时用宽松候选链使劲找元素是合理的(你正要操作它,找不到就算失败);
+  // 【探锚点】却是在断言"中间这一整段已被页面状态满足、可以整段跳过",强得多的主张,证据必须够specific。
+  // 而 selAlt 的尾部候选恰恰最弱:__text__ 是【前缀】匹配 —— 「__text__:button|确定」能命中当前页任何以"确定"
+  // 开头的按钮(弹窗 OK 键、别的区块的确认键);nth-of-type 兜底路径换个区块也能撞上。拿这种证据把中间 6 步
+  // (填金额、选账户…)全标成 ok:true → fails=0 → 报 PASS → 还触发下载后编排。银行流程里"跳步且报成功"是最坏结果。
+  // 故:只认主选择器(录制时选出的最强候选),且伪选择器要求文本【全等】不许前缀。
+  // 代价是有些本该跳的段不跳了 → 那步照常失败 → 走自愈/Agent 接管(既有的降级路,安全);比静默跳过好得多。
+  function anchorExpr(ev) {
+    const s = String((ev && ev.sel) || '')
+    if (!s) return 'null'
+    if (s.startsWith('__text__:')) {
+      const idx = s.indexOf('|'); if (idx < 0) return 'null'
+      const tag = s.slice(9, idx).toLowerCase(); const txt = s.slice(idx + 1)
+      if (!tag || !txt) return 'null'
+      return `(__el=(function(){var els=document.querySelectorAll(${JSON.stringify(tag)});for(var i=0;i<els.length;i++){var t=(els[i].innerText||els[i].value||'').trim();if(t===${JSON.stringify(txt)})return els[i]}return null})())`
+    }
+    if (s.startsWith('__label__:')) {
+      const t = s.slice(10); if (!t) return 'null'
+      return `(__el=(function(){var ls=document.querySelectorAll('label');for(var i=0;i<ls.length;i++){var tx=(ls[i].innerText||ls[i].textContent||'').trim();if(tx===${JSON.stringify(t)}){var c=ls[i].control||(ls[i].htmlFor&&document.getElementById(ls[i].htmlFor))||ls[i].querySelector('input,textarea,select');if(c)return c}}return null})())`
+    }
+    return `(__el=document.querySelector(${JSON.stringify(s)}))`
+  }
+
   // 定位事件该在哪个 frame 上执行:ev.fu=录制时子框架(iframe)URL → 找同 URL 的 frame;
   // 无 fu=主框架;找不到匹配 frame(iframe 已卸载/换页)则退回主框架,至少不崩。
   // 返回值有统一的 .executeJavaScript(code, userGesture) —— wc 与 WebFrameMain 同签名。
@@ -737,7 +761,7 @@ function redactRec(rec) {
   for (const ev of (Array.isArray(c.events) ? c.events : [])) if (ev && ev._restorePreState) ev._restorePreState = mask(ev._restorePreState)
   return c
 }
-module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, composePostWorkflowGoal, applyRefinePatch, rowToParamValues, relocateSelectors, takeoverDigest, redactRec }
+module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, composePostWorkflowGoal, applyRefinePatch, rowToParamValues, relocateSelectors, takeoverDigest, redactRec, anchorExpr }
 
 // ── 纯文件 IO 工厂:window.js 注入 { app, fs, path, execSync } 后解构使用 ────────
 // 这些函数从 window.js 原样搬入,只把对 app/fs/path/execSync 的引用改为工厂参数(名字不变)。

@@ -2,7 +2,7 @@
 // 只搬不改函数体，行为 100% 不变。函数间互相调用（模块内互见）。
 // ctx 注入 window.js 闭包与 ./recorder-core 的外部符号；sleep 本模块自定义（不从 ctx 拿）。
 module.exports = function initRecorder(ctx) {
-  const { S, brActive, session, log, snapshotBad, RECORDER_JS, frameFor, findElExpr, coverageHits, gitChangedFiles, resolveBus, relocateSelectors, persistHeal, takeoverDigest, pageRead } = ctx
+  const { S, brActive, session, log, snapshotBad, RECORDER_JS, frameFor, findElExpr, anchorExpr, coverageHits, gitChangedFiles, resolveBus, relocateSelectors, persistHeal, takeoverDigest, pageRead } = ctx
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
   async function injectRecorder(wc) {
@@ -264,7 +264,9 @@ module.exports = function initRecorder(ctx) {
       if (e2.human) continue   // 人机断点步(验证码)不当锚点:它属于被跳过的登录块的概率更高
       if (!e2.sel || !['click', 'input', 'select', 'check', 'submit'].includes(e2.act)) continue
       try {
-        const hit = await frameFor(wc, e2).executeJavaScript(`(()=>{var __el=null;return !!(${findElExpr(e2.sel, e2.selAlt)})})()`, true)
+        // anchorExpr 而非 findElExpr:探锚点要断言"整段可跳过",不能拿 selAlt 里的弱候选(__text__ 前缀匹配 /
+        // nth-of-type 兜底)当证据 —— 撞上一个无关的"确定"按钮就会静默跳掉中间的真实业务步并报 PASS。详见 anchorExpr。
+        const hit = await frameFor(wc, e2).executeJavaScript(`(()=>{var __el=null;return !!(${anchorExpr(e2)})})()`, true)
         if (hit) return j
       } catch {}
     }
