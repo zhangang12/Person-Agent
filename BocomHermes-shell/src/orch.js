@@ -57,6 +57,7 @@ module.exports = function initOrch(S, { ipcMain, oc, orch, log, app, path, fs })
       const idleDeath = new Promise((_, rej) => {
         watchdog = setInterval(() => {
           const si = S.sessionInfo.get(sid)
+          if (si && si.awaitPerm > 0) return   // 正在等人批准工具(session.js onPermission 记的账)——这不是空转,别把"用户去吃饭"当黑洞杀掉;用户随时可点停止
           const last = (si && si.lastAt) || started
           // 该会话各上下文单元里读得最多的一个:高读=溢出嫌疑大,缩短空转容忍。还在读/还在出文本的会一直刷新 lastAt → 不会被误杀,只杀"读一堆后彻底安静"的卡死会话
           let reads = 0
@@ -80,7 +81,7 @@ module.exports = function initOrch(S, { ipcMain, oc, orch, log, app, path, fs })
       // 重试自知:让模型知道上次被超时/出错中止,这次少绕路直奔目标
       const pfx = meta && meta.attempt > 0 ? '(上一次尝试因超时/出错被中止,这是第 ' + (meta.attempt + 1) + ' 次执行:请更直接地完成目标,减少探索性步骤)\n\n' : ''
       try { return await Promise.race([oc.sendMessage(serve, sid, pfx + prompt, S.settings.model), idleDeath]) }   // 工作流子任务用全局默认模型
-      finally { if (watchdog) clearInterval(watchdog); if (reap) clearTimeout(reap); S.sessionInfo.delete(sid); entry.sessions.delete(sid); S.streamBuf.delete(sid) }
+      finally { if (watchdog) clearInterval(watchdog); if (reap) clearTimeout(reap); S.sessionInfo.delete(sid); entry.sessions.delete(sid); S.streamBuf.delete(sid); S.dropPendingPerm && S.dropPendingPerm(sid) }   // 未答的审批记录一并清:会话都没了,那条 pendingPerm 永远等不到回复
     }
 
     try {
@@ -123,7 +124,7 @@ module.exports = function initOrch(S, { ipcMain, oc, orch, log, app, path, fs })
       send('error', { error: String(err && err.message || err) })
       return { ok: false }
     } finally {
-      for (const s of entry.sessions) { S.sessionInfo.delete(s); S.streamBuf.delete(s) }   // streamBuf 一并兜底:永不 settle 的会话其 run() finally 不执行
+      for (const s of entry.sessions) { S.sessionInfo.delete(s); S.streamBuf.delete(s); S.dropPendingPerm && S.dropPendingPerm(s) }   // streamBuf/pendingPerm 一并兜底:永不 settle 的会话其 run() finally 不执行
       S.workflows.delete(wc.id)
       // 注册表只留最近 50 条,防长跑内存 + 存档目录本身是全量留痕
       if (S.wfRegistry.size > 50) { const k = S.wfRegistry.keys().next().value; S.wfRegistry.delete(k) }

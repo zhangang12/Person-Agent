@@ -91,6 +91,16 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
   ipcMain.handle('skills-list', () => loadSkills().map(({ id, name, desc }) => ({ id, name, desc })))
   ipcMain.handle('skills-open-dir', () => { try { ensureDefaultSkills(); shell.openPath(skillsDir) } catch {} ; return true })
 
+  // 会话没了(关卡/工作流收尾/会话被杀)→ 把它名下【弹了框但没人答】的审批记录一起清掉。
+  // pendingPerm 以前唯一的删除点是 permission-reply,于是"弹了审批框但没点就关卡"的记录永远留在 Map 里(无上限,长跑必涨)。
+  // 挂在 S 上:window.js(关卡)与 orch.js(工作流收尾)都要用,而 pendingPerm 的所有权在这一层。
+  S.dropPendingPerm = (sessionId) => {
+    if (!sessionId) return
+    for (const [k, v] of S.pendingPerm) {
+      if (v === sessionId) { S.pendingPerm.delete(k); S.pendingPerm.delete(k + ':meta') }   // k=requestId → v=sessionId;:meta 是同 requestId 的伴生键
+    }
+  }
+
   // ── 事件路由（所有 serve 共用，按 sessionId 路由到对应卡）─────────────────
   function onPermission({ sessionId, requestId, tool, detail }) {
     const si = S.sessionInfo.get(sessionId); if (!si) return
@@ -101,6 +111,11 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     if (!si.wc || si.wc.isDestroyed()) { oc.replyPermission(si.serve, sessionId, requestId, 'reject'); return }
     S.pendingPerm.set(requestId, sessionId)
     S.pendingPerm.set(requestId + ':meta', { tool, detail: detail || '' })   // 供审计留痕(批准/拒绝了什么)
+    // 「在等人批准」要记账:lastAt 只在 onText 打点,弹了审批框之后整个等人窗口期时间戳是冻结的 →
+    // 工作流的空转看门狗(src/orch.js)会把"用户去吃饭了"当成黑洞,20 分钟(高读会话 6 分钟)后把会话杀掉,
+    // 还报"连续 20 分钟无任何活动"。等人不是空转,看门狗见 awaitPerm>0 就不判死(用户随时可以点停止)。
+    si.lastAt = Date.now()
+    si.awaitPerm = (si.awaitPerm || 0) + 1
     si.wc.send('permission-request', { requestId, tool, detail: detail || '' })   // detail=要改的文件/要跑的命令，便于知情审批
   }
   function onText({ sessionId, text, role, partID, kind, status, delta, toolInput, toolOutput, toolTitle, toolError, subagent, agentId, agentName, taskChild, taskDesc }) {
@@ -383,6 +398,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     const sessionId = S.pendingPerm.get(requestId); const meta = S.pendingPerm.get(requestId + ':meta'); S.pendingPerm.delete(requestId); S.pendingPerm.delete(requestId + ':meta')
     const si = sessionId && S.sessionInfo.get(sessionId)
     const d = decision === 'always' ? 'always' : decision === 'once' ? 'once' : 'reject'
+    if (si) { si.awaitPerm = Math.max(0, (si.awaitPerm || 1) - 1); si.lastAt = Date.now() }   // 人答完了:解除"等人"记账,空转计时从此刻重新起算(别把等人那段算进空转)
     if (si) oc.replyPermission(si.serve, sessionId, requestId, d)
     // 审计:写/执行类操作的人工批准(工具+目标),reject 也记(留痕拒绝)
     try { S.audit && S.audit('permission', (d === 'reject' ? '拒绝' : '批准' + (d === 'always' ? '(总是)' : '')) + '权限:' + ((meta && meta.tool) || '?'), { decision: d, tool: meta && meta.tool, detail: (meta && meta.detail || '').slice(0, 300), sessionId }) } catch {}

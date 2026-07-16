@@ -182,7 +182,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     win.on('closed', () => {
       const s = S.sessionByWc.get(wcId)
       let oldServe = null
-      if (s) { const si = S.sessionInfo.get(s); if (si) { oldServe = si.serve; oc.abort(si.serve, s) } S.sessionInfo.delete(s); S.streamBuf.delete(s); S.sentPrompt.delete(s); S.firstMsgCtx.delete(s) }
+      if (s) { const si = S.sessionInfo.get(s); if (si) { oldServe = si.serve; oc.abort(si.serve, s) } S.sessionInfo.delete(s); S.streamBuf.delete(s); S.sentPrompt.delete(s); S.firstMsgCtx.delete(s); S.dropPendingPerm && S.dropPendingPerm(s) }   // 未答的审批记录随卡清,别在 pendingPerm 里留孤儿
       S.sessionByWc.delete(wcId)
       if (S.cardDir) S.cardDir.delete(wcId)       // per-card 目录/模型状态随卡销毁
       if (S.modelByWc) S.modelByWc.delete(wcId)
