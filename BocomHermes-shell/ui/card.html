@@ -9,13 +9,14 @@
 <style>
   .card { display: flex; flex-direction: column; height: 100%; padding: 11px 13px 12px; gap: 9px; position: relative; }
   /* 探活日志抽屉 */
+  /* 修主题 bug:原先用未定义的 --bg/--line,浅色主题下抽屉永远回退成深色板(黑板贴白卡) —— 改用真实令牌随主题走 */
   .probedraw { position: absolute; top: 0; right: 0; bottom: 0; width: 320px; max-width: 80%; z-index: 40;
-    background: var(--bg, #12131a); border-left: 1px solid var(--line, rgba(255,255,255,.1));
-    box-shadow: -10px 0 30px rgba(0,0,0,.45); display: flex; flex-direction: column;
+    background: var(--ai-bg); border-left: 1px solid var(--composer-border);
+    box-shadow: -10px 0 30px rgba(0,0,0,.22); display: flex; flex-direction: column;
     animation: pdslide .18s ease-out; }
   .probedraw[hidden] { display: none; }
   @keyframes pdslide { from { transform: translateX(100%) } to { transform: translateX(0) } }
-  .pd-hd { display: flex; align-items: center; gap: 7px; padding: 10px 12px; flex: none; border-bottom: 1px solid var(--line, rgba(255,255,255,.08)); flex-wrap: wrap; }
+  .pd-hd { display: flex; align-items: center; gap: 7px; padding: 10px 12px; flex: none; border-bottom: 1px solid var(--composer-border); flex-wrap: wrap; }
   .pd-title { font-size: 12.5px; font-weight: 700; color: var(--txt); }
   .pd-sub { font-size: 10px; color: var(--txt3); font-family: var(--mono); }
   .pd-now { margin-left: auto; font-size: 10.5px; color: var(--accent); background: var(--accent-dim, rgba(74,168,255,.12)); border: .5px solid rgba(74,168,255,.3); border-radius: 6px; padding: 3px 8px; cursor: pointer; }
@@ -36,7 +37,8 @@
   .pd-ms { grid-row: 1; grid-column: 3; color: var(--txt3); }
   .hd { display: flex; align-items: center; gap: 7px; flex: none; }
   .icn { width: 16px; height: 16px; flex: none; display: inline-flex; }
-  .ttl { flex: 1; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ttl { flex: 1; font-size: 13px; font-weight: 650; letter-spacing: .01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .toolbox .ts2, .toolbox .tsum, .subagent .sa-meta { font-variant-numeric: tabular-nums; }   /* 耗时/计数列数字等宽,流式刷新不抖 */
   .proj { font-size: 10.5px; font-family: var(--mono); color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 999px; padding: 2px 8px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; transition: color .12s, border-color .12s, background .12s; }
   .proj:hover { color: var(--txt); border-color: var(--accent); }
   .proj.empty { color: var(--accent); border-color: var(--accent); background: rgba(74,168,255,.08); }
@@ -45,7 +47,7 @@
   .model-menu { position: fixed; z-index: 100; min-width: 210px; max-width: 290px; max-height: 340px; overflow-y: auto; background: var(--glass-bg); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border: 1px solid var(--composer-border); border-radius: 12px; padding: 5px; box-shadow: 0 10px 34px rgba(0,0,0,.28); }
   .model-menu::-webkit-scrollbar { width: 6px; } .model-menu::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
   .model-menu .mi { padding: 7px 10px; border-radius: 8px; cursor: pointer; display: flex; flex-direction: column; gap: 1px; }
-  .model-menu .mi:hover, .model-menu .mi.on { background: var(--composer-bg); }
+  .model-menu .mi:hover, .model-menu .mi.on { background: var(--hover); }
   .model-menu .mi .mn { font-size: 13px; color: var(--txt); }
   .model-menu .mi .mp { font-size: 10.5px; color: var(--txt3); }
   .model-menu .mhint { padding: 8px 10px; font-size: 12px; color: var(--txt3); }
@@ -54,7 +56,7 @@
   .skill-menu[hidden] { display: none; }
   .skill-menu::-webkit-scrollbar { width: 6px; } .skill-menu::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
   .skill-menu .si { padding: 7px 10px; border-radius: 8px; cursor: pointer; display: flex; flex-direction: column; gap: 1px; }
-  .skill-menu .si:hover, .skill-menu .si.sel { background: var(--composer-bg); }
+  .skill-menu .si:hover, .skill-menu .si.sel { background: var(--hover); }
   .skill-menu .si .sn { font-size: 13px; color: var(--txt); font-weight: 600; }
   .skill-menu .si .sd { font-size: 10.5px; color: var(--txt3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .skill-menu .sfoot { padding: 7px 10px; font-size: 11px; color: var(--accent); cursor: pointer; border-top: .5px solid var(--composer-border); margin-top: 3px; }
@@ -79,7 +81,7 @@
   .hb.ok  { color: #2bb673; border-color: rgba(43,182,115,.35); }
   .hb.bad { color: #e5534b; border-color: rgba(229,83,75,.4); }
   .hbtn { border: none; background: transparent; color: var(--txt3); cursor: pointer; padding: 3px; border-radius: 6px; display: flex; align-items: center; }
-  .hbtn:hover { color: var(--txt); background: var(--composer-bg); }
+  .hbtn:hover { color: var(--txt); background: var(--hover); }
   .hbtn.on { color: var(--accent); }
   .err { color: var(--txt2); }
 
@@ -92,7 +94,8 @@
 
   /* 思考链折叠块 */
   .reason { align-self: flex-start; max-width: 92%; background: var(--c-think-bg); border: .5px solid var(--composer-border); border-left: 3px solid var(--c-think); border-radius: 0 11px 11px 0; }
-  .reason > summary { cursor: pointer; padding: 8px 12px; color: var(--c-think); font-size: 13px; font-weight: 600; list-style: none; display: flex; align-items: center; gap: 7px; user-select: none; }
+  .reason > summary { cursor: pointer; padding: 8px 12px; color: var(--c-think); font-size: 13px; font-weight: 600; list-style: none; display: flex; align-items: center; gap: 7px; user-select: none; transition: background .12s; }
+  .reason > summary:hover { background: var(--hover); }
   .reason > summary::-webkit-details-marker { display: none; }
   .reason > summary .chev { transition: transform .15s; }
   .reason[open] > summary .chev { transform: rotate(90deg); }
@@ -168,7 +171,8 @@
   .quick::-webkit-scrollbar { height: 0; }
   .quick.hidden { display: none; }
   .qchip { flex: none; font-size: 11px; color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 999px; padding: 4px 11px; cursor: pointer; white-space: nowrap; }
-  .qchip:hover { color: var(--txt); border-color: var(--accent); }
+  .qchip { transition: color .12s, border-color .12s, background .12s; }
+  .qchip:hover { color: var(--txt); border-color: var(--accent); background: var(--hover); }
   .qchip.go { color: var(--green); border-color: var(--green); background: transparent; font-weight: 600; }   /* 描边强调,不用渐变糖果色 */
   .qchip.go:hover { background: rgba(43,182,115,.1); }
 
@@ -182,8 +186,11 @@
   .note.muted { border-left-color: var(--txt3); color: var(--txt3); }
   /* 工具调用 chip:看得见 Agent 在 grounding / 升格(run_workflow 高亮) */
   /* 工具日志块：可展开，显示 工具名/标题 + 入参 + 结果（对齐 opencode TUI 的 tool call 视图） */
-  .toolbox { align-self: flex-start; max-width: 92%; font-size: 11px; color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 9px; margin: 2px 0; overflow: hidden; }
-  .toolbox > summary { cursor: pointer; padding: 5px 11px; display: flex; align-items: center; gap: 6px; list-style: none; user-select: none; }
+  /* 去盒子化(对齐 Claude Code):折叠态=一行平铺(⏺ 名称 · 目标 · 状态),不再人手一个边框盒 ——
+     长对话里几十个工具行是"呼吸的过程",不是几十张卡片;展开时明细才升起面板 */
+  .toolbox { align-self: stretch; max-width: 100%; font-size: 11px; color: var(--txt2); background: transparent; border: none; margin: -2px 0; overflow: hidden; }   /* 负边距抵掉 feed 的 8px gap:连续工具行收成 ~4px,读起来是一串动作而不是一叠卡 */
+  .toolbox > summary { cursor: pointer; padding: 3px 8px; display: flex; align-items: center; gap: 6px; list-style: none; user-select: none; transition: background .12s; border-radius: 7px; }
+  .toolbox > summary:hover { background: var(--hover); }
   .toolbox > summary::-webkit-details-marker { display: none; }
   .toolbox .ti { flex: none; font-size: 9px; color: var(--accent); }   /* ⏺ 状态色:蓝=运行中 绿=完成 红=出错(单色,不用花色 emoji) */
   .toolbox.done .ti { color: var(--green); }
@@ -193,15 +200,17 @@
   .toolbox .ts2 { color: var(--txt3); margin-left: auto; flex: none; }
   .toolbox.done .ts2 { color: var(--green); }
   .toolbox.err .ts2 { color: var(--diff-del); }
-  .toolbox .tsec { border-top: .5px solid var(--composer-border); padding: 5px 11px; }
+  .toolbox .tsec { background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 8px; padding: 6px 10px; margin: 2px 0 4px 22px; }   /* 展开的明细才是面板,左缩进挂在 ⏺ 下 */
+  .toolbox .tsec + .tsec { margin-top: 3px; }
   .toolbox .tsl { display: block; font-size: 9.5px; color: var(--txt3); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 3px; }
   .toolbox .tsec pre { margin: 0; font-family: var(--mono); font-size: 11px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto; color: var(--txt); }
   .toolbox .tsec.e pre { color: var(--diff-del); }
-  .toolbox.wf { border-color: var(--accent); background: rgba(74,168,255,.08); }
+  .toolbox.wf > summary { border: .5px solid var(--accent); background: rgba(74,168,255,.08); }   /* 升格工作流仍保留高亮框:它是大事件,值得一个盒子 */
   .toolbox.wf .tn { color: var(--accent); font-family: inherit; }
   /* 子agent富容器(可"进入"):折叠块,点开=看它的 思考 + 完整工具(入参/结果,复用 .toolbox) + 产出,对齐主 Agent */
   .subagent { align-self: flex-start; max-width: 92%; background: var(--composer-bg); border: .5px solid var(--composer-border); border-left: 3px solid var(--c-think); border-radius: 0 11px 11px 0; margin: 3px 0; overflow: hidden; }
-  .subagent > summary { cursor: pointer; padding: 6px 11px; list-style: none; display: flex; align-items: center; gap: 7px; user-select: none; }
+  .subagent > summary { cursor: pointer; padding: 6px 11px; list-style: none; display: flex; align-items: center; gap: 7px; user-select: none; transition: background .12s; }
+  .subagent > summary:hover { background: var(--hover); }
   .subagent > summary::-webkit-details-marker { display: none; }
   .subagent .sa-chev { flex: none; color: var(--txt3); transition: transform .15s; }
   .subagent[open] .sa-chev { transform: rotate(90deg); }
@@ -227,7 +236,7 @@
   /* Claude Code 式状态行:忙时钉在输入框上方 —— 耗时 + 正在跑的工具 + Esc 提示;完成短显 ✓ 耗时 */
   .statusline { flex: none; display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--txt2); padding: 1px 4px 0; min-width: 0; }
   .statusline[hidden] { display: none; }
-  .statusline .sl-spin { flex: none; display: inline-flex; color: var(--accent); }
+  .statusline .sl-spin { flex: none; display: inline-flex; color: var(--accent); animation: tw 1.4s ease-in-out infinite; }
   .statusline .sl-main { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .statusline .sl-tool { font-family: var(--mono); color: var(--accent); }
   .statusline .sl-time { flex: none; font-variant-numeric: tabular-nums; color: var(--txt3); }

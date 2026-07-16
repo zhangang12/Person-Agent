@@ -43,6 +43,7 @@
      点开看工具明细(↳ 工具 目标)与产出全文。规划器/汇总/子任务/嵌套子agent 同一形态。 */
   .wfi { align-self: stretch; border: .5px solid var(--composer-border); border-radius: 9px; background: var(--composer-bg); overflow: hidden; }
   .wfi > summary { list-style: none; cursor: pointer; padding: 5px 9px; display: flex; align-items: center; gap: 7px; user-select: none; }
+  .wfi > summary:hover { background: var(--hover); }
   .wfi > summary::-webkit-details-marker { display: none; }
   .wfi .g { flex: none; font-size: 12px; color: var(--txt3); }
   .wfi.run .g { color: var(--accent); } .wfi.ok .g { color: var(--green); } .wfi.err .g { color: var(--diff-del); }

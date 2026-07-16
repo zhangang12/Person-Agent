@@ -6,8 +6,12 @@
   --txt: #111228; --txt2: rgba(17,18,40,.78); --txt3: rgba(17,18,40,.58);
   --halo: 0 0 3px rgba(255,255,255,.92), 0 1px 1px rgba(255,255,255,.85);   /* 白晕：深字浮在任何背景上都清晰 */
   --accent: #1d4ed8; --green: #0a9d6e;
-  --brand: linear-gradient(135deg, #8b5cf6, #0891b2);
+  /* 主按钮:同色系单色渐变(深浅一档),不再紫→青彩虹 —— 高端感=克制,一个品牌蓝贯穿 */
+  --brand: linear-gradient(180deg, #2f5fe8, #1d4ed8);
   --send-fg: #ffffff;
+  --hover: rgba(28,36,86,.055);            /* 统一悬停底色:所有可点条目共用,不再各写各的 */
+  --ring: 0 0 0 3px rgba(29,78,216,.14);   /* 焦点环:输入框聚焦的柔光,存在感有但不吵 */
+  --sel-bg: rgba(29,78,216,.16);           /* 选区底色:跟品牌蓝,不用浏览器默认的刺蓝 */
   --glass-bg: linear-gradient(158deg, rgba(255,255,255,.80), rgba(255,255,255,.62));
   --glass-border: rgba(255,255,255,.95);
   --glass-shadow: 0 18px 44px rgba(28,36,86,.20), 0 4px 12px rgba(28,36,86,.10), inset 0 1px 0 rgba(255,255,255,1);
@@ -29,8 +33,11 @@ html[data-theme="onyx"] {
   --txt: #f2f4f8; --txt2: #aab1bf; --txt3: #767e8d;
   --halo: none;   /* 实底不需要文字光晕 */
   --accent: #4d9fff; --green: #3dcc8e;
-  --brand: linear-gradient(135deg, #7c8cff, #4d9fff);
-  --send-fg: #0a1018;
+  --brand: linear-gradient(180deg, #5f8dff, #3f6fe0);
+  --send-fg: #ffffff;
+  --hover: rgba(255,255,255,.05);
+  --ring: 0 0 0 3px rgba(77,159,255,.18);
+  --sel-bg: rgba(77,159,255,.24);
   --glass-bg: #161a21;
   --glass-border: #272d38;
   --glass-shadow: 0 14px 34px rgba(0,0,0,.5);
@@ -51,8 +58,11 @@ html[data-theme="paper"] {
   --txt: #171a20; --txt2: #575e6c; --txt3: #8a9099;
   --halo: none;
   --accent: #1d5ee0; --green: #0e9a6c;
-  --brand: linear-gradient(135deg, #5b6cf0, #1d5ee0);
+  --brand: linear-gradient(180deg, #3a63e8, #1d4ed8);
   --send-fg: #ffffff;
+  --hover: rgba(23,26,32,.045);
+  --ring: 0 0 0 3px rgba(29,94,224,.13);
+  --sel-bg: rgba(29,94,224,.14);
   --glass-bg: #ffffff;
   --glass-border: #e2e5ec;
   --glass-shadow: 0 10px 26px rgba(23,32,64,.13);
@@ -72,13 +82,17 @@ html[data-theme="dark"] {
   /* 墨玻璃 */
   --txt: #ffffff; --txt2: rgba(242,245,255,.82); --txt3: rgba(242,245,255,.58);
   --halo: 0 0 4px rgba(0,0,0,.6), 0 1px 2px rgba(0,0,0,.72);   /* 黑晕：亮字浮在任何背景上都清晰 */
-  --accent: #5be6ff; --green: #54e0a8;
-  --brand: linear-gradient(135deg, #9b8cff, #46c8ff);
-  --send-fg: #06131c;
+  /* 荧光青→沉稳蓝:霓虹感=廉价 AI 味,高端暗色的强调色要"亮而不荧" */
+  --accent: #79aaff; --green: #54e0a8;
+  --brand: linear-gradient(180deg, #6b8dff, #4468e8);
+  --send-fg: #ffffff;
   --glass-bg: linear-gradient(158deg, rgba(30,34,58,.78), rgba(15,18,34,.70));
   --glass-border: rgba(255,255,255,.15);
-  --glass-shadow: 0 0 30px rgba(90,140,255,.24), 0 20px 48px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.16);
-  --hl: linear-gradient(90deg, transparent, rgba(150,200,255,.6), transparent);
+  --glass-shadow: 0 20px 48px rgba(0,0,0,.5), 0 4px 14px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.14);   /* 去蓝色泛光:影子只负责悬浮感,不发光 */
+  --hl: linear-gradient(90deg, transparent, rgba(150,200,255,.4), transparent);
+  --hover: rgba(255,255,255,.06);
+  --ring: 0 0 0 3px rgba(121,170,255,.2);
+  --sel-bg: rgba(121,170,255,.28);
   --me-bg: rgba(110,150,255,.26); --me-border: rgba(150,180,255,.34); --me-txt: #eef2ff;
   --ai-bg: rgba(32,38,66,.78); --ai-border: rgba(255,255,255,.16); --ai-txt: #f4f6ff;
   /* 富文本 / 角色 鲜明配色(暗) */
@@ -88,7 +102,7 @@ html[data-theme="dark"] {
   --orb-bg: rgba(124,140,255,.18); --orb-border: rgba(150,180,255,.25);
   --kbd-border: rgba(255,255,255,.16);
   --scroll: rgba(255,255,255,.16);
-  --warn-bg: rgba(255,207,107,.10); --warn-border: rgba(255,207,107,.30); --warn-txt: #f1e7cf; --warn-btn: #46e0ff; --warn-btn-fg: #06131c;
+  --warn-bg: rgba(255,207,107,.10); --warn-border: rgba(255,207,107,.30); --warn-txt: #f1e7cf; --warn-btn: #79aaff; --warn-btn-fg: #06131c;
   --diff-add: #6ee7b7; --diff-add-bg: rgba(84,224,168,.13); --diff-del: #ffb3bd; --diff-del-bg: rgba(255,122,138,.13);
 }
 
@@ -97,8 +111,22 @@ html[data-theme="dark"] {
 html, body {
   height: 100%; margin: 0; background: transparent; overflow: hidden;
   font-family: var(--font); color: var(--txt);
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;   /* 亚像素→灰度平滑:小字号中文在磨砂底上更干净 */
   -webkit-user-select: none; user-select: none;   /* 默认不可选：拖拽手柄/标签更像原生应用 */
 }
+/* 表单控件默认不继承字体(Chromium 会落到系统衬线/微软雅黑):按钮里的中文和正文字体不一致,一眼廉价。统一继承 */
+button, input, textarea, select { font-family: var(--font); }
+/* 数字等宽:耗时/计数/行号列不再随数字变化左右抖动 */
+code, pre, .mono, [class*="meta"], [class*="time"] { font-variant-numeric: tabular-nums; }
+/* 选区颜色跟品牌蓝,不用浏览器默认的刺蓝 */
+::selection { background: var(--sel-bg); }
+/* 全局滚动条兜底:没自己定义的窗口也拿到细滚动条 + 悬停加深(各页面自定义的优先级更高,不受影响) */
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--txt3); }
+/* 键盘可达:Tab 走到的控件有清晰焦点环(鼠标点击不出现,focus-visible 只认键盘) */
+button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
 /* 但消息内容、输入框里的文字要能选中复制。
    页面可在自己的 <style> 里对语义容器局部覆写 user-select:text(如 mailcenter 的
    .rbody/.aiBody/.mail-full、mailview 的 .txt/.subj/.meta),不必全局加 .selectable。 */
@@ -126,9 +154,10 @@ body { padding: 24px; }
 .glass code, .glass pre, .glass input, .glass textarea, .glass .dl, .glass .kbd, .glass .mono { text-shadow: none; }
 
 /* ===== 消息气泡 ===== */
-.msg { max-width: 86%; font-size: 14.5px; line-height: 1.6; padding: 9px 12px; border-radius: 13px; word-break: break-word; }
+.msg { max-width: 86%; font-size: 14.5px; line-height: 1.6; padding: 9px 12px; border-radius: 13px; word-break: break-word; animation: msgIn .16s ease-out; }
 .me { align-self: flex-end; background: var(--me-bg); border: .5px solid var(--me-border); border-bottom-right-radius: 5px; color: var(--me-txt); }
 .ai { align-self: flex-start; background: var(--ai-bg); border: .5px solid var(--ai-border); border-bottom-left-radius: 5px; color: var(--ai-txt); }
+@keyframes msgIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }   /* 新消息轻入场:3px 上浮,快到不构成等待 */
 
 /* ===== 消息流 + 滚动条 ===== */
 .feed { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 2px 4px 2px 0; cursor: auto; -webkit-user-select: text; user-select: text; }
@@ -137,10 +166,13 @@ body { padding: 24px; }
 .feed::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
 
 /* ===== 输入栏 ===== */
-.composer { flex: none; display: flex; align-items: center; gap: 8px; background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 12px; padding: 5px 6px 5px 12px; }
+.composer { flex: none; display: flex; align-items: center; gap: 8px; background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 12px; padding: 5px 6px 5px 12px; transition: border-color .15s, box-shadow .15s; }
+.composer:focus-within { border-color: var(--accent); box-shadow: var(--ring); }   /* 聚焦有着落:焦点环柔光,一眼知道光标在哪张卡 */
 .composer input { flex: 1; background: transparent; border: none; outline: none; color: var(--txt); font-size: 13px; font-family: var(--font); }
 .composer input::placeholder { color: var(--txt3); }
-.send { flex: none; width: 28px; height: 28px; border-radius: 50%; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; background: var(--brand); color: var(--send-fg); }
+.send { flex: none; width: 28px; height: 28px; border-radius: 50%; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; background: var(--brand); color: var(--send-fg); transition: filter .15s, transform .1s; }
+.send:hover { filter: brightness(1.08); }
+.send:active { transform: scale(.92); }   /* 按下有回弹:确认感,不用等网络 */
 .send svg { stroke: var(--send-fg); }
 
 @keyframes orbGrow { 0% { opacity: 0; transform: translate(var(--gfx, 0), var(--gfy, 16px)) scale(.58); } 55% { opacity: 1; } 100% { opacity: 1; transform: none; } }
