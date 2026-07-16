@@ -649,7 +649,7 @@ function setBadges(e, w) {
   const cc = $('ccount'); cc.textContent = conEntries.length || ''; cc.classList.toggle('show', conEntries.length > 0)
 }
 function levelCls(l){ return 'l' + l }
-function levelIcon(l){ return l === 3 ? '✕' : l === 2 ? '⚠' : l === 1 ? 'ℹ' : '›' }
+function levelIcon(l){ return l === 3 ? '✕' : l === 2 ? '!' : l === 1 ? 'ℹ' : '›' }
 function matchFilter(l){ if (conFilter==='all') return true; if (conFilter==='log') return l<2; return String(l)===conFilter }
 function consoleVisible(c){ return c.kind ? true : matchFilter(c.level) }   // REPL 回显不受等级筛选影响
 function ceLine(c){
@@ -995,26 +995,26 @@ function openBatch(it){
   ta.addEventListener('input', preview)
   ov.querySelector('#b-go').onclick = async () => {
     const { rows } = bParse(ta.value)
-    if (!rows.length) { showToast('<span class="err">⚠</span> 先粘贴数据(第一行=表头)'); return }
-    if (rows.length > 200) { showToast('<span class="err">⚠</span> 一次最多 200 行,请分批'); return }
+    if (!rows.length) { showToast('先粘贴数据(第一行=表头)'); return }
+    if (rows.length > 200) { showToast('一次最多 200 行,请分批'); return }
     const onError = ov.querySelector('#b-stop').checked ? 'stop' : 'skip'
     close()
-    sbStatus('📊 批量「'+esc(it.title||it.id)+'」 0/'+rows.length+' …')
-    showToast('<span class="ok">📊</span> 批量运行中,共 ' + rows.length + ' 行…')
+    sbStatus('批量「'+esc(it.title||it.id)+'」 0/'+rows.length+' …')
+    showToast('<span class="ok">▶</span> 批量运行中,共 ' + rows.length + ' 行…')
     try {
       const r = await H.skillsRunBatch({ id: it.id, dataset: rows, onError })
-      if (r && r.error) { showToast('<span class="err">⚠</span> '+r.error); sbStatus('<span class="bad">⚠ '+esc(r.error)+'</span>') }
+      if (r && r.error) { showToast(''+r.error); sbStatus('<span class="bad">'+esc(r.error)+'</span>') }
       else {
-        showToast((r.fail?'<span class="err">⚠</span> ':'<span class="ok">✓</span> ')+'批量完成:✓ '+r.pass+' / ✗ '+r.fail)
-        sbStatus((r.fail?'<span class="bad">':'<span class="ok">')+'📊 批量完成:✓ '+r.pass+' / ✗ '+r.fail+'</span>')
+        showToast((r.fail?'':'<span class="ok">✓</span> ')+'批量完成:✓ '+r.pass+' / ✗ '+r.fail)
+        sbStatus((r.fail?'<span class="bad">':'<span class="ok">')+'批量完成:✓ '+r.pass+' / ✗ '+r.fail+'</span>')
       }
-    } catch(e){ showToast('<span class="err">⚠</span> '+e.message) }
+    } catch(e){ showToast(''+e.message) }
   }
   setTimeout(()=>ta.focus(), 60)
 }
 // 批量逐行进度 → 底部技能条实况
 H.onSkillBatchProgress && H.onSkillBatchProgress((d) => {
-  sbStatus((d.ok?'':'<span class="bad">')+'📊 批量 行 '+d.row+'/'+d.total+' · ✓ '+d.pass+' / ✗ '+d.fail+(d.ok?'':' · '+esc(d.firstErr||'')+'</span>'))
+  sbStatus((d.ok?'':'<span class="bad">')+'批量 行 '+d.row+'/'+d.total+' · ✓ '+d.pass+' / ✗ '+d.fail+(d.ok?'':' · '+esc(d.firstErr||'')+'</span>'))
 })
 
 // 技能库面板:抽屉式,从右滑入。一条录制即一个技能 —— 存了名字+参数的排前面,
@@ -1045,7 +1045,7 @@ async function openRecMgr() {
   panel.querySelector('#rm-import').addEventListener('click', async () => {
     const r = await H.browserRecImport()
     if (r && r.canceled) return
-    showToast(r && r.ok ? '<span class="ok">✓</span> 已导入「' + r.title + '」(' + r.steps + ' 步)' : '<span class="err">⚠</span> 导入失败: ' + ((r && r.error) || ''))
+    showToast(r && r.ok ? '<span class="ok">✓</span> 已导入「' + r.title + '」(' + r.steps + ' 步)' : '导入失败: ' + ((r && r.error) || ''))
     if (r && r.ok) { closePanel(); openRecMgr() }   // 重开刷新列表
   })
   const list = panel.querySelector('#rm-list')
@@ -1074,7 +1074,7 @@ async function openRecMgr() {
   // 技能文档:面板内嵌白页(不新开原生层),现生成保证与 JSON 同步
   async function openDoc(it) {
     const md = await H.browserRecSkillMd(it.id)
-    if (!md) { showToast('<span class="err">⚠</span> 生成文档失败'); return }
+    if (!md) { showToast('生成文档失败'); return }
     const dv = document.createElement('div')
     dv.style.cssText = 'position:absolute;inset:0;z-index:5;background:#fff;display:flex;flex-direction:column'
     dv.innerHTML = `
@@ -1139,9 +1139,9 @@ async function openRecMgr() {
         if (r && r.ok) {
           const failed = r.stepReport.filter((s) => !s.ok).length
           const sOk = !r.success || r.success.pass
-          showToast(failed === 0 && sOk ? '<span class="ok">✓</span> 运行完成,共 ' + r.stepReport.length + ' 步' + (r.success ? ' · 成功断言 ✓' : '') : '<span class="err">⚠</span> 完成但 ' + (failed ? failed + ' 步失败' : '成功断言未达成'))
-        } else showToast('<span class="err">⚠</span> 运行失败: ' + ((r && r.error) || ''))
-      } catch (e) { showToast('<span class="err">⚠</span> ' + e.message) }
+          showToast(failed === 0 && sOk ? '<span class="ok">✓</span> 运行完成,共 ' + r.stepReport.length + ' 步' + (r.success ? ' · 成功断言 ✓' : '') : '完成但 ' + (failed ? failed + ' 步失败' : '成功断言未达成'))
+        } else showToast('运行失败: ' + ((r && r.error) || ''))
+      } catch (e) { showToast('' + e.message) }
     })
     // 批量:粘贴表格数据(首行=表头=参数名),每行独立跑一遍
     const bb = row.querySelector('[data-act="batch"]')
@@ -1150,7 +1150,7 @@ async function openRecMgr() {
     const mk = row.querySelector('[data-act="mkskill"]')
     if (mk) mk.addEventListener('click', async () => {
       const rec = await H.browserRecGet(it.id)
-      if (!rec) { showToast('<span class="err">⚠</span> 读取录制失败'); return }
+      if (!rec) { showToast('读取录制失败'); return }
       closePanel()
       saveAsSkill(rec)
     })
@@ -1165,12 +1165,12 @@ async function openRecMgr() {
       { label: '查看文档', fn: () => openDoc(it) },
       { label: '编辑步骤', fn: async () => {
         const rec = await H.browserRecGet(it.id)
-        if (!rec) { showToast('<span class="err">⚠</span> 读取失败'); return }
+        if (!rec) { showToast('读取失败'); return }
         editSteps(rec, () => { closePanel(); openRecMgr() })
       } },
       ...(it.skill ? [{ label: '导出分享', fn: async () => {
         const r = await H.browserRecExport(it.id)
-        showToast(r && r.ok ? '<span class="ok">✓</span> 已导出到 下载/' + r.path.split(/[\\/]/).pop() + (r.inputValues ? '(含 ' + r.inputValues + ' 个录制输入值,密码已脱敏)' : '') : '<span class="err">⚠</span> 导出失败: ' + ((r && r.error) || ''))
+        showToast(r && r.ok ? '<span class="ok">✓</span> 已导出到 下载/' + r.path.split(/[\\/]/).pop() + (r.inputValues ? '(含 ' + r.inputValues + ' 个录制输入值,密码已脱敏)' : '') : '导出失败: ' + ((r && r.error) || ''))
       } }] : []),
       { label: '删除', danger: true, fn: async () => {
         if (!confirm('删除「' + (it.title || it.id) + '」?')) return
@@ -1269,7 +1269,7 @@ async function stopRec() {
   $('brecbadge').hidden = true
   const n = (r && r.events && r.events.length) || 0
   if (r && r.ok && n <= 1) {
-    showToast('<span class="err">⚠</span> 已停止,但没录到任何页面动作 — 若操作发生在 iframe/新窗口,或页面覆写了 console,请升级后重试')
+    showToast('已停止,但没录到任何页面动作 — 若操作发生在 iframe/新窗口,或页面覆写了 console,请升级后重试')
     return
   }
   showToast('<span class="ok">✓</span> 已停止 · 共 ' + n + ' 个动作')
@@ -1279,7 +1279,7 @@ async function startRec() {
   // 技能库开着先收起:录制发生在浏览器里,得让页面可见可点
   const rm = document.getElementById('recmgr'); if (rm) { rm.remove(); chromeOverlay('recmgr', 0) }
   const r = await H.browserRecStart()
-  if (!r || !r.ok) { showToast('<span class="err">⚠</span> 录制启动失败:' + ((r && r.error) || '未知')); return }
+  if (!r || !r.ok) { showToast('录制启动失败:' + ((r && r.error) || '未知')); return }
   setRecUi(true)
   $('brecbadge').hidden = false; $('brecn').textContent = '1'   // 主进程已入队初始 navigate
   showToast('<span class="ok">●</span> 开始录制 — 在浏览器把操作走一遍,回来点「■ 停止并保存」')
@@ -1303,7 +1303,7 @@ H.onBrowserDoStopRec && H.onBrowserDoStopRec(() => stopRec())
 H.onBrowserOpenSaveSkill && H.onBrowserOpenSaveSkill(async ({ id }) => {
   const rec = await H.browserRecGet(id)
   if (rec) saveAsSkill(rec)
-  else showToast('<span class="err">⚠</span> 读取录制失败')
+  else showToast('读取录制失败')
 })
 H.onBrowserRecUi && H.onBrowserRecUi(({ on }) => { setRecUi(!!on); if (on) $('brecbadge').hidden = false })
 // 从「🎬 录制回放」入口进工作台 → 自动展开技能库(让用户一眼看到技能列表)
@@ -1328,7 +1328,7 @@ function showReplayPause(d) {
   const b = document.createElement('div'); b.id = 'replaypause'
   b.style.cssText = 'position:fixed;top:46px;left:50%;transform:translateX(-50%);z-index:10000;display:flex;align-items:center;gap:10px;background:#fffbeb;border:1px solid #f0c33c;border-radius:8px;padding:5px 8px 5px 12px;color:#6b4e0e;font-size:12px;box-shadow:0 4px 18px rgba(16,24,40,.16);pointer-events:auto;white-space:nowrap;font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif'
   if (d.takeover) {
-    b.innerHTML = `<span style="font-size:13px">🤖</span><span><b style="color:#8a6410">Agent 已接管执行</b> — 过程见左侧对话;完成后自动继续,也可点右侧确认</span>`
+    b.innerHTML = `<span style="font-size:13px;color:#8a6410">⏺</span><span><b style="color:#8a6410">Agent 已接管执行</b> — 过程见左侧对话;完成后自动继续,也可点右侧确认</span>`
   } else {
     const agentTip = d.agent ? '已通知 Agent 尝试解析;也可' : '——'
     b.innerHTML = `<span style="font-size:13px">⏸</span><span>请在页面完成:<b style="color:#8a6410">${String(d.hint || '需人工操作').replace(/</g,'&lt;')}</b> ${agentTip}填完自动继续,或点右侧</span>`
@@ -1343,17 +1343,17 @@ function showReplayPause(d) {
 // 「保存为技能」触发的 Agent 自动精修完成 → toast 告知改了什么(过程本身在工作台对话里可视)
 H.onBrowserSkillRefined && H.onBrowserSkillRefined((d) => {
   const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
-  showToast('<span class="ok">🛠</span> 技能「' + esc(d.title) + '」已由 Agent 整理:' + esc((d.applied || []).join('、')))
+  showToast('<span class="ok">✓</span> 技能「' + esc(d.title) + '」已由 Agent 整理:' + esc((d.applied || []).join('、')))
 })
 H.onBrowserReplayProgress && H.onBrowserReplayProgress((d) => {
-  if (d.pause) { showReplayPause(d); sbStatus(d.takeover ? '<span class="warn">🤖 Agent 接管执行中 — 过程见左侧对话</span>' : '<span class="warn">⏸ ' + esc(d.hint || '需人工操作') + (d.agent ? ' · Agent 解析中' : ' · 等你在页面输入') + '</span>'); return }
+  if (d.pause) { showReplayPause(d); sbStatus(d.takeover ? '<span class="warn">Agent 接管执行中 — 过程见左侧对话</span>' : '<span class="warn">⏸ ' + esc(d.hint || '需人工操作') + (d.agent ? ' · Agent 解析中' : ' · 等你在页面输入') + '</span>'); return }
   if (d.resume) { clearReplayPause(); sbStatus('▶ 已续跑…'); return }
   if (d.waitDownload) { const q = ensureHud(); clearTimeout(hudHideT); q.hidden = false; q.style.borderColor = '#e5e7ec'; q.textContent = '⏳ 等下载完成…'; sbStatus('⏳ 等下载完成,准备交给工作流…'); return }
   const p = ensureHud()
   clearTimeout(hudHideT)
   p.hidden = false
   if (d.start) { p.style.borderColor = '#e5e7ec'; p.textContent = '▶ ' + (d.title || '') + ' 0/' + d.total; sbStatus('▶ 回放「' + esc(d.title || '') + '」 0/' + d.total); return }
-  if (d.done) { clearReplayPause(); p.textContent = (d.fails ? '⚠ ' + d.fails + ' 步失败 / ' : '✓ 完成 ') + d.total + ' 步'; hudHideT = setTimeout(() => { p.hidden = true }, 4000); sbStatus(d.fails ? '<span class="bad">⚠ 回放完成,' + d.fails + ' 步失败</span>' : '<span class="ok">✓ 回放完成 ' + d.total + ' 步</span>'); return }
+  if (d.done) { clearReplayPause(); p.textContent = (d.fails ? d.fails + ' 步失败 / ' : '✓ 完成 ') + d.total + ' 步'; hudHideT = setTimeout(() => { p.hidden = true }, 4000); sbStatus(d.fails ? '<span class="bad">回放完成,' + d.fails + ' 步失败</span>' : '<span class="ok">✓ 回放完成 ' + d.total + ' 步</span>'); return }
   p.textContent = '▶ 步 ' + d.i + '/' + d.total + ' · ' + d.act + (d.ok ? '' : ' ✗ ' + (d.err || ''))
   p.style.borderColor = d.ok ? '#e5e7ec' : '#d4373e'
   sbStatus('▶ 回放 步 ' + d.i + '/' + d.total + ' · ' + d.act + (d.ok === false ? ' <span class="bad">✗</span>' : ''))
@@ -1366,7 +1366,7 @@ H.onBrowserVerifyResult && H.onBrowserVerifyResult(({ kind, verdict, summary, fu
   const c = document.createElement('div'); c.id = 'vfy-card'
   const color = kind === 'pass' ? '#1aa86e' : (kind === 'suspicious' ? '#d6a32d' : '#e2424a')
   const bg = kind === 'pass' ? 'rgba(26,168,110,.12)' : (kind === 'suspicious' ? 'rgba(214,163,45,.13)' : 'rgba(226,66,74,.13)')
-  const tag = kind === 'pass' ? '✅ PASS' : (kind === 'suspicious' ? '⚠ SUSPICIOUS' : '❌ FAIL')
+  const tag = kind === 'pass' ? '✓ PASS' : (kind === 'suspicious' ? 'SUSPICIOUS' : '✗ FAIL')
   c.style.cssText = `position:fixed;bottom:18px;right:18px;z-index:9999;background:${bg};border:1.5px solid ${color};border-radius:12px;padding:11px 13px;color:var(--txt);font-size:12.5px;max-width:480px;box-shadow:0 14px 40px rgba(0,0,0,.45);font-family:inherit`
   c.innerHTML = `
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
@@ -1390,12 +1390,12 @@ H.onBrowserVerifyResult && H.onBrowserVerifyResult(({ kind, verdict, summary, fu
   const rb = c.querySelector('#vfy-rollback')
   if (rb) rb.addEventListener('click', async () => {
     const dry = await H.browserRollback({ dryRun: true })
-    if (!dry || !dry.ok) { showToast('<span class="err">⚠</span> 检查失败:' + (dry && dry.error || '')); return }
+    if (!dry || !dry.ok) { showToast('检查失败:' + (dry && dry.error || '')); return }
     const all = (dry.result || []).flatMap((d) => [...d.tracked, ...d.untracked])
     if (!all.length) { showToast('(没有可回滚的改动)'); return }
     if (!confirm('将回滚 ' + all.length + ' 个文件:\n\n' + all.slice(0, 20).join('\n') + (all.length > 20 ? '\n…' : '') + '\n\n确认?')) return
     const r = await H.browserRollback({})
-    showToast(r && r.ok ? '<span class="ok">✓</span> 已回滚 ' + all.length + ' 个文件' : '<span class="err">⚠</span> 回滚部分失败')
+    showToast(r && r.ok ? '<span class="ok">✓</span> 已回滚 ' + all.length + ' 个文件' : '回滚部分失败')
     rb.disabled = true; rb.style.opacity = '.5'
   })
   // 8 秒后自动半透明(不挡浏览器),hover 恢复
@@ -1463,7 +1463,7 @@ function saveAsSkill(rec) {
     const skipScroll = ov.querySelector('#sk-skipscroll')
     if (skipScroll) patch.skipSteps = skipScroll.checked ? rec.events.map((ev, i) => ev.act === 'scroll' ? i : -1).filter((i) => i >= 0) : []
     const okSave = await H.browserRecUpdate(rec.id, patch)
-    showToast(okSave ? '<span class="ok">✓</span> 技能「' + name + '」已保存,Agent 正在后台整理(完成会提示)' : '<span class="err">⚠</span> 保存失败')
+    showToast(okSave ? '<span class="ok">✓</span> 技能「' + name + '」已保存,Agent 正在后台整理(完成会提示)' : '保存失败')
     close()
     // 一条流收尾:保存成功 → 回技能库,新技能立刻可见可跑(工作台模式)
     if (okSave && WS && !document.getElementById('recmgr')) setTimeout(openRecMgr, 120)
@@ -1527,11 +1527,11 @@ function editSteps(rec, onSaved) {
   const close = () => { ov.remove(); modalOverlay(false) }   // 取消/保存/Escape 全走这里,漏一处页面视图永久 height:0
   ov.querySelector('#se-cancel').addEventListener('click', close)
   ov.querySelector('#se-save').addEventListener('click', async () => {
-    if (!rows.length) { showToast('<span class="err">⚠</span> 至少保留一步'); return }
+    if (!rows.length) { showToast('至少保留一步'); return }
     const keep = rows.map((r) => ({ srcIndex: r.srcIndex, ...(r.value !== undefined ? { value: r.value } : {}) }))
     const res = await H.browserRecEditSteps(rec.id, keep)
     if (res && res.ok) { showToast('<span class="ok">✓</span> 已保存 ' + res.steps + ' 步' + (res.params ? ' · 参数×' + res.params : '')); close(); if (onSaved) onSaved() }
-    else showToast('<span class="err">⚠</span> 保存失败: ' + ((res && res.error) || ''))
+    else showToast('保存失败: ' + ((res && res.error) || ''))
   })
   ov.addEventListener('keydown', (e) => { if (e.key === 'Escape') close() })
 }

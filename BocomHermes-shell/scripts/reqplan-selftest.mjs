@@ -72,7 +72,7 @@ console.log('planToMarkdown:')
 const md = planToMarkdown(res, { file: '电子渠道需求.docx' })
 ok(md.includes('# 实施方案 · 电子渠道需求.docx') && md.includes('**影响文件**'), 'Markdown 带标题 + 影响文件分节')
 ok(md.includes('【渠道整合平台】'), 'Markdown 带系统归属')
-ok(md.includes('⛑ 未决'), 'Markdown 渲染未决项')
+ok(md.includes('未决（待人工确认'), 'Markdown 渲染未决项')
 
 console.log(`\n${pass} 通过 / ${fail} 失败`)
 process.exit(fail ? 1 : 0)

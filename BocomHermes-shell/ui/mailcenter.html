@@ -128,7 +128,7 @@
   <span class="hl"></span>
   <div class="mc">
     <div class="hd">
-      <span class="ttl">📧 邮件中心</span>
+      <span class="ttl">邮件中心</span>
       <div class="tabs nodrag">
         <button id="tabInbox" class="on">收件箱</button>
         <button id="tabOutbox">发件箱</button>
@@ -136,7 +136,7 @@
         <button id="tabSettings">设置</button>
       </div>
       <span class="sp"></span>
-      <button id="btnSummary" class="tbtn primary nodrag" title="让 AI 整理今天的邮件">✨ 今日摘要</button>
+      <button id="btnSummary" class="tbtn primary nodrag" title="让 AI 整理今天的邮件">今日摘要</button>
       <button id="x" class="hbtn nodrag" title="关闭"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
 
@@ -159,7 +159,7 @@
       </div>
       <div class="col-read">
         <div id="reader" style="display:flex;flex-direction:column;flex:1;min-height:0">
-          <div class="empty" id="readEmpty"><div class="big">✉️</div>从左侧选一封邮件阅读<br>读信、AI 摘要、起草回复都在这里完成</div>
+          <div class="empty" id="readEmpty">从左侧选一封邮件阅读<br>读信、AI 摘要、起草回复都在这里完成</div>
         </div>
       </div>
     </div>
@@ -183,7 +183,7 @@
 
     <!-- ── 设置 ── -->
     <div id="viewSettings" class="panel nodrag" hidden>
-      <div class="warn" id="encWarn">⚠️ 系统密钥库不可用，邮箱密码将以明文落盘。请仅在受信任的本机使用。</div>
+      <div class="warn" id="encWarn">系统密钥库不可用，邮箱密码将以明文落盘。请仅在受信任的本机使用。</div>
       <div class="fld">
         <span class="lbl">收件 IMAP <span class="hint" style="font-weight:400">(收件箱 / 晨间摘要 / agent 读邮件)</span></span>
         <div class="row"><input id="imapHost" class="in" style="flex:3" placeholder="imap.company.com" spellcheck="false" /><input id="imapPort" class="in" style="width:64px;flex:none" placeholder="993" spellcheck="false" /></div>
@@ -288,10 +288,10 @@
   }
   function renderList() {
     const list = visibleEmails()
-    if (!list.length) { $('mlist').innerHTML = '<div class="empty">' + (onlyUnread ? '没有未读邮件 📭' : '近 30 天没有邮件 📭') + '</div>'; return }
+    if (!list.length) { $('mlist').innerHTML = '<div class="empty">' + (onlyUnread ? '没有未读邮件' : '近 30 天没有邮件') + '</div>'; return }
     const searching = !!$('search').value.trim()
     let html = list.map((e) => {
-      const att = (e.attachments || 0) > 0 ? ' <span class="att">📎' + e.attachments + '</span>' : ''
+      const att = (e.attachments || 0) > 0 ? ' <span class="att">▤' + e.attachments + '</span>' : ''
       const mid = esc(e.messageId)
       const on = selected.has(e.messageId)
       return '<div class="mrow' + (e.messageId === curMsgId ? ' on' : '') + (on ? ' sel' : '') + '" data-mid="' + mid + '">'
@@ -310,8 +310,8 @@
     $('selbar').classList.toggle('on', n > 0)
     $('selCount').textContent = '已选 ' + n
     const b = $('btnSummary')
-    if (n > 0) { b.textContent = '✨ 摘要选中 (' + n + ')'; b.title = '对选中的 ' + n + ' 封邮件做 AI 摘要分析' }
-    else { b.textContent = '✨ 今日摘要'; b.title = '让 AI 整理最近的邮件' }
+    if (n > 0) { b.textContent = '摘要选中 (' + n + ')'; b.title = '对选中的 ' + n + ' 封邮件做 AI 摘要分析' }
+    else { b.textContent = '今日摘要'; b.title = '让 AI 整理最近的邮件' }
   }
   $('mlist').addEventListener('click', (e) => {
     const cb = e.target.closest('.msel')
@@ -342,16 +342,16 @@
       // 有 HTML 版 → 沙箱 iframe 完整还原(表格/内联样式/cid 图);纯文本仅作兜底
       // 安全红线:sandbox 只能是 allow-same-origin,绝不可再加 allow-scripts(same-origin+scripts=逃逸沙箱)
       const bodyHtml = r.hasHtml
-        ? '<button class="tbtn" id="imgBtn" style="display:none">🖼 显示远程图片</button><iframe id="mailFrame" class="mail-frame" sandbox="allow-same-origin" referrerpolicy="no-referrer"></iframe>'
+        ? '<button class="tbtn" id="imgBtn" style="display:none">显示远程图片</button><iframe id="mailFrame" class="mail-frame" sandbox="allow-same-origin" referrerpolicy="no-referrer"></iframe>'
         : '<div class="rbody">' + esc(r.text || '(无正文)') + '</div>'
       reader.innerHTML =
         '<div class="rhead">'
         + '<div class="rsubj">' + esc(r.subject || '(无主题)') + '</div>'
         + '<div class="rmeta">' + esc(r.from) + ' · ' + esc(fmtDate(r.date)) + '</div>'
         + '<div class="racts">'
-        + '<button class="tbtn primary" id="aReply">✉️ AI 起草回复</button>'
-        + '<button class="tbtn" id="aSum">✨ 摘要这封</button>'
-        + '<button class="tbtn" id="aArchive">📥 归档</button>'
+        + '<button class="tbtn primary" id="aReply">AI 起草回复</button>'
+        + '<button class="tbtn" id="aSum">摘要这封</button>'
+        + '<button class="tbtn" id="aArchive">归档</button>'
         + '<button class="tbtn" id="aRead">✓ 标记已读</button>'
         + '</div></div>'
         + '<div class="rscroll">' + bodyHtml + '<div id="aiSlot"></div></div>'
@@ -376,7 +376,7 @@
   async function doArchive(btn) {
     btn.disabled = true; btn.textContent = '归档中…'
     try { await H.mailArchive(curMsgId); btn.textContent = '已归档 ✓'; emails = emails.filter((e) => e.messageId !== curMsgId); renderList() }
-    catch (e) { btn.disabled = false; btn.textContent = '📥 归档'; }
+    catch (e) { btn.disabled = false; btn.textContent = '归档'; }
   }
   async function doMarkRead(btn) {
     btn.disabled = true; btn.textContent = '标记中…'
@@ -427,16 +427,16 @@
       if (reply) body.innerHTML = window.Rich.renderMarkdown(reply)
       else if (!body.textContent.trim() || body.textContent === '思考中…') body.textContent = '(无文本输出)'
       wireRich(slot)
-    } catch (e) { body.textContent = '⚠ ' + ((e && e.message) || e) }
+    } catch (e) { body.textContent = String((e && e.message) || e) }
     finally { curAiBody = null; aiBusy = false; try { H.reportBusy(false) } catch {}; const sp = document.getElementById('aiSpin'); if (sp) sp.remove() }
   }
   function runSummarizeOne() {
     if (!curEmail) return
-    runAI('请用中文简洁摘要这封邮件(2-4 句话讲清核心)，再列出需要我跟进的事项(若有，用 TODO: 开头)。\n\n发件人：' + curEmail.from + '\n主题：' + curEmail.subject + '\n时间：' + curEmail.date + '\n正文：\n' + curEmail.text.slice(0, 6000), '✨ 摘要这封', 'aiSlot')
+    runAI('请用中文简洁摘要这封邮件(2-4 句话讲清核心)，再列出需要我跟进的事项(若有，用 TODO: 开头)。\n\n发件人：' + curEmail.from + '\n主题：' + curEmail.subject + '\n时间：' + curEmail.date + '\n正文：\n' + curEmail.text.slice(0, 6000), '摘要这封', 'aiSlot')
   }
   function runReply() {
     if (!curEmail) return
-    runAI('请帮我起草这封邮件的回复，中文、礼貌专业、简洁。**先给草稿让我确认，我说"发"之前不要真的发送。**\n\n原邮件：\n发件人：' + curEmail.from + '\n主题：' + curEmail.subject + '\n正文：\n' + curEmail.text.slice(0, 6000), '✉️ 起草回复', 'aiSlot')
+    runAI('请帮我起草这封邮件的回复，中文、礼貌专业、简洁。**先给草稿让我确认，我说"发"之前不要真的发送。**\n\n原邮件：\n发件人：' + curEmail.from + '\n主题：' + curEmail.subject + '\n正文：\n' + curEmail.text.slice(0, 6000), '起草回复', 'aiSlot')
   }
 
   // ── 今日摘要(批量，渲染进右侧阅读区) ──
@@ -444,7 +444,7 @@
     if (aiBusy) return
     curMsgId = null; renderList()
     const reader = $('reader')
-    reader.innerHTML = '<div class="rhead"><div class="rsubj">✨ 今日邮件摘要</div><div class="rmeta">' + new Date().toLocaleDateString('zh-CN') + '</div></div><div class="rscroll"><div id="aiSlot"></div></div>'
+    reader.innerHTML = '<div class="rhead"><div class="rsubj">今日邮件摘要</div><div class="rmeta">' + new Date().toLocaleDateString('zh-CN') + '</div></div><div class="rscroll"><div id="aiSlot"></div></div>'
     let list = []
     try {
       const r = await H.mailList({ onlyUnseen: false, days: 2, limit: 30, live: true })   // 今日摘要要正文预览 → 走实时,不读缓存
@@ -453,7 +453,7 @@
     if (!list.length) { $('aiSlot').innerHTML = '<div class="empty">近 2 天没有邮件</div>'; return }
     const lines = list.map((e, i) => (i + 1) + '. ' + fromName(e.from) + ' · ' + (e.subject || '(无主题)') + '\n   ' + (e.preview || '')).join('\n')
     const prompt = '下面是我最近的邮件列表(共 ' + list.length + ' 封)。请用中文：\n1. 整体摘要今天的邮件重点；\n2. 逐条用一句话点出每封的核心；\n3. 提取需要我跟进的事项，每条用 `TODO: [高/中/低] 具体事项` 格式输出。\n\n' + lines
-    runAI(prompt, '✨ 今日摘要', 'aiSlot')
+    runAI(prompt, '今日摘要', 'aiSlot')
   }
   // ── 摘要"选中的"邮件(人工多选 → AI 批量摘要分析) ──
   function summarizeSelected() {
@@ -462,10 +462,10 @@
     if (!picked.length) return runDailySummary()
     curMsgId = null; renderList()
     const reader = $('reader')
-    reader.innerHTML = '<div class="rhead"><div class="rsubj">✨ 选中邮件摘要（' + picked.length + ' 封）</div><div class="rmeta">' + new Date().toLocaleString('zh-CN') + '</div></div><div class="rscroll"><div id="aiSlot"></div></div>'
+    reader.innerHTML = '<div class="rhead"><div class="rsubj">选中邮件摘要（' + picked.length + ' 封）</div><div class="rmeta">' + new Date().toLocaleString('zh-CN') + '</div></div><div class="rscroll"><div id="aiSlot"></div></div>'
     const lines = picked.map((e, i) => (i + 1) + '. ' + fromName(e.from) + ' · ' + (e.subject || '(无主题)') + ' · ' + fmtDate(e.date) + '\n   ' + (e.preview || '')).join('\n')
     const prompt = '下面是我挑选的 ' + picked.length + ' 封邮件。请用中文：\n1. 先做整体摘要，点出这批邮件的共同主题/重点；\n2. 逐封用一句话点出核心；\n3. 提取需要我跟进的事项，每条用 `TODO: [高/中/低] 具体事项` 格式输出。\n\n' + lines
-    runAI(prompt, '✨ 选中邮件摘要', 'aiSlot')
+    runAI(prompt, '选中邮件摘要', 'aiSlot')
   }
   $('btnSummary').addEventListener('click', () => { showTab('inbox'); if (selected.size > 0) summarizeSelected(); else runDailySummary() })
 
@@ -474,7 +474,7 @@
     let items = []
     try { items = await H.outboxList() } catch (e) {}
     const el = $('oblist')
-    if (!items || !items.length) { el.innerHTML = '<div class="empty">发件箱为空 📭<br>Agent 发信会先进这里，延迟内可撤销</div>'; return }
+    if (!items || !items.length) { el.innerHTML = '<div class="empty">发件箱为空<br>Agent 发信会先进这里，延迟内可撤销</div>'; return }
     el.innerHTML = items.map((it) => {
       const to = (it.msg && (it.msg.to || []).join(', ')) || ''
       const subj = (it.msg && it.msg.subject) || '(无主题)'
@@ -496,7 +496,7 @@
     let list = []
     try { list = await H.todoList() } catch (e) {}
     const el = $('tlist')
-    if (!list || !list.length) { el.innerHTML = '<div class="empty">暂无待办 📭<br>读信时点「记为待办」，或邮件摘要后自动生成</div>'; $('tcount').textContent = ''; return }
+    if (!list || !list.length) { el.innerHTML = '<div class="empty">暂无待办<br>读信时点「记为待办」，或邮件摘要后自动生成</div>'; $('tcount').textContent = ''; return }
     const pending = list.filter((t) => !t.done).sort((a, b) => (URG_ORDER[a.urgency] ?? 3) - (URG_ORDER[b.urgency] ?? 3))
     const done = list.filter((t) => t.done)
     $('tcount').textContent = `${pending.length} 项待处理 · ${done.length} 项已完成`
@@ -516,14 +516,14 @@
       const r = document.createElement('span'); r.className = 'urg'
       const late = !t.done && t.remindAt < Date.now() && !t.remindedAt
       r.style.color = late ? 'var(--diff-del)' : 'var(--accent)'
-      r.textContent = '⏰ ' + new Date(t.remindAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) + (t.remindedAt ? ' ✓已提醒' : (late ? ' 已过期' : ''))
+      r.textContent = '提醒 ' + new Date(t.remindAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) + (t.remindedAt ? ' ✓已提醒' : (late ? ' 已过期' : ''))
       body.querySelector('.todo-text').appendChild(r)
     }
     if (t.from || t.source) {
       const meta = document.createElement('div'); meta.className = 'todo-meta'
       const parts = []
       if (t.from) parts.push('来自：' + t.from)
-      if (t.source === 'email') parts.push('📧 邮件')
+      if (t.source === 'email') parts.push('邮件')
       if (t.mailSubject) parts.push('「' + t.mailSubject.slice(0, 40) + (t.mailSubject.length > 40 ? '…' : '') + '」')
       if (t.mailDate) parts.push(t.mailDate.slice(0, 16))
       meta.textContent = parts.join(' · ')
@@ -537,9 +537,9 @@
     }
     if (t.mailMsgId) {
       const acts = document.createElement('div'); acts.className = 'mail-acts'
-      const bView = document.createElement('button'); bView.className = 'mail-act'; bView.textContent = '📄 原邮件'
-      const bWeb = document.createElement('button'); bWeb.className = 'mail-act'; bWeb.textContent = '🌐 网页视图'
-      const bReply = document.createElement('button'); bReply.className = 'mail-act'; bReply.textContent = '✉️ 起草回复'
+      const bView = document.createElement('button'); bView.className = 'mail-act'; bView.textContent = '原邮件'
+      const bWeb = document.createElement('button'); bWeb.className = 'mail-act'; bWeb.textContent = '网页视图'
+      const bReply = document.createElement('button'); bReply.className = 'mail-act'; bReply.textContent = '起草回复'
       bWeb.addEventListener('click', () => { try { H.openMailView(t.mailMsgId) } catch (e) {} })
       let full = null
       bView.addEventListener('click', async () => {
@@ -557,12 +557,12 @@
         bReply.disabled = false; bReply.textContent = o
         if (!(r && r.ok)) { const e = document.createElement('div'); e.className = 'mail-full'; e.textContent = '✗ ' + ((r && r.error) || '打开失败'); body.appendChild(e) }
       })
-      const bLoc = document.createElement('button'); bLoc.className = 'mail-act'; bLoc.textContent = '📍 定位收件箱'
+      const bLoc = document.createElement('button'); bLoc.className = 'mail-act'; bLoc.textContent = '定位收件箱'
       bLoc.addEventListener('click', () => { showTab('inbox'); openEmail(t.mailMsgId) })
       acts.append(bView, bWeb, bReply, bLoc); body.appendChild(acts)
     }
     // 设置/修改提醒时间(就地弹 datetime-local)
-    const bTime = document.createElement('button'); bTime.className = 'del-btn'; bTime.textContent = '⏰'
+    const bTime = document.createElement('button'); bTime.className = 'del-btn'; bTime.textContent = '提醒'
     bTime.title = t.remindAt ? '修改提醒时间' : '设置提醒'
     bTime.addEventListener('click', () => {
       if (body.querySelector('input[type="datetime-local"]')) return
@@ -592,13 +592,13 @@
     let sugs = []; try { sugs = await H.todoSuggestList() } catch (e) { sugs = [] }
     const el = $('tsuggest')
     if (!sugs.length) { el.innerHTML = ''; return }
-    el.innerHTML = '<div class="section-label">📅 从邮件识别的会议(待确认)</div>'
+    el.innerHTML = '<div class="section-label">从邮件识别的会议(待确认)</div>'
     sugs.forEach((s) => {
       const d = document.createElement('div'); d.className = 'todo'
       const body = document.createElement('div'); body.className = 'todo-body'
       body.innerHTML = '<div class="todo-text">' + esc(s.text) + '</div>'
-        + '<div class="todo-meta">' + (s.meetingAt ? '🕐 ' + new Date(s.meetingAt).toLocaleString('zh-CN') + ' · ' : '')
-        + (s.from ? '来自:' + esc(s.from) : '') + (s.link ? ' · 🔗 有会议链接' : '') + '</div>'
+        + '<div class="todo-meta">' + (s.meetingAt ? new Date(s.meetingAt).toLocaleString('zh-CN') + ' · ' : '')
+        + (s.from ? '来自:' + esc(s.from) : '') + (s.link ? ' · 有会议链接' : '') + '</div>'
       const acts = document.createElement('div'); acts.className = 'mail-acts'
       const bOk = document.createElement('button'); bOk.className = 'mail-act'; bOk.textContent = '✓ 加入待办'
       bOk.addEventListener('click', async () => {
@@ -610,7 +610,7 @@
       })
       const bNo = document.createElement('button'); bNo.className = 'mail-act'; bNo.textContent = '忽略'
       bNo.addEventListener('click', async () => { await H.todoSuggestDismiss(s.id); loadSuggests() })
-      const bSrc = document.createElement('button'); bSrc.className = 'mail-act'; bSrc.textContent = '📄 原文'
+      const bSrc = document.createElement('button'); bSrc.className = 'mail-act'; bSrc.textContent = '原文'
       bSrc.addEventListener('click', () => { showTab('inbox'); openEmail(s.msgId) })
       acts.append(bOk, bNo, bSrc); body.appendChild(acts); d.appendChild(body); el.appendChild(d)
     })

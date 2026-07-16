@@ -42,7 +42,7 @@
   <span class="hl"></span>
   <div class="panel">
     <div class="hd">
-      <span class="ttl">📤 发件箱</span>
+      <span class="ttl">发件箱</span>
       <button id="x" class="hbtn nodrag" title="关闭"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <div id="body" class="body nodrag"></div>
@@ -70,7 +70,7 @@
       const badge = `<span class="badge b-${it.status}">${BADGE[it.status] || it.status}</span>`
       const kind = it.kind === 'reply' ? '↩︎ ' : ''
       d.innerHTML = `<div class="row1">${badge}<span class="subj">${kind}${escHtml(it.subject)}</span></div>` +
-        `<div class="to">→ ${escHtml(it.to)}${it.attCount ? ' · 📎' + it.attCount : ''}</div>`
+        `<div class="to">→ ${escHtml(it.to)}${it.attCount ? ' · 附件 ' + it.attCount : ''}</div>`
       if (it.status === 'failed' || it.status === 'unknown') {
         const e = document.createElement('div'); e.className = 'err'; e.textContent = '✗ ' + (it.error || '发送失败'); d.appendChild(e)
       } else if (it.status === 'sent') {

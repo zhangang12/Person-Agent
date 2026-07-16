@@ -33,7 +33,7 @@ try {
   notify('notifications/initialized')
 
   const list = await req('tools/list')
-  ok(list.result?.tools?.length === 12, '12 个工具(' + (list.result?.tools?.length || 0) + ')')
+  ok(list.result?.tools?.length === 16, '16 个工具(' + (list.result?.tools?.length || 0) + ')')   // P3/P6 加了 skill_* 等 4 个:12→16,断言曾一直没跟上
 
   const bs = await req('tools/call', { name: 'list_bundles', arguments: {} })
   ok(/b_test01/.test(bs.result?.content?.[0]?.text || ''), 'list_bundles 含 b_test01')

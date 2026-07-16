@@ -66,7 +66,7 @@
       let a = groups.get(key)
       if (a) { if (name && name !== '子agent') { const h = a.box.querySelector('.subname'); if (h && h.textContent !== name) h.textContent = name } return a }
       const box = document.createElement('details'); box.className = 'subbox'   // 默认收起:表头 + 最新一条(紧凑视图),点开看全部工具
-      box.innerHTML = '<summary><div class="ahead"><span class="aico">🔍</span><span class="subname">' + esc(name || '子agent') + '</span>'
+      box.innerHTML = '<summary><div class="ahead"><span class="aico">⏺</span><span class="subname">' + esc(name || '子agent') + '</span>'
         + '<span class="subhint"><span class="acount">0</span> 次调用 · <span class="aelapsed">0s</span><span class="areads"></span><span class="astat"> · 探索中…</span></span></div>'
         + '<div class="alatest">↳ 准备中…</div></summary>'
         + '<div class="subwrap"><div class="alist"></div></div>'
@@ -90,7 +90,7 @@
       const html = '<span class="aln-ic">↳</span><span class="aln-t">' + esc(toolName) + '</span><span class="aln-g">' + esc(toolTarget(input)) + '</span>'
       line.className = 'aline' + cls; line.innerHTML = html
       if (a.latest) { a.latest.className = 'alatest' + cls; a.latest.innerHTML = html }   // 表头下"最新一条"(收起时可见)
-      if (readN) { const rd = a.box.querySelector('.areads'); if (rd) { rd.textContent = ' · 📄 ' + readN; rd.classList.toggle('warn', readN >= 60) } }   // 查子Agent:该单元读文件累计,越界标红
+      if (readN) { const rd = a.box.querySelector('.areads'); if (rd) { rd.textContent = ' · 读 ' + readN; rd.classList.toggle('warn', readN >= 60) } }   // 查子Agent:该单元读文件累计,越界标红
       const e = a.box.querySelector('.aelapsed'); if (e) e.textContent = fmtElapsed(Date.now() - a.t0)
       host.scrollTop = host.scrollHeight
     }

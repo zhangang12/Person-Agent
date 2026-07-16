@@ -118,11 +118,11 @@
     loadRepos()
     body.innerHTML =
       '<div style="margin:auto;width:100%;max-width:380px">'
-      + '<div class="cfg"><div class="ct">📁 代码仓库 · grounding 真相源</div>'
+      + '<div class="cfg"><div class="ct">代码仓库 · grounding 真相源</div>'
       + '<div class="cs">需求分析会在这些仓里 grep 定位代码、出实施方案。可加多个（场景一：个网 / 渠道管理台 / 渠道整合平台）。</div>'
       + '<div id="repolist">' + reposRows() + '</div>'
       + '<button id="addrepo" class="addrepo">+ 添加仓库</button></div>'
-      + '<div class="imp" id="imp" style="max-width:none;margin:0"><div class="ic">📄</div>'
+      + '<div class="imp" id="imp" style="max-width:none;margin:0">'
       + '<div class="t">选择需求 Word 文档</div>'
       + '<div class="s">点「选择文件」选 .docx · 内嵌图片自动走多模态（待接 Qwen）<br>多个 Agent 各自独立读，把明确/不明确/矛盾摊给你</div>'
       + '<button id="pick" class="cta">选择文件</button></div>'
@@ -178,7 +178,7 @@
   function showBar(frac) { const b = document.getElementById('pbar'), f = document.getElementById('pbarf'); if (b) b.style.display = ''; if (f) f.style.width = Math.round(Math.max(0, Math.min(1, frac)) * 100) + '%' }
   function hideBar() { const b = document.getElementById('pbar'); if (b) b.style.display = 'none' }
   const fmt = (s) => '明确 ' + (s.clear || 0) + ' · 不明确 ' + (s.split || 0) + ' · 矛盾 ' + (s.conflict || 0) + ' · 隐藏 ' + (s.hidden || 0)
-  function showErr(msg) { const d = document.getElementById('sum-d'); if (d) d.innerHTML = '<div class="err">⚠ ' + esc(msg) + '</div>'; setDot('parse', 'err', '!'); setDot('read', 'err', '!') }
+  function showErr(msg) { const d = document.getElementById('sum-d'); if (d) d.innerHTML = '<div class="err">' + esc(msg) + '</div>'; setDot('parse', 'err', '!'); setDot('read', 'err', '!') }
 
   function startAnalysis(path) {
     started = true
@@ -193,7 +193,7 @@
   // ── 读者/裁判实时监控（共享组件 agentmon.js）：card-stream 带 tag{scope:'req',kind,id=persona} → 组=读者/裁判(只绑一次) ──
   AgentMon.bindStream(() => window.__mon, (p) => {
     const t = p.tag || {}; if (t.scope !== 'req' || !window.__mon || !started) return null
-    const nm = t.kind === 'read' ? '🔍 读者 · ' + t.id : t.kind === 'judge-topic' ? '⚖ 话题裁判' : t.kind === 'judge-reading' ? '⚖ 读法裁判' : (t.id || '过程')
+    const nm = t.kind === 'read' ? '读者 · ' + t.id : t.kind === 'judge-topic' ? '话题裁判' : t.kind === 'judge-reading' ? '读法裁判' : (t.id || '过程')
     return p.sub ? { key: t.id + '/' + (p.agentId || '_'), name: nm + ' ▸ ' + (p.agentName || '子agent') } : { key: t.id || t.kind, name: nm }
   })
 
@@ -226,7 +226,7 @@
       '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 6px">'
       + '<span class="pill pg">明确 ' + (s.clear || 0) + '</span><span class="pill pa">不明确 ' + (s.split || 0) + '</span>'
       + '<span class="pill pr">矛盾 ' + (s.conflict || 0) + '</span><span class="pill pb">隐藏 ' + (s.hidden || 0) + '</span></div>'
-      + '<div class="doc"><span class="ic">📄</span><div style="flex:1;min-width:0">'
+      + '<div class="doc"><div style="flex:1;min-width:0">'
       + '<div style="font-weight:600;font-size:12.5px">需求分析报告 · ' + esc(fnEl.textContent.replace(/^ · /, '') || '需求文档') + '</div>'
       + '<div style="font-size:11.5px;color:var(--txt3)">' + (ev.findings || 0) + ' findings · ' + (ev.clusters || 0) + ' 话题簇 · 证据锚 + 待确认项</div></div></div>'
       + '<div style="display:flex;align-items:center;gap:8px;margin-top:10px"><span style="font-size:11px;color:var(--txt3)">确认后 append-only 落档</span>'

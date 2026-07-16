@@ -322,7 +322,7 @@
       for (const f of fails.slice(0, 10)) lines.push(`  · 步 ${f.i} ${f.act} "${String(f.sel).slice(0, 60)}" — ${f.err}`)
       if (replay.cascadeFrom >= 0) {
         const skipped = replay.totalSteps - replay.stepReport.length
-        lines.push(`  ⚠ 步 ${replay.cascadeFrom} 起连续 3 次失败 → 早停(后续 ${skipped} 步未执行),通常是早期失败破坏了页面流程,排查那个首失败点即可,后面级联多半假阳性`)
+        lines.push(`  ! 步 ${replay.cascadeFrom} 起连续 3 次失败 → 早停(后续 ${skipped} 步未执行),通常是早期失败破坏了页面流程,排查那个首失败点即可,后面级联多半假阳性`)
       }
     } else lines.push('所有步骤执行成功 ✓')
     lines.push(`\n报错前后对比: 修复前 ${before.errs.length} → 修复后 ${after.errs.length}`)
@@ -357,7 +357,7 @@
       const jsLike = replay.hitInfo.filter((h) => JS_LIKE.test(h.file))
       const others = replay.hitInfo.filter((h) => !JS_LIKE.test(h.file))
       lines.push(`\nAgent 改动文件(本次 session 共 ${replay.changedFiles.length} 个),回放期间执行命中:`)
-      if (!replay.covOn) lines.push('  ⚠ 当前标签未挂 CDP 调试器,无法收集 V8 coverage(打开 DevTools 触发一次即可启用)')
+      if (!replay.covOn) lines.push('  ! 当前标签未挂 CDP 调试器,无法收集 V8 coverage(打开 DevTools 触发一次即可启用)')
       else {
         for (const h of jsLike) {
           const mark = h.executed > 0 ? '✓' : '✗'
@@ -365,7 +365,7 @@
           lines.push(`  ${mark} ${h.file}  (${h.executed} 个函数被执行)`)
         }
         if (others.length) lines.push(`  · 其它非 JS 改动 ${others.length} 个(java/py/sql 等不在浏览器跑,不参与命中评估):${others.map((o) => o.file).join(', ')}`)
-        if (unhitJsCount > 0) lines.push(`  ⚠ ${unhitJsCount} 个 JS/TS 改动在回放中未被执行 — 大概率改错地方,或这条复现路径不覆盖此改动`)
+        if (unhitJsCount > 0) lines.push(`  ! ${unhitJsCount} 个 JS/TS 改动在回放中未被执行 — 大概率改错地方,或这条复现路径不覆盖此改动`)
       }
     }
     // 判定:报错与网络异常都不多于(且无新增) + 步骤全过 + 改动都被命中(若有 JS 改动) → PASS
@@ -388,12 +388,12 @@
       })
       lines.push('\nAgent 改前影响半径扫描:')
       if (replay.scans.scans.length === 0) {
-        lines.push('  ⚠ 一次都没调 scan_impact — agent 没查改动影响范围,盲改')
+        lines.push('  ! 一次都没调 scan_impact — agent 没查改动影响范围,盲改')
       } else {
         lines.push(`  · 共扫了 ${replay.scans.scans.length} 个符号,覆盖 ${scannedSet.size} 个文件`)
         for (const s of replay.scans.scans.slice(0, 5)) lines.push(`    ✓ scan_impact("${s.symbol}") → ${s.files.length} 文件`)
       }
-      if (blindEdits.length) lines.push(`  ⚠ 改了 ${blindEdits.length} 个未扫过的文件(盲改):\n` + blindEdits.slice(0, 5).map((f) => '    · ' + f).join('\n'))
+      if (blindEdits.length) lines.push(`  ! 改了 ${blindEdits.length} 个未扫过的文件(盲改):\n` + blindEdits.slice(0, 5).map((f) => '    · ' + f).join('\n'))
     }
     // Self-review 显示
     if (replay.review) {
@@ -401,7 +401,7 @@
       lines.push(`  · 信心 ${replay.review.risk}/5 — ${replay.review.summary}`)
       if (replay.review.edge_cases) lines.push(`  · 未覆盖的边界: ${replay.review.edge_cases}`)
     } else if (replay.changedFiles && replay.changedFiles.length) {
-      lines.push('\n⚠ Agent 没调 repro_self_review — 跳过了自审环节')
+      lines.push('\n! Agent 没调 repro_self_review — 跳过了自审环节')
     }
 
     const hitsOk = unhitJsCount === 0   // 若全是后端改动或无 JS 改动,自动 true
@@ -410,16 +410,16 @@
     const reviewOk = !replay.changedFiles || !replay.changedFiles.length || (replay.review && replay.review.risk >= 3)
     const pass = errsImproved && badsImproved && newErrs.length === 0 && newBads.length === 0 && fails.length === 0 && hitsOk && assertOk && radiusOk && reviewOk
     let verdict
-    if (!assertOk) verdict = `❌ FAIL — Agent 自己声明的 ${assertFail} 条断言未通过(见上面 ✗ 标的几条) → 修复未达成 agent 自己的预期`
-    else if (newErrs.length || newBads.length) verdict = `❌ FAIL — 出现了修复前没有的新问题:${newErrs.length} 条新报错 / ${newBads.length} 条新网络异常 → 回归了`
-    else if (!radiusOk) verdict = `⚠ SUSPICIOUS — 改了 ${blindEdits.length} 个未扫过的文件(盲改),没确认这些改动的影响半径 → 可能改坏其他功能`
-    else if (!hitsOk) verdict = `⚠ SUSPICIOUS — 报错和网络看着好了,但 ${unhitJsCount} 个 JS 改动在回放期间根本没被执行 → 可能改错地方,问题"看似消失"可能是别的因素`
-    else if (!reviewOk) verdict = replay.review ? `⚠ SUSPICIOUS — Agent 自评信心 ${replay.review.risk}/5 偏低 → 修复可能不彻底,建议看 review 里的边界后再确认` : '⚠ SUSPICIOUS — Agent 跳过了 self-review,缺少自审证据'
-    else if (fails.length) verdict = '⚠ PARTIAL — 步骤执行有失败(可能页面结构变了),无法可靠判断;建议人工再看一眼'
-    else if (!errsImproved || !badsImproved) verdict = '❌ FAIL — 数量变多了 → 没修好或引入了新问题'
-    else if (pass && replay.assertions && replay.assertions.length) verdict = `✅ PASS — Agent ${replay.assertions.length} 条断言全部满足 + 影响半径已扫 + self-review 信心 ${replay.review ? replay.review.risk : '-'}/5 + JS 改动均被执行 → 修复有硬证据`
-    else if (pass) verdict = '✅ PASS — 复现路径全部走通,报错/网络异常未增加,JS 改动均被执行,影响半径与 self-review 完整'
-    else verdict = '✅ PASS'
+    if (!assertOk) verdict = `✗ FAIL — Agent 自己声明的 ${assertFail} 条断言未通过(见上面 ✗ 标的几条) → 修复未达成 agent 自己的预期`
+    else if (newErrs.length || newBads.length) verdict = `✗ FAIL — 出现了修复前没有的新问题:${newErrs.length} 条新报错 / ${newBads.length} 条新网络异常 → 回归了`
+    else if (!radiusOk) verdict = `SUSPICIOUS — 改了 ${blindEdits.length} 个未扫过的文件(盲改),没确认这些改动的影响半径 → 可能改坏其他功能`
+    else if (!hitsOk) verdict = `SUSPICIOUS — 报错和网络看着好了,但 ${unhitJsCount} 个 JS 改动在回放期间根本没被执行 → 可能改错地方,问题"看似消失"可能是别的因素`
+    else if (!reviewOk) verdict = replay.review ? `SUSPICIOUS — Agent 自评信心 ${replay.review.risk}/5 偏低 → 修复可能不彻底,建议看 review 里的边界后再确认` : 'SUSPICIOUS — Agent 跳过了 self-review,缺少自审证据'
+    else if (fails.length) verdict = 'PARTIAL — 步骤执行有失败(可能页面结构变了),无法可靠判断;建议人工再看一眼'
+    else if (!errsImproved || !badsImproved) verdict = '✗ FAIL — 数量变多了 → 没修好或引入了新问题'
+    else if (pass && replay.assertions && replay.assertions.length) verdict = `✓ PASS — Agent ${replay.assertions.length} 条断言全部满足 + 影响半径已扫 + self-review 信心 ${replay.review ? replay.review.risk : '-'}/5 + JS 改动均被执行 → 修复有硬证据`
+    else if (pass) verdict = '✓ PASS — 复现路径全部走通,报错/网络异常未增加,JS 改动均被执行,影响半径与 self-review 完整'
+    else verdict = '✓ PASS'
     return { pass, verdict, text: verdict + '\n\n' + lines.join('\n') }
   }
 

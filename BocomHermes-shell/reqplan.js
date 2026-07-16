@@ -179,7 +179,7 @@ function planToMarkdown(result, meta = {}) {
       c.steps.forEach((s, k) => L.push((k + 1) + '. ' + s))
     }
     if (c.opens.length) {
-      L.push(''); L.push('**⛑ 未决（待人工确认，未替人拍板）**')
+      L.push(''); L.push('**未决（待人工确认，未替人拍板）**')
       for (const o of c.opens) L.push('- ' + o)
     }
     L.push('')

@@ -209,7 +209,7 @@
   function wfMeta(it) {
     const secs = it.t0 ? Math.round(((it.doneAt || Date.now()) - it.t0) / 1000) + 's' : ''
     // 查子Agent:该执行体读文件累计;越界(≥60)红字提示可能撑爆上下文
-    const rd = it.reads ? (it.reads >= 60 ? '<span style="color:var(--diff-del);font-weight:600">📄 ' + it.reads + '</span>' : '📄 ' + it.reads) : ''
+    const rd = it.reads ? (it.reads >= 60 ? '<span style="color:var(--diff-del);font-weight:600">读 ' + it.reads + '</span>' : '读 ' + it.reads) : ''
     const parts = []
     if (it.count) parts.push(it.count + ' 次调用')
     if (rd) parts.push(rd)
@@ -291,7 +291,7 @@
       refreshBanner()
     } else if (ev.type === 'plan-failed') {
       // 规划器挂了但前面几轮有成果:编排层收手去汇总。必须说出来 —— 否则用户只看到"轮次莫名其妙少了几轮"
-      plannerNote('⚠ 第 ' + ev.round + ' 轮规划失败：' + (ev.error || '') + ' —— 不再往下拆，直接用已完成的子任务成果汇总（成果不丢）')
+      plannerNote('第 ' + ev.round + ' 轮规划失败：' + (ev.error || '') + ' —— 不再往下拆，直接用已完成的子任务成果汇总（成果不丢）')
       refreshBanner('规划器失败，正在用已有成果汇总…')
     } else if (ev.type === 'plan-approve') {
       const box = document.createElement('div'); box.className = 'approve'
@@ -379,12 +379,12 @@
       feed.appendChild(box); feed.scrollTop = feed.scrollHeight
     } else if (ev.type === 'error') {
       if (runningBanner) { runningBanner.remove(); runningBanner = null }
-      banner('err', '⚠ 出错：' + ev.error)
+      banner('err', '出错：' + ev.error)
     }
   })
   feed.addEventListener('click', (e) => { const a = e.target.closest('a.floc'); if (a) { e.preventDefault(); window.BocomHermes.openLoc(a.dataset.file, a.dataset.line) } })
   document.getElementById('stop').addEventListener('click', () => { window.BocomHermes.abortWorkflow(); banner('err', '已请求停止…') })
-  ;(async () => { try { await window.BocomHermes.runWorkflow(goal, params.get('id') || '') } catch (e) { banner('err', '⚠ ' + (e.message || e)) } })()
+  ;(async () => { try { await window.BocomHermes.runWorkflow(goal, params.get('id') || '') } catch (e) { banner('err', String(e.message || e)) } })()
 </script>
   <script src="carddrag.js"></script>
 </body>

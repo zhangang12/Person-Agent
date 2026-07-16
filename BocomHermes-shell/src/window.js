@@ -326,7 +326,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       const prompt = email.formatEmailPrompt(fresh)
       const prompt2 = prompt + '\n\n注意:你提取的 TODO 行,如果对应某封具体邮件,请在 TODO 行后面追加 `[msgId:xxx]`(xxx 是上面邮件的 Message-ID,见输出),系统会自动回填邮件主题/日期/正文摘要进待办,跨会话也能反查到。'
       const skipped = all.length - fresh.length
-      const title = '📧 邮件整理 · ' + new Date().toLocaleDateString('zh-CN') + ' · 新 ' + fresh.length + (skipped ? '/已跳 ' + skipped : '')
+      const title = '邮件整理 · ' + new Date().toLocaleDateString('zh-CN') + ' · 新 ' + fresh.length + (skipped ? '/已跳 ' + skipped : '')
       // flash:卡片加载完后任务栏闪 + 抢焦点 + 短暂置顶 1.5s → 用户一眼能找到新弹的卡
       spawnCard(title, null, prompt2, null, { flash: true })
       // 标记 seen 放在卡片建好之后:摘要卡若没弹出来,这些邮件不会被误标"已整理"而永久漏掉
@@ -525,7 +525,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       if (b.mode !== 'workspace' || !b.cardView || b.cardView.webContents.isDestroyed()) return false
       let disp, text
       if (req.kind === 'takeover') {   // 混合执行:严格回放整段失败 → Agent 流程级接管,直接操作内嵌浏览器完成剩余
-        disp = `🤖 回放第 ${req.step} 步起整段失败 — Agent 接管执行中…`
+        disp = `回放第 ${req.step} 步起整段失败 — Agent 接管执行中…`
         text = `技能「${req.title}」的严格回放从第 ${req.step} 步起整段失败,请你【接管执行剩余流程】。\n`
           + `目标:${req.goal || '(见步骤)'}${req.successText ? '\n成功标志:' + req.successText : ''}\n`
           + `当前页面:${req.url}${req.pageTitle ? '(' + req.pageTitle + ')' : ''}\n失败点:${req.failText}\n\n`
@@ -626,12 +626,12 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       dbgNote(cardWc, disp, 'user')
       // 信号简单 → 直接单 agent，省掉一次分诊调用
       if (heur.strategy === 'single' && heur.difficulty <= 2) {
-        dbgNote(cardWc, `🧭 分诊：难度 ${heur.difficulty}/5 · 单 agent 直接定位`, 'info')
+        dbgNote(cardWc, `分诊：难度 ${heur.difficulty}/5 · 单 agent 直接定位`, 'info')
         inj(bundlePrompt); return
       }
-      dbgNote(cardWc, '🧭 正在评估是否需要多 agent 对抗分析…', 'info')
+      dbgNote(cardWc, '正在评估是否需要多 agent 对抗分析…', 'info')
       const v = await dbgTriage(serve, summary, heur, hostModel)
-      dbgNote(cardWc, `🧭 分诊：难度 ${v.difficulty}/5 · 层面 [${(v.layers || []).map(k => DBG_TAG[k] || k).join('、') || '未定'}] · ${v.strategy === 'multi' ? '启动多 agent 对抗分析' : '单 agent 直接定位'}${v.reason ? '\n' + v.reason : ''}`, 'info')
+      dbgNote(cardWc, `分诊：难度 ${v.difficulty}/5 · 层面 [${(v.layers || []).map(k => DBG_TAG[k] || k).join('、') || '未定'}] · ${v.strategy === 'multi' ? '启动多 agent 对抗分析' : '单 agent 直接定位'}${v.reason ? '\n' + v.reason : ''}`, 'info')
       if (v.strategy !== 'multi') { inj(bundlePrompt); return }
       // 选 2~3 个假设角度（不足两个时补 frontend/contract 形成对抗）
       // 后端仓库：opencode 一 serve 一目录，跨前后端必须分 serve。配了就让后端调查/修复在它自己的 serve 上跑
@@ -643,7 +643,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       for (const k of ['frontend', 'contract', 'backend']) { if (lenses.length >= 2) break; if (!lenses.includes(k)) lenses.push(k) }
       lenses = lenses.slice(0, 3)
       if (backendServe && !lenses.includes('backend')) lenses = [...lenses.slice(0, 2), 'backend']   // 配了后端仓库必查后端
-      lenses.forEach(k => dbgNote(cardWc, `🤖 假设·${DBG_TAG[k]} 调查中…${k === 'backend' && backendServe ? '（后端仓库）' : ''}`, 'muted'))
+      lenses.forEach(k => dbgNote(cardWc, `假设·${DBG_TAG[k]} 调查中…${k === 'backend' && backendServe ? '（后端仓库）' : ''}`, 'muted'))
       // #7 假设生成式分诊:并行起一个"开放式假设 lens",不局限于 frontend/backend/contract 三分类,
       // 让 agent 自己列 3 个最可能根因(可能是状态机/缓存/竞态/CSS 等启发式抓不到的)
       const dynamicLens = (async () => {
@@ -657,7 +657,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         } catch (e) { return { k: 'open_hypotheses', out: '(假设生成失败:' + e.message + ')', repo: '前端仓库' } }
         finally { if (sid) { S.sessionInfo.delete(sid); S.streamBuf.delete(sid) } }
       })()
-      dbgNote(cardWc, '🧭 同时启动开放式假设生成 lens(不局限于固定 3 分类)…', 'muted')
+      dbgNote(cardWc, '同时启动开放式假设生成 lens(不局限于固定 3 分类)…', 'muted')
       const heurFindings = await Promise.all(lenses.map(async (k) => {
         const useServe = (k === 'backend' && backendServe) ? backendServe : serve
         const repo = useServe === backendServe ? '后端仓库' : '前端仓库'
@@ -683,14 +683,14 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
 
       // 后端修复：卡片会话在前端仓库改不到后端，所以由后端仓库 serve 上的 agent 判断并直接改后端源码（权限回本卡）
       if (backendServe) {
-        dbgNote(cardWc, '🔧 后端 agent 正在判断是否需要改后端…', 'muted')
+        dbgNote(cardWc, '后端 agent 正在判断是否需要改后端…', 'muted')
         let bsid
         try {
           bsid = await oc.createSession(backendServe, '后端修复')
           S.sessionInfo.set(bsid, { wc: cardWc, serve: backendServe })
           const bout = await oc.sendMessage(backendServe, bsid,
             `你在【后端仓库】里。下面是一个从前端复现的问题 + 多路调查结论。如果根因/修复在后端，请直接用编辑工具修改后端源码完成修复（我会逐次确认写入），改完用一两句话说明改了哪些文件、为什么；如果与后端无关，只回复"后端无需改动"。\n\n## 复现上下文\n${bundlePrompt}\n\n## 各路调查结论\n${merged}`, hostModel)
-          dbgNote(cardWc, '🔧 后端 agent：' + String(bout || '').replace(/\s+/g, ' ').slice(0, 500), 'muted')
+          dbgNote(cardWc, '后端 agent：' + String(bout || '').replace(/\s+/g, ' ').slice(0, 500), 'muted')
           findings.push({ k: 'backend-fix', out: bout, repo: '后端仓库' })
         } catch (e) { dbgNote(cardWc, `后端修复失败：${e.message}`, 'muted') }
         finally { if (bsid) { S.sessionInfo.delete(bsid); S.streamBuf.delete(bsid) } }
@@ -700,7 +700,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       inj(`下面是对同一问题的多路并行调查${backendServe ? '（跨前后端两个仓库）+ 后端 agent 的修复结果' : ''}。请交叉验证、定出最可能的【唯一根因】。**前端改动你直接用编辑工具修改（你在前端仓库）**；${backendServe ? '后端已由后端 agent 在后端仓库处理，你据其结果说明后端结论即可，不要试图改后端文件；' : ''}改完总结根因与各端改动。\n\n## 原始复现上下文\n${bundlePrompt}\n\n## 各路调查结论\n${mergedAll}`)
     } catch (e) {
       log('runDebugFlow err: ' + e.message)
-      dbgNote(cardWc, '⚠ 分析流程出错：' + e.message + '（回退为单 agent）', 'info')
+      dbgNote(cardWc, '分析流程出错：' + e.message + '（回退为单 agent）', 'info')
       inj(bundlePrompt)
     }
   }
@@ -986,7 +986,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       `8. FAIL 且方向错了,**先用 repro_rollback{cwd, dryRun:true}** 列出会回滚的文件,确认后 dryRun:false 清掉本轮改动,从头分析。`
     S.browser.lastBundleId = bundleId   // verify 用它读 mcp 'repro_assert' 写入的断言
     log('brAnalyze: bundle ' + bundleId + ' size=' + Buffer.byteLength(bundle) + 'B')
-    const disp = `🔍 已复现并发送：${tab.url || '(空白页)'}\n（${errs.length} 条控制台报错 + ${bad.length} 条网络异常 + 页面 DOM 上下文）`
+    const disp = `已复现并发送：${tab.url || '(空白页)'}\n（${errs.length} 条控制台报错 + ${bad.length} 条网络异常 + 页面 DOM 上下文）`
     const b = S.browser
     if (b.mode === 'workspace' && b.cardView && !b.cardView.webContents.isDestroyed()) {
       const cardSid = S.sessionByWc.get(b.cardWcId)
@@ -1026,9 +1026,9 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
 
     // 路径 A: 有录制 → 自动回放 + diff 报告(真正闭环)
     if (rec && rec.events && rec.events.length) {
-      dbgNote(cardWc, '🔁 验证修复:回放录制(' + rec.events.length + ' 步)…', 'info')
+      dbgNote(cardWc, '验证修复:回放录制(' + rec.events.length + ' 步)…', 'info')
       const replay = await replayRec(rec)
-      if (!replay.ok) { dbgNote(cardWc, '⚠ 回放失败:' + (replay.error || ''), 'info'); return }
+      if (!replay.ok) { dbgNote(cardWc, '回放失败:' + (replay.error || ''), 'info'); return }
       // 读 agent 写入的断言 / 影响半径扫描 / self-review
       const bid = rec.bundleId || S.browser.lastBundleId
       const assertions = await checkAssertions(tab, loadAssertions(bid))
@@ -1039,7 +1039,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       const snap = rec.snapshot || { errs: [], bad: [] }   // 导入的技能没有 snapshot
       const hitSummary = replay.hitInfo && replay.hitInfo.length ? `;改动 ${replay.hitInfo.length} 文件,${replay.hitInfo.filter((h) => h.executed > 0).length} 个被执行` : ''
       const statusKind = rep.pass ? 'pass' : (/SUSPICIOUS/.test(rep.verdict) ? 'suspicious' : 'fail')
-      const disp = `🔁 验证完成 · ${rep.pass ? '✅ PASS' : (statusKind === 'suspicious' ? '⚠ SUSPICIOUS' : '❌ FAIL')}\n(回放 ${replay.stepReport.length}/${rec.events.length} 步;修复前 ${snap.errs.length}/${snap.bad.length} → 修复后 ${replay.after.errs.length}/${replay.after.bad.length}${hitSummary})`
+      const disp = `验证完成 · ${rep.pass ? '✓ PASS' : (statusKind === 'suspicious' ? 'SUSPICIOUS' : '✗ FAIL')}\n(回放 ${replay.stepReport.length}/${rec.events.length} 步;修复前 ${snap.errs.length}/${snap.bad.length} → 修复后 ${replay.after.errs.length}/${replay.after.bad.length}${hitSummary})`
       // 同步推一份卡片到浏览器壳 UI,用户在右下角一眼看到结论而不用翻 agent 对话流
       if (b.win && !b.win.isDestroyed()) {
         b.win.webContents.send('wf-verify-result', {
@@ -1059,7 +1059,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
 
     // 路径 B: 没录制 → 退回旧的"重载看现状"模式
     const url = tab.url || '(当前页)'
-    dbgNote(cardWc, '🔁 验证修复:本次未录制 → 退回重载模式(下次点"录制"复现可启用自动回放)', 'info')
+    dbgNote(cardWc, '验证修复:本次未录制 → 退回重载模式(下次点"录制"复现可启用自动回放)', 'info')
     await new Promise((resolve) => {
       let done = false
       const finish = () => { if (done) return; done = true; try { wc.off('did-stop-loading', onStop) } catch {} resolve() }
@@ -1070,9 +1070,9 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     })
     const errs = tab.console.filter((c) => c.level >= 2)
     const bad = tab.net.filter((r) => r.state === 'failed' || (r.status && r.status >= 400))
-    const errText = errs.length ? errs.slice(-20).map((c) => (c.level === 3 ? '✗ ' : '⚠ ') + c.message).join('\n') : '(无 warning / error)'
+    const errText = errs.length ? errs.slice(-20).map((c) => (c.level === 3 ? '✗ ' : '! ') + c.message).join('\n') : '(无 warning / error)'
     const clean = !errs.length && !bad.length
-    const disp = `🔁 已重载验证: ${url}\n(${errs.length} 报错 + ${bad.length} 网络异常)`
+    const disp = `已重载验证: ${url}\n(${errs.length} 报错 + ${bad.length} 网络异常)`
     const prompt =
       `我已重载页面验证你刚才的修复(注:这次没用录制,只是简单重载)。重载后的当前状态:\n\n## 控制台报错(${errs.length})\n${errText}\n\n` +
       (clean
@@ -1086,15 +1086,15 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       { label: '唤起输入框', accelerator: 'Ctrl+Shift+Space', click: toggleInput },
       { label: S.settings.orbHidden ? '显示桌面悬浮球' : '隐藏桌面悬浮球', click: () => setOrbHidden(!S.settings.orbHidden) },
       { type: 'separator' },
-      { label: '🌐 调试工作台（Agent + 浏览器）', accelerator: 'Ctrl+Shift+B', click: () => createWorkspace() },
-      { label: '🎬 录制与回放（浏览器技能）', accelerator: 'Ctrl+Shift+R', click: () => createSkillCenter() },
-      { label: '📧 邮件（收件箱 · 摘要 · 设置）', accelerator: 'Ctrl+Shift+M', click: () => createMailCenter() },
-      { label: '📄 需求分析（Word）', click: () => spawnReqAnalysis('') },
-      { label: '📤 发件箱', click: openOutbox },
-      { label: '📋 待办事项', click: () => createMailCenter('todos') },
-      { label: '📸 截图提问', accelerator: 'Ctrl+Shift+S', click: () => snapAsk() },
-      { label: '🛡 审计流水', click: openAudit },
-      { label: '🕸 HTTP 抓包(外部程序)', click: openHttpcap },
+      { label: '调试工作台（Agent + 浏览器）', accelerator: 'Ctrl+Shift+B', click: () => createWorkspace() },
+      { label: '录制与回放（浏览器技能）', accelerator: 'Ctrl+Shift+R', click: () => createSkillCenter() },
+      { label: '邮件（收件箱 · 摘要 · 设置）', accelerator: 'Ctrl+Shift+M', click: () => createMailCenter() },
+      { label: '需求分析（Word）', click: () => spawnReqAnalysis('') },
+      { label: '发件箱', click: openOutbox },
+      { label: '待办事项', click: () => createMailCenter('todos') },
+      { label: '截图提问', accelerator: 'Ctrl+Shift+S', click: () => snapAsk() },
+      { label: '审计流水', click: openAudit },
+      { label: 'HTTP 抓包(外部程序)', click: openHttpcap },
       { label: '卡坞 · 历史对话', click: openDock },
       { label: '切换深 / 浅主题', click: toggleTheme },
       { label: '设置…', click: openSettings },
@@ -1348,7 +1348,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('set-settings', (_e, patch) => {
     // 存密码前先看能不能加密:不能 → 日志告警一次(设置面板另有红字提示),让用户知道密码明文落盘
     if (patch && ((patch.imap && patch.imap.pass && patch.imap.pass.trim()) || (patch.smtp && patch.smtp.pass && patch.smtp.pass.trim())) && !email.encryptionAvailable()) {
-      log('⚠️ 安全告警:当前环境 safeStorage 不可用,邮箱密码将以明文保存到 settings.json')
+      log('安全告警:当前环境 safeStorage 不可用,邮箱密码将以明文保存到 settings.json')
     }
     if (patch && typeof patch.backendDir === 'string') S.settings.backendDir = patch.backendDir.trim()
     if (patch && typeof patch.editorCmd === 'string') S.settings.editorCmd = patch.editorCmd.trim()
@@ -1881,19 +1881,19 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     const retried = replay.stepReport.filter((s) => s.retried && s.ok).length
     const ok = fails.length === 0 && (!replay.success || replay.success.pass)
     try { S.audit && S.audit('skill', 'Agent 运行技能「' + hit.name + '」', { by: 'agent', steps: replay.stepReport.length, result: ok ? 'PASS' : (fails.length + ' 步失败'), baseUrl: (a && a.baseUrl) || '' }) } catch {}
-    const lines = ['技能「' + hit.name + '」回放 ' + replay.stepReport.length + '/' + replay.totalSteps + ' 步 · ' + (fails.length === 0 ? '✅ 步骤全部成功' : '❌ ' + fails.length + ' 步失败') + (retried ? '(' + retried + ' 步重试后成功)' : '')]
+    const lines = ['技能「' + hit.name + '」回放 ' + replay.stepReport.length + '/' + replay.totalSteps + ' 步 · ' + (fails.length === 0 ? '✓ 步骤全部成功' : '✗ ' + fails.length + ' 步失败') + (retried ? '(' + retried + ' 步重试后成功)' : '')]
     for (const f of fails.slice(0, 8)) lines.push('  · 步 ' + f.i + ' ' + f.act + ' "' + String(f.sel).slice(0, 60) + '" — ' + f.err)
     const skippedState = replay.stepReport.filter((s) => s.skipped === 'state').length
     if (skippedState) lines.push('· ' + skippedState + ' 步已被页面状态满足自动跳过(登录缓存/无效导航)')
     // 人机断点透明化:等人的步怎么过的(人点的/自动判出的/Agent 给的);【超时】要单独喊出来 —— 那步等于没人管就往下跑了
     const humans = replay.stepReport.filter((s) => s.human || s.liveGate)
-    const HOW = { manual: '人工点继续', auto: '自动检测填入', 'auto-nav': '自动检测页面跳转', 'auto-gone': '自动检测验证消失', agent: 'Agent 给值', timeout: '⚠ 等了 5 分钟没人管(该步未处理即继续)' }
+    const HOW = { manual: '人工点继续', auto: '自动检测填入', 'auto-nav': '自动检测页面跳转', 'auto-gone': '自动检测验证消失', agent: 'Agent 给值', timeout: '等了 5 分钟没人管(该步未处理即继续)' }
     for (const h of humans) {
       // liveGate 现在拦到就留痕(不管重试成没成)—— 失败那条恰恰是"没人管干等 5 分钟"的路,必须照实说
       if (h.liveGate) lines.push('· 步 ' + h.i + ' 回放时冒出「' + h.liveGate.hint + '」(录制时没有)→ ' + (h.liveGate.ok ? '已等人过关后重试成功' : '等人处理后重试仍失败') + '(' + (HOW[h.liveGate.how] || h.liveGate.how) + ')')
       else lines.push('· 步 ' + h.i + ' 人机断点 → ' + (HOW[h.how] || h.how))
     }
-    if (humans.some((h) => h.how === 'timeout' || (h.liveGate && h.liveGate.how === 'timeout'))) lines.push('⚠ 有人机断点超时未处理,结果可能不可信')
+    if (humans.some((h) => h.how === 'timeout' || (h.liveGate && h.liveGate.how === 'timeout'))) lines.push('注意:有人机断点超时未处理,结果可能不可信')
     if (rec.noCache) lines.push('· 本次已禁用缓存运行(跑前 + 每次导航前清 HTTP 缓存)')
     if (replay.takeover) lines.push('· 第 ' + replay.takeover.from + ' 步起由 Agent 接管:' + (replay.takeover.status === 'done' ? '目标达成 ✓' : '未完成(' + replay.takeover.status + ')') + (replay.takeover.note ? ' — ' + replay.takeover.note : ''))
     if (replay.success) lines.push('成功断言: ' + (replay.success.pass ? '✓ 达成' : '✗ 未达成') + ' [' + replay.success.kind + '] "' + replay.success.value + '"' + (replay.success.err ? '(检查出错: ' + replay.success.err + ')' : ''))
@@ -1914,9 +1914,9 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
           workflow = { started: true, files: dls, id: wfId }
           lines.push('→ 已对下载的 ' + dls.length + ' 个文件启动「工作流编排」(见「工作台」窗口,成果自动存档): ' + dls.map((p) => String(p).split(/[\\/]/).pop()).join('、'))
           try { S.audit && S.audit('skill', '技能「' + hit.name + '」触发下载后编排', { files: dls.map((p) => String(p).split(/[\\/]/).pop()), goal: String(rec.postWorkflow.goal).slice(0, 120), wfId }) } catch {}
-        } catch (e) { lines.push('⚠ 下载后编排启动失败: ' + e.message) }
+        } catch (e) { lines.push('下载后编排启动失败: ' + e.message) }
       } else {
-        lines.push('⚠ 该技能配了「下载后编排」,但本次没捕获到下载文件 —— 请确认导出/下载步骤成功(工作流未启动)')
+        lines.push('该技能配了「下载后编排」,但本次没捕获到下载文件 —— 请确认导出/下载步骤成功(工作流未启动)')
       }
     }
     return { ok, pass: ok, report: lines.join('\n'), stepReport: replay.stepReport, downloads: dls, workflow }
@@ -1974,9 +1974,9 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
         if (!rowOk && (a && a.onError) === 'stop') break
       }
       try { S.audit && S.audit('skill', 'Agent 批量运行技能「' + hit.name + '」', { by: 'agent', rows: rows.length, pass: passN, fail: failN }) } catch {}
-      const lines = ['技能「' + hit.name + '」批量运行 ' + rows.length + '/' + dataset.length + ' 行 · ✅ ' + passN + ' / ❌ ' + failN + (rows.length < dataset.length ? '(onError=stop 提前中止)' : '')]
+      const lines = ['技能「' + hit.name + '」批量运行 ' + rows.length + '/' + dataset.length + ' 行 · ✓ ' + passN + ' / ✗ ' + failN + (rows.length < dataset.length ? '(onError=stop 提前中止)' : '')]
       const unm = rows.find((r) => r.unmatched && r.unmatched.length)
-      if (unm) lines.push('⚠ 有列名未匹配到任何参数(检查 dataset 键是否 = 参数 label): ' + unm.unmatched.join('、'))
+      if (unm) lines.push('有列名未匹配到任何参数(检查 dataset 键是否 = 参数 label): ' + unm.unmatched.join('、'))
       for (const r of rows.slice(0, 60)) lines.push('  行' + r.row + ' ' + (r.ok ? '✓' : '✗ ' + r.firstErr))
       if (rows.length > 60) lines.push('  …(共 ' + rows.length + ' 行,只列前 60)')
       return { ok: failN === 0, pass: passN, fail: failN, report: lines.join('\n'), rows }
@@ -2114,7 +2114,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       const b = S.browser
       const viaCard = b.mode === 'workspace' && b.cardView && !b.cardView.webContents.isDestroyed()
       if (viaCard) {
-        b.cardView.webContents.send('card-inject', { text: prompt, disp: '🛠 自动整理技能「' + (rec.title || id) + '」:步骤命名/参数识别/成功判据…' })
+        b.cardView.webContents.send('card-inject', { text: prompt, disp: '自动整理技能「' + (rec.title || id) + '」:步骤命名/参数识别/成功判据…' })
       } else {
         try {
           const serve = await oc.ensureServe(S.settings.projectDir || process.cwd(), S.handlers, log)

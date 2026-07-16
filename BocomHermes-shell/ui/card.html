@@ -169,8 +169,8 @@
   .quick.hidden { display: none; }
   .qchip { flex: none; font-size: 11px; color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 999px; padding: 4px 11px; cursor: pointer; white-space: nowrap; }
   .qchip:hover { color: var(--txt); border-color: var(--accent); }
-  .qchip.go { color: #fff; background: linear-gradient(135deg,#1aa86e,#0b8e5c); border-color: transparent; font-weight: 600; }
-  .qchip.go:hover { opacity: .92; }
+  .qchip.go { color: var(--green); border-color: var(--green); background: transparent; font-weight: 600; }   /* 描边强调,不用渐变糖果色 */
+  .qchip.go:hover { background: rgba(43,182,115,.1); }
 
   .perm { display: flex; align-items: center; gap: 8px; background: var(--warn-bg); border: .5px solid var(--warn-border); border-radius: 11px; padding: 7px 9px; }
   .perm .t { flex: 1; font-size: 12px; color: var(--warn-txt); }
@@ -185,7 +185,9 @@
   .toolbox { align-self: flex-start; max-width: 92%; font-size: 11px; color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 9px; margin: 2px 0; overflow: hidden; }
   .toolbox > summary { cursor: pointer; padding: 5px 11px; display: flex; align-items: center; gap: 6px; list-style: none; user-select: none; }
   .toolbox > summary::-webkit-details-marker { display: none; }
-  .toolbox .ti { flex: none; }
+  .toolbox .ti { flex: none; font-size: 9px; color: var(--accent); }   /* ⏺ 状态色:蓝=运行中 绿=完成 红=出错(单色,不用花色 emoji) */
+  .toolbox.done .ti { color: var(--green); }
+  .toolbox.err .ti { color: var(--diff-del); }
   .toolbox .tn { font-family: var(--mono); font-weight: 600; color: var(--txt); flex: none; }
   .toolbox .tt { font-family: var(--mono); color: var(--txt3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .toolbox .ts2 { color: var(--txt3); margin-left: auto; flex: none; }
@@ -277,7 +279,7 @@
     <!-- 探活日志抽屉:右侧滑出,显示 GET /global/health 的报文 -->
     <div id="probedraw" class="probedraw nodrag" hidden>
       <div class="pd-hd">
-        <span class="pd-title">📡 保活心跳日志</span>
+        <span class="pd-title">保活心跳日志</span>
         <span class="pd-sub">每 2 分钟 POST /heartbeat</span>
         <button id="pd-now" class="pd-now" title="当场发一次心跳">⟳ 立即保活</button>
         <button id="pd-x" class="pd-x" aria-label="关闭">✕</button>
@@ -379,7 +381,7 @@
       addMsg('本卡已切换到项目「' + (rr.project || '未选目录') + '」(' + (rr.dir || '') + ')，新会话就绪，直接提问即可。', 'ai')
       maybeDrain()
     } catch (e) {
-      boot.className = 'msg ai err'; boot.textContent = '⚠ 切换失败：' + (e.message || e); setBusy(false)
+      boot.className = 'msg ai err'; boot.textContent = '切换失败：' + (e.message || e); setBusy(false)
     }
   })
   // 不再监听全局 project-changed 重绘 —— 全局项目只是"新卡默认",本卡标签唯一真相源是 cardInit/cardReinit 回包
@@ -584,9 +586,9 @@
   }
   const joinParts = (m) => Array.from(m.values()).join('\n')
   // 工具日志块:同一 callID 原地更新(运行中→完成),展开可见 入参 + 结果。run_workflow 高亮成"升格"。
+  // 图标统一单色 ⏺(对齐 Claude Code):状态靠颜色说话(蓝=运行中/绿=完成/红=出错),不用一桌花色 emoji
   const toolEls = new Map()
   const TOOL_LABEL = { run_workflow: '升格 → 动态工作流' }
-  const TOOL_ICON = { run_workflow: '🚀', bash: '▶', shell: '▶', read: '📖', write: '✍', edit: '✏', patch: '✏', grep: '🔎', glob: '🔎', list: '📁', ls: '📁', webfetch: '🌐', fetch: '🌐', task: '🤖', todowrite: '☑', todoread: '☑' }
   const fmtInput = (v) => { if (v == null) return ''; if (typeof v === 'string') return v; try { return JSON.stringify(v, null, 2) } catch { return String(v) } }
   // 过程详情开关(Claude Code 的 verbose):关=工具紧凑一行摘要(默认,免刷屏),开=每个工具自动展开入参/结果。记住偏好。
   let verbose = false; try { verbose = localStorage.getItem('cardVerbose') === '1' } catch {}
@@ -634,7 +636,7 @@
     const done = /complet|success|done|finish|ok/i.test(status), err = /error|fail|deny|reject/i.test(status)
     el.classList.toggle('done', done && !err); el.classList.toggle('err', err)
     const stt = err ? '出错' : done ? '完成' : '运行中…'
-    const icon = isWf ? '🚀' : (TOOL_ICON[String(name).toLowerCase()] || '⚙')
+    const icon = '⏺'
     const inStr = fmtInput(data.input)
     const outStr = data.error ? String(data.error) : (data.output != null ? String(data.output) : '')
     const todo = isTodo ? todoHtml(data.input) : null
@@ -684,7 +686,7 @@
     let s = subAgents.get(agentId)
     if (s) { if (name && name !== '子agent' && s.name.textContent !== name) s.name.textContent = name; return s }
     const el = document.createElement('details'); el.className = 'subagent'; el.open = true   // 默认展开 —— 直接看到它的思考/工具/产出全程(想收起可手动折叠)
-    el.innerHTML = '<summary><svg class="sa-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg><span class="sa-ic">🔍</span><span class="sa-name"></span><span class="sa-meta">运行中…</span></summary>'
+    el.innerHTML = '<summary><svg class="sa-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg><span class="sa-ic">⏺</span><span class="sa-name"></span><span class="sa-meta">运行中…</span></summary>'
       + '<div class="sa-body"><div class="sa-reason" hidden></div><div class="sa-tools"></div><div class="sa-out" hidden></div></div>'
     if (curAnswer && curAnswer.parentNode === feed) feed.insertBefore(el, curAnswer); else feed.appendChild(el)
     s = { el, name: el.querySelector('.sa-name'), meta: el.querySelector('.sa-meta'), reason: el.querySelector('.sa-reason'), tools: el.querySelector('.sa-tools'), out: el.querySelector('.sa-out'), reasonParts: new Map(), outParts: new Map(), toolIds: new Set(), count: 0, t0: Date.now(), doneAt: 0, done: false }
@@ -761,10 +763,10 @@
       if (partial) {
         ai.innerHTML = renderMarkdown(partial)
         if (!target) { ai.dataset.raw = partial; addCopyBtn(ai) }
-        addNote('⚠ 回合中断：' + (e.message || e) + '（以上是中断前已收到的部分回答）', 'muted')
+        addNote('回合中断：' + (e.message || e) + '（以上是中断前已收到的部分回答）', 'muted')
       } else {
         if (!target) ai.className = 'msg ai err'
-        ai.textContent = '⚠ ' + (e.message || e)
+        ai.textContent = '出错：' + (e.message || e)
       }
     } finally { for (const [id, s] of subAgents) if (!s.done) subAgentDone(id, 'done'); curAnswer = null; setBusy(false); scrollFeed(); maybeDrain() }
     return ok
@@ -779,7 +781,7 @@
     attRow.innerHTML = ''
     pendingAtts.forEach((a, i) => {
       const el = document.createElement('div'); el.className = 'att'
-      el.innerHTML = (a.kind === 'image' ? '<img src="' + a.dataUrl + '">' : '<span>📄</span>') + '<span class="an">' + esc(a.name) + (a.loading ? ' …' : '') + '</span><span class="ax" data-i="' + i + '">✕</span>'
+      el.innerHTML = (a.kind === 'image' ? '<img src="' + a.dataUrl + '">' : '<span style="color:var(--txt3)">▤</span>') + '<span class="an">' + esc(a.name) + (a.loading ? ' …' : '') + '</span><span class="ax" data-i="' + i + '">✕</span>'
       attRow.appendChild(el)
     })
   }
@@ -825,7 +827,7 @@
     const docNote = docRefs ? '【用户拖入了文档，需要时用 read_document 工具读取其内容】\n' + docRefs : ''
     const images = pendingAtts.filter((a) => a.kind === 'image').map((a) => ({ mime: a.mime, url: a.dataUrl, filename: a.name }))
     const full = [docNote, v].filter(Boolean).join('\n\n')
-    const dispText = (v || (images.length ? '(图片)' : '(文档)')) + (pendingAtts.length ? '  📎' + pendingAtts.length : '')
+    const dispText = (v || (images.length ? '(图片)' : '(文档)')) + (pendingAtts.length ? ' · 附件 ' + pendingAtts.length : '')
     ci.value = ''; autoGrow()
     pendingAtts.length = 0; renderAtts()
     const el = addMsg(dispText, 'me')
@@ -833,7 +835,7 @@
     // 现在气泡立即上屏(半透明 + ⏳),本轮一结束按序自动发出(复用注入队列 maybeDrain)。
     if (busy || !cardReady) {
       el.classList.add('queued')
-      const q = document.createElement('span'); q.className = 'qtag'; q.textContent = '⏳ 排队中，本轮结束后发出'; el.appendChild(q)
+      const q = document.createElement('span'); q.className = 'qtag'; q.textContent = '排队中 · 本轮结束后发出'; el.appendChild(q)
       pendingInjects.push({ text: full || '(见附件)', files: images, el })
       return
     }
@@ -867,7 +869,7 @@
   function renderSkillChip() {
     if (!activeSkill) { skillBar.hidden = true; skillBar.innerHTML = ''; return }
     skillBar.hidden = false
-    skillBar.innerHTML = '<span class="skill-chip">⚡ 技能:' + esc(activeSkill.name) + '<span class="sx" title="卸载技能">✕</span></span>'
+    skillBar.innerHTML = '<span class="skill-chip">技能 · ' + esc(activeSkill.name) + '<span class="sx" title="卸载技能">✕</span></span>'
     skillBar.querySelector('.sx').addEventListener('click', () => { activeSkill = null; renderSkillChip() })
   }
   ci.addEventListener('input', () => { autoGrow(); const v = ci.value; if (v[0] === '/') openSkillMenu(v.slice(1)); else if (skillMenuOpen()) hideSkillMenu() })
@@ -891,7 +893,7 @@
 
   // 快捷指令：常用追问的模板（在这个数组里增删即可迭代）
   const QUICK = [
-    { label: '✅ 批准方案 → 改', text: '批准方案。请按你刚才的计划用编辑工具完成修改;改完调 repro_assert/repro_self_review 登记,再简要总结改了什么。我改完后会自动用 git diff 把改动展示给我看。', highlight: true },
+    { label: '✓ 批准方案 → 改', text: '批准方案。请按你刚才的计划用编辑工具完成修改;改完调 repro_assert/repro_self_review 登记,再简要总结改了什么。我改完后会自动用 git diff 把改动展示给我看。', highlight: true },
     { label: '改成可应用 diff', text: '把你上面给出的修改整理成统一 diff：用 ```diff 围栏，包含 +++/--- 文件头和 @@ 行号，便于我一键应用到对应文件。' },
     { label: '补单元测试', text: '为刚才的改动补充单元测试，覆盖正常路径与边界场景。' },
     { label: '加中文注释', text: '给刚才的代码补上必要的中文注释，解释关键逻辑，但不要改变行为。' },
@@ -906,20 +908,20 @@
     quick.appendChild(b)
   })
   // 查看本次改动:把 git diff 当 ```diff 注入 ai 气泡(富结果会自动渲红绿+可应用)
-  const diffBtn = document.createElement('button'); diffBtn.className = 'qchip'; diffBtn.textContent = '📜 查看本次改动'; diffBtn.title = '取当前 session 的 git diff(前端+后端目录),用富结果格式显示;改完想看 agent 到底改了什么用这个'
+  const diffBtn = document.createElement('button'); diffBtn.className = 'qchip'; diffBtn.textContent = '查看本次改动'; diffBtn.title = '取当前 session 的 git diff(前端+后端目录),用富结果格式显示;改完想看 agent 到底改了什么用这个'
   diffBtn.addEventListener('click', async () => {
     if (busy) return
     try {
       const d = await window.BocomHermes.currentDiff()
       const ai = addMsg('', 'ai')
       ai.innerHTML = window.Rich.renderMarkdown('## 本次 session 的改动 (git diff)\n\n```diff\n' + (d || '(无)').slice(0, 50000) + '\n```')
-    } catch (e) { addMsg('⚠ 拉 diff 失败:' + (e.message || e), 'ai') }
+    } catch (e) { addMsg('拉 diff 失败:' + (e.message || e), 'ai') }
   })
   quick.appendChild(diffBtn)
 
   // 记忆管理:内联编辑弹层。不能用 window.prompt() —— Electron 渲染进程不实现它,一调就抛
   // "prompt() is and will not be supported",这个按钮点了毫无反应(而且异常还没人接)。
-  const memBtn = document.createElement('button'); memBtn.className = 'qchip'; memBtn.textContent = '📌 我的记忆'; memBtn.title = '查看 / 编辑个人记忆（每张新卡会自动注入）'
+  const memBtn = document.createElement('button'); memBtn.className = 'qchip'; memBtn.textContent = '我的记忆'; memBtn.title = '查看 / 编辑个人记忆（每张新卡会自动注入）'
   memBtn.addEventListener('click', async () => {
     if (document.getElementById('memPop')) return
     let cur = ''
@@ -928,7 +930,7 @@
     pop.style.cssText = 'position:absolute;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35);border-radius:14px;'
     const box = document.createElement('div')
     box.style.cssText = 'width:86%;max-width:520px;background:var(--glass-bg);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border:1px solid var(--composer-border);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;box-shadow:0 10px 34px rgba(0,0,0,.3);'
-    const ttl2 = document.createElement('div'); ttl2.textContent = '📌 个人记忆（每张新卡自动注入，留空即清除）'; ttl2.style.cssText = 'font-size:12.5px;font-weight:600;color:var(--txt);'
+    const ttl2 = document.createElement('div'); ttl2.textContent = '个人记忆（每张新卡自动注入，留空即清除）'; ttl2.style.cssText = 'font-size:12.5px;font-weight:600;color:var(--txt);'
     const ta = document.createElement('textarea'); ta.value = cur; ta.placeholder = '例如：我是信贷系统后端开发，回答优先给 Java 示例…'
     ta.style.cssText = 'height:150px;resize:vertical;background:var(--composer-bg);border:.5px solid var(--composer-border);border-radius:8px;color:var(--txt);font-size:12.5px;font-family:var(--font);padding:8px;outline:none;line-height:1.5;'
     const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;'
@@ -974,11 +976,11 @@
         } else {
           const msg = failed.map(r => r.file + '：' + r.error).join('\n')
           btn.innerHTML = orig; btn.disabled = false
-          addMsg('⚠ 应用失败：\n' + msg, 'ai')
+          addMsg('应用失败：\n' + msg, 'ai')
         }
       } catch (e) {
         btn.innerHTML = orig; btn.disabled = false
-        addMsg('⚠ 应用出错：' + (e.message || e), 'ai')
+        addMsg('应用出错：' + (e.message || e), 'ai')
       }
     },
     run: async ({ raw }, btn) => {
@@ -1034,7 +1036,7 @@
       maybeDrain()
     } catch (e) {
       boot.className = 'msg ai err'
-      boot.textContent = '⚠ ' + (sid ? '无法续接：' : '引擎未就绪：') + (e.message || e) + (sid ? '' : '（确认 opencode/bocomcode 已装、模型已配）')
+      boot.textContent = (sid ? '无法续接：' : '引擎未就绪：') + (e.message || e) + (sid ? '' : '（确认 opencode/bocomcode 已装、模型已配）')
       setBusy(false)
     }
   })()

@@ -73,7 +73,7 @@ module.exports = function initMail(ctx) {
         try { S.syncMailCache && S.syncMailCache({ full: false }) } catch {}   // 新邮件即时拉进本地缓存(下次进收件箱就有,不用等 5 分钟定时)
         // 球绿色脉冲 + 通知;点击通知=打开邮件中心(收件箱默认只看未读 → 新邮件自然置顶)
         try { sendOrbState && sendOrbState('done') } catch {}
-        notifyMail('📬 新邮件', (n > 1 ? n + ' 封新邮件到达' : '有新邮件到达') + ' — 点击打开邮件中心',
+        notifyMail('新邮件', (n > 1 ? n + ' 封新邮件到达' : '有新邮件到达') + ' — 点击打开邮件中心',
           () => { try { createMailCenter() } catch (e) { log('idle open center err: ' + e.message) } })
       },
     })
@@ -452,7 +452,7 @@ module.exports = function initMail(ctx) {
     const r = await loadMailByMsgId(arg && arg.msgId)
     if (r.error) return r
     const prompt = `请帮我回复这封邮件。**先把回复草稿写出来给我看,我确认后你再调用 mail_reply 工具发送(messageId=${r.id})**,在我说"发"之前不要真发。\n\n## 原邮件\n发件人:${r.from}\n时间:${r.date}\n主题:${r.subject}\n正文:\n${String(r.text).slice(0, 4000)}`
-    spawnCard('回复 · ' + String(r.subject || '邮件').slice(0, 18), null, prompt, '✉️ 起草回复:' + String(r.subject || '').slice(0, 40))
+    spawnCard('回复 · ' + String(r.subject || '邮件').slice(0, 18), null, prompt, '起草回复:' + String(r.subject || '').slice(0, 40))
     return { ok: true }
   })
   // HTML 邮件查看器:返回完整正文(text + html),viewer 用沙箱 iframe 渲染

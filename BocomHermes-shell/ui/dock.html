@@ -136,7 +136,7 @@
     items.sort((a, b) => (b.ts || 0) - (a.ts || 0))
     $('count').textContent = items.length ? items.length + ' 段历史' : ''
     if (!items.length) {
-      list.innerHTML = '<div class="empty"><span class="big">💬</span>还没有历史会话<br>上面输入开一张新卡，关掉后会留在这儿续接</div>'
+      list.innerHTML = '<div class="empty">还没有历史会话<br>上面输入开一张新卡，关掉后会留在这儿续接</div>'
       return
     }
     list.innerHTML = ''
@@ -203,7 +203,7 @@
     attRow.innerHTML = ''
     pendingAtts.forEach((a, i) => {
       const el = document.createElement('div'); el.className = 'att'
-      el.innerHTML = (a.kind === 'image' ? '<img src="' + a.dataUrl + '">' : '<span>📄</span>') + '<span class="an">' + esc(a.name) + (a.loading ? ' …' : '') + '</span><span class="ax" data-i="' + i + '">✕</span>'
+      el.innerHTML = (a.kind === 'image' ? '<img src="' + a.dataUrl + '">' : '<span style="color:var(--txt3)">▤</span>') + '<span class="an">' + esc(a.name) + (a.loading ? ' …' : '') + '</span><span class="ax" data-i="' + i + '">✕</span>'
       attRow.appendChild(el)
     })
   }
@@ -232,7 +232,7 @@
     const images = pendingAtts.filter((a) => a.kind === 'image').map((a) => ({ mime: a.mime, url: a.dataUrl, filename: a.name }))
     const msg = [docNote, v].filter(Boolean).join('\n\n') || '(见附件)'
     const title = (v || (images.length ? '图片对话' : '文档对话')).slice(0, 24)
-    const disp = (v || (images.length ? '(图片)' : '(文档)')) + (pendingAtts.length ? '  📎' + pendingAtts.length : '')
+    const disp = (v || (images.length ? '(图片)' : '(文档)')) + (pendingAtts.length ? ' · 附件 ' + pendingAtts.length : '')
     try { H.startConversation({ title, msg, disp, files: images, mode }) } catch (e) {}
     H.closeSelf()
   }

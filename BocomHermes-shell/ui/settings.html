@@ -85,17 +85,17 @@
       </div>
 
       <div id="encWarn" style="display:none;margin-bottom:10px;padding:8px 11px;border-radius:8px;font-size:12px;line-height:1.5;color:var(--diff-del);background:var(--diff-del-bg);border:.5px solid var(--diff-del)">
-        ⚠️ 当前环境无法调用系统密钥库加密,邮箱密码将以<b>明文</b>保存到本机 settings.json。请仅在可信的个人设备上填写,或先确认系统钥匙串/凭据管理可用。
+        当前环境无法调用系统密钥库加密,邮箱密码将以<b>明文</b>保存到本机 settings.json。请仅在可信的个人设备上填写,或先确认系统钥匙串/凭据管理可用。
       </div>
 
       <div class="fld">
-        <span class="lbl">📧 邮件（收发 / 晨间摘要）</span>
+        <span class="lbl">邮件（收发 / 晨间摘要）</span>
         <span class="hint">IMAP 收件、SMTP 发件、晨间摘要、IDLE 实时提醒等配置已搬到独立的「邮件中心」，连同收件箱一起管理。</span>
         <div class="row" style="margin-top:4px"><button id="openMailCenter" class="chip">打开邮件中心（收件箱 + 设置）</button></div>
       </div>
 
       <div class="fld">
-        <span class="lbl">🗄️ OceanBase 数据库 <span class="hint" style="font-weight:400">(只读 · 给 agent 查表结构/字段/采样 —— DB 是真相,胜过过时字典)</span></span>
+        <span class="lbl">OceanBase 数据库 <span class="hint" style="font-weight:400">(只读 · 给 agent 查表结构/字段/采样 —— DB 是真相,胜过过时字典)</span></span>
         <div class="row">
           <input id="obHost" class="in" style="flex:3" placeholder="OBProxy 主机 IP / 域名" spellcheck="false" />
           <input id="obPort" class="in" style="width:64px;flex:none" placeholder="3306" spellcheck="false" />
@@ -111,11 +111,11 @@
       </div>
 
       <div class="fld">
-        <span class="lbl">🔌 注册 MCP 到 bocomcode / opencode <span class="hint" style="font-weight:400">(让 agent 看到邮件/数据库/浏览器/抓包/git/复现 6 类工具)</span></span>
+        <span class="lbl">注册 MCP 到 bocomcode / opencode <span class="hint" style="font-weight:400">(让 agent 看到邮件/数据库/浏览器/抓包/git/复现 6 类工具)</span></span>
         <div id="mcpCandList" style="display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:var(--txt2);font-family:monospace"></div>
         <div class="row" style="margin-top:6px">
-          <button id="mcpRegisterAuto" class="chip">🔌 自动注册(选已有/或建默认)</button>
-          <button id="mcpRefreshStatus" class="chip">🔄 重新扫描</button>
+          <button id="mcpRegisterAuto" class="chip">自动注册(选已有/或建默认)</button>
+          <button id="mcpRefreshStatus" class="chip">重新扫描</button>
         </div>
         <span class="hint">扫描标准路径:%APPDATA%/opencode 与 %APPDATA%/bocomcode、~/.config/opencode、~/.opencode.json 等。<b>原文件会自动备份成 .bak.&lt;时间戳&gt;</b>。注册完<b>重启 bocomcode serve</b> 才生效。</span>
         <span id="mcpMsg" class="hint" style="color:var(--green)"></span>

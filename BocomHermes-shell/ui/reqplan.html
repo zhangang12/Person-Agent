@@ -79,7 +79,7 @@
 
   // ── 进度态 ──
   function renderProgress() {
-    listEl.innerHTML = '<div class="prog"><div class="ic">🛠️</div>'
+    listEl.innerHTML = '<div class="prog"><div class="ic">⏺</div>'
       + '<div class="t">正在生成详设级实施方案</div>'
       + '<div id="ps" class="s">定位代码 + 起草中…（grep 在模型外、只把命中切片喂给 agent）</div>'
       + '<div class="pbar"><div id="pf"></div></div>'
@@ -87,7 +87,7 @@
   }
   const setPS = (t) => { const d = document.getElementById('ps'); if (d) d.textContent = t }
   const setPF = (f) => { const d = document.getElementById('pf'); if (d) d.style.width = Math.round(Math.max(0, Math.min(1, f)) * 100) + '%' }
-  function showErr(msg) { listEl.innerHTML = '<div class="err">⚠ ' + esc(msg) + '</div>' }
+  function showErr(msg) { listEl.innerHTML = '<div class="err">' + esc(msg) + '</div>' }
 
   let lastReqPoint = ''   // 'planned' 事件不带 reqPoint(管线顺序执行) → 记住 locating/planning 报的当前需求点做收尾 key
   H.onReqPlanEvent((ev) => {
@@ -137,7 +137,7 @@
       h += '</ol></div>'
     }
     if (c.opens && c.opens.length) {
-      h += '<div class="opens"><div class="sct">⛑ 未决（待人工确认，未替人拍板）</div>'
+      h += '<div class="opens"><div class="sct">未决（待人工确认，未替人拍板）</div>'
       for (const o of c.opens) h += '<div class="o">· ' + esc(o) + '</div>'
       h += '</div>'
     }
@@ -168,7 +168,7 @@
   AgentMon.bindStream(mon, (p) => {
     const t = p.tag || {}; if (t.scope !== 'reqplan') return null
     const base = String(t.id || t.kind || '详设')
-    const nm = (t.kind === 'plan-kw' ? '🔎 关键词 · ' : '🛠 详设 · ') + base.slice(0, 30)
+    const nm = (t.kind === 'plan-kw' ? '关键词 · ' : '详设 · ') + base.slice(0, 30)
     return p.sub ? { key: base + '/' + (p.agentId || '_'), name: nm + ' ▸ ' + (p.agentName || '子agent') } : { key: base + ':' + t.kind, name: nm }
   })
   H.reqPlan(reportId).catch((e) => showErr(e && e.message || e))

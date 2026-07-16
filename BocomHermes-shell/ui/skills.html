@@ -186,7 +186,6 @@ pre.doc{margin:0;font-family:var(--mono);font-size:11.5px;line-height:1.65;white
 <div class="app">
 
   <div class="tbar">
-    <span class="logo">🎬</span>
     <span class="tt">录制与回放</span>
     <span class="sub">浏览器技能 · 录一遍,复用一辈子</span>
     <span class="sp"></span>
@@ -213,7 +212,7 @@ pre.doc{margin:0;font-family:var(--mono);font-size:11.5px;line-height:1.65;white
   </div>
 
   <div class="tools">
-    <div class="search">🔎<input id="q" placeholder="搜技能名 / 说明…"></div>
+    <div class="search"><input id="q" placeholder="搜技能名 / 说明…"></div>
     <span class="cnt" id="cnt"></span>
     <button class="ghost" id="btnImport" title="导入同事分享的技能 JSON">导入</button>
   </div>
@@ -222,10 +221,10 @@ pre.doc{margin:0;font-family:var(--mono);font-size:11.5px;line-height:1.65;white
 
   <div class="dock">
     <div class="status" id="status">
-      <span class="ic" id="stIc">▶</span><span class="tx" id="stTx"></span>
+      <span class="ic" id="stIc">▸</span><span class="tx" id="stTx"></span>
       <button class="go" id="stGo" hidden>去浏览器窗口</button>
     </div>
-    <div class="edu">💡 这些技能 <b>Agent 也会用</b>:在对话里说「用〈技能名〉跑一遍」或「按物料表批量跑」;回放遇到<b>验证码会自动暂停</b>,等你在页面输入后继续。</div>
+    <div class="edu">这些技能 <b>Agent 也会用</b>:在对话里说「用〈技能名〉跑一遍」或「按物料表批量跑」;回放遇到<b>验证码会自动暂停</b>,等你在页面输入后继续。</div>
   </div>
 
 </div>
@@ -234,7 +233,7 @@ pre.doc{margin:0;font-family:var(--mono);font-size:11.5px;line-height:1.65;white
 <div class="ovl" id="ovlParams"><div class="sheet">
   <div class="sh"><span class="t" id="pTitle">运行技能</span><button class="x" data-x="ovlParams">✕</button></div>
   <div class="sb" id="pBody"></div>
-  <div class="sf"><button class="ghost" data-x="ovlParams">取消</button><button class="btn-run" id="pGo">▶ 运行</button></div>
+  <div class="sf"><button class="ghost" data-x="ovlParams">取消</button><button class="btn-run" id="pGo">运行</button></div>
 </div></div>
 
 <!-- 批量弹层 -->
@@ -246,23 +245,23 @@ pre.doc{margin:0;font-family:var(--mono);font-size:11.5px;line-height:1.65;white
     <div class="map" id="bMap">粘贴后这里显示:解析多少行、每列对到哪个参数</div>
     <label class="ck"><input type="checkbox" id="bStop">某一行失败就中止(默认:跳过失败行继续)</label>
   </div>
-  <div class="sf"><button class="ghost" data-x="ovlBatch">取消</button><button class="btn-run" id="bGo">▶ 开始批量运行</button></div>
+  <div class="sf"><button class="ghost" data-x="ovlBatch">取消</button><button class="btn-run" id="bGo">开始批量运行</button></div>
 </div></div>
 
 <!-- 文档弹层 -->
 <div class="ovl" id="ovlDoc"><div class="sheet">
-  <div class="sh"><span class="t" id="dTitle">📄 技能文档</span><button class="ghost" id="dCopy" style="padding:4px 10px;font-size:11.5px">复制</button><button class="x" data-x="ovlDoc">✕</button></div>
+  <div class="sh"><span class="t" id="dTitle">技能文档</span><button class="ghost" id="dCopy" style="padding:4px 10px;font-size:11.5px">复制</button><button class="x" data-x="ovlDoc">✕</button></div>
   <div class="sb"><pre class="doc" id="dBody"></pre></div>
 </div></div>
 
 <!-- 下载后编排弹层 -->
 <div class="ovl" id="ovlPw"><div class="sheet">
-  <div class="sh"><span class="t" id="pwTitle">🔀 下载后编排</span><button class="x" data-x="ovlPw">✕</button></div>
+  <div class="sh"><span class="t" id="pwTitle">下载后编排</span><button class="x" data-x="ovlPw">✕</button></div>
   <div class="sb">
     <div class="hint">这个技能<b>回放会导出/下载文件</b>时,填一句话说明<b>拿下载的文件做什么</b> —— 技能跑完会自动把文件交给<b>动态工作流</b>处理(在「工作台」窗口可视化跑,成果自动存档)。</div>
     <div class="fld"><label>对下载的文件做什么(人话目标)</label>
       <textarea id="pwGoal" placeholder="例:把导出的用户反馈表逐条归类,统计高频问题,产出一份 Markdown 分析报告" spellcheck="false"></textarea></div>
-    <div class="hint">💡 文件的本地路径会自动接在目标后面,工作流的子 Agent 会先读文件再干活。留空并点「关闭编排」= 取消。</div>
+    <div class="hint">文件的本地路径会自动接在目标后面,工作流的子 Agent 会先读文件再干活。留空并点「关闭编排」= 取消。</div>
   </div>
   <div class="sf"><button class="ghost" id="pwClear">关闭编排</button><button class="ghost" data-x="ovlPw">取消</button><button class="btn-run" id="pwSave">保存</button></div>
 </div></div>
@@ -299,8 +298,8 @@ $('btnRec').addEventListener('click', async () => {
   try{
     const r = await H.skillsRecord($('recUrl').value.trim())
     if (r && r.ok) { setRec(true, 1); toast('<span class="ok">●</span> 录制中 — 去浏览器把操作走一遍,回来点「停止并保存」') }
-    else toast('<span class="err">⚠</span> ' + ((r && r.error) || '录制启动失败'))
-  } catch(e){ toast('<span class="err">⚠</span> ' + e.message) }
+    else toast((r && r.error) || '录制启动失败')
+  } catch(e){ toast(e.message) }
   $('btnRec').disabled = false
 })
 $('recUrl').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnRec').click() })
@@ -328,7 +327,7 @@ function render(){
   $('cnt').textContent = skills.length + ' 个技能'
   const L = $('list'); L.innerHTML = ''
   if (!skills.length && !raws.length && !q){
-    L.innerHTML = `<div class="empty"><div class="big">🎬</div><h3>还没有技能 — 三步上手</h3><ol>
+    L.innerHTML = `<div class="empty"><h3>还没有技能 — 三步上手</h3><ol>
       <li><span class="n">①</span><span>点上方「<b>● 开始录制</b>」,在打开的浏览器里把一次操作<b>完整走一遍</b>(登录、查询、导出…都行)</span></li>
       <li><span class="n">②</span><span>回来点「■ 停止并保存」,给技能<b>起个名字</b> — Agent 会自动整理:步骤命名、识别参数、补成功判据</span></li>
       <li><span class="n">③</span><span>以后在这里<b>一键运行</b>;要跑一批数据就点「批量」,把 Excel 粘进来</span></li></ol></div>`
@@ -341,10 +340,10 @@ function render(){
     for (const it of raws){
       const r = document.createElement('div'); r.className = 'raw'
       r.innerHTML = `<span class="nm">${esc(it.title || it.id)}</span><span class="meta">${it.eventCount} 步 · ${fmtT(it.mtime)}</span>
-        <button class="btn-sec" data-a="mk">⚙ 整理成技能</button><button class="btn-more" data-a="del" title="删除">🗑</button>`
+        <button class="btn-sec" data-a="mk">整理成技能</button><button class="btn-more" data-a="del" title="删除">✕</button>`
       r.querySelector('[data-a="mk"]').addEventListener('click', async () => {
         const rr = await H.skillsMakeSkill(it.id)
-        toast(rr && rr.ok ? '已在浏览器窗口弹出保存卡 — 去起个名字' : '<span class="err">⚠</span> ' + ((rr && rr.error) || '失败'))
+        toast(rr && rr.ok ? '已在浏览器窗口弹出保存卡 — 去起个名字' : ((rr && rr.error) || '失败'))
       })
       r.querySelector('[data-a="del"]').addEventListener('click', async () => {
         if (!confirm('删除录制 "' + (it.title || it.id) + '"?')) return
@@ -361,24 +360,24 @@ function skillCard(it){
   const lastHtml = lr ? (lr.ok ? `<span class="ok">✓ 上次成功</span> · ${fmtT(lr.at)}` : `<span class="bad">✗ 上次 ${lr.fails} 步失败</span> · ${fmtT(lr.at)}`) : '还没运行过'
   el.innerHTML = `
     <div class="r1">
-      <button class="star ${it.starred ? 'on' : ''}" title="收藏置顶">${it.starred ? '⭐' : '☆'}</button>
+      <button class="star ${it.starred ? 'on' : ''}" title="收藏置顶">${it.starred ? '★' : '☆'}</button>
       <input class="name" value="${esc(it.title || it.id)}" spellcheck="false" title="点击改名">
       <span class="chip">${it.eventCount} 步</span>
       ${it.paramCount ? `<span class="chip">参数 ${it.paramCount}</span>` : ''}
-      ${it.gates ? `<span class="chip gate" title="回放到这步会暂停,等你现场输入(如验证码)">⏸ 人工 ${it.gates}</span>` : ''}
-      ${it.postWorkflow ? `<span class="chip pw" title="回放导出/下载文件后,自动对文件跑动态工作流:&#10;${esc(it.postWorkflow.goal)}">🔀 下载后编排</span>` : ''}
-      ${it.noCache ? `<span class="chip" title="每次运行前 + 每次页面跳转前清 HTTP 缓存,确保拿到最新页面/数据(不影响登录态)">⃠ 禁用缓存</span>` : ''}
+      ${it.gates ? `<span class="chip gate" title="回放到这步会暂停,等你现场输入(如验证码)">人工 ${it.gates}</span>` : ''}
+      ${it.postWorkflow ? `<span class="chip pw" title="回放导出/下载文件后,自动对文件跑动态工作流:&#10;${esc(it.postWorkflow.goal)}">下载后编排</span>` : ''}
+      ${it.noCache ? `<span class="chip" title="每次运行前 + 每次页面跳转前清 HTTP 缓存,确保拿到最新页面/数据(不影响登录态)">禁用缓存</span>` : ''}
     </div>
     ${it.description ? `<div class="desc">${esc(it.description)}</div>` : ''}
     <div class="r3">
       <span class="last">${lastHtml}</span><span class="sp"></span>
-      <button class="btn-run" data-a="run">▶ 运行</button>
+      <button class="btn-run" data-a="run">运行</button>
       <button class="btn-sec" data-a="batch" title="粘贴 Excel 数据,每行独立跑一遍">批量</button>
       <button class="btn-more" data-a="more" title="更多">⋯</button>
     </div>`
   el.querySelector('.star').addEventListener('click', async (e) => {
     const nv = !it.starred; await H.browserRecUpdate(it.id, { starred: nv }); it.starred = nv
-    e.currentTarget.textContent = nv ? '⭐' : '☆'; e.currentTarget.classList.toggle('on', nv)
+    e.currentTarget.textContent = nv ? '★' : '☆'; e.currentTarget.classList.toggle('on', nv)
   })
   el.querySelector('.name').addEventListener('blur', async (e) => {
     const nv = e.target.value.trim()
@@ -393,7 +392,7 @@ $('q').addEventListener('input', render)
 $('btnImport').addEventListener('click', async () => {
   const r = await H.browserRecImport()
   if (r && r.canceled) return
-  toast(r && r.ok ? '<span class="ok">✓</span> 已导入「' + esc(r.title) + '」' : '<span class="err">⚠</span> 导入失败: ' + ((r && r.error) || ''))
+  toast(r && r.ok ? '<span class="ok">✓</span> 已导入「' + esc(r.title) + '」' : '导入失败: ' + ((r && r.error) || ''))
   if (r && r.ok) load()
 })
 
@@ -406,11 +405,11 @@ function openMore(anchor, it){
   const r = anchor.getBoundingClientRect()
   popEl = document.createElement('div'); popEl.className = 'pop'
   popEl.innerHTML = `
-    <button data-m="nc" title="每次跑这个技能前 + 每次页面跳转前清一次浏览器缓存,确保拿到的是最新页面/数据(不影响登录态)">⃠ 禁用缓存跑 · ${it.noCache ? '<b style="color:var(--accent)">开</b>' : '关'}</button>
-    <button data-m="pw">🔀 下载后编排…</button>
-    <button data-m="doc">📄 查看技能文档</button>
-    <button data-m="exp">📤 导出分享</button>
-    <button data-m="del" class="danger">🗑 删除技能</button>`
+    <button data-m="nc" title="每次跑这个技能前 + 每次页面跳转前清一次浏览器缓存,确保拿到的是最新页面/数据(不影响登录态)">禁用缓存跑 · ${it.noCache ? '<b style="color:var(--accent)">开</b>' : '关'}</button>
+    <button data-m="pw">下载后编排…</button>
+    <button data-m="doc">查看技能文档</button>
+    <button data-m="exp">导出分享</button>
+    <button data-m="del" class="danger">删除技能</button>`
   document.body.appendChild(popEl)
   const pw = popEl.offsetWidth
   popEl.style.left = Math.max(8, Math.min(window.innerWidth - pw - 8, r.right - pw)) + 'px'
@@ -420,14 +419,14 @@ function openMore(anchor, it){
     const nv = !it.noCache
     const ok = await H.browserRecUpdate(it.id, { noCache: nv })
     if (ok) { it.noCache = nv; toast(nv ? '<span class="ok">✓</span> 已开启「禁用缓存跑」— 每次运行前清缓存,保证拿到最新数据' : '已关闭「禁用缓存跑」'); load() }
-    else toast('<span class="err">⚠</span> 保存失败')
+    else toast('保存失败')
   })
   popEl.querySelector('[data-m="pw"]').addEventListener('click', () => { closePop(); openPw(it) })
   popEl.querySelector('[data-m="doc"]').addEventListener('click', async () => {
     closePop()
     const md = await H.browserRecSkillMd(it.id)
-    if (!md) { toast('<span class="err">⚠</span> 生成文档失败'); return }
-    $('dTitle').textContent = '📄 ' + (it.title || it.id)
+    if (!md) { toast('生成文档失败'); return }
+    $('dTitle').textContent = (it.title || it.id) + ' · 技能文档'
     $('dBody').textContent = md
     $('dCopy').onclick = () => { navigator.clipboard.writeText(md).catch(() => {}); toast('<span class="ok">✓</span> 已复制') }
     $('ovlDoc').classList.add('show')
@@ -435,7 +434,7 @@ function openMore(anchor, it){
   popEl.querySelector('[data-m="exp"]').addEventListener('click', async () => {
     closePop()
     const r2 = await H.browserRecExport(it.id)
-    toast(r2 && r2.ok ? '<span class="ok">✓</span> 已导出到 下载/' + esc(String(r2.path || '').split(/[\\/]/).pop()) : '<span class="err">⚠</span> 导出失败')
+    toast(r2 && r2.ok ? '<span class="ok">✓</span> 已导出到 下载/' + esc(String(r2.path || '').split(/[\\/]/).pop()) : '导出失败')
   })
   popEl.querySelector('[data-m="del"]').addEventListener('click', async () => {
     closePop()
@@ -446,7 +445,7 @@ function openMore(anchor, it){
 
 // ── 运行(单次)─────────────────────────────────────────────────────────────
 function openParams(it){
-  $('pTitle').textContent = '▶ 运行 · ' + (it.title || it.id)
+  $('pTitle').textContent = '运行 · ' + (it.title || it.id)
   const B = $('pBody'); B.innerHTML = ''
   for (const p of it.params){
     const f = document.createElement('div'); f.className = 'fld'
@@ -470,13 +469,13 @@ function openParams(it){
 }
 async function runSkill(it, values, baseUrl){
   runningId = it.id
-  showStatus('run', '▶ 正在启动「' + (it.title || it.id) + '」…')
+  showStatus('run', '▸ 正在启动「' + (it.title || it.id) + '」…')
   try{
     const r = await H.skillsRun({ id: it.id, params: values || undefined, baseUrl })
-    if (r && r.error) showStatus('err', '⚠ ' + r.error, true)
+    if (r && r.error) showStatus('err', r.error, true)
     else if (r && r.ok) showStatus('done', '✓ 「' + (it.title || it.id) + '」运行成功' + (r.workflow && r.workflow.started ? ' → 已对下载文件启动工作流编排(见「工作台」窗口)' : ''), true)
-    else showStatus('err', '⚠ 运行完成但有失败 — ' + String((r && r.report) || '').split('\n')[0], true)
-  } catch(e){ showStatus('err', '⚠ ' + e.message, true) }
+    else showStatus('err', '运行完成但有失败 — ' + String((r && r.report) || '').split('\n')[0], true)
+  } catch(e){ showStatus('err', e.message, true) }
   runningId = null
   load()
 }
@@ -498,7 +497,7 @@ function previewMap(){
   const labels = (batchIt.params || []).map((p) => p.label)
   const parts = headers.filter(Boolean).map((h) => {
     const hit = (batchIt.params || []).some((p) => p.label === h || p.key === h || (p.label && (h.includes(p.label) || p.label.includes(h))))
-    return hit ? `<span class="y">${esc(h)} ✓</span>` : `<span class="n">${esc(h)} ⚠未匹配</span>`
+    return hit ? `<span class="y">${esc(h)} ✓</span>` : `<span class="n">${esc(h)} 未匹配</span>`
   })
   $('bMap').innerHTML = `解析 <b>${rows.length}</b> 行 · 列映射:${parts.join('  ')}${labels.length ? `<br>技能参数:${labels.map(esc).join('、')}` : '<br>该技能没有参数 — 每行会按原录制值跑'}`
 }
@@ -513,28 +512,28 @@ function openBatch(it){
 $('bGo').addEventListener('click', async () => {
   if (!batchIt) return
   const { rows } = parseTable($('bData').value)
-  if (!rows.length) { toast('<span class="err">⚠</span> 先粘贴数据(第一行=表头)'); return }
-  if (rows.length > 200) { toast('<span class="err">⚠</span> 一次最多 200 行,请分批'); return }
+  if (!rows.length) { toast('先粘贴数据(第一行=表头)'); return }
+  if (rows.length > 200) { toast('一次最多 200 行,请分批'); return }
   const it = batchIt
   $('ovlBatch').classList.remove('show')
-  showStatus('run', '📊 批量「' + (it.title || it.id) + '」 0/' + rows.length + ' …')
+  showStatus('run', '批量「' + (it.title || it.id) + '」 0/' + rows.length + ' …')
   try{
     const r = await H.skillsRunBatch({ id: it.id, dataset: rows, onError: $('bStop').checked ? 'stop' : 'skip' })
-    if (r && r.error) showStatus('err', '⚠ ' + r.error, true)
-    else showStatus(r.fail ? 'err' : 'done', `📊 批量完成:✓ ${r.pass} / ✗ ${r.fail}`, true)
-    if (r && r.report) { $('dTitle').textContent = '📊 批量报告 · ' + (it.title || it.id); $('dBody').textContent = r.report; $('dCopy').onclick = () => { navigator.clipboard.writeText(r.report).catch(() => {}); toast('<span class="ok">✓</span> 已复制') }; $('ovlDoc').classList.add('show') }
-  } catch(e){ showStatus('err', '⚠ ' + e.message, true) }
+    if (r && r.error) showStatus('err', r.error, true)
+    else showStatus(r.fail ? 'err' : 'done', `批量完成:✓ ${r.pass} / ✗ ${r.fail}`, true)
+    if (r && r.report) { $('dTitle').textContent = '批量报告 · ' + (it.title || it.id); $('dBody').textContent = r.report; $('dCopy').onclick = () => { navigator.clipboard.writeText(r.report).catch(() => {}); toast('<span class="ok">✓</span> 已复制') }; $('ovlDoc').classList.add('show') }
+  } catch(e){ showStatus('err', e.message, true) }
   load()
 })
 H.onSkillBatchProgress && H.onSkillBatchProgress((d) => {
-  showStatus(d.ok ? 'run' : 'err', `📊 批量 行 ${d.row}/${d.total} · ✓ ${d.pass} / ✗ ${d.fail}${d.ok ? '' : ' · ' + (d.firstErr || '')}`)
+  showStatus(d.ok ? 'run' : 'err', `批量 行 ${d.row}/${d.total} · ✓ ${d.pass} / ✗ ${d.fail}${d.ok ? '' : ' · ' + (d.firstErr || '')}`)
 })
 
 // ── 下载后编排:配一句话,技能跑完把下载文件交给动态工作流 ────────────────────────
 let pwIt = null
 function openPw(it){
   pwIt = it
-  $('pwTitle').textContent = '🔀 下载后编排 · ' + (it.title || it.id)
+  $('pwTitle').textContent = '下载后编排 · ' + (it.title || it.id)
   $('pwGoal').value = (it.postWorkflow && it.postWorkflow.goal) || ''
   $('ovlPw').classList.add('show')
   setTimeout(() => $('pwGoal').focus(), 60)
@@ -543,7 +542,7 @@ async function savePw(goal){
   if (!pwIt) return
   const ok = await H.browserRecUpdate(pwIt.id, { postWorkflow: goal ? { goal } : null })
   $('ovlPw').classList.remove('show')
-  toast(ok ? (goal ? '<span class="ok">✓</span> 已设置「下载后编排」' : '<span class="ok">✓</span> 已关闭「下载后编排」') : '<span class="err">⚠</span> 保存失败')
+  toast(ok ? (goal ? '<span class="ok">✓</span> 已设置「下载后编排」' : '<span class="ok">✓</span> 已关闭「下载后编排」') : '保存失败')
   pwIt = null
   if (ok) load()
 }
@@ -555,7 +554,7 @@ let stT = null
 function showStatus(kind, text, autohide){
   const s = $('status')
   s.className = 'status show' + (kind === 'pause' ? ' pause' : kind === 'err' ? ' err' : '')
-  $('stIc').textContent = kind === 'pause' ? '⏸' : kind === 'done' ? '✓' : kind === 'err' ? '⚠' : '▶'
+  $('stIc').textContent = kind === 'pause' ? '‖' : kind === 'done' ? '✓' : kind === 'err' ? '✗' : '▸'
   $('stTx').textContent = text
   $('stGo').hidden = kind !== 'pause'
   clearTimeout(stT)
@@ -563,17 +562,17 @@ function showStatus(kind, text, autohide){
 }
 $('stGo').addEventListener('click', () => toast('切到「BocomHermes · 浏览器」窗口完成该步 — 填完会自动继续'))
 H.onBrowserReplayProgress && H.onBrowserReplayProgress((d) => {
-  if (d.start) { showStatus('run', '▶ ' + (d.title || '回放') + ' 0/' + d.total); return }
-  if (d.pause) { showStatus('pause', (d.heal ? '🔧 ' : '⏸ ') + (d.hint || '需人工操作') + (d.agent ? ' · 已通知 Agent' : '') + ' — 请到浏览器窗口完成'); return }
-  if (d.resume) { showStatus('run', '▶ 已续跑…'); return }
-  if (d.waitDownload) { showStatus('run', '⏳ 等下载完成,准备交给工作流…'); return }
-  if (d.done) { showStatus(d.fails ? 'err' : 'done', d.fails ? '⚠ 完成,' + d.fails + ' 步失败' : '✓ 回放完成 ' + d.total + ' 步', true); load(); return }
-  showStatus(d.ok === false ? 'err' : 'run', '▶ 步 ' + d.i + '/' + d.total + ' · ' + d.act + (d.ok === false ? ' ✗ ' + (d.err || '') : ''))
+  if (d.start) { showStatus('run', '▸ ' + (d.title || '回放') + ' 0/' + d.total); return }
+  if (d.pause) { showStatus('pause', (d.hint || '需人工操作') + (d.agent ? ' · 已通知 Agent' : '') + ' — 请到浏览器窗口完成'); return }
+  if (d.resume) { showStatus('run', '▸ 已续跑…'); return }
+  if (d.waitDownload) { showStatus('run', '等下载完成,准备交给工作流…'); return }
+  if (d.done) { showStatus(d.fails ? 'err' : 'done', d.fails ? '完成,' + d.fails + ' 步失败' : '✓ 回放完成 ' + d.total + ' 步', true); load(); return }
+  showStatus(d.ok === false ? 'err' : 'run', '▸ 步 ' + d.i + '/' + d.total + ' · ' + d.act + (d.ok === false ? ' ✗ ' + (d.err || '') : ''))
 })
 
 // Agent 自动整理完成
 H.onBrowserSkillRefined && H.onBrowserSkillRefined((d) => {
-  toast('🛠 「' + esc(d.title) + '」已由 Agent 整理:' + esc((d.applied || []).join('、')))
+  toast('<span class="ok">✓</span> 「' + esc(d.title) + '」已由 Agent 整理:' + esc((d.applied || []).join('、')))
   load()
 })
 H.onSkillsChanged && H.onSkillsChanged(() => load())
