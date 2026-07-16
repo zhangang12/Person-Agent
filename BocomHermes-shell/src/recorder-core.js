@@ -491,22 +491,36 @@ function compactEvents(events) {
 // 有些输入必须人来、且每次不同(短信/邮箱验证码、图形码、动态口令、滑块、人脸),录制的值是一次性的、
 // 回放照填必然失败或触发风控。识别出来 → 回放到这一步【暂停】,把浏览器交还给人现场输入,人填完再续跑。
 // 靠字段上下文(autocomplete/placeholder/label + 选择器)+ 关键词判定;autocomplete="one-time-code" 是 OTP 的 W3C 标准标记,命中即判定。
-const HUMAN_RE = /验证码|校验码|短信码|动态[口令码]|动态令牌|图形码|图片码|captcha|verif(?:y|ication)[-\s_]?code|one[-\s]?time|(?:^|[^a-z])otp(?:[^a-z]|$)|滑块|拖动验证|滑动验证|人脸|指纹|扫码/i
+// 两张表分开,因为【填值类】与【动作类】的判定面必须不同(见 humanGateHint 注释):
+const HUMAN_RE = /验证码|校验码|短信码|短信验证|动态[口令码]|动态令牌|动态密码|图形码|图片码|安全码|口令卡|手机令牌|U盾|ukey|MFA|二次验证|双因素|captcha|verif(?:y|ication)[-\s_]?code|one[-\s]?time|(?:^|[^a-z])otp(?:[^a-z]|$)/i
+// 行为验证:不是"填个值"而是"做个动作"(滑块拖一下/刷个脸/扫个码)。录制时是 click/拖拽【不是 input】,
+// 老版本 act!=='input' 一刀切 → 这类永远识别不到(关键词写了也白写),回放照点必然失败/触发风控。
+const HUMAN_ACT_RE = /滑块|滑动验证|拖动验证|拖动滑块|行为验证|安全验证|人脸|刷脸|指纹|扫码|扫一扫|二维码/i
 function humanGateHint(ev) {
-  if (!ev || ev.act !== 'input') return null
-  if (/one-time-code/i.test(String(ev.ac || ''))) return '验证码(one-time-code)'
-  const hay = [ev.ph, ev.lb, ev.sel, ...(Array.isArray(ev.selAlt) ? ev.selAlt : [])].filter(Boolean).join(' ')
-  if (!HUMAN_RE.test(hay)) return null
-  const m = hay.match(/验证码|校验码|短信码|动态口令|动态令牌|图形码|captcha|otp|滑块|人脸|指纹|扫码/i)
-  return (m ? m[0] : '需人工输入')
+  if (!ev) return null
+  const hay = [ev.ph, ev.lb, ev.sel, ev.text, ...(Array.isArray(ev.selAlt) ? ev.selAlt : [])].filter(Boolean).join(' ')
+  if (ev.act === 'input') {
+    if (/one-time-code/i.test(String(ev.ac || ''))) return '验证码(one-time-code)'
+    const m = hay.match(HUMAN_RE)
+    return m ? m[0] : null
+  }
+  // 非输入步只认【行为验证】,不吃 HUMAN_RE ——「获取验证码」按钮虽带"验证码"字样,但它正是【该自动点】的那一下,
+  // 认成断点会让每次回放都停下等人。填值的那个字段自己会被上面的 input 分支认出来。
+  if (ev.act === 'click' || ev.act === 'submit') {
+    const m = hay.match(HUMAN_ACT_RE)
+    return m ? m[0] : null
+  }
+  return null
 }
-// 给事件序列打人机断点标记:命中的 input 步置 human=true + humanHint,并清空 value(一次性验证码不留存、回放不照填,靠人现场输入)。
+// 给事件序列打人机断点标记:命中的步置 human=true + humanHint;填值类另清空 value
+// (一次性验证码不留存、回放不照填,靠人现场输入)。行为类(滑块/人脸)本就没值,不动 value。
 // 纯函数:原地不改入参,返回带标记的新数组。
 function markHumanGates(events) {
   return (Array.isArray(events) ? events : []).map((ev) => {
     const hint = humanGateHint(ev)
     if (!hint) return ev
-    const o = Object.assign({}, ev, { human: true, humanHint: hint, value: '' })
+    const o = Object.assign({}, ev, { human: true, humanHint: hint })
+    if (ev.act === 'input' || ev.act === 'select') o.value = ''
     delete o.secret   // 人机断点语义已覆盖"不照填",secret 标记多余
     return o
   })

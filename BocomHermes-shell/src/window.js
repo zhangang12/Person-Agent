@@ -1879,6 +1879,15 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     for (const f of fails.slice(0, 8)) lines.push('  · 步 ' + f.i + ' ' + f.act + ' "' + String(f.sel).slice(0, 60) + '" — ' + f.err)
     const skippedState = replay.stepReport.filter((s) => s.skipped === 'state').length
     if (skippedState) lines.push('· ' + skippedState + ' 步已被页面状态满足自动跳过(登录缓存/无效导航)')
+    // 人机断点透明化:等人的步怎么过的(人点的/自动判出的/Agent 给的);【超时】要单独喊出来 —— 那步等于没人管就往下跑了
+    const humans = replay.stepReport.filter((s) => s.human || s.liveGate)
+    const HOW = { manual: '人工点继续', auto: '自动检测填入', 'auto-nav': '自动检测页面跳转', 'auto-gone': '自动检测验证消失', agent: 'Agent 给值', timeout: '⚠ 等了 5 分钟没人管(该步未处理即继续)' }
+    for (const h of humans) {
+      if (h.liveGate) lines.push('· 步 ' + h.i + ' 回放时冒出「' + h.liveGate.hint + '」(录制时没有)→ 已等人过关后重试成功(' + (HOW[h.liveGate.how] || h.liveGate.how) + ')')
+      else lines.push('· 步 ' + h.i + ' 人机断点 → ' + (HOW[h.how] || h.how))
+    }
+    if (humans.some((h) => h.how === 'timeout' || (h.liveGate && h.liveGate.how === 'timeout'))) lines.push('⚠ 有人机断点超时未处理,结果可能不可信')
+    if (rec.noCache) lines.push('· 本次已禁用缓存运行(跑前 + 每次导航前清 HTTP 缓存)')
     if (replay.takeover) lines.push('· 第 ' + replay.takeover.from + ' 步起由 Agent 接管:' + (replay.takeover.status === 'done' ? '目标达成 ✓' : '未完成(' + replay.takeover.status + ')') + (replay.takeover.note ? ' — ' + replay.takeover.note : ''))
     if (replay.success) lines.push('成功断言: ' + (replay.success.pass ? '✓ 达成' : '✗ 未达成') + ' [' + replay.success.kind + '] "' + replay.success.value + '"' + (replay.success.err ? '(检查出错: ' + replay.success.err + ')' : ''))
     if (replay.dialogs && replay.dialogs.length) lines.push('自动应答弹窗 ' + replay.dialogs.length + ' 个(confirm→确定): ' + replay.dialogs.slice(0, 3).map((d) => d.k + '「' + d.m + '」').join(' | '))
@@ -2043,6 +2052,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
           params: (j.params || []).map((p) => ({ key: p.key, label: p.label || p.key, secret: !!p.secret, default: p.default != null ? String(p.default) : '' })),   // 「录制与回放」中心:填参/批跑映射预览用
           gates: (j.events || []).filter((e) => e && e.human).length,   // 人机断点数(验证码等,卡片上提示"回放会暂停等人")
           postWorkflow: (j.postWorkflow && j.postWorkflow.goal) ? { goal: String(j.postWorkflow.goal) } : null,   // 下载后编排:配了就在卡片上出 chip + ⋯ 里可编辑
+          noCache: !!j.noCache,   // 技能级禁用缓存(跑前+每次导航前清 HTTP 缓存)
           startUrl: j.startUrl || '',
           expectation: j.expectation || '',
           eventCount: (j.events || []).length,
@@ -2140,6 +2150,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       const wasSkill = !!j.skill   // 晋升检测:非技能 → 技能 的那一次触发自动精修
       const allowed = ['title', 'starred', 'expectation', 'description', 'params', 'skill']   // events 不进白名单,保持只读
       for (const k of allowed) if (k in patch) j[k] = patch[k]
+      if ('noCache' in patch) { if (patch.noCache) j.noCache = true; else delete j.noCache }   // 技能级禁用缓存:跑前+每次导航前清 HTTP 缓存
       // 形状校验后才放行的字段(坏形状直接丢弃,不落盘)
       if ('postWorkflow' in patch) {   // 下载后编排:{goal:人话目标};传 null/空目标 = 清除
         const pw = patch.postWorkflow

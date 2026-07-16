@@ -147,6 +147,26 @@ console.log('用例8:人机断点识别(验证码/动态令牌/滑块)')
   ok('验证码步去掉 secret(human 已覆盖语义)', marked[1].secret === undefined)
   ok('普通用户名步不动', marked[0].human === undefined && marked[0].value === 'admin')
   ok('markHumanGates 不改原数组', true)   // Object.assign 产新对象,原引用不变(见实现)
+
+  // 行为验证(滑块/人脸/扫码):录的是 click/拖拽不是 input。老版 act!=='input' 一刀切 → 这类永远认不出(死角)
+  ok('滑块 click → 命中(老版死角)', humanGateHint({ act: 'click', sel: '.slider-btn', text: '按住滑块,拖动到最右边' }) !== null)
+  ok('滑动验证 class → 命中', humanGateHint({ act: 'click', sel: '#nc_1_n1z', selAlt: ['.nc-lang-cnt'], text: '滑动验证' }) !== null)
+  ok('人脸 click → 命中', humanGateHint({ act: 'click', sel: '#faceBtn', text: '开始人脸识别' }) !== null)
+  ok('扫码 click → 命中', humanGateHint({ act: 'click', sel: '#qr', text: '扫码登录' }) !== null)
+  // ★ 关键区分:「获取验证码」按钮是【该自动点的那一下】,认成断点会让每次回放都停下等人
+  ok('★「获取验证码」按钮(click)→ 不命中(该自动点)', humanGateHint({ act: 'click', sel: '#sendCode', text: '获取验证码' }) === null)
+  ok('★「发送短信验证码」按钮(click)→ 不命中', humanGateHint({ act: 'click', sel: '#send', text: '发送短信验证码' }) === null)
+  ok('普通业务按钮(click)→ 不命中', humanGateHint({ act: 'click', sel: '#exp', text: '导出待处理 HTML' }) === null)
+  // 内网常见叫法扩面
+  ok('U盾 → 命中', humanGateHint({ act: 'input', sel: '#u', lb: 'U盾口令' }) !== null)
+  ok('手机令牌 → 命中', humanGateHint({ act: 'input', sel: '#t', ph: '请输入手机令牌' }) !== null)
+  ok('二次验证 → 命中', humanGateHint({ act: 'input', sel: '#m', lb: '二次验证码' }) !== null)
+  ok('短信验证 → 命中', humanGateHint({ act: 'input', sel: '#s', ph: '短信验证' }) !== null)
+  // 行为类不清 value(本来就没值),填值类才清
+  const m2 = markHumanGates([{ act: 'click', sel: '.slider', text: '拖动滑块' }])
+  ok('行为验证步标 human 且不注入 value 字段', m2[0].human === true && !('value' in m2[0]))
+  // navigate/scroll 等非交互步不误判
+  ok('navigate 步 → 不命中', humanGateHint({ act: 'navigate', url: 'http://x/captcha-page' }) === null)
 }
 
 console.log('用例9:upgradeToSkill —— events → 语义 steps(输入来源三分:static/param/resolve)')

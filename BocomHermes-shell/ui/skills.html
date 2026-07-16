@@ -367,6 +367,7 @@ function skillCard(it){
       ${it.paramCount ? `<span class="chip">参数 ${it.paramCount}</span>` : ''}
       ${it.gates ? `<span class="chip gate" title="回放到这步会暂停,等你现场输入(如验证码)">⏸ 人工 ${it.gates}</span>` : ''}
       ${it.postWorkflow ? `<span class="chip pw" title="回放导出/下载文件后,自动对文件跑动态工作流:&#10;${esc(it.postWorkflow.goal)}">🔀 下载后编排</span>` : ''}
+      ${it.noCache ? `<span class="chip" title="每次运行前 + 每次页面跳转前清 HTTP 缓存,确保拿到最新页面/数据(不影响登录态)">⃠ 禁用缓存</span>` : ''}
     </div>
     ${it.description ? `<div class="desc">${esc(it.description)}</div>` : ''}
     <div class="r3">
@@ -405,6 +406,7 @@ function openMore(anchor, it){
   const r = anchor.getBoundingClientRect()
   popEl = document.createElement('div'); popEl.className = 'pop'
   popEl.innerHTML = `
+    <button data-m="nc" title="每次跑这个技能前 + 每次页面跳转前清一次浏览器缓存,确保拿到的是最新页面/数据(不影响登录态)">⃠ 禁用缓存跑 · ${it.noCache ? '<b style="color:var(--accent)">开</b>' : '关'}</button>
     <button data-m="pw">🔀 下载后编排…</button>
     <button data-m="doc">📄 查看技能文档</button>
     <button data-m="exp">📤 导出分享</button>
@@ -413,6 +415,13 @@ function openMore(anchor, it){
   const pw = popEl.offsetWidth
   popEl.style.left = Math.max(8, Math.min(window.innerWidth - pw - 8, r.right - pw)) + 'px'
   popEl.style.top = Math.min(window.innerHeight - popEl.offsetHeight - 8, r.bottom + 6) + 'px'
+  popEl.querySelector('[data-m="nc"]').addEventListener('click', async () => {
+    closePop()
+    const nv = !it.noCache
+    const ok = await H.browserRecUpdate(it.id, { noCache: nv })
+    if (ok) { it.noCache = nv; toast(nv ? '<span class="ok">✓</span> 已开启「禁用缓存跑」— 每次运行前清缓存,保证拿到最新数据' : '已关闭「禁用缓存跑」'); load() }
+    else toast('<span class="err">⚠</span> 保存失败')
+  })
   popEl.querySelector('[data-m="pw"]').addEventListener('click', () => { closePop(); openPw(it) })
   popEl.querySelector('[data-m="doc"]').addEventListener('click', async () => {
     closePop()

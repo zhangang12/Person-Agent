@@ -94,14 +94,29 @@ module.exports = function initRecorder(ctx) {
     sendProg({ pause: true, i: i + 1, hint: ev.humanHint || '需人工操作', sel: ev.sel || '', agent: agentOn })
     let done = false
     const manual = new Promise((res) => { S.browser._replayResume = () => { if (!done) { done = true; res({ how: 'manual' }) } } })
+    // 自动续跑判定(三路,治"只认值≥4位"的老毛病 —— 滑块/扫码/点选这类【无值】验证以前只能手点「继续」):
+    //  ① 值填够且稳定 1.2s(经典验证码)  ② 见过的 gate 元素消失/隐藏了(滑块拖过、弹窗关了 = 人已通过)
+    //  ③ 页面跳走了(扫码登录/填完即提交)。②要求"先见过"——一开始就没有的元素不算通过,避免误判续跑。
     const auto = (async () => {
-      let lastV = null, stableAt = 0
+      let lastV = null, stableAt = 0, seen = false
+      let url0 = ''; try { url0 = wc.getURL() } catch {}
       const t0 = Date.now()
       while (!done && Date.now() - t0 < 300000) {   // 最长 5 分钟
         await sleep(500)
-        let v = ''
-        try { v = await fr.executeJavaScript(`(()=>{var __el=null;return (${elExpr})?String((__el.value!=null?__el.value:__el.innerText)||''):''})()`, true) } catch {}
-        if (v && v.trim().length >= 4) {   // 验证码通常 ≥4 位;滑块/无值类只能靠手动「继续」
+        let u = ''; try { u = wc.getURL() } catch {}
+        if (url0 && u && u !== url0) return { how: 'auto-nav' }   // ③ 页面跳走 = 这关过了
+        let st = null
+        try {
+          st = await fr.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return {gone:1};
+            var r=__el.getBoundingClientRect();var s=getComputedStyle(__el);
+            var vis=!!(r.width||r.height)&&s.visibility!=='hidden'&&s.display!=='none';
+            return {gone:0,vis:vis?1:0,v:String((__el.value!=null?__el.value:__el.innerText)||'')}})()`, true)
+        } catch {}
+        if (!st) continue
+        if (st.gone || !st.vis) { if (seen) return { how: 'auto-gone' }; continue }   // ② 见过又没了 = 人做完了
+        seen = true
+        const v = String(st.v || '')
+        if (v.trim().length >= 4) {   // ① 经典验证码:值稳定即续跑
           if (v === lastV) { if (!stableAt) stableAt = Date.now(); else if (Date.now() - stableAt >= 1200) return { how: 'auto' } }
           else { lastV = v; stableAt = 0 }
         }
@@ -134,6 +149,43 @@ module.exports = function initRecorder(ctx) {
     sendProg({ resume: true, i: i + 1 })
     log('replay 解析断点 步 ' + (i + 1) + '(' + (ev.humanHint || '') + ')续跑: ' + win.how + (win.note ? ' · ' + win.note : ''))
     return win.how
+  }
+
+  // ── 运行时人机断点探测:录制时【没有】、回放时【冒出来】的验证码/行为验证(风控偶发、二次校验)──────
+  // 老行为:引擎完全不知道页面被拦了,只会「selector not found」→ 自愈→级联→早停,把"该等人 5 秒"变成"整场失败"。
+  // 现在:某步找不到元素时扫一眼当前页,发现【可见且空】的验证码字段 / 可见的行为验证控件 → 停下等人,人过完关重试该步。
+  // 【保守优先】只在步骤已经失败时才探(页面确实不对劲了),且只认强信号 —— 误停会卡死无人值守的批跑,比漏停更糟。
+  // 故意不认"扫码/二维码"(页脚"扫码下载APP"这类横幅遍地都是,误报率高);录制时人真去点了才认(见 HUMAN_ACT_RE)。
+  const LIVE_GATE_JS = `(()=>{try{
+    var KW=/验证码|校验码|短信码|短信验证|动态口令|动态令牌|动态密码|图形码|图片码|安全码|captcha|verif|one-time|otp/i;
+    var ACT=/滑块|滑动验证|拖动验证|行为验证|安全验证|人脸验证|刷脸/i;
+    function vis(el){try{var r=el.getBoundingClientRect();if(!(r.width||r.height))return false;var s=getComputedStyle(el);
+      return s.visibility!=='hidden'&&s.display!=='none'&&s.opacity!=='0'}catch(e){return false}}
+    function lab(el){var t='';try{if(el.id){var l=document.querySelector('label[for="'+el.id.replace(/"/g,'')+'"]');if(l)t+=' '+l.innerText}
+      var p=el.closest&&el.closest('label');if(p)t+=' '+p.innerText}catch(e){}return t}
+    function q(s){return String(s||'').replace(/"/g,'\\\\"')}
+    function selOf(el){if(el.id)return '#'+el.id;if(el.name)return el.tagName.toLowerCase()+'[name="'+q(el.name)+'"]';
+      if(el.placeholder)return 'input[placeholder="'+q(el.placeholder)+'"]';return ''}
+    var ins=[].slice.call(document.querySelectorAll('input:not([type=hidden])'));
+    for(var i=0;i<ins.length;i++){var el=ins[i];
+      if(!vis(el))continue; if(String(el.value||'').trim())continue;   // 已有值 = 不用人填
+      var ac=String(el.getAttribute('autocomplete')||'');
+      if(/one-time-code/i.test(ac))return{found:1,hint:'验证码(one-time-code)',sel:selOf(el)};
+      var hay=[el.placeholder,el.name,el.id,el.className,lab(el)].filter(Boolean).join(' ');
+      var m=hay.match(KW); if(m)return{found:1,hint:m[0],sel:selOf(el)};
+    }
+    var all=[].slice.call(document.querySelectorAll('div,span,button,canvas')).slice(0,2500);
+    for(var j=0;j<all.length;j++){var e2=all[j]; if(!vis(e2))continue;
+      var cn=e2.className; cn=(cn&&cn.baseVal!==undefined)?cn.baseVal:cn;
+      var h2=[cn,e2.id,(e2.innerText||'').slice(0,40),e2.getAttribute?e2.getAttribute('aria-label'):''].filter(Boolean).join(' ');
+      var m2=h2.match(ACT); if(m2)return{found:1,hint:m2[0],sel:e2.id?('#'+e2.id):''};
+    }
+    return{found:0}}catch(e){return{found:0}}})()`
+  async function detectLiveGate(wc, ev) {
+    try {
+      const r = await frameFor(wc, ev).executeJavaScript(LIVE_GATE_JS, true)
+      return (r && r.found) ? r : null
+    } catch { return null }
   }
 
   // ── Phase 6·自愈回放:某步选择器全失配(页面改版/动态 id/瞬态类) → 不早停,重新定位 ──
@@ -415,9 +467,22 @@ module.exports = function initRecorder(ctx) {
   }
 
 
+  // 技能级「禁用缓存」(rec.noCache):跑前清一次 HTTP 缓存 + 回放期间每次导航前再清
+  // (置 S.browser.noCache,由 browser.js 的 did-start-navigation 钩子消费 —— 复用工具栏那个 toggle 的同一条路,不另造)。
+  // 为什么要包一层:回放中途抛异常也必须还原用户原本的 toggle 状态,否则"禁用缓存"会悄悄常开,之后每次导航都清缓存。
+  // 注意只清 HTTP 缓存,不碰 cookie/localStorage —— 那是 preState 的活(回放前【恢复】登录态,方向相反,清了就白登了)。
+  async function replayRec(rec, opts = {}) {
+    const on = !!(rec && rec.noCache)
+    if (!on) return await replayRecInner(rec, opts)
+    const prev = S.browser.noCache
+    S.browser.noCache = true
+    try { await session.defaultSession.clearCache(); log('replay: 技能开了「禁用缓存」→ 已清 HTTP 缓存,回放期间每次导航前再清') } catch (e) { log('clearCache err: ' + e.message) }
+    try { return await replayRecInner(rec, opts) }
+    finally { S.browser.noCache = prev }
+  }
   // opts:{ fast, gapCap, waitMs } —— 默认值 = 原有节奏,verifyFix 无参调用零回归;
   // 技能运行传 {fast:true}(步间 gap 封顶 400ms、各固定 sleep 缩短),等待策略(waitForEl/waitNetIdle)不缩水
-  async function replayRec(rec, opts = {}) {
+  async function replayRecInner(rec, opts = {}) {
     const fast = !!opts.fast
     const gapCap = opts.gapCap || (fast ? 400 : 2000)
     const waitMsBase = opts.waitMs || 5000
@@ -453,6 +518,7 @@ module.exports = function initRecorder(ctx) {
     let lastT = 0
     let storageRestored = false
     let consecutiveFails = 0; let cascadeFrom = -1
+    let liveGateN = 0   // 运行时人机断点触发次数(上限 3,防病态死循环)
     const healed = []   // 自愈成功的步(回放结束回写技能:selector 自更新)
     // 混合执行:运行时参数值表(applyParams 后从事件里取)——Agent 接管时引擎持值代填(type_param),secret 值不进模型
     const paramValues = {}
@@ -481,6 +547,7 @@ module.exports = function initRecorder(ctx) {
       }
       await highlightTarget(frameFor(wc, ev), ev, i + 1)   // 红框打在事件所属 frame(含 iframe)
       await sleep(fast ? 60 : 180)
+      let liveGateInfo = null   // 本步是否被"回放时才冒出来的验证"拦过(拦到并过关 → 进 stepReport 留痕)
       // 级联收缩:已有连续失败时缩短 waitForEl,防「等5s×重试」把 3 连败早停拖到 30s+;成功即复原。
       // transient 步(日历格子点击,换月后已消失)预期找不到 → 短等 800ms,不傻等 5s
       const stepOpts = { waitMs: ev.transient ? 800 : (redirectFast ? 1200 : (consecutiveFails >= 1 ? Math.min(waitMsBase, 1500) : waitMsBase)) }
@@ -491,6 +558,18 @@ module.exports = function initRecorder(ctx) {
         await sleep(400)
         r = await execStep(wc, ev, tab, { waitMs: 1500 })
         r.retried = true
+      }
+      // 运行时人机断点:这步找不到元素,但页面上冒出了录制时没有的验证码/行为验证(风控偶发/二次校验)
+      // → 停下等人过关,人过完【重试这步】继续跑。以前这里只会一路失败到早停。上限 3 次,防病态死循环。
+      if (!r.ok && !ev.transient && liveGateN < 3 && String(r.err || '').startsWith('selector(+alt) not found') && ['click', 'input', 'select', 'check', 'submit'].includes(ev.act)) {
+        const lg = await detectLiveGate(wc, ev)
+        if (lg) {
+          liveGateN++
+          log('replay live-gate: 步 ' + (i + 1) + ' 前页面出现「' + lg.hint + '」(录制时没有)→ 暂停等人工')
+          const how = await awaitHumanGate(wc, { act: 'input', sel: lg.sel || ev.sel, selAlt: [], human: true, humanHint: lg.hint + '(回放时出现的验证,录制时没有)' }, i, sendProg)
+          r = await execStep(wc, ev, tab, { waitMs: 3000 })
+          if (r.ok) { liveGateInfo = { hint: lg.hint, how }; consecutiveFails = 0 }
+        }
       }
       // 混合执行·噪声层①:找不到先向前探锚点 —— 若后续某步的目标已在当前页,说明中间段已被
       // 页面状态满足(登录缓存跳过登录块 / 录制里的菜单往返),整段跳过不计失败(零 LLM)
@@ -516,6 +595,7 @@ module.exports = function initRecorder(ctx) {
         if (h && h.ok) { r = { ok: true }; healHow = h.how; healed.push({ ei: i, sel: h.sel, selAlt: [] }) }
       }
       const entry = { i: i + 1, act: ev.act, sel: ev.sel || ev.url || '', ok: r.ok, err: r.err || '' }
+      if (liveGateInfo) entry.liveGate = liveGateInfo   // 回放时冒出的验证:已等人过关并重试成功
       if (r.retried) entry.retried = true
       if (healHow) { entry.healed = healHow; entry.sel = healed[healed.length - 1].sel }
       if (r.secret) entry.secret = true
