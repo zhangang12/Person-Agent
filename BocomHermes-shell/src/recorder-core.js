@@ -516,13 +516,19 @@ function compactEvents(events) {
 // 回放照填必然失败或触发风控。识别出来 → 回放到这一步【暂停】,把浏览器交还给人现场输入,人填完再续跑。
 // 靠字段上下文(autocomplete/placeholder/label + 选择器)+ 关键词判定;autocomplete="one-time-code" 是 OTP 的 W3C 标准标记,命中即判定。
 // 两张表分开,因为【填值类】与【动作类】的判定面必须不同(见 humanGateHint 注释):
-const HUMAN_RE = /验证码|校验码|短信码|短信验证|动态[口令码]|动态令牌|动态密码|图形码|图片码|安全码|口令卡|手机令牌|U盾|ukey|MFA|二次验证|双因素|captcha|verif(?:y|ication)[-\s_]?code|one[-\s]?time|(?:^|[^a-z])otp(?:[^a-z]|$)/i
+const HUMAN_RE = /验证码|校验码|短信码|短信验证|短讯验证|动态[口令码]|动态令牌|动态密码|图形码|图片码|安全码|口令卡|手机令牌|保安编码|一次性密码|U盾|ukey|MFA|二次验证|双因素|captcha|verif(?:y|ication)[-\s_]?code|one[-\s]?time|(?:^|[^a-z])otp(?:[^a-z]|$)/i
 // 行为验证:不是"填个值"而是"做个动作"(滑块拖一下/刷个脸/扫个码)。录制时是 click/拖拽【不是 input】,
 // 老版本 act!=='input' 一刀切 → 这类永远识别不到(关键词写了也白写),回放照点必然失败/触发风控。
 const HUMAN_ACT_RE = /滑块|滑动验证|拖动验证|拖动滑块|行为验证|安全验证|人脸|刷脸|指纹|扫码|扫一扫|二维码/i
+// 繁体→简体归一化(只映射关键词里用到的字):港澳台站点(实测交行香港)的「驗證碼/手機驗證碼/保安編碼器/短訊」
+// 全是繁体,简体正则一个都匹配不上 → 录制识别、回放运行时探测双双失明,验证码弹窗被当成"元素定位失败"走自愈,整场跑偏。
+// 匹配前过一遍映射,正则本身保持简体一份(不用每条翻倍)。与 recorder.js LIVE_GATE_JS 里的内联版保持同步。
+const T2S_FROM = '驗證碼動態圖機臉掃維塊為雙紋編號訊鑑權驗証'
+const T2S_TO   = '验证码动态图机脸扫维块为双纹编号讯鉴权验证'
+function t2s(s) { return String(s == null ? '' : s).replace(/[㐀-鿿]/g, (c) => { const i = T2S_FROM.indexOf(c); return i >= 0 ? T2S_TO[i] : c }) }
 function humanGateHint(ev) {
   if (!ev) return null
-  const hay = [ev.ph, ev.lb, ev.sel, ev.text, ...(Array.isArray(ev.selAlt) ? ev.selAlt : [])].filter(Boolean).join(' ')
+  const hay = t2s([ev.ph, ev.lb, ev.sel, ev.text, ...(Array.isArray(ev.selAlt) ? ev.selAlt : [])].filter(Boolean).join(' '))
   if (ev.act === 'input') {
     if (/one-time-code/i.test(String(ev.ac || ''))) return '验证码(one-time-code)'
     const m = hay.match(HUMAN_RE)
@@ -761,7 +767,7 @@ function redactRec(rec) {
   for (const ev of (Array.isArray(c.events) ? c.events : [])) if (ev && ev._restorePreState) ev._restorePreState = mask(ev._restorePreState)
   return c
 }
-module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, composePostWorkflowGoal, applyRefinePatch, rowToParamValues, relocateSelectors, takeoverDigest, redactRec, anchorExpr }
+module.exports = { RECORDER_JS, selExpr, findElExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, composePostWorkflowGoal, applyRefinePatch, rowToParamValues, relocateSelectors, takeoverDigest, redactRec, anchorExpr, t2s }
 
 // ── 纯文件 IO 工厂:window.js 注入 { app, fs, path, execSync } 后解构使用 ────────
 // 这些函数从 window.js 原样搬入,只把对 app/fs/path/execSync 的引用改为工厂参数(名字不变)。

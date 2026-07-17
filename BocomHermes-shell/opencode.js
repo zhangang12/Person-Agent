@@ -456,12 +456,22 @@ async function runEventLoop(info, handlers, log) {
     if (info.dead) { log('event loop stopped (' + (info.dir || '(home)') + ')'); return }
     const base = info.base
     try {
-      const res = await fetch(base + '/event')
-      if (!res.ok || !res.body) throw new Error('/event ' + res.status)
+      // 半开看门狗:serve 被重启(如为带上新 MCP 工具)时,旧 TCP 连接可能【半开挂死】——reader.read() 永远阻塞、
+      // 不报错、不触发重连,而 api() 照常打到新 serve。结果:会话都正常,但工具/思考/流式全静默消失(实测踩中)。
+      // serve 会定期发 server.heartbeat,连心跳都 90s 没有 = 连接已死,主动掐掉让外层循环重连。
+      const ac = new AbortController()
+      let lastByteAt = Date.now()
+      const wd = setInterval(() => { if (Date.now() - lastByteAt > 90000) { try { ac.abort() } catch {} } }, 15000)
+      let res
+      try { res = await fetch(base + '/event', { signal: ac.signal }) }
+      catch (e) { clearInterval(wd); throw e }
+      if (!res.ok || !res.body) { clearInterval(wd); throw new Error('/event ' + res.status) }
       const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = ''
       log('event stream connected (' + base + ')')
+      try {
       for (;;) {
         const { value, done } = await reader.read(); if (done) break
+        lastByteAt = Date.now()
         buf += dec.decode(value, { stream: true })
         let i
         while ((i = buf.indexOf('\n\n')) !== -1) {
@@ -481,6 +491,7 @@ async function runEventLoop(info, handlers, log) {
           dispatch(ev, onPermission, onText)
         }
       }
+      } finally { clearInterval(wd) }   // 内层读循环结束(正常断/看门狗掐)都摘定时器,不漏
     } catch (e) { if (info.dead) return; log('event stream dropped, reconnect 2s: ' + e.message); await sleep(2000) }
   }
 }

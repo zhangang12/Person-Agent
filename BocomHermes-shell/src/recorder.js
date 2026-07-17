@@ -177,8 +177,12 @@ module.exports = function initRecorder(ctx) {
   // 【保守优先】只在步骤已经失败时才探(页面确实不对劲了),且只认强信号 —— 误停会卡死无人值守的批跑,比漏停更糟。
   // 故意不认"扫码/二维码"(页脚"扫码下载APP"这类横幅遍地都是,误报率高);录制时人真去点了才认(见 HUMAN_ACT_RE)。
   const LIVE_GATE_JS = `(()=>{try{
-    var KW=/验证码|校验码|短信码|短信验证|动态口令|动态令牌|动态密码|图形码|图片码|安全码|captcha|verif|one-time|otp/i;
+    var KW=/验证码|校验码|短信码|短信验证|短讯验证|动态口令|动态令牌|动态密码|图形码|图片码|安全码|保安编码|一次性密码|captcha|verif|one-time|otp/i;
     var ACT=/滑块|滑动验证|拖动验证|行为验证|安全验证|人脸验证|刷脸/i;
+    // 繁→简归一化(与 recorder-core 的 t2s 保持同步):港澳台站点的「驗證碼/手機驗證碼/保安編碼器」全是繁体,
+    // 简体正则全部失明 → 验证码弹窗被当"元素定位失败"走自愈,整场跑偏(实测交行香港)
+    var TF='驗證碼動態圖機臉掃維塊為雙紋編號訊鑑權驗証',TT='验证码动态图机脸扫维块为双纹编号讯鉴权验证';
+    function t2s(s){return String(s||'').replace(/[\\u3400-\\u9fff]/g,function(c){var i=TF.indexOf(c);return i>=0?TT[i]:c})}
     function vis(el){try{var r=el.getBoundingClientRect();if(!(r.width||r.height))return false;var s=getComputedStyle(el);
       return s.visibility!=='hidden'&&s.display!=='none'&&s.opacity!=='0'}catch(e){return false}}
     function lab(el){var t='';try{if(el.id){var l=document.querySelector('label[for="'+el.id.replace(/"/g,'')+'"]');if(l)t+=' '+l.innerText}
@@ -191,13 +195,13 @@ module.exports = function initRecorder(ctx) {
       if(!vis(el))continue; if(String(el.value||'').trim())continue;   // 已有值 = 不用人填
       var ac=String(el.getAttribute('autocomplete')||'');
       if(/one-time-code/i.test(ac))return{found:1,hint:'验证码(one-time-code)',sel:selOf(el)};
-      var hay=[el.placeholder,el.name,el.id,el.className,lab(el)].filter(Boolean).join(' ');
+      var hay=t2s([el.placeholder,el.name,el.id,el.className,lab(el)].filter(Boolean).join(' '));
       var m=hay.match(KW); if(m)return{found:1,hint:m[0],sel:selOf(el)};
     }
     var all=[].slice.call(document.querySelectorAll('div,span,button,canvas')).slice(0,2500);
     for(var j=0;j<all.length;j++){var e2=all[j]; if(!vis(e2))continue;
       var cn=e2.className; cn=(cn&&cn.baseVal!==undefined)?cn.baseVal:cn;
-      var h2=[cn,e2.id,(e2.innerText||'').slice(0,40),e2.getAttribute?e2.getAttribute('aria-label'):''].filter(Boolean).join(' ');
+      var h2=t2s([cn,e2.id,(e2.innerText||'').slice(0,40),e2.getAttribute?e2.getAttribute('aria-label'):''].filter(Boolean).join(' '));
       var m2=h2.match(ACT); if(m2)return{found:1,hint:m2[0],sel:e2.id?('#'+e2.id):''};
     }
     return{found:0}}catch(e){return{found:0}}})()`
@@ -605,9 +609,11 @@ module.exports = function initRecorder(ctx) {
         r = await execStep(wc, ev, tab, { waitMs: 1500 })
         r.retried = true
       }
-      // 运行时人机断点:这步找不到元素,但页面上冒出了录制时没有的验证码/行为验证(风控偶发/二次校验)
+      // 运行时人机断点:这步失败了,而页面上冒出了录制时没有的验证码/行为验证(风控偶发/二次校验)
       // → 停下等人过关,人过完【重试这步】继续跑。以前这里只会一路失败到早停。上限 3 次,防病态死循环。
-      if (!r.ok && !ev.transient && liveGateN < 3 && String(r.err || '').startsWith('selector(+alt) not found') && ['click', 'input', 'select', 'check', 'submit'].includes(ev.act)) {
+      // 触发面不只 "selector not found":验证弹窗把页面拦住时,点击常报 "Script failed to execute"(元素在但脚本抛)
+      // 或求值超时 —— 这些失败同样该扫一眼"是不是被验证拦了"(实测交行香港:弹窗期间全是 script 错,探测根本没跑)
+      if (!r.ok && !ev.transient && liveGateN < 3 && /selector\(\+alt\) not found|Script failed to execute|页面求值超时/i.test(String(r.err || '')) && ['click', 'input', 'select', 'check', 'submit'].includes(ev.act)) {
         const lg = await detectLiveGate(wc, ev)
         if (lg) {
           liveGateN++

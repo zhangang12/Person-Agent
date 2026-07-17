@@ -135,6 +135,13 @@ console.log('用例8:人机断点识别(验证码/动态令牌/滑块)')
   ok('普通用户名字段 → 不命中', humanGateHint({ act: 'input', sel: '#username', ph: '请输入用户名' }) === null)
   ok('金额字段 → 不命中', humanGateHint({ act: 'input', sel: '#amount', lb: '转账金额' }) === null)
   ok('非 input(click)→ 不命中', humanGateHint({ act: 'click', sel: '#captcha', text: '获取验证码' }) === null)
+  // 繁体(港澳台站,实测交行香港):驗證碼/短訊/保安編碼器 —— 简体正则靠 t2s 归一化后命中
+  ok('繁体 label 手機驗證碼 → 命中', humanGateHint({ act: 'input', sel: '#c', lb: '手機驗證碼' }) !== null)
+  ok('繁体 placeholder 短訊驗證碼 → 命中', humanGateHint({ act: 'input', sel: '#c', ph: '請輸入短訊驗證碼' }) !== null)
+  ok('繁体 保安編碼器 → 命中', humanGateHint({ act: 'input', sel: '#c', lb: '保安編碼器' }) !== null)
+  ok('繁体行为 滑動驗證(click) → 命中', humanGateHint({ act: 'click', sel: '#s', text: '滑動驗證' }) !== null)
+  ok('繁体普通字段不误判', humanGateHint({ act: 'input', sel: '#u', ph: '請輸入用戶名' }) === null)
+  ok('繁体「獲取驗證碼」按钮仍不认(该自动点)', humanGateHint({ act: 'click', sel: '#send', text: '獲取驗證碼' }) === null)
   // markHumanGates:打标 + 清空一次性值 + 去 secret
   const marked = markHumanGates([
     { act: 'input', sel: '#user', value: 'admin', ph: '用户名' },
