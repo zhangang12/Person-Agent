@@ -104,7 +104,7 @@ module.exports = function initOrch(S, { ipcMain, oc, orch, log, app, path, fs })
       const goalFull = dir ? goal + '\n(工作目录:' + dir + ' —— 子任务应用工具在此目录内核实,不要访问其它项目)' : goal
       const res = await orch.orchestrate(goalFull, {
         // taskTimeoutMs:0 = 不按墙钟杀(内网网关慢是常态,慢≠死);超时判定改由 run() 的空转看门狗负责
-        run, signal: ac.signal, maxConcurrency: 2, maxRounds: 4, maxTasks: 16, maxBatch: 5, maxRoundsCeil: 8, maxTasksCeil: 32, taskTimeoutMs: 0, review: true, onBeforeBatch,
+        run, signal: ac.signal, maxConcurrency: 3, maxRounds: 2, maxTasks: 16, maxBatch: 6, maxRoundsCeil: 8, maxTasksCeil: 32, taskTimeoutMs: 0, review: true, onBeforeBatch,   // 效率:默认 2 轮偏向一轮拆够 + 并发 3 让单批并行更快 + 单批上限 6
         // maxRounds/maxTasks=规划器没自估时的默认;规划器给了 budget 就动态调整,夹在 maxRoundsCeil/maxTasksCeil(8轮/32Agent)内 —— 复杂任务放得开、简单任务早收,不再被固定 4/16 框死
         onPlan: (round, plan) => send('plan', { round, done: plan.done, note: plan.note || '', tasks: plan.tasks.map((t) => ({ id: t.id, role: t.role, goal: t.goal, deps: t.deps })) }),
         // 规划器重试完仍挂:已有成果 → 编排层收手去汇总(不再连坐丢光)。这里要让用户看见"为什么没继续拆下去",别静默少跑几轮
