@@ -217,21 +217,30 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     return keys.length
   }
 
+  // 「动态工作流」= Claude Code 式:单个【主 Agent】在连续上下文里自己拆解 → 用 task 工具并行派子 Agent 深挖 → 自己综合。
+  // 不再是"独立规划器分轮吐任务图 + 另开 worker 会话 + reduce/review"(orchestrator.js/src/orch.js,现降为 legacy 不再默认走)。
+  // 128k 纪律是这套成立的关键:主 Agent 只装"结论"不装"原料",深读交给有各自 128k 的子 Agent,只回精炼发现;
+  // 实现成一张卡 → 白捡卡片的【上下文用量 chip + 压缩续聊】做 128k 安全网 + 【子 Agent 富容器】做 fan-out 可视化。
+  function workflowSystemPrompt(dir) {
+    return [
+      '<动态工作流规程>',
+      '你要独立完成一个需要拆解的复杂目标。像资深工程师那样【自己规划、自己执行、自己综合】——你是唯一主导者,不等外部给你分步骤。',
+      '',
+      '【铁律:你的上下文只有 128k,是稀缺资源,只装"结论"不装"原料"。】',
+      '1. 轻量定位:自己用 grep/glob + 读几个入口文件了解全貌即可。【绝不】自己通读整个模块/几十个文件 —— 那会撑爆你 128k。',
+      '2. 【深挖交给子 Agent】需要读一大片代码/文件的深挖,用 task 工具派子 Agent。子 Agent 有它自己独立的 128k,在那里读,只给你【一条精炼发现】回来:结论 + 关键证据(文件:行号、几行关键代码/数据)。明确要求它【不要贴大段原文】,别把原始内容倒进你的上下文。每个子 Agent 边界清晰:只看哪块、只回答什么。',
+      '3. 【能并行就一次并行派】彼此独立、可同时做的深挖,在一条消息里一次派多个 task 子 Agent 并行跑,别一个个串。只有"下一步必须先知道上一步的实际结论"才串行。',
+      '4. 【综合】子 Agent 的发现回到你上下文后,你【亲自】整合成一份完整、可直接落地的成品:消除重复、把分歧点出来并给判断、保留所有可执行细节(路径/命令/数据/代码)。是你写透,不是拼接摘要。',
+      '5. 高风险结论(代码改动/关键判断)派一个子 Agent 交叉验证,别自证。',
+      dir ? '6. 工作目录:' + dir + ' —— 一律在此目录内核实,不访问其它项目。' : '',
+      '</动态工作流规程>',
+    ].filter(Boolean).join('\n')
+  }
   function spawnWorkflow(goal) {
-    const id = ++S.cardSeq
-    const col = (id - 1) % 4, row = Math.floor((id - 1) / 4) % 4
-    const wx = 180 + col * 56, wy = 80 + row * 50 + col * 18
-    const win = new BrowserWindow(baseOpts({
-      width: 680, height: 820, minWidth: 460, minHeight: 420, resizable: true,
-      alwaysOnTop: false, skipTaskbar: false, x: wx, y: wy,
-    }))
-    const wcId = win.webContents.id
-    win.loadFile(path.join(__dirname, '..', 'ui', 'workflow.html'), { query: { goal: goal || '未命名工作流', id: String(id), ...orbAnchorFor(wx, wy, 680, 820) } })
-    win.on('closed', () => {
-      const w = S.workflows.get(wcId)
-      if (w) { try { w.ac.abort() } catch {}; for (const s of w.sessions) { try { oc.abort(w.serve, s) } catch {}; S.sessionInfo.delete(s) }; S.workflows.delete(wcId) }
-    })
-    return id
+    const g = String(goal || '').trim() || '未命名工作流'
+    const dir = S.settings.projectDir || ''
+    // msg=系统规程+目标(发给 serve);disp=目标(用户气泡只显示目标,规程不露)。返回卡 id,与旧签名兼容。
+    return spawnCard('工作流 · ' + g.slice(0, 20), null, workflowSystemPrompt(dir) + '\n\n【总目标】\n' + g, g, { flash: true })
   }
 
   // ── 需求分析（多Agent 对抗 → 三类清单）────────────────────────────────────────
@@ -1232,7 +1241,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ].join('\n')
   ipcMain.handle('start-conversation', (_e, payload) => {
     const { title, msg, disp, files, mode } = payload || {}
-    if (mode === 'wf') return { id: spawnWorkflow(msg || title || '') }   // 动态工作流走文本(含已内联文档);图片暂不支持
+    if (mode === 'wf') return { id: spawnWorkflow(msg || title || '') }   // 动态工作流:起单主 Agent fan-out 卡(见 spawnWorkflow);图片暂不支持
     if (mode === 'pipeline') {
       const body = msg || title || ''
       return { id: spawnCard('任务编排 · ' + String(disp || body).slice(0, 18), null, PIPELINE_RULES + body, disp || body, { flash: true }) }

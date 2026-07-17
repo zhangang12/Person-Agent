@@ -107,7 +107,7 @@
         <span id="modelName">默认模型</span>
       </button>
       <span class="sp"></span>
-      <div class="seg" title="自动：Agent 自判 ｜ 任务编排：按描述顺序执行业务链(跑技能/读文件/发邮件) ｜ 动态工作流：多 Agent 拆解复杂任务">
+      <div class="seg" title="自动：Agent 自判 ｜ 任务编排：单 Agent 按描述顺序走业务链(跑技能/读文件/发邮件) ｜ 动态工作流：单主 Agent 自己拆解、并行派子 Agent 深挖、自己综合(Claude Code 式)">
         <button id="mAuto" class="on">自动</button>
         <button id="mPipe">任务编排</button>
         <button id="mWf">动态工作流</button>
@@ -182,7 +182,7 @@
   projBtn.addEventListener('click', async () => { try { paintProj(await H.pickProject()) } catch (e) {} setTimeout(() => goalEl.focus(), 30) })
   H.onProject && H.onProject((p) => paintProj(p))
 
-  // 模式:自动(Agent 自判要不要升格) / 任务编排(单执行体按描述顺序走业务链) / 动态工作流(多 Agent 拆解复杂任务)
+  // 模式:自动(Agent 自判要不要升格) / 任务编排(单执行体按描述顺序走业务链) / 动态工作流(单主 Agent 连续上下文里自拆+并行派子Agent+自综合,Claude Code 式)
   let mode = 'auto'
   const MODES = { mAuto: 'auto', mPipe: 'pipeline', mWf: 'wf' }
   for (const id of Object.keys(MODES)) $(id).addEventListener('click', () => { mode = MODES[id]; for (const k of Object.keys(MODES)) $(k).classList.toggle('on', k === id); paintPipePanel(); goalEl.focus() })
@@ -305,7 +305,7 @@
   document.addEventListener('drop', async (e) => { e.preventDefault(); dropHint.classList.remove('show'); const fs = Array.from((e.dataTransfer && e.dataTransfer.files) || []); for (const f of fs) await addFile(f) })
   document.addEventListener('paste', async (e) => { const items = (e.clipboardData && e.clipboardData.items) || []; for (const it of items) { if (it.kind === 'file' && /^image\//.test(it.type)) { const f = it.getAsFile(); if (f) { e.preventDefault(); await addFile(f) } } } })
 
-  // 开新会话:自动=开对话卡(卡里 Agent 可自主升格);直接工作流=强制动态编排;附件随首条消息带过去
+  // 开新会话:自动=开对话卡(卡里 Agent 可自主升格);动态工作流=开一张会 fan-out 的主 Agent 卡;附件随首条消息带过去
   const goalEl = $('goal')
   function go() {
     const v = goalEl.value.trim()

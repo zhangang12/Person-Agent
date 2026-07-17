@@ -243,6 +243,8 @@ await (async () => {
   ])
   ok('用户气泡只剩原文(注入前缀全剥掉)', msgs[0].role === 'user' && msgs[0].text === '帮我看这个报错', msgs[0] && msgs[0].text)
   ok('剥离只认标记块,不误伤正文', stripInjected('正文里聊到 <个人记忆> 这个词但没闭合') === '正文里聊到 <个人记忆> 这个词但没闭合')
+  ok('剥离动态工作流规程(Claude Code 式主 Agent 规程,续接不露)', stripInjected('<动态工作流规程>\n一堆纪律\n</动态工作流规程>\n\n【总目标】\n查并发问题') === '【总目标】\n查并发问题')
+  ok('剥离任务编排执行规程', stripInjected('<任务编排执行规程>\n规程\n</任务编排执行规程>\n\n跑技能X') === '跑技能X')
   ok('reasoning part 的历史思考带回', msgs[1].reasoning === '先查日志再定位', msgs[1] && msgs[1].reasoning)
   ok('正文里的 <think> 也拆进思考、正文只剩答案', msgs[3].reasoning === '这轮的思考混在正文里' && msgs[3].text === '第二轮答案', msgs[3])
   ok('每条助手消息各带各的思考(不是只有最后一轮)', !!(msgs[1].reasoning && msgs[3].reasoning))

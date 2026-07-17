@@ -420,6 +420,8 @@ function stripInjected(t) {
     .replace(/<项目背景>[\s\S]*?<\/项目背景>\s*/g, '')
     .replace(/<作答技能:[^>\n]{0,120}>[\s\S]*?<\/作答技能>\s*/g, '')
     .replace(/<上轮对话接力摘要>[\s\S]*?<\/上轮对话接力摘要>\s*/g, '')   // 压缩续聊注入的摘要,同样不进用户气泡
+    .replace(/<动态工作流规程>[\s\S]*?<\/动态工作流规程>\s*/g, '')          // 动态工作流(Claude Code 式)注入的主 Agent 规程
+    .replace(/<任务编排执行规程>[\s\S]*?<\/任务编排执行规程>\s*/g, '')      // 任务编排注入的单 Agent 规程
     .trim()
 }
 // 从正文里拆 <think> 段(这个网关的模型思考常以 <think> 混在 text 里,不走标准 reasoning part):
