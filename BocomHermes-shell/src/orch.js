@@ -53,25 +53,38 @@ module.exports = function initOrch(S, { ipcMain, oc, orch, log, app, path, fs })
       const IDLE_MS = 1200000          // 常规:20 分钟空转才判死(容得下慢网关一次 15 分钟重试风暴)
       const IDLE_MS_HOTREAD = 360000   // 高读会话:6 分钟 —— 读了一大堆文件又彻底安静,几乎必是上下文被撑爆、模型调用卡死(不是"慢"),快判快重试(可调)
       const started = Date.now()
-      let watchdog = null
+      let watchdog = null, probing = false, lastSig = '', probeAlive = started   // probeAlive=主动探测确认"还在推进"的最近时刻,与事件流 si.lastAt 取较新
       const idleDeath = new Promise((_, rej) => {
-        watchdog = setInterval(() => {
+        watchdog = setInterval(async () => {
+          if (probing) return
           const si = S.sessionInfo.get(sid)
-          if (si && si.awaitPerm > 0) return   // 正在等人批准工具(session.js onPermission 记的账)——这不是空转,别把"用户去吃饭"当黑洞杀掉;用户随时可点停止
-          const last = (si && si.lastAt) || started
-          // 该会话各上下文单元里读得最多的一个:高读=溢出嫌疑大,缩短空转容忍。还在读/还在出文本的会一直刷新 lastAt → 不会被误杀,只杀"读一堆后彻底安静"的卡死会话
+          if (si && si.awaitPerm > 0) { probeAlive = Date.now(); return }   // 正在等人批准工具(session.js onPermission 记的账)——这不是空转,别把"用户去吃饭"当黑洞杀掉;用户随时可点停止
+          // 存活信号取两路较新:事件流打点(si.lastAt,这台 serve 少推 + 会半开,不可靠)与 主动探测(probeAlive)
+          const last = Math.max((si && si.lastAt) || started, probeAlive)
+          // 该会话各上下文单元里读得最多的一个:高读=溢出嫌疑大,缩短空转容忍。还在读/还在出文本的会一直刷新 → 不会被误杀,只杀"读一堆后彻底安静"的卡死会话
           let reads = 0
           if (si && si.readStat) for (const rs of si.readStat.values()) if (rs.parts && rs.parts.size > reads) reads = rs.parts.size
           const idleLimit = reads >= 60 ? IDLE_MS_HOTREAD : IDLE_MS
-          if (Date.now() - last > idleLimit) {
-            clearInterval(watchdog); watchdog = null
-            try { oc.abort(serve, sid) } catch {}
-            const why = reads >= 60
-              ? '读了 ' + reads + ' 个文件后连续 ' + Math.round(idleLimit / 60000) + ' 分钟无响应(疑似上下文被撑爆、模型调用卡死)'
-              : '连续 ' + Math.round(idleLimit / 60000) + ' 分钟无任何活动'
-            log('wf 空转看门狗:会话 ' + sid + '(' + ((meta && meta.kind || 'work') + ':' + (meta && meta.id || '')) + ')' + why + ',已中止')
-            rej(new Error('任务超时(' + why + ',已中止会话)'))
-          }
+          if (Date.now() - last <= idleLimit) return
+          // 疑似空转 → 判死前【主动探一次消息端点】:模型还在推进(消息在长)= 事件流假死不是模型死,续命不杀。
+          // 这是治"第三轮规划器被误杀"的根:规划器静默想很久 + 这台 serve 不流式/半开 → si.lastAt 冻结,但模型没死。
+          probing = true
+          let sig = null
+          try {
+            const msgs = await Promise.race([oc.getMessages(serve, sid), new Promise((r) => setTimeout(() => r(null), 10000))])
+            if (Array.isArray(msgs)) sig = msgs.length + ':' + msgs.reduce((n, m) => n + ((m.text || '').length + (m.reasoning || '').length), 0)
+          } catch {}
+          if (sig != null && sig !== lastSig) { lastSig = sig; probeAlive = Date.now(); probing = false; return }   // 消息在长 → 活着,续命
+          probing = false
+          // 消息端点也无进展(或探测超时/serve 不通)→ 这才是真黑洞
+          if (!watchdog) return
+          clearInterval(watchdog); watchdog = null
+          try { oc.abort(serve, sid) } catch {}
+          const why = reads >= 60
+            ? '读了 ' + reads + ' 个文件后连续 ' + Math.round(idleLimit / 60000) + ' 分钟无响应且消息端点无进展(疑似上下文被撑爆、模型调用卡死)'
+            : '连续 ' + Math.round(idleLimit / 60000) + ' 分钟无任何活动且消息端点无进展'
+          log('wf 空转看门狗:会话 ' + sid + '(' + ((meta && meta.kind || 'work') + ':' + (meta && meta.id || '')) + ')' + why + ',已中止')
+          rej(new Error('任务超时(' + why + ',已中止会话)'))
         }, 20000)
       })
       idleDeath.catch(() => {})   // race 输掉(任务正常结束)时不产生 unhandled rejection
