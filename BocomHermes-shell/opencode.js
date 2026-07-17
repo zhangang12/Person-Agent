@@ -283,10 +283,24 @@ function pickTurnText(list) {
   const la = asst[asst.length - 1]
   const laText = extractText(la)
   const laDone = !!(la?.info?.time?.completed || la?.info?.finish)
-  // sig=活动指纹(助手消息数:总 part 数:已出文本长度)。它变了 = 这个回合还在推进(工具在跑 / 文本在长)。
-  // 轮询据此判"空转多久",而不是看墙钟:一个埋头调工具十几分钟、期间一个字都不吐的任务是【慢】不是【死】,不该被砍。
-  const nParts = asst.reduce((n, m) => n + (((m?.parts ?? m?.data?.parts ?? m?.info?.parts) || []).length || 0), 0)
-  return { done: laDone && !!laText, text, laDone, laText, sig: asst.length + ':' + nParts + ':' + text.length }   // 收尾 = 最后一条 assistant 已完成【且带文本】
+  // sig=活动指纹(助手消息数:总part数:文本长:思考长:工具忙),它变了 = 回合还在推进。思考长度必须计入 ——
+  // 长思考期间 text 不动,只看 text 会把"正在想"误判成"答完了"。toolRunning=有工具 part 还没到终态:
+  // 这是"文本稳定但没答完"唯一可靠的机器信号(答案截半截的根子就是文本稳定 + 工具在跑的间隙)。
+  let nParts = 0, rLen = 0, toolRunning = false
+  for (const m of asst) {
+    const parts = (m?.parts ?? m?.data?.parts ?? m?.info?.parts) || []
+    nParts += parts.length || 0
+    for (const p of parts) {
+      if (!p) continue
+      if (p.type === 'reasoning' || p.type === 'thinking') rLen += String(p.text || p.reasoning || p.content || '').length
+      else if (p.type === 'tool') {
+        const st = String((p.state && p.state.status) || p.status || '')
+        if (st && !/complet|success|done|error|fail|cancel|abort/i.test(st)) toolRunning = true
+      }
+    }
+  }
+  return { done: laDone && !!laText, text, laDone, laText, toolRunning,
+    sig: asst.length + ':' + nParts + ':' + text.length + ':' + rLen + ':' + (toolRunning ? 1 : 0) }   // 收尾 = 最后一条 assistant 已完成【且带文本】
 }
 // maxMs=绝对上限(防永久 hang);idleMs=空转上限(sig 一直不动才算空转)。
 // 超时【抛错,不再返回空串】:返回 '' 会让上层无法区分"黑洞会话"和"跑完了没话说" —— 编排层照单全收记成
@@ -303,13 +317,15 @@ async function waitAssistantText(info, sessionId, maxMs = 1800000, idleMs = 6000
     let raw; try { raw = await api(info.base, 'GET', `/session/${sessionId}/message`); lastErr = null } catch (e) { lastErr = e; continue }   // 留住最后一个错:serve 挂掉时上层才有的可查(否则=10 分钟静默 + 空结果)
     const list = Array.isArray(raw) ? raw : (raw && raw.data) || []
     const r = pickTurnText(list)
-    if (r.sig !== sig) { sig = r.sig; lastMove = Date.now() }               // 还在推进 → 续命,不按墙钟砍慢任务
-    if (r.laDone) info.hasCompletedMarker = true                            // 这台 serve 会标完成 → 学到能力,永久关掉下面的"稳定即收"蒙混判据
-    if (r.done) return r.text                                              // 最后一条已完成且带文本 → 收
-    // "文本稳定 ~2s 即收"只给【从没见过完成标记】的 serve 兜底 —— 有正经收尾信号的 serve 走这条会截半截:
-    // 模型先吐一段文字→调一个 >2.1s 的工具→再续写,文本恰好稳定三拍 → 半截被当完整答案返回,后半段全丢(表现:"回答突然断了")。
-    // 能力按 serve 记(info 是常驻池对象):见过一次 time.completed/finish 就永久学会,跨轮生效。
-    if (!info.hasCompletedMarker && r.text && r.text === prev) { if (++stable >= 3) return r.text } else { stable = 0; prev = r.text }
+    prev = r.text || prev
+    if (r.done) return r.text                                              // 最后一条已完成且带文本 → 收(最快路径)
+    // 稳定即收的判据升级:不再按"这台 serve 有没有完成标记"二选一 ——
+    //   · 完成标记打得晚的 serve(实测内网:completed 可能等会话级收尾/标题生成才落),死等它 = 简单问题也 70s(用户实测,终端 10 倍速于卡片);
+    //   · 但纯文本稳定就收会截半截(文本稳定 + 工具在跑的间隙)。
+    // 真正可靠的忙信号是【工具 part 的状态】+【思考还在长】(都进了 sig):
+    //   sig 连续 3 拍(~2s)没动 且 没有工具在跑 且 已有正文 → 答完了,收。工具在跑/思考在长 → sig 一直变,永远不会误收。
+    if (r.sig !== sig) { sig = r.sig; lastMove = Date.now(); stable = 0 }
+    else if (!r.toolRunning && r.text) { if (++stable >= 3) return r.text }
     if (r.laDone && !r.laText) { if (++doneNoTextTicks >= 42) return r.text } else { doneNoTextTicks = 0 }   // 兜底:真以无文本工具收尾(罕见),~30s 无续写才放弃
   }
   if (prev) return prev
