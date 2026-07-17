@@ -148,6 +148,15 @@ const TOOLS = [
     }, required: ['name', 'dataset'] },
   },
   {
+    name: 'doc_read',
+    description: '读一个本地文档文件的文本内容(Excel/CSV/Word/PDF/TXT/MD/HTML/JSON/XML;Excel 转成 CSV 文本,每个 Sheet 一段)。【任务编排】链路的加工环节用它:skill_run 回放导出的文件路径在其报告的「导出/下载文件」行里,拿路径直接读,不要自己写脚本解析二进制。支持 offset/limit 分段读大文件。',
+    inputSchema: { type: 'object', properties: {
+      path:   { type: 'string', description: '本地文件绝对路径(如 skill_run 报告里给的下载路径)' },
+      offset: { type: 'number', description: '从第几个字符开始,默认 0' },
+      limit:  { type: 'number', description: '本次取多少字符,默认 8000,最大 50000(大表分段翻,别一口吞)' },
+    }, required: ['path'] },
+  },
+  {
     name: 'skill_page_read',
     description: '【混合执行】读用户可见的内嵌浏览器当前页:URL/标题/可交互元素清单(带现成可用的选择器)/正文节选。技能回放失败被点名接管时,每步操作前先调这个确认页面状态。',
     inputSchema: { type: 'object', properties: {} },
@@ -195,7 +204,30 @@ async function callTool(name, args) {
     const body = { name: String(args.name || ''), params: args.params || {} }
     if (args.baseUrl) body.baseUrl = String(args.baseUrl)
     const r = await relayPost('/skill/run', body)
-    return r.report || JSON.stringify(r)
+    let out = r.report || JSON.stringify(r)
+    // 任务编排的接力棒:导出文件的【完整路径】必须回到 agent 手里(report 兜底再补一次,防主进程侧文案改动漏掉)——
+    // 没有路径,"回放导出 → doc_read 加工"这条链就断在第一棒
+    if (Array.isArray(r.downloads) && r.downloads.length && !out.includes(r.downloads[0])) {
+      out += '\n导出/下载文件(' + r.downloads.length + ' 个,用 doc_read 读内容):\n' + r.downloads.map((p) => '  · ' + p).join('\n')
+    }
+    return out
+  }
+  if (name === 'doc_read') {
+    const fp = String(args.path || '').trim()
+    if (!fp) return '(path 必填:本地文件绝对路径)'
+    if (!path.isAbsolute(fp)) return '(path 必须是绝对路径,收到: ' + fp + ')'
+    if (!fs.existsSync(fp)) return '(文件不存在: ' + fp + ')'
+    // 复用主进程同一套解析(attachments.js 无 electron 依赖,MCP 子进程可直载;xlsx/mammoth/pdf-parse 懒加载,缺依赖会给可读错误)
+    const { createRequire } = await import('node:module')
+    const attachments = createRequire(import.meta.url)('../src/attachments.js')
+    const r = await attachments.extractLocalFile(fp)
+    if (!r.ok) return 'doc_read 失败: ' + r.error
+    const text = r.text || ''
+    const off = Math.max(0, +args.offset || 0)
+    const lim = Math.max(1, Math.min(+args.limit || 8000, 50000))
+    const chunk = text.slice(off, off + lim)
+    const more = off + lim < text.length
+    return `[${path.basename(fp)} · ${chunk.length} / ${text.length} 字${more ? ` · 继续传 offset=${off + lim}` : ' · 已完整'}]\n──────────\n${chunk}`
   }
   if (name === 'skill_run_batch') {
     const body = { name: String(args.name || ''), dataset: Array.isArray(args.dataset) ? args.dataset : [] }

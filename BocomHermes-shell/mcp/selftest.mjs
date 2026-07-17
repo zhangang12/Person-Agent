@@ -19,6 +19,48 @@ try {
   notify('notifications/initialized')
   const list = await req('tools/list')
   ok(Array.isArray(list.result?.tools) && list.result.tools.some((t) => t.name === 'browser_navigate'), 'tools/list 含 browser_navigate（' + (list.result?.tools?.length || 0) + ' 个工具）')
+  ok(list.result.tools.some((t) => t.name === 'doc_read'), 'tools/list 含 doc_read(任务编排加工环节)')
+
+  // ── doc_read:任务编排链路的加工积木(不依赖浏览器/relay,先测) ──
+  {
+    const os = await import('node:os')
+    const fsm = await import('node:fs')
+    const tmp = fsm.mkdtempSync(path.join(os.tmpdir(), 'docread-'))
+    // csv/txt 直读
+    const csvP = path.join(tmp, '导出报表.csv')
+    fsm.writeFileSync(csvP, '客户号,金额,状态\nC001,8000,正常\nC002,-99,异常', 'utf8')
+    const r1 = await req('tools/call', { name: 'doc_read', arguments: { path: csvP } }, 20000)
+    const t1 = r1.result?.content?.[0]?.text || ''
+    ok(/C002,-99,异常/.test(t1) && /已完整/.test(t1), 'doc_read 读 CSV 全文')
+    // xlsx → CSV 文本(复用 attachments.js 的 xlsx 解析;真写一个 xlsx)
+    let xlsxOk = false
+    try {
+      const { createRequire } = await import('node:module')
+      const xlsx = createRequire(import.meta.url)('../node_modules/xlsx')
+      const wb = xlsx.utils.book_new()
+      xlsx.utils.book_append_sheet(wb, xlsx.utils.aoa_to_sheet([['户名', '余额'], ['张三', 123.45]]), '对账单')
+      const xp = path.join(tmp, '对账.xlsx')
+      xlsx.writeFile(wb, xp)
+      const r2 = await req('tools/call', { name: 'doc_read', arguments: { path: xp } }, 20000)
+      const t2 = r2.result?.content?.[0]?.text || ''
+      xlsxOk = /Sheet: 对账单/.test(t2) && /张三,123.45/.test(t2)
+      ok(xlsxOk, 'doc_read 读 XLSX → 每 Sheet 一段 CSV 文本')
+    } catch (e) { console.log('  ! xlsx 库不可用,跳过 xlsx 用例: ' + e.message) }
+    // 分段:limit 截断 + nextOffset 续读
+    const bigP = path.join(tmp, 'big.txt')
+    fsm.writeFileSync(bigP, 'A'.repeat(50) + 'B'.repeat(50), 'utf8')
+    const r3 = await req('tools/call', { name: 'doc_read', arguments: { path: bigP, limit: 60 } }, 20000)
+    const t3 = r3.result?.content?.[0]?.text || ''
+    ok(/继续传 offset=60/.test(t3), 'doc_read 大文件分段(带 nextOffset)')
+    const r4 = await req('tools/call', { name: 'doc_read', arguments: { path: bigP, offset: 60 } }, 20000)
+    ok(/B{40}/.test(r4.result?.content?.[0]?.text || ''), 'doc_read 按 offset 续读')
+    // 防呆
+    const r5 = await req('tools/call', { name: 'doc_read', arguments: { path: '相对路径.csv' } }, 20000)
+    ok(/必须是绝对路径/.test(r5.result?.content?.[0]?.text || ''), 'doc_read 拒绝相对路径')
+    const r6 = await req('tools/call', { name: 'doc_read', arguments: { path: path.join(tmp, '不存在.csv') } }, 20000)
+    ok(/文件不存在/.test(r6.result?.content?.[0]?.text || ''), 'doc_read 不存在给可读错误')
+    try { fsm.rmSync(tmp, { recursive: true, force: true }) } catch {}
+  }
 
   const html = 'data:text/html,' + encodeURIComponent('<title>TS-OK</title><body><h1 id=h>HELLO_BOCOMHERMES</h1>')
   const nav = await req('tools/call', { name: 'browser_navigate', arguments: { url: html } }, 60000)

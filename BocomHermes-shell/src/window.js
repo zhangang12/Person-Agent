@@ -1906,6 +1906,9 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     // 网关挂了也不影响 —— 文件已在本地,工作流窗口自会报错;批跑不走这条(见 skillRunBatch,循环编排属"运行计划"不进单次技能)。
     let workflow = null
     const dls = Array.isArray(replay.downloads) ? replay.downloads : []
+    // 导出文件【完整路径】始终进报告(不只 postWorkflow 场景):任务编排里 worker 调 skill_run 后要拿路径接 doc_read 加工,
+    // 以前没配 postWorkflow 时报告对下载只字不提 —— 链条断在第一棒
+    if (dls.length) lines.push('导出/下载文件(' + dls.length + ' 个): ' + dls.join(' | '))
     if (ok && rec.postWorkflow && rec.postWorkflow.goal) {
       if (dls.length) {
         try {
