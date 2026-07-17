@@ -586,9 +586,14 @@ module.exports = function initRecorder(ctx) {
       const gap = Math.min(Math.max(0, (ev.t || 0) - lastT), gapCap)   // 步间 sleep 封顶(fast 模式 400ms)
       if (gap > 50) await sleep(gap)
       lastT = ev.t || 0
-      // 人机断点(验证码/滑块/动态令牌):暂停等人现场输入,不照填录制值(已清空),续跑后走下一步
-      if (ev.human) {
-        const how = await awaitHumanGate(wc, ev, i, sendProg)
+      // 人机断点(验证码/滑块/动态令牌):暂停等人现场输入,不照填录制值(已清空),续跑后走下一步。
+      // secret 步(密码)运行时没给值 → 同样暂停等人【现场输入】,绝不填空硬跑:填空密码=登录必败,
+      // 后续依赖登录态的步骤(SMS 弹窗等)全部连败早停,报告还看不出根子是"密码没给"(实测踩中)。
+      // 密码走这条路也最安全 —— 值由人敲进页面,不经过 Agent/模型/日志。
+      const secretNoValue = ev.act === 'input' && ev.secret && !String(ev.value || '').trim()
+      if (ev.human || secretNoValue) {
+        const gateEv = ev.human ? ev : { ...ev, human: true, humanHint: ev.humanHint || '密码/凭据(运行时未提供,请在页面直接输入 —— 值不经过模型)' }
+        const how = await awaitHumanGate(wc, gateEv, i, sendProg)
         stepReport.push({ i: i + 1, act: ev.act, sel: ev.sel || '', ok: true, human: true, how })
         sendProg({ i: i + 1, total: rec.events.length, act: ev.act, ok: true })
         consecutiveFails = 0
