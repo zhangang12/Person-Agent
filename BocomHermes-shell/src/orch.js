@@ -85,12 +85,10 @@ module.exports = function initOrch(S, { ipcMain, oc, orch, log, app, path, fs })
     }
 
     try {
-      // 工作目录锚:让规划器/子任务都知道该在哪个项目里核实(子任务会话本就跑在 dir,这里给规划层同一事实)
-      // 任务编排积木:用户可以用一句话描述跨模块的业务链(如"跑XX技能导出→核对数据→把问题发邮件给谁"),
-      // 规划器按需把这些动词拆成子任务 —— 工具本身 serve 已注册,这里只是让规划层【知道有这些积木】,不提就不会想到用。
-      // 外发安全:mail_send 经发件箱缓发(用户可撤销/立即发送),模型不掌握"立即发出"的能力。
-      const ORCH_TOOLS_HINT = '\n(可用的任务编排积木,按目标需要取用:skill_run=运行已录制的浏览器技能(导出/下载的文件完整路径在其报告的「导出/下载文件」行);doc_read=读本地 Excel/CSV/Word/PDF 为文本;mail_send=发邮件(经发件箱缓发,用户可撤销);skill_list=查有哪些技能。与目标无关时忽略。)'
-      const goalFull = (dir ? goal + '\n(工作目录:' + dir + ' —— 子任务应用工具在此目录内核实,不要访问其它项目)' : goal) + ORCH_TOOLS_HINT
+      // 工作目录锚:让规划器/子任务都知道该在哪个项目里核实(子任务会话本就跑在 dir,这里给规划层同一事实)。
+      // 【动态工作流 = 纯多 Agent 拆解复杂任务】,与「任务编排」(单 Agent 顺序串业务链)是两回事,不在这里塞
+      // skill_run/doc_read/mail_send 之类的"业务链积木提示" —— 那属于任务编排卡(见 window.js PIPELINE_RULES)。
+      const goalFull = dir ? goal + '\n(工作目录:' + dir + ' —— 子任务应用工具在此目录内核实,不要访问其它项目)' : goal
       const res = await orch.orchestrate(goalFull, {
         // taskTimeoutMs:0 = 不按墙钟杀(内网网关慢是常态,慢≠死);超时判定改由 run() 的空转看门狗负责
         run, signal: ac.signal, maxConcurrency: 2, maxRounds: 4, maxTasks: 16, maxBatch: 5, maxRoundsCeil: 8, maxTasksCeil: 32, taskTimeoutMs: 0, review: true, onBeforeBatch,

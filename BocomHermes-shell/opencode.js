@@ -310,7 +310,9 @@ async function waitAssistantText(info, sessionId, maxMs = 1800000, idleMs = 6000
   const t0 = Date.now()
   let prev = '', stable = 0, doneNoTextTicks = 0, sig = '', lastMove = Date.now(), lastErr = null
   while (Date.now() - t0 < maxMs && Date.now() - lastMove < idleMs) {
-    await sleep(700)
+    // 自适应轮询:前 6 秒密探(450ms)——简单问题一完成就尽快收,少等半拍;之后疏探(750ms)——
+    // 长任务不必频繁打 GET /message。实测这台 serve 首字要 12s(模型 TTFT),客户端能省的就这半秒量级。
+    await sleep(Date.now() - t0 < 6000 ? 450 : 750)
     // 本次等待期间会话被 abort(用户点「停止」/看门狗收割)→ 别再傻等 serve 自然收尾(它可能永远不标 completed,
     // 一等就是 idleMs=10 分钟,用户点了停止卡片却一直转圈)。宽限 ~3s 让 abort 后的收尾文本落进消息,然后有啥收啥。
     if (abortedSince(sessionId, t0) && Date.now() - abortedSids.get(sessionId) > 2800) return prev

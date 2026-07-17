@@ -705,11 +705,11 @@ module.exports = function initRecorder(ctx) {
       else await sleep(fast ? 50 : 120)
     }
     // 下载后编排的输入采集:回放跑完文件常常还没落地(导出是异步的)。若本次回放期间触发了下载(S.downloads 里 at≥dlBase),
-    // 或技能配了「下载后编排」(必然期待一次导出)→ 等下载全部落定再收尾,把已完成的绝对路径交给上层(skillRun 据此起工作流)。
-    // 纯确定性轮询,零 LLM;硬等(postWorkflow)最长 90s,自动模式(仅探到下载才等)最长 30s、4s 内无下载起头就判定"非下载技能"不空等。
+    // 或技能配了「下载后任务编排」(必然期待一次导出)→ 等下载全部落定再收尾,把已完成的绝对路径交给上层(skillRun 据此起任务编排卡)。
+    // 纯确定性轮询,零 LLM;硬等(配了下载后任务编排)最长 90s,自动模式(仅探到下载才等)最长 30s、4s 内无下载起头就判定"非下载技能"不空等。
     let downloads = []
     try {
-      const expectDl = !!(rec.postWorkflow && rec.postWorkflow.goal)
+      const _pp = rec.postPipeline || rec.postWorkflow; const expectDl = !!(_pp && _pp.goal)
       // 归属过滤:时间窗(at≥dlBase)+【来源 origin ∈ 本次回放访问过的站点】双条件 —— 回放期间用户在别的标签手动
       // 下载的文件不再被错认成技能产物喂给工作流。旧记录无 url 字段/解析不出 origin 时退回纯时间窗(向后兼容)。
       // 同站判定按"主域"(最后两段标签)不苛求完全同 origin:银行的结单 PDF 常从另一个子域/文件网关下发
@@ -749,7 +749,7 @@ module.exports = function initRecorder(ctx) {
         }
         downloads = mine().filter((d) => d.state === 'completed').map((d) => d.savePath)
         if (downloads.length) log('replay downloads: 捕获 ' + downloads.length + ' 个下载文件' + (originRelaxed ? '(按时间窗降级采集:来源域不在访问清单,多半是文件网关子域)' : '') + '(' + downloads.map((p) => String(p).split(/[\\/]/).pop()).join(', ') + ')')
-        else if (expectDl) log('replay downloads: 技能配了「下载后编排」但本次未捕获到已完成的下载(导出是否成功?)')
+        else if (expectDl) log('replay downloads: 技能配了「下载后任务编排」但本次未捕获到已完成的下载(导出是否成功?)')
       }
     } catch (e) { log('replay download wait err: ' + e.message) }
     sendProg({ done: true, fails: stepReport.filter((s) => !s.ok).length, total: stepReport.length })

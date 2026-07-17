@@ -4,7 +4,7 @@
 // 另加合成边界用例:不跨元素误并、不误删两次真实点击、无按钮表单的 Enter 保留、survivors+dropped 可还原。
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
-const { compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, composePostWorkflowGoal, applyRefinePatch, rowToParamValues, relocateSelectors, selExpr, findElExpr, anchorExpr, takeoverDigest, applyParams, redactRec } = require('../src/recorder-core.js')
+const { compactEvents, humanGateHint, markHumanGates, upgradeToSkill, skillMd, composePostPipelineGoal, applyRefinePatch, rowToParamValues, relocateSelectors, selExpr, findElExpr, anchorExpr, takeoverDigest, applyParams, redactRec } = require('../src/recorder-core.js')
 
 let pass = 0, fail = 0
 function ok(name, cond, extra) {
@@ -337,28 +337,29 @@ console.log('用例15:takeoverDigest —— 接管摘要(secret 脱敏/人机断
   ok('普通值可见(非敏感,给 Agent 上下文)', d.doneText.includes('admin'))
 }
 
-console.log('用例16:composePostWorkflowGoal —— 下载后编排目标合成(下载文件路径接进工作流目标)')
+console.log('用例16:composePostPipelineGoal —— 下载后任务编排目标合成(下载文件路径接进单Agent任务编排目标)')
 {
   const files = ['C:/Users/x/Downloads/用户反馈.xlsx', 'C:/Users/x/Downloads/明细.csv']
-  const g = composePostWorkflowGoal('导出用户反馈', '把导出的表做成分析报告', files)
+  const g = composePostPipelineGoal('导出用户反馈', '把导出的表做成分析报告', files)
   ok('含人话目标', g.includes('把导出的表做成分析报告'))
   ok('含技能名', g.includes('导出用户反馈'))
   ok('含【输入文件】标注', g.includes('【输入文件】'))
   ok('每个下载文件路径都列出', files.every((f) => g.includes(f)))
   ok('提示子任务先读文件再干活', g.includes('读取') && g.includes('打开其内容'))
   // 空目标 → 空(无论有无文件):不配 postWorkflow 就不编排
-  ok('空/纯空白模板 → 空串(不触发编排)', composePostWorkflowGoal('x', '', files) === '' && composePostWorkflowGoal('x', '   ', files) === '')
+  ok('空/纯空白模板 → 空串(不触发编排)', composePostPipelineGoal('x', '', files) === '' && composePostPipelineGoal('x', '   ', files) === '')
   // 有目标无文件 → 原样返回(trim),不拼空清单
-  ok('有目标无下载 → 返回目标本身(trim)', composePostWorkflowGoal('x', '  做点啥  ', []) === '做点啥')
-  ok('非数组 files 当空处理', composePostWorkflowGoal('x', '做点啥', null) === '做点啥')
+  ok('有目标无下载 → 返回目标本身(trim)', composePostPipelineGoal('x', '  做点啥  ', []) === '做点啥')
+  ok('非数组 files 当空处理', composePostPipelineGoal('x', '做点啥', null) === '做点啥')
   // 空/null 文件项被过滤,只留有效路径
-  const g2 = composePostWorkflowGoal('x', '目标', ['  ', null, 'C:/a.xlsx', ''])
+  const g2 = composePostPipelineGoal('x', '目标', ['  ', null, 'C:/a.xlsx', ''])
   ok('空/null 文件项过滤,保留有效路径', g2.includes('C:/a.xlsx'))
   ok('清单只 1 行(3 个无效项被过滤)', (g2.match(/^- /gm) || []).length === 1, g2.match(/^- /gm))
   // skillMd 渲染"下载后编排"段(透明:文档/Agent 都看得到这个技能会编排)
-  const md = skillMd({ id: 'r', title: '导出反馈', events: [{ act: 'click', sel: '#exp', text: '导出' }], postWorkflow: { goal: '做成分析报告' } })
-  ok('skillMd 含"下载后编排"段 + 目标', md.includes('## 下载后编排') && md.includes('做成分析报告'))
-  ok('未配 postWorkflow → skillMd 无该段', !skillMd({ id: 'r', events: [{ act: 'click', sel: '#b', text: '导出' }] }).includes('## 下载后编排'))
+  const md = skillMd({ id: 'r', title: '导出反馈', events: [{ act: 'click', sel: '#exp', text: '导出' }], postPipeline: { goal: '做成分析报告' } })
+  ok('skillMd 含"下载后任务编排"段 + 目标', md.includes('## 下载后任务编排') && md.includes('做成分析报告'))
+  ok('向后兼容:老 postWorkflow 字段也认', skillMd({ id: 'r', events: [{ act: 'click', sel: '#e' }], postWorkflow: { goal: '老字段目标' } }).includes('老字段目标'))
+  ok('未配 → skillMd 无该段', !skillMd({ id: 'r', events: [{ act: 'click', sel: '#b', text: '导出' }] }).includes('## 下载后任务编排'))
 }
 
 // ── 用例17:redactRec —— 交出去的副本不带登录态(证据包给 Agent 读) ─────────────────

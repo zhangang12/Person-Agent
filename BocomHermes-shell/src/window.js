@@ -8,7 +8,7 @@ const emailSummarySeen = require('./email-summary-seen')
 const initOutbox = require('./outbox')
 const db = require('./db')
 const { extractMeeting } = require('./meeting-extract')
-const { RECORDER_JS, selExpr, findElExpr, anchorExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, markHumanGates, upgradeToSkill, skillMd, composePostWorkflowGoal, applyRefinePatch, rowToParamValues, relocateSelectors, takeoverDigest, redactRec } = require('./recorder-core')
+const { RECORDER_JS, selExpr, findElExpr, anchorExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, markHumanGates, upgradeToSkill, skillMd, composePostPipelineGoal, applyRefinePatch, rowToParamValues, relocateSelectors, takeoverDigest, redactRec } = require('./recorder-core')
 const initRecorder = require('./recorder')
 const { cdpConsoleLevel, fmtRO, fmtException, resolveFrame } = require('./cdp-format')
 const initMail = require('./mail')
@@ -1930,30 +1930,31 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     if (replay.after.errs.length) lines.push('回放后控制台报错 ' + replay.after.errs.length + ' 条: ' + replay.after.errs.slice(0, 3).map((x) => x.msg).join(' | '))
     if (replay.after.bad.length) lines.push('网络/业务异常 ' + replay.after.bad.length + ' 条: ' + replay.after.bad.slice(0, 3).map((b) => (b.biz ? '200·' + b.biz : (b.status || b.state)) + ' ' + b.url).join(' | '))
     lines.push('结束页面: ' + (replay.after.url || '?'))
-    // 下载后编排:技能配了 postWorkflow 且本次捕获到下载文件 → 把文件接进动态工作流(工作台窗口自动跑、DAG 可视、成果自动存档)。
-    // 网关挂了也不影响 —— 文件已在本地,工作流窗口自会报错;批跑不走这条(见 skillRunBatch,循环编排属"运行计划"不进单次技能)。
-    let workflow = null
+    // 下载后编排 = 【单 Agent 任务编排】,与「动态工作流」(多 Agent 拆解)彻底无关:技能配了 postPipeline 且捕获到下载文件
+    // → 开一张任务编排卡(注入 PIPELINE_RULES,单 Agent 顺序读文件→加工→按目标办),不再 spawnWorkflow。
+    // 网关挂了也不影响 —— 文件已在本地;批跑不走这条(见 skillRunBatch,循环批跑属"运行计划")。
+    let pipeline = null
     const dls = Array.isArray(replay.downloads) ? replay.downloads : []
-    // 导出文件【完整路径】始终进报告(不只 postWorkflow 场景):任务编排里 worker 调 skill_run 后要拿路径接 doc_read 加工,
-    // 以前没配 postWorkflow 时报告对下载只字不提 —— 链条断在第一棒
+    const pp = rec.postPipeline || rec.postWorkflow   // 向后兼容:老技能存的是 postWorkflow 字段,读时兜底
+    // 导出文件【完整路径】始终进报告(不只配了 postPipeline 的场景):任务编排里 Agent 调 skill_run 后要拿路径接 doc_read 加工,
+    // 以前没配时报告对下载只字不提 —— 链条断在第一棒
     if (dls.length) lines.push('导出/下载文件(' + dls.length + ' 个): ' + dls.join(' | '))
-    // 触发条件从"全绿才编排"放宽为"文件到手就编排":导出文件已捕获说明主链目标基本达成,个别步失败
-    // (常见:导出后的收尾点击失配)不该把整条编排卡死 —— 有失败照样启动,但在报告里明说,用户可在工作流窗停掉
-    if (rec.postWorkflow && rec.postWorkflow.goal) {
+    // 触发条件"文件到手就接编排":导出文件已捕获说明主链目标基本达成,个别收尾步失败不该卡死整条链 —— 有失败照样起,报告明说
+    if (pp && pp.goal) {
       if (dls.length) {
-        if (!ok) lines.push('注意:回放有失败步骤,但导出文件已捕获 —— 仍按文件启动下载后编排(不放心可在工作台窗口停止)')
+        if (!ok) lines.push('注意:回放有失败步骤,但导出文件已捕获 —— 仍按文件启动下载后任务编排(不放心可关掉那张卡)')
         try {
-          const wfGoal = composePostWorkflowGoal(hit.name, rec.postWorkflow.goal, dls)
-          const wfId = spawnWorkflow(wfGoal)
-          workflow = { started: true, files: dls, id: wfId }
-          lines.push('→ 已对下载的 ' + dls.length + ' 个文件启动「工作流编排」(见「工作台」窗口,成果自动存档): ' + dls.map((p) => String(p).split(/[\\/]/).pop()).join('、'))
-          try { S.audit && S.audit('skill', '技能「' + hit.name + '」触发下载后编排', { files: dls.map((p) => String(p).split(/[\\/]/).pop()), goal: String(rec.postWorkflow.goal).slice(0, 120), wfId }) } catch {}
-        } catch (e) { lines.push('下载后编排启动失败: ' + e.message) }
+          const pipeGoal = composePostPipelineGoal(hit.name, pp.goal, dls)
+          const cardId = spawnCard('任务编排 · ' + hit.name, null, PIPELINE_RULES + pipeGoal, pp.goal, { flash: true })
+          pipeline = { started: true, files: dls, id: cardId }
+          lines.push('→ 已对下载的 ' + dls.length + ' 个文件启动「任务编排」(单 Agent 顺序执行,见对话卡): ' + dls.map((p) => String(p).split(/[\\/]/).pop()).join('、'))
+          try { S.audit && S.audit('skill', '技能「' + hit.name + '」触发下载后任务编排', { files: dls.map((p) => String(p).split(/[\\/]/).pop()), goal: String(pp.goal).slice(0, 120), cardId }) } catch {}
+        } catch (e) { lines.push('下载后任务编排启动失败: ' + e.message) }
       } else {
-        lines.push('该技能配了「下载后编排」,但本次没捕获到下载文件 —— 请确认导出/下载步骤成功(工作流未启动)')
+        lines.push('该技能配了「下载后任务编排」,但本次没捕获到下载文件 —— 请确认导出/下载步骤成功(任务编排未启动)')
       }
     }
-    return { ok, pass: ok, report: lines.join('\n'), stepReport: replay.stepReport, downloads: dls, workflow }
+    return { ok, pass: ok, report: lines.join('\n'), stepReport: replay.stepReport, downloads: dls, pipeline }
   }
   // 批量跑技能(relay /skill/run-batch,Phase 5·数据集循环,设计文档第 6 节):
   // dataset 每行 = {参数label/key: 值} = 一次独立运行(独立参数注入/独立结果);循环在技能外,技能保持线性。
@@ -2092,7 +2093,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
           paramCount: (j.params || []).length,
           params: (j.params || []).map((p) => ({ key: p.key, label: p.label || p.key, secret: !!p.secret, default: p.default != null ? String(p.default) : '' })),   // 「录制与回放」中心:填参/批跑映射预览用
           gates: (j.events || []).filter((e) => e && e.human).length,   // 人机断点数(验证码等,卡片上提示"回放会暂停等人")
-          postWorkflow: (j.postWorkflow && j.postWorkflow.goal) ? { goal: String(j.postWorkflow.goal) } : null,   // 下载后编排:配了就在卡片上出 chip + ⋯ 里可编辑
+          postPipeline: (() => { const pp = j.postPipeline || j.postWorkflow; return (pp && pp.goal) ? { goal: String(pp.goal) } : null })(),   // 下载后任务编排:配了就在卡片上出 chip + ⋯ 里可编辑
           noCache: !!j.noCache,   // 技能级禁用缓存(跑前+每次导航前清 HTTP 缓存)
           startUrl: j.startUrl || '',
           expectation: j.expectation || '',

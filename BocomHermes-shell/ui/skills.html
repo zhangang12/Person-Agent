@@ -254,11 +254,11 @@ pre.doc{margin:0;font-family:var(--mono);font-size:11.5px;line-height:1.65;white
   <div class="sb"><pre class="doc" id="dBody"></pre></div>
 </div></div>
 
-<!-- 下载后编排弹层 -->
+<!-- 下载后任务编排弹层 -->
 <div class="ovl" id="ovlPw"><div class="sheet">
-  <div class="sh"><span class="t" id="pwTitle">下载后编排</span><button class="x" data-x="ovlPw">✕</button></div>
+  <div class="sh"><span class="t" id="pwTitle">下载后任务编排</span><button class="x" data-x="ovlPw">✕</button></div>
   <div class="sb">
-    <div class="hint">这个技能<b>回放会导出/下载文件</b>时,填一句话说明<b>拿下载的文件做什么</b> —— 技能跑完会自动把文件交给<b>动态工作流</b>处理(在「工作台」窗口可视化跑,成果自动存档)。</div>
+    <div class="hint">这个技能<b>回放会导出/下载文件</b>时,填一句话说明<b>拿下载的文件做什么</b> —— 技能跑完会自动开一张<b>单 Agent 任务编排卡</b>读文件按目标办(与多 Agent 动态工作流无关)。</div>
     <div class="fld"><label>对下载的文件做什么(人话目标)</label>
       <textarea id="pwGoal" placeholder="例:把导出的用户反馈表逐条归类,统计高频问题,产出一份 Markdown 分析报告" spellcheck="false"></textarea></div>
     <div class="hint">文件的本地路径会自动接在目标后面,工作流的子 Agent 会先读文件再干活。留空并点「关闭编排」= 取消。</div>
@@ -365,7 +365,7 @@ function skillCard(it){
       <span class="chip">${it.eventCount} 步</span>
       ${it.paramCount ? `<span class="chip">参数 ${it.paramCount}</span>` : ''}
       ${it.gates ? `<span class="chip gate" title="回放到这步会暂停,等你现场输入(如验证码)">人工 ${it.gates}</span>` : ''}
-      ${it.postWorkflow ? `<span class="chip pw" title="回放导出/下载文件后,自动对文件跑动态工作流:&#10;${esc(it.postWorkflow.goal)}">下载后编排</span>` : ''}
+      ${it.postPipeline ? `<span class="chip pw" title="回放导出/下载文件后,自动开一张单 Agent 任务编排卡读文件按目标办:&#10;${esc(it.postPipeline.goal)}">下载后任务编排</span>` : ''}
       ${it.noCache ? `<span class="chip" title="每次运行前 + 每次页面跳转前清 HTTP 缓存,确保拿到最新页面/数据(不影响登录态)">禁用缓存</span>` : ''}
     </div>
     ${it.description ? `<div class="desc">${esc(it.description)}</div>` : ''}
@@ -406,7 +406,7 @@ function openMore(anchor, it){
   popEl = document.createElement('div'); popEl.className = 'pop'
   popEl.innerHTML = `
     <button data-m="nc" title="每次跑这个技能前 + 每次页面跳转前清一次浏览器缓存,确保拿到的是最新页面/数据(不影响登录态)">禁用缓存跑 · ${it.noCache ? '<b style="color:var(--accent)">开</b>' : '关'}</button>
-    <button data-m="pw">下载后编排…</button>
+    <button data-m="pw">下载后任务编排…</button>
     <button data-m="doc">查看技能文档</button>
     <button data-m="exp">导出分享</button>
     <button data-m="del" class="danger">删除技能</button>`
@@ -529,20 +529,20 @@ H.onSkillBatchProgress && H.onSkillBatchProgress((d) => {
   showStatus(d.ok ? 'run' : 'err', `批量 行 ${d.row}/${d.total} · ✓ ${d.pass} / ✗ ${d.fail}${d.ok ? '' : ' · ' + (d.firstErr || '')}`)
 })
 
-// ── 下载后编排:配一句话,技能跑完把下载文件交给动态工作流 ────────────────────────
+// ── 下载后任务编排:配一句话,技能跑完开一张单 Agent 任务编排卡读文件按目标办 ──────────
 let pwIt = null
 function openPw(it){
   pwIt = it
-  $('pwTitle').textContent = '下载后编排 · ' + (it.title || it.id)
-  $('pwGoal').value = (it.postWorkflow && it.postWorkflow.goal) || ''
+  $('pwTitle').textContent = '下载后任务编排 · ' + (it.title || it.id)
+  $('pwGoal').value = ((it.postPipeline || it.postWorkflow) && (it.postPipeline || it.postWorkflow).goal) || ''
   $('ovlPw').classList.add('show')
   setTimeout(() => $('pwGoal').focus(), 60)
 }
 async function savePw(goal){
   if (!pwIt) return
-  const ok = await H.browserRecUpdate(pwIt.id, { postWorkflow: goal ? { goal } : null })
+  const ok = await H.browserRecUpdate(pwIt.id, { postPipeline: goal ? { goal } : null })
   $('ovlPw').classList.remove('show')
-  toast(ok ? (goal ? '<span class="ok">✓</span> 已设置「下载后编排」' : '<span class="ok">✓</span> 已关闭「下载后编排」') : '保存失败')
+  toast(ok ? (goal ? '<span class="ok">✓</span> 已设置「下载后任务编排」' : '<span class="ok">✓</span> 已关闭「下载后任务编排」') : '保存失败')
   pwIt = null
   if (ok) load()
 }
