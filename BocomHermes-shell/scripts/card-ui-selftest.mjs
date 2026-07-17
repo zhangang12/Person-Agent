@@ -245,5 +245,25 @@ console.log('用例11:rich.js —— http 链接渲染成可点外链,文件:行
   ok('围栏代码块自带复制按钮(存量能力,防退化)', /data-act="copy"/.test(w.Rich.renderMarkdown('```js\nconst a=1\n```')))
 }
 
+console.log('用例12:内联 task 子Agent fan-out 实时可见(不等完成才显示)')
+{
+  // 这台 serve 的 task 不建独立子会话 → 主会话 task 工具事件。以前只在完成时渲染,跑的 1-2 分钟空白("不知道在干啥")
+  const feedEl = byId.get('feed')
+  const before = feedEl.children.length
+  // 主 Agent 一条消息里并行派 3 个 task 子Agent,status=running
+  cbs.onStream({ kind: 'tool', text: 'task', partID: 'tk1', status: 'running', input: { description: '深挖前端结构', prompt: '...' } })
+  cbs.onStream({ kind: 'tool', text: 'task', partID: 'tk2', status: 'running', input: { description: '深挖后端接口数据流', prompt: '...' } })
+  cbs.onStream({ kind: 'tool', text: 'task', partID: 'tk3', status: 'running', input: { description: '深挖构建部署配置', prompt: '...' } })
+  ok('3 个 task 子Agent运行中就各建了一个可见块(不等完成)', exported.toolEls.has('tk1') && exported.toolEls.has('tk2') && exported.toolEls.has('tk3'))
+  const b1 = exported.toolEls.get('tk1')
+  ok('块标签是「子Agent」', /子Agent/.test(b1.innerHTML), b1.innerHTML.slice(0, 120))
+  ok('块显示 task 的 description(深挖前端结构)', /深挖前端结构/.test(b1.innerHTML))
+  ok('运行中状态可见', /运行中/.test(b1.innerHTML))
+  // 完成 → 同块原地更新为完成 + 结论
+  cbs.onStream({ kind: 'tool', text: 'task', partID: 'tk1', status: 'completed', input: { description: '深挖前端结构' }, output: 'Vue3 + Vite,portal 无单测' })
+  ok('完成后同块原地更新(仍是同一块)', exported.toolEls.get('tk1') === b1 && /完成/.test(b1.innerHTML))
+  ok('结论(子Agent发现)显示', /Vue3 \+ Vite/.test(b1.innerHTML))
+}
+
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

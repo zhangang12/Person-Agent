@@ -697,7 +697,7 @@
   // 工具日志块:同一 callID 原地更新(运行中→完成),展开可见 入参 + 结果。run_workflow 高亮成"升格"。
   // 图标统一单色 ⏺(对齐 Claude Code):状态靠颜色说话(蓝=运行中/绿=完成/红=出错),不用一桌花色 emoji
   const toolEls = new Map()
-  const TOOL_LABEL = { run_workflow: '升格 → 动态工作流' }
+  const TOOL_LABEL = { run_workflow: '升格 → 动态工作流', task: '子Agent' }
   const fmtInput = (v) => { if (v == null) return ''; if (typeof v === 'string') return v; try { return JSON.stringify(v, null, 2) } catch { return String(v) } }
   // 过程详情开关(Claude Code 的 verbose):关=工具紧凑一行摘要(默认,免刷屏),开=每个工具自动展开入参/结果。记住偏好。
   let verbose = false; try { verbose = localStorage.getItem('cardVerbose') === '1' } catch {}
@@ -851,8 +851,12 @@
       if (text === 'task') {                              // 父会话的 task 工具 = 起/收一个子agent
         const gid = taskChild || ''
         const fin = /complet|success|done|finish|error|fail|deny|reject/i.test(status || '')
-        if (gid && subAgents.has(gid)) { if (fin) subAgentDone(gid, status || '', taskDesc || '') }
-        else if (fin) renderTool(partID || '_', 'task', status || '', { input, output, title, error })   // 子路由没拿到 → 退回普通工具块显示结果
+        if (gid && subAgents.has(gid)) { if (fin) subAgentDone(gid, status || '', taskDesc || '') ; return }
+        // 内联 task 子Agent(这台 serve 的 task 不建独立子会话,不走 sub 路由)——【实时】渲染成可见块,
+        // 用 task 的 description 当名字。fan-out 时三个 task 就是三个"子Agent · 深挖X · 运行中"并排实时更新,
+        // 不再是"主 Agent 一条消息静默转圈,不知道在干啥"。以前 else-if(fin) 只在完成时才渲,跑的 1-2 分钟全空白。
+        const desc = (input && (input.description || input.title)) || taskDesc || title || '子任务'
+        renderTool(partID || '_', 'task', status || '', { input, output, title: String(desc).slice(0, 60), error })
         return
       }
       renderTool(partID || '_', text, status || '', { input, output, title, error })
