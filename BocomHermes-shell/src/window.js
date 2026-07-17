@@ -1221,6 +1221,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   const PIPELINE_RULES = [
     '<任务编排执行规程>',
     '你现在是「任务编排」执行器:把用户描述的业务链按顺序一步步【执行完】,不是分析问题。纪律:',
+    '0. 【开工自检】先核对你的工具列表:必须有 skill_list / skill_run(浏览器技能)、doc_read(读文档)、mail_send(发邮件,若链里要发邮件)。缺任何一个 → 立即停,原话告诉用户:「任务编排工具未加载到当前引擎,请完整重启 opencode/bocomcode 引擎(serve)后重试」,不要用 bash/curl 等别的方式硬凑,也不要假装执行。',
     '1. 先把描述拆成有序步骤清单(用 todowrite 登记,做一步更新一步),然后逐步执行。',
     '2. 每步用对应工具真执行:跑浏览器技能=skill_run(导出文件的完整路径在其报告「导出/下载文件」行);读 Excel/CSV/文档=doc_read;发邮件=mail_send(经发件箱缓发,用户可撤销);不确定技能名=先 skill_list。',
     '3. 顺序依赖:上一步的产物(文件路径/数据/结论)接给下一步;某步失败就【停】,说清卡在哪、差什么,不要跳过继续、不要编造产物。',
@@ -1248,6 +1249,15 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('spawn-fanout-roles', (_e, { goal, roles }) => spawnFanout(goal, roles))
   ipcMain.handle('get-fanout-roles', () => Object.entries(ROLES).map(([k, [label]]) => ({ key: k, label })))
   ipcMain.handle('spawn-workflow', (_e, goal) => spawnWorkflow(goal))
+  // 任务编排引擎体检:配置文件写了 ≠ serve 带上了(外部 serve 早于注册启动 = 静默没工具)。
+  // 问 serve 实际加载的 /config;端点不认识时 known:false,前端只提示不吓人。
+  ipcMain.handle('orch-tools-status', async () => {
+    try {
+      const serve = await oc.ensureServe(S.settings.projectDir || '', S.handlers, log)
+      const chk = await oc.checkMcp(serve)
+      return { ...chk, external: !!serve.external, regChanged: !!S.mcpRegChangedAt }
+    } catch (e) { return { known: false, error: e.message } }
+  })
   ipcMain.handle('open-req-analysis', () => spawnReqAnalysis(''))
   ipcMain.handle('pick-req-doc-path', () => pickReqDocPath())
 
@@ -1358,7 +1368,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   setTimeout(() => {
     try {
       const r = mcpCfg.autoRegisterIfMissing()
-      if (r && r.ok && !r.already) log('MCP 自动注册完成 → ' + r.path + '(若已有外部 serve 在跑,需重启 serve 才带上工具)')
+      if (r && r.ok && !r.already) { S.mcpRegChangedAt = Date.now(); log('MCP 自动注册完成 → ' + r.path + '(若已有外部 serve 在跑,需重启 serve 才带上工具)') }
     } catch (e) { log('MCP 自动注册异常: ' + e.message) }
   }, 800)
 

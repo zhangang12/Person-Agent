@@ -365,6 +365,17 @@ async function listModels(info) {
     return out
   } catch { return [] }
 }
+// 问 serve【实际加载】的配置里有没有我们的 MCP 注册 —— 配置文件写了不等于 serve 带上了(外部 serve 早于注册启动=静默没工具)。
+// GET /config 是 serve 启动时装载的快照,正是我们要的"它到底认不认"。端点不存在/形状不认识 → known:false(别误报)。
+async function checkMcp(info) {
+  try {
+    const cfg = await api(info.base, 'GET', '/config')
+    const mcp = (cfg && cfg.mcp) || (cfg && cfg.config && cfg.config.mcp)
+    if (!mcp || typeof mcp !== 'object') return { known: false }
+    return { known: true, registered: !!(mcp['BocomHermes-browser'] || mcp['BocomHermes-mail']) }
+  } catch { return { known: false } }
+}
+
 // 已中止会话登记:sendMessage 的"4xx 去模型重发"降级分支绝不能对刚被 abort 的会话重发
 // (abort 会让在飞 POST 以 4xx 收尾 → 降级分支把全量 prompt 灌回死会话 = 无人收割的二次僵尸)。
 const abortedSids = new Map()   // sid → 最近一次 abort 的时间戳。Map 而非 Set:判断要带时间(见 sendMessage 降级 / waitAssistantText 快收)
@@ -685,5 +696,5 @@ function retireIfOrphan(info, inUseBases) {
   return true
 }
 
-module.exports = { ensureServe, createSession, sendMessage, listModels, abort, replyPermission, sessionExists, getMessages, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, AUTO_ALLOW,
+module.exports = { ensureServe, createSession, sendMessage, listModels, checkMcp, abort, replyPermission, sessionExists, getMessages, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, AUTO_ALLOW,
   __test: { dispatch, waitAssistantText, extractText, pickTurnText, abortedSince, abortedSids, normalizeMessages, stripInjected, splitThink } }

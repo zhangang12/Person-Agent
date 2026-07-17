@@ -227,6 +227,22 @@
       ppSkills.appendChild(mkChip(name, '跑技能「' + name + '」', (s.description || '') + (params ? '\n参数:' + params : '') + '\n步骤:' + (s.eventCount || '?') + ' 步' + (s.gates ? ' · 含 ' + s.gates + ' 个人机断点(回放会暂停等人)' : ''), 'skill'))
     }
   }
+  // 引擎体检:serve 实际加载的配置里没有我们的 MCP,或注册刚更新而引擎是外部起的(必然旧配置)→ 亮出人话警示。
+  // 执行器 prompt 里还有开工自检兜底(缺工具立即停并指引重启),这里是提前到编排时就看见。
+  let engineWarned = false
+  async function checkEngine() {
+    if (engineWarned) return
+    let st = null
+    try { st = await H.orchToolsStatus() } catch {}
+    if (!st) return
+    let msg = ''
+    if (st.known && st.registered === false) msg = '当前引擎(serve)没带任务编排工具:完整重启 opencode/bocomcode 引擎后再编排'
+    else if (st.external && st.regChanged) msg = '工具注册刚更新,而当前引擎是外部启动的旧进程 —— 重启 serve 才带上新工具'
+    if (!msg) return
+    engineWarned = true
+    const w = document.createElement('div'); w.className = 'pp-empty'; w.style.color = 'var(--warn-txt)'; w.textContent = msg
+    pipePanel.prepend(w)
+  }
   $('ppImport').addEventListener('click', async () => {
     let r
     try { r = await H.browserRecImport() } catch (e) { r = { error: e.message } }
