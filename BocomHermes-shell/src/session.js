@@ -367,13 +367,29 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
       } catch {}
     }
     const onNote = (t) => { try { if (!si.wc.isDestroyed()) si.wc.send('card-note', { text: t, tone: 'muted' }) } catch {} }
+    // 轮询补渲染:这台 serve 的 /event 常不推 message 流式事件(工具/子Agent/思考全静默 → 卡片只能等 POST 返回一次性贴,
+    // 看着像"单Agent一口气出结果")。发消息期间另挂一个轻量轮询:每 1.2s 拉 message parts 喂给【同一个 onText handler】,
+    // 卡片按 partID 幂等渲染 —— 不依赖事件流。与事件流路径重复也只是原地更新(onText/card 按 partID 去重),不重复。
+    let poll = null
+    const startPoll = () => { if (poll) return; poll = setInterval(async () => {
+      try {
+        const si2 = S.sessionInfo.get(sessionId); if (!si2 || !si2.wc || si2.wc.isDestroyed()) return
+        const parts = await oc.pollTurnParts(si2.serve, sessionId); if (!parts) return
+        for (const p of parts) {
+          if (p.kind === 'tool') onText({ sessionId, role: 'assistant', kind: 'tool', text: p.text, partID: p.partID, status: p.status, toolInput: p.input, toolOutput: p.output, toolTitle: p.title, toolError: p.error })
+          else onText({ sessionId, role: 'assistant', kind: p.kind, text: p.text, partID: p.partID })
+        }
+      } catch {}
+    }, 1200) }
+    const stopPoll = () => { if (poll) { clearInterval(poll); poll = null } }
+    startPoll()
     try { return await oc.sendMessage(si.serve, sessionId, msg, model, fileArr, onNote) }
     catch (err) {
       const m = String((err && err.message) || err)
       if (/ECONNREFUSED|ECONNRESET|socket hang up|ENOTFOUND|EPIPE|fetch failed/i.test(m))
         throw new Error('引擎连接中断（serve 可能已退出）。关掉这张卡重开即可（已自动准备重启 serve）。')
       throw err
-    }
+    } finally { stopPoll() }
   })
 
   // 模型选择:列出可用模型 + 设置本卡模型(每个模块各自选)

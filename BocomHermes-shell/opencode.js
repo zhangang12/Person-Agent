@@ -463,6 +463,33 @@ async function getMessages(info, sid) {
   }
   return []
 }
+// 轮询补渲染:这台 serve 的 /event 常不推流式事件(工具/子Agent/思考全静默),卡片只能等 POST 返回一次性贴。
+// 拉当前回合(最后一个 user 之后的所有 assistant)的【原始 parts】,映射成 onText 能吃的形状 → 卡片按 partID 幂等渲染。
+// text/reasoning/thinking → 文本流;tool(含 task 子Agent)→ 工具块。返回 null=取消息失败,调用方跳过本次。
+async function pollTurnParts(info, sid) {
+  let raw
+  try { raw = await api(info.base, 'GET', `/session/${sid}/message`) } catch { return null }
+  const list = Array.isArray(raw) ? raw : (raw && raw.data) || []
+  let lastUserIdx = -1
+  list.forEach((m, i) => { const r = m?.info?.role ?? m?.role; if (r === 'user') lastUserIdx = i })
+  const out = []
+  for (const m of list.slice(lastUserIdx + 1)) {
+    const role = m?.info?.role ?? m?.role
+    if (role !== 'assistant') continue
+    const parts = m?.parts ?? m?.data?.parts ?? m?.info?.parts ?? []
+    for (const p of Array.isArray(parts) ? parts : []) {
+      if (!p || !p.id) continue
+      if (p.type === 'text' || p.type === 'reasoning' || p.type === 'thinking') {
+        const text = (typeof p.text === 'string' && p.text) || (typeof p.reasoning === 'string' && p.reasoning) || (typeof p.content === 'string' && p.content) || ''
+        if (text) out.push({ partID: p.id, kind: p.type === 'text' ? 'text' : 'reasoning', text })
+      } else if (p.type === 'tool') {
+        const st = p.state || {}
+        out.push({ partID: p.id, kind: 'tool', text: p.tool || 'tool', status: st.status || '', input: st.input, output: st.output, title: st.title, error: st.error })
+      }
+    }
+  }
+  return out
+}
 async function replyPermission(info, sessionId, requestId, decision) {
   const p = info.permStyle === 'new' ? `/permission/${requestId}/reply` : `/session/${sessionId}/permissions/${requestId}`
   try { await api(info.base, 'POST', p, { reply: decision }) } catch (e) { console.error('permission reply failed:', e.message) }
@@ -727,5 +754,5 @@ function retireIfOrphan(info, inUseBases) {
   return true
 }
 
-module.exports = { ensureServe, createSession, sendMessage, listModels, checkMcp, abort, replyPermission, sessionExists, getMessages, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, AUTO_ALLOW,
+module.exports = { ensureServe, createSession, sendMessage, listModels, checkMcp, abort, replyPermission, sessionExists, getMessages, pollTurnParts, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, AUTO_ALLOW,
   __test: { dispatch, waitAssistantText, extractText, pickTurnText, abortedSince, abortedSids, normalizeMessages, stripInjected, splitThink } }
