@@ -57,6 +57,17 @@
   .newrow .go svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
   .hint2 { flex: none; font-size: 11px; color: var(--txt3); line-height: 1.4; display: flex; align-items: center; gap: 5px; margin-top: -4px; }
   .hint2 svg { flex: none; opacity: .8; }
+  /* 任务编排牌桌:两行 chip(录制技能/内置能力),点一下拼进描述 */
+  .pipe-panel { flex: none; display: flex; flex-direction: column; gap: 5px; background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 10px; padding: 8px 10px; max-height: 168px; overflow-y: auto; }
+  .pipe-panel::-webkit-scrollbar { width: 6px; } .pipe-panel::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  .pp-lbl { display: flex; align-items: center; font-size: 10px; color: var(--txt3); text-transform: uppercase; letter-spacing: .06em; }
+  .pp-lbl .clr { font-size: 11px; color: var(--accent); background: none; border: none; cursor: pointer; padding: 1px 4px; border-radius: 5px; }
+  .pp-lbl .clr:hover { background: var(--hover); }
+  .pp-row { display: flex; flex-wrap: wrap; gap: 5px; }
+  .pp-chip { font-size: 11.5px; color: var(--txt2); background: transparent; border: .5px solid var(--composer-border); border-radius: 999px; padding: 3px 10px; cursor: pointer; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: color .12s, border-color .12s, background .12s; }
+  .pp-chip:hover { color: var(--txt); border-color: var(--accent); background: var(--hover); }
+  .pp-chip.skill { color: var(--accent); border-color: rgba(74,168,255,.35); }
+  .pp-empty { font-size: 11px; color: var(--txt3); padding: 2px 0; }
 
   .seclbl { flex: none; font-size: 11px; font-weight: 600; color: var(--txt3); letter-spacing: .03em; padding: 4px 2px 0; display: flex; align-items: center; }
   .seclbl .sp { flex: 1; }
@@ -104,6 +115,13 @@
     </div>
     <div id="modelMenu" class="model-menu" hidden></div>
 
+    <!-- 任务编排的牌桌:选中「任务编排」模式才出现 —— 录制技能 + 内置能力 + 导入,点一下拼进描述,编排时知道手里有什么牌 -->
+    <div id="pipePanel" class="pipe-panel nodrag" hidden>
+      <div class="pp-lbl">录制技能<span class="sp"></span><button id="ppImport" class="clr" title="导入同事分享的技能 JSON（白名单净化，登录态不随包）">导入技能…</button></div>
+      <div id="ppSkills" class="pp-row"></div>
+      <div class="pp-lbl">内置能力</div>
+      <div id="ppBuiltins" class="pp-row"></div>
+    </div>
     <div id="attRow" class="att-row nodrag"></div>
     <div id="dropHint" class="drop-hint">松手上传 — 文档解析成文本，图片走多模态识别</div>
     <div class="newrow nodrag">
@@ -167,7 +185,55 @@
   // 模式:自动(Agent 自判要不要升格) / 任务编排(单执行体按描述顺序走业务链) / 动态工作流(多 Agent 拆解复杂任务)
   let mode = 'auto'
   const MODES = { mAuto: 'auto', mPipe: 'pipeline', mWf: 'wf' }
-  for (const id of Object.keys(MODES)) $(id).addEventListener('click', () => { mode = MODES[id]; for (const k of Object.keys(MODES)) $(k).classList.toggle('on', k === id); goalEl.focus() })
+  for (const id of Object.keys(MODES)) $(id).addEventListener('click', () => { mode = MODES[id]; for (const k of Object.keys(MODES)) $(k).classList.toggle('on', k === id); paintPipePanel(); goalEl.focus() })
+
+  // ── 任务编排牌桌:录制技能 + 内置能力,点 chip 拼进描述;导入技能(复用技能中心同一条白名单净化链) ──
+  const pipePanel = $('pipePanel'), ppSkills = $('ppSkills'), ppBuiltins = $('ppBuiltins')
+  // 内置能力=任务编排积木的人话版:插入的是自然语言短语(规划的是描述,不是工具调用)
+  const BUILTINS = [
+    { n: '读文档', p: '读取导出的文件核对数据', t: '读 Excel/CSV/Word/PDF 为文本(doc_read)' },
+    { n: '发邮件', p: '把结果整理成邮件发给 〈收件人邮箱〉', t: '经发件箱缓发,可撤销(mail_send)' },
+    { n: '搜邮件', p: '搜索相关邮件', t: '按发件人/主题/正文检索(mail_search)' },
+    { n: '读附件', p: '读取邮件附件内容', t: '邮件附件文本化(mail_get_attachment_text)' },
+    { n: '批量跑技能', p: '按数据表逐行批量运行技能「〈技能名〉」', t: '数据集循环回放(skill_run_batch)' },
+    { n: '加待办', p: '把待跟进事项加入待办', t: '登记待办提醒(todo_add)' },
+  ]
+  function mkChip(label, phrase, title, cls) {
+    const b = document.createElement('button'); b.className = 'pp-chip' + (cls ? ' ' + cls : ''); b.textContent = label; b.title = title || phrase
+    b.addEventListener('click', () => {
+      const v = goalEl.value
+      goalEl.value = v + (v.trim() ? (/[，。→;；\s]$/.test(v) ? '' : '，然后') : '') + phrase   // 空输入直接放,已有内容用"然后"接
+      goalEl.focus()
+    })
+    return b
+  }
+  let builtinsDone = false
+  async function paintPipePanel() {
+    pipePanel.hidden = mode !== 'pipeline'
+    if (pipePanel.hidden) return
+    if (!builtinsDone) { builtinsDone = true; for (const x of BUILTINS) ppBuiltins.appendChild(mkChip(x.n, x.p, x.t)) }
+    await refreshPipeSkills()   // 每次切进来都刷:技能中心刚录的/刚导入的立即可见(fs 扫一遍很便宜)
+  }
+  async function refreshPipeSkills() {
+    ppSkills.innerHTML = '<span class="pp-empty">读取中…</span>'
+    let recs = []
+    try { recs = (await H.browserRecList()) || [] } catch {}
+    const skills = recs.filter((r) => r.skill)   // rec-list 返回全部录制;只亮真技能(skill=true)
+    ppSkills.innerHTML = ''
+    if (!skills.length) { ppSkills.innerHTML = '<span class="pp-empty">还没有录制技能 — 去「录制回放」录一条,或点右上「导入技能…」</span>'; return }
+    for (const s of skills.slice(0, 30)) {
+      const name = s.title || s.id
+      const params = Array.isArray(s.params) && s.params.length ? '（' + s.params.map((p) => p.label || p.key).join('、') + '）' : ''
+      ppSkills.appendChild(mkChip(name, '跑技能「' + name + '」', (s.description || '') + (params ? '\n参数:' + params : '') + '\n步骤:' + (s.eventCount || '?') + ' 步' + (s.gates ? ' · 含 ' + s.gates + ' 个人机断点(回放会暂停等人)' : ''), 'skill'))
+    }
+  }
+  $('ppImport').addEventListener('click', async () => {
+    let r
+    try { r = await H.browserRecImport() } catch (e) { r = { error: e.message } }
+    if (r && r.canceled) return
+    if (r && r.ok) { await refreshPipeSkills(); goalEl.focus() }
+    else { const e2 = document.createElement('span'); e2.className = 'pp-empty'; e2.textContent = '导入失败: ' + ((r && r.error) || '未知错误'); ppSkills.prepend(e2); setTimeout(() => { try { e2.remove() } catch {} }, 6000) }
+  })
 
   // 模型选择(全局默认;卡片可单独覆盖):列模型 → setSettings({model})
   const modelChip = $('modelChip'), modelNameEl = $('modelName'), modelMenu = $('modelMenu')
