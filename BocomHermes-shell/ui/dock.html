@@ -96,9 +96,10 @@
         <span id="modelName">默认模型</span>
       </button>
       <span class="sp"></span>
-      <div class="seg" title="自动：Agent 自己判断要不要拉队 ｜ 直接工作流：强制拉起动态编排">
+      <div class="seg" title="自动：Agent 自判 ｜ 任务编排：按描述顺序执行业务链(跑技能/读文件/发邮件) ｜ 动态工作流：多 Agent 拆解复杂任务">
         <button id="mAuto" class="on">自动</button>
-        <button id="mWf">直接工作流</button>
+        <button id="mPipe">任务编排</button>
+        <button id="mWf">动态工作流</button>
       </div>
     </div>
     <div id="modelMenu" class="model-menu" hidden></div>
@@ -109,7 +110,7 @@
       <textarea id="goal" rows="2" placeholder="想让 Agent 做什么？" spellcheck="false"></textarea>
       <button id="go" class="go" title="开始（Enter）" aria-label="开始"><svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg></button>
     </div>
-    <div class="hint2"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>复杂任务它会自主拉起动态工作流</div>
+    <div class="hint2"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>任务编排示例：跑技能「XX导出」→ 核对导出数据 → 把问题发邮件给某某</div>
 
     <div class="seclbl">最近会话 · 点一条续接 <span class="sp"></span><button id="clear" class="clr nodrag">清空</button></div>
     <div id="list" class="list nodrag"></div>
@@ -163,10 +164,10 @@
   projBtn.addEventListener('click', async () => { try { paintProj(await H.pickProject()) } catch (e) {} setTimeout(() => goalEl.focus(), 30) })
   H.onProject && H.onProject((p) => paintProj(p))
 
-  // 模式:自动(Agent 自判要不要升格) / 直接工作流(强制拉起动态编排)
+  // 模式:自动(Agent 自判要不要升格) / 任务编排(单执行体按描述顺序走业务链) / 动态工作流(多 Agent 拆解复杂任务)
   let mode = 'auto'
-  $('mAuto').addEventListener('click', () => { mode = 'auto'; $('mAuto').classList.add('on'); $('mWf').classList.remove('on'); goalEl.focus() })
-  $('mWf').addEventListener('click', () => { mode = 'wf'; $('mWf').classList.add('on'); $('mAuto').classList.remove('on'); goalEl.focus() })
+  const MODES = { mAuto: 'auto', mPipe: 'pipeline', mWf: 'wf' }
+  for (const id of Object.keys(MODES)) $(id).addEventListener('click', () => { mode = MODES[id]; for (const k of Object.keys(MODES)) $(k).classList.toggle('on', k === id); goalEl.focus() })
 
   // 模型选择(全局默认;卡片可单独覆盖):列模型 → setSettings({model})
   const modelChip = $('modelChip'), modelNameEl = $('modelName'), modelMenu = $('modelMenu')

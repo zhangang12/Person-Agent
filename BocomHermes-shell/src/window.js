@@ -1215,9 +1215,27 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   })
   ipcMain.handle('spawn-card', (_e, title) => spawnCard(title))
   // 对话坞带附件开会话:文档文本内联进 msg,图片(大 data URL)暂存,新卡 init 时取回随首条消息发
+  // 任务编排执行规程:与「动态工作流」是两种东西 —— 后者=多 Agent 拆解答案未知的复杂任务;
+  // 任务编排=【步骤已知】的业务链(跑技能→读文件→发邮件),要的是一个执行体按顺序办完,产出是"每步办成了"。
+  // 实现=对话卡 + 静默前缀(复用 msg/disp 分离:用户气泡只见自己的描述):单 Agent 顺序执行,卡片白捡工具行/状态行可视化。
+  const PIPELINE_RULES = [
+    '<任务编排执行规程>',
+    '你现在是「任务编排」执行器:把用户描述的业务链按顺序一步步【执行完】,不是分析问题。纪律:',
+    '1. 先把描述拆成有序步骤清单(用 todowrite 登记,做一步更新一步),然后逐步执行。',
+    '2. 每步用对应工具真执行:跑浏览器技能=skill_run(导出文件的完整路径在其报告「导出/下载文件」行);读 Excel/CSV/文档=doc_read;发邮件=mail_send(经发件箱缓发,用户可撤销);不确定技能名=先 skill_list。',
+    '3. 顺序依赖:上一步的产物(文件路径/数据/结论)接给下一步;某步失败就【停】,说清卡在哪、差什么,不要跳过继续、不要编造产物。',
+    '4. 不扩大范围:不做描述之外的事,不派子 agent,不通读无关文件。',
+    '5. 全链跑完用 3-5 行收尾:每步结果 + 产物位置(文件路径/邮件收件人)。',
+    '</任务编排执行规程>',
+    '',
+  ].join('\n')
   ipcMain.handle('start-conversation', (_e, payload) => {
     const { title, msg, disp, files, mode } = payload || {}
-    if (mode === 'wf') return { id: spawnWorkflow(msg || title || '') }   // 工作流走文本(含已内联文档);图片暂不支持
+    if (mode === 'wf') return { id: spawnWorkflow(msg || title || '') }   // 动态工作流走文本(含已内联文档);图片暂不支持
+    if (mode === 'pipeline') {
+      const body = msg || title || ''
+      return { id: spawnCard('任务编排 · ' + String(disp || body).slice(0, 18), null, PIPELINE_RULES + body, disp || body, { flash: true }) }
+    }
     const id = spawnCard(title || (msg || '').slice(0, 24) || '新对话', null, msg, disp, { flash: true })
     if (Array.isArray(files) && files.length) { S.cardFiles = S.cardFiles || new Map(); S.cardFiles.set(String(id), files) }
     return { id }
