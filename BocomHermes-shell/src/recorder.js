@@ -335,8 +335,22 @@ module.exports = function initRecorder(ctx) {
           return { ok: true }
         } catch (e) { return { ok: false, err: e.message } }
       }
-      try { wc.loadURL(ev.url) } catch (e) { return { ok: false, err: e.message } }
-      await new Promise((res) => { const t = setTimeout(res, 12000); wc.once('did-stop-loading', () => { clearTimeout(t); res() }) })
+      // 导航失败要如实报错,不再蒙混成功:以前 ①loadURL 的 rejection 没人接(连接拒绝/证书错误 = 主进程 unhandled)
+      // ②只等 did-stop-loading 不看 did-fail-load —— 失败的导航照样 return ok:true,专为"导航失败"设计的
+      // Agent 流程级接管因此【永远不会触发】。③12s 定时器赢下竞速时 once 监听器不摘,慢导航逐次泄漏。
+      // ERR_ABORTED(-3) 例外:页面秒重定向/被新导航取代时 Chromium 会报它,不是真失败,照旧等 did-stop。
+      const nav = await new Promise((resolve) => {
+        let settled = false
+        const fin = (v) => { if (settled) return; settled = true; clearTimeout(t); try { wc.removeListener('did-stop-loading', onStop) } catch {}; try { wc.removeListener('did-fail-load', onFail) } catch {}; resolve(v) }
+        const onStop = () => fin({ ok: true })
+        const onFail = (_e, code, desc, _url, isMainFrame) => { if (isMainFrame && code !== -3) fin({ ok: false, err: '导航失败(' + code + ' ' + (desc || '') + '): ' + ev.url }) }
+        const t = setTimeout(() => fin({ ok: true }), 12000)   // 超时照旧放行(慢站点交给后续步骤的 waitForEl 判定)
+        wc.on('did-stop-loading', onStop)
+        wc.on('did-fail-load', onFail)
+        try { const p = wc.loadURL(ev.url); if (p && p.catch) p.catch((e) => { const m = String(e && e.message || e); if (!/ERR_ABORTED|\(-3\)/.test(m)) fin({ ok: false, err: '导航失败: ' + m }) }) }
+        catch (e) { fin({ ok: false, err: '导航失败: ' + e.message }) }
+      })
+      if (!nav.ok) return nav
       // 混合执行·噪声层:导航被重定向(如登录缓存 → /login 直落 /overview)要让上层知道,
       // 后续"登录页元素找不到"就能快速失败 + 锚点跳段,而不是傻等 5s 再级联早停
       let redirected = false
@@ -349,7 +363,7 @@ module.exports = function initRecorder(ctx) {
           await evalJs(wc, `(()=>{try{var l=JSON.parse(${JSON.stringify(ls)});Object.keys(l).forEach(k=>localStorage.setItem(k,l[k]));var s=JSON.parse(${JSON.stringify(ss)});Object.keys(s).forEach(k=>sessionStorage.setItem(k,s[k]));}catch(e){}})()`, true)
           // reload 让 SPA 在恢复后的 storage 状态下重新跑入口逻辑
           try { wc.reload() } catch {}
-          await new Promise((res) => { const t = setTimeout(res, 12000); wc.once('did-stop-loading', () => { clearTimeout(t); res() }) })
+          await new Promise((res) => { const onStop = () => { clearTimeout(t); res() }; const t = setTimeout(() => { try { wc.removeListener('did-stop-loading', onStop) } catch {}; res() }, 12000); wc.once('did-stop-loading', onStop) })   // 超时也摘监听器,慢导航不逐次泄漏
         } catch (e) { log('storage restore err: ' + e.message) }
       }
       return { ok: true, redirected }
@@ -685,16 +699,30 @@ module.exports = function initRecorder(ctx) {
     let downloads = []
     try {
       const expectDl = !!(rec.postWorkflow && rec.postWorkflow.goal)
-      const mine = () => (Array.isArray(S.downloads) ? S.downloads : []).filter((d) => d && d.at >= dlBase)
+      // 归属过滤:时间窗(at≥dlBase)+【来源 origin ∈ 本次回放访问过的站点】双条件 —— 回放期间用户在别的标签手动
+      // 下载的文件不再被错认成技能产物喂给工作流。旧记录无 url 字段/解析不出 origin 时退回纯时间窗(向后兼容)。
+      const visited = new Set()
+      for (const ev of rec.events) { if (ev && ev.act === 'navigate' && ev.url) { try { visited.add(new URL(ev.url).origin) } catch {} } }
+      try { visited.add(new URL(tab.url || wc.getURL()).origin) } catch {}
+      const fromVisited = (d) => { if (!d.url || !visited.size) return true; try { return visited.has(new URL(d.url).origin) } catch { return true } }
+      const mine = () => (Array.isArray(S.downloads) ? S.downloads : []).filter((d) => d && d.at >= dlBase && fromVisited(d))
       if (expectDl || mine().length) {
         const deadline = Date.now() + (expectDl ? 90000 : 30000)
         sendProg({ i: rec.events.length, total: rec.events.length, act: 'download', ok: true, waitDownload: true })
+        // 多文件导出:第一个文件完成时后面的可能还没【起头】(顺序导出常见间隔 1-3s)。
+        // 以前"有完成且无进行中"立刻 break → 第二个文件永久漏抓。改为:全部落定后再守 2.5s 静默期,
+        // 期间冒出新下载(数量变了)就继续等;真没有了才收。expectDl 的 90s 硬顶不变。
+        let settledAt = 0, lastCount = 0
         while (Date.now() < deadline) {
           const m = mine()
           const pending = m.filter((d) => d.state === 'progressing')
-          if (m.length && !pending.length) break                          // 本次下载全部落定(成功或失败)
+          if (m.length && !pending.length) {
+            if (m.length !== lastCount) { lastCount = m.length; settledAt = Date.now() }   // 数量变化 → 静默期重计
+            else if (settledAt && Date.now() - settledAt >= 2500) break                    // 全落定且 2.5s 没有新下载起头 → 收
+            else if (!settledAt) settledAt = Date.now()
+          } else { settledAt = 0; lastCount = m.length }
           if (!expectDl && !m.length && Date.now() - dlBase > 4000) break  // 自动模式:4s 内没任何下载起头 → 这不是下载技能,不空等
-          await sleep(800)
+          await sleep(500)
         }
         downloads = mine().filter((d) => d.state === 'completed').map((d) => d.savePath)
         if (downloads.length) log('replay downloads: 捕获 ' + downloads.length + ' 个下载文件(' + downloads.map((p) => String(p).split(/[\\/]/).pop()).join(', ') + ')')

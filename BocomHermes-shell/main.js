@@ -105,11 +105,18 @@ app.whenReady().then(() => {
     const id = 'dl_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
     const total = item.getTotalBytes() || 0
     const name = item.getFilename()
-    const savePath = path.join(app.getPath('downloads'), name)
+    // 同名不覆盖:技能连跑/批跑每次导出同名文件,以前直接写同一路径互相覆盖 —— 登记表里多条记录指向同一个被反复重写的文件。
+    // 落盘用 名(1).ext 递增;100 次兜底后回退原路径(极端场景宁可覆盖也别下载失败)
+    let savePath = path.join(app.getPath('downloads'), name)
+    if (fs.existsSync(savePath)) {
+      const ext = path.extname(name), stem = name.slice(0, name.length - ext.length)
+      for (let n = 1; n < 100; n++) { const p2 = path.join(app.getPath('downloads'), stem + '(' + n + ')' + ext); if (!fs.existsSync(p2)) { savePath = p2; break } }
+    }
     item.setSavePath(savePath)
     // 下载登记表:回放引擎据此「等下载落地并取回文件路径」——「下载后编排」技能的输入来源,与浏览器 UI 的进度提示解耦。
-    // 滚动上限 40 条;at=发起时刻(回放按 at≥回放起点圈定本次产生的下载),state 收敛到 completed/failed。
-    const rec = { id, name, savePath, bytes: total, at: Date.now(), state: 'progressing', doneAt: 0 }
+    // 滚动上限 40 条;at=发起时刻 + url=来源(回放按 at≥起点 ∧ origin∈访问过的站点 圈定本次产生的下载),state 收敛到 completed/failed。
+    let srcUrl = ''; try { srcUrl = item.getURL() || '' } catch {}
+    const rec = { id, name, savePath, url: srcUrl, bytes: total, at: Date.now(), state: 'progressing', doneAt: 0 }
     if (!Array.isArray(S.downloads)) S.downloads = []
     S.downloads.push(rec); if (S.downloads.length > 40) S.downloads.shift()
     const target = S.browser && S.browser.win && !S.browser.win.isDestroyed() ? S.browser.win.webContents : null

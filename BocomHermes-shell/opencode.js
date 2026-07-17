@@ -304,8 +304,12 @@ async function waitAssistantText(info, sessionId, maxMs = 1800000, idleMs = 6000
     const list = Array.isArray(raw) ? raw : (raw && raw.data) || []
     const r = pickTurnText(list)
     if (r.sig !== sig) { sig = r.sig; lastMove = Date.now() }               // 还在推进 → 续命,不按墙钟砍慢任务
+    if (r.laDone) info.hasCompletedMarker = true                            // 这台 serve 会标完成 → 学到能力,永久关掉下面的"稳定即收"蒙混判据
     if (r.done) return r.text                                              // 最后一条已完成且带文本 → 收
-    if (r.text && r.text === prev) { if (++stable >= 3) return r.text } else { stable = 0; prev = r.text }   // 无完成标记的 serve:文本稳定 ~2s
+    // "文本稳定 ~2s 即收"只给【从没见过完成标记】的 serve 兜底 —— 有正经收尾信号的 serve 走这条会截半截:
+    // 模型先吐一段文字→调一个 >2.1s 的工具→再续写,文本恰好稳定三拍 → 半截被当完整答案返回,后半段全丢(表现:"回答突然断了")。
+    // 能力按 serve 记(info 是常驻池对象):见过一次 time.completed/finish 就永久学会,跨轮生效。
+    if (!info.hasCompletedMarker && r.text && r.text === prev) { if (++stable >= 3) return r.text } else { stable = 0; prev = r.text }
     if (r.laDone && !r.laText) { if (++doneNoTextTicks >= 42) return r.text } else { doneNoTextTicks = 0 }   // 兜底:真以无文本工具收尾(罕见),~30s 无续写才放弃
   }
   if (prev) return prev

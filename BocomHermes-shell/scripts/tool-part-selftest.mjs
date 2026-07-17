@@ -251,5 +251,49 @@ await (async () => {
   ok('无 think 原样返回', splitThink('普通正文').rest === '普通正文' && splitThink('普通正文').think === '')
 })()
 
+// 用例16:有完成标记的 serve 不许"文本稳定2s"蒙混收尾(治"模型吐一段→调>2.1s工具→续写,答案被截半截")
+await (async () => {
+  console.log('用例16:waitAssistantText 稳定即收只给无完成标记的 serve 兜底')
+  const { waitAssistantText } = oc.__test
+  const http = await import('node:http')
+  let polls = 0
+  const srv = http.createServer((req, res) => {
+    res.setHeader('content-type', 'application/json')
+    if (req.url.includes('teach')) {          // 第一轮:带 completed 标记 → 教会 info 这台 serve 有收尾信号
+      res.end(JSON.stringify([
+        { info: { role: 'user' }, parts: [{ type: 'text', text: 'q1' }] },
+        { info: { role: 'assistant', time: { completed: 1 } }, parts: [{ type: 'text', text: '第一轮答案' }] },
+      ])); return
+    }
+    if (req.url.includes('trunc')) {          // 第二轮:前 7 拍文本稳定但无标记(模型在调工具);第 8 拍起续写完成
+      polls++
+      const done = polls >= 8
+      res.end(JSON.stringify([
+        { info: { role: 'user' }, parts: [{ type: 'text', text: 'q2' }] },
+        { info: { role: 'assistant', ...(done ? { time: { completed: 1 } } : {}) }, parts: [{ type: 'text', text: done ? '前半段\n后半段' : '前半段' }] },
+      ])); return
+    }
+    // nomark:从不给完成标记,文本稳定 → 兜底收尾必须还活着(不然这类 serve 永远收不了尾)
+    res.end(JSON.stringify([
+      { info: { role: 'user' }, parts: [{ type: 'text', text: 'q' }] },
+      { info: { role: 'assistant' }, parts: [{ type: 'text', text: '只有这一段' }] },
+    ]))
+  })
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r))
+  const base = 'http://127.0.0.1:' + srv.address().port
+  const info = { base }                        // 同一 info 对象跨两轮(能力学在它身上)
+  const r1 = await waitAssistantText(info, 'teach', 30000, 30000)
+  ok('第一轮正常收尾并学到完成标记能力', r1 === '第一轮答案' && info.hasCompletedMarker === true)
+  const t0 = Date.now()
+  const r2 = await waitAssistantText(info, 'trunc', 30000, 30000)
+  ok('工具间隙文本稳定 >2s 不再截半截(等到真正完成)', /后半段/.test(r2), r2)
+  ok('确实等过了稳定窗口(耗时 ' + Math.round((Date.now() - t0) / 100) / 10 + 's > 2.8s)', Date.now() - t0 > 2800)
+  const info2 = { base }                       // 全新 info:没见过标记的 serve,稳定即收兜底必须保留
+  const t1 = Date.now()
+  const r3 = await waitAssistantText(info2, 'nomark', 30000, 30000)
+  ok('无完成标记的 serve 仍走稳定即收(向后兼容,' + Math.round((Date.now() - t1) / 100) / 10 + 's)', r3 === '只有这一段' && Date.now() - t1 < 8000)
+  srv.close()
+})()
+
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)
