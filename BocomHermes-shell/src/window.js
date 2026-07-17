@@ -1937,8 +1937,11 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     // 导出文件【完整路径】始终进报告(不只 postWorkflow 场景):任务编排里 worker 调 skill_run 后要拿路径接 doc_read 加工,
     // 以前没配 postWorkflow 时报告对下载只字不提 —— 链条断在第一棒
     if (dls.length) lines.push('导出/下载文件(' + dls.length + ' 个): ' + dls.join(' | '))
-    if (ok && rec.postWorkflow && rec.postWorkflow.goal) {
+    // 触发条件从"全绿才编排"放宽为"文件到手就编排":导出文件已捕获说明主链目标基本达成,个别步失败
+    // (常见:导出后的收尾点击失配)不该把整条编排卡死 —— 有失败照样启动,但在报告里明说,用户可在工作流窗停掉
+    if (rec.postWorkflow && rec.postWorkflow.goal) {
       if (dls.length) {
+        if (!ok) lines.push('注意:回放有失败步骤,但导出文件已捕获 —— 仍按文件启动下载后编排(不放心可在工作台窗口停止)')
         try {
           const wfGoal = composePostWorkflowGoal(hit.name, rec.postWorkflow.goal, dls)
           const wfId = spawnWorkflow(wfGoal)

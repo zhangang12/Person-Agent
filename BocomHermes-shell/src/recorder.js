@@ -712,11 +712,23 @@ module.exports = function initRecorder(ctx) {
       const expectDl = !!(rec.postWorkflow && rec.postWorkflow.goal)
       // 归属过滤:时间窗(at≥dlBase)+【来源 origin ∈ 本次回放访问过的站点】双条件 —— 回放期间用户在别的标签手动
       // 下载的文件不再被错认成技能产物喂给工作流。旧记录无 url 字段/解析不出 origin 时退回纯时间窗(向后兼容)。
+      // 同站判定按"主域"(最后两段标签)不苛求完全同 origin:银行的结单 PDF 常从另一个子域/文件网关下发
+      // (实测交行澳门:页面在 pbank.bankcomm.com.mo,严格 origin 比对把真下载滤没了 → 回放白等、编排断链)
+      const site = (u) => { try { return new URL(u).hostname.split('.').slice(-3).join('.') } catch { return '' } }   // .com.mo/.com.cn 这类双后缀,取三段才是主域
       const visited = new Set()
-      for (const ev of rec.events) { if (ev && ev.act === 'navigate' && ev.url) { try { visited.add(new URL(ev.url).origin) } catch {} } }
-      try { visited.add(new URL(tab.url || wc.getURL()).origin) } catch {}
-      const fromVisited = (d) => { if (!d.url || !visited.size) return true; try { return visited.has(new URL(d.url).origin) } catch { return true } }
-      const mine = () => (Array.isArray(S.downloads) ? S.downloads : []).filter((d) => d && d.at >= dlBase && fromVisited(d))
+      for (const ev of rec.events) { if (ev && ev.act === 'navigate' && ev.url) { const s = site(ev.url); if (s) visited.add(s) } }
+      { const s = site(tab.url || (() => { try { return wc.getURL() } catch { return '' } })()); if (s) visited.add(s) }
+      const fromVisited = (d) => { if (!d.url || !visited.size) return true; const s = site(d.url); return !s || visited.has(s) }
+      const inWindow = () => (Array.isArray(S.downloads) ? S.downloads : []).filter((d) => d && d.at >= dlBase)
+      let originRelaxed = false
+      const mine = () => {
+        const w = inWindow()
+        const m = w.filter(fromVisited)
+        if (m.length || !w.length) return m
+        // 过滤后为空但时间窗内确有下载 → 降级按时间窗采集(漏抓比错配伤害大:断链 vs 多带一个文件),报告注明
+        originRelaxed = true
+        return w
+      }
       if (expectDl || mine().length) {
         const deadline = Date.now() + (expectDl ? 90000 : 30000)
         sendProg({ i: rec.events.length, total: rec.events.length, act: 'download', ok: true, waitDownload: true })
@@ -736,7 +748,7 @@ module.exports = function initRecorder(ctx) {
           await sleep(500)
         }
         downloads = mine().filter((d) => d.state === 'completed').map((d) => d.savePath)
-        if (downloads.length) log('replay downloads: 捕获 ' + downloads.length + ' 个下载文件(' + downloads.map((p) => String(p).split(/[\\/]/).pop()).join(', ') + ')')
+        if (downloads.length) log('replay downloads: 捕获 ' + downloads.length + ' 个下载文件' + (originRelaxed ? '(按时间窗降级采集:来源域不在访问清单,多半是文件网关子域)' : '') + '(' + downloads.map((p) => String(p).split(/[\\/]/).pop()).join(', ') + ')')
         else if (expectDl) log('replay downloads: 技能配了「下载后编排」但本次未捕获到已完成的下载(导出是否成功?)')
       }
     } catch (e) { log('replay download wait err: ' + e.message) }
