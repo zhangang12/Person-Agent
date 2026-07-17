@@ -5,13 +5,24 @@ module.exports = function initRecorder(ctx) {
   const { S, brActive, session, log, snapshotBad, RECORDER_JS, frameFor, findElExpr, anchorExpr, coverageHits, gitChangedFiles, resolveBus, relocateSelectors, persistHeal, takeoverDigest, pageRead } = ctx
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+  // executeJavaScript 竞速超时:页面卡在加载态/渲染进程假死时,Electron 的 executeJavaScript 的 promise 可能【永远不 settle】——
+  // waitForEl/execStep 里 while(Date.now()-t0<maxMs) 的时间检查根本轮不到,整个 skillRun 就此挂死,连回放互斥锁都不释放
+  // (e2e 实测:data: 页面上直接复现,真实场景=页面假死/渲染进程卡住)。回放路径的页面求值一律走这里:
+  // 超时抛错交给既有失败处理(重试/自愈/级联)。动作类(点击/提交)超时的错误文案不含 "selector not found",
+  // 不会命中"未找到才重试"的条件 —— 不存在超时后盲重试导致双击/双提交。
+  function evalJs(target, code, userGesture, ms) {
+    return Promise.race([
+      target.executeJavaScript(code, userGesture !== false),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('页面求值超时(' + (ms || 8000) + 'ms,页面可能卡在加载态或渲染进程假死)')), ms || 8000)),
+    ])
+  }
   async function injectRecorder(wc) {
     let okMain = false
     try {
       const main = wc.mainFrame
       for (const f of main.framesInSubtree) {
         try {
-          await f.executeJavaScript(RECORDER_JS + '\n;window.__bocom_rec_on=true;', true)
+          await evalJs(f, RECORDER_JS + '\n;window.__bocom_rec_on=true;', true)
           if (f === main) okMain = true
         } catch (e) { if (f === main) log('injectRecorder err: ' + e.message) }
       }
@@ -40,7 +51,7 @@ module.exports = function initRecorder(ctx) {
     let existsAt = 0
     while (Date.now() - t0 < maxMs) {
       try {
-        const st = await fr.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 0;var rc=__el.getBoundingClientRect?__el.getBoundingClientRect():{width:1};return (!!(rc.width||rc.height)&&!__el.disabled)?2:1})()`, true)
+        const st = await evalJs(fr, `(()=>{var __el=null;if(!(${elExpr}))return 0;var rc=__el.getBoundingClientRect?__el.getBoundingClientRect():{width:1};return (!!(rc.width||rc.height)&&!__el.disabled)?2:1})()`, true)
         if (st === 2 || (st === 1 && !requireVisible)) return true
         if (st === 1) {
           if (!existsAt) existsAt = Date.now()
@@ -57,7 +68,7 @@ module.exports = function initRecorder(ctx) {
     const elExpr = findElExpr(ev.sel, ev.selAlt)
     const label = JSON.stringify(`步 ${idx} · ${ev.act}`)
     try {
-      await fr.executeJavaScript(`(()=>{
+      await evalJs(fr, `(()=>{
         var __el=null; if(!(${elExpr})) return;
         var rect=__el.getBoundingClientRect();
         var box=document.createElement('div'); box.id='__bocom_hi__';
@@ -115,7 +126,7 @@ module.exports = function initRecorder(ctx) {
           // 只有装得下值的才配走 ① 值稳定。以前对任意元素拿 innerText 兜底,滑块/刷脸是 div:没有 .value → 取到
           // innerText="向右滑动完成验证" —— 静态文案天生稳定 → 横幅刚弹出 ~2.7s 就自动续跑,人还没碰滑块,
           // 下一步必失败。行为类断点(滑块/人脸/扫码)本就【无值可等】,只能靠 ②元素消失 / ③页面跳走 / 人点「继续」。
-          st = await fr.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return {gone:1};
+          st = await evalJs(fr, `(()=>{var __el=null;if(!(${elExpr}))return {gone:1};
             var r=__el.getBoundingClientRect();var s=getComputedStyle(__el);
             var vis=!!(r.width||r.height)&&s.visibility!=='hidden'&&s.display!=='none';
             var ce=__el.isContentEditable===true;var hasV=__el.value!=null;
@@ -148,7 +159,7 @@ module.exports = function initRecorder(ctx) {
     // Agent 给了值 → 填入该步字段(与 execStep input 同款:原生 setter + input/change 事件)
     if (win.how === 'agent') {
       try {
-        await fr.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';
+        await evalJs(fr, `(()=>{var __el=null;if(!(${elExpr}))return 'NF';
           var v=${JSON.stringify(String(win.value || ''))};
           if (__el.isContentEditable){__el.focus();__el.innerText=v}
           else{var p=Object.getOwnPropertyDescriptor(__el.__proto__,'value');p&&p.set?p.set.call(__el,v):(__el.value=v);}
@@ -192,7 +203,7 @@ module.exports = function initRecorder(ctx) {
     return{found:0}}catch(e){return{found:0}}})()`
   async function detectLiveGate(wc, ev) {
     try {
-      const r = await frameFor(wc, ev).executeJavaScript(LIVE_GATE_JS, true)
+      const r = await evalJs(frameFor(wc, ev), LIVE_GATE_JS, true)
       return (r && r.found) ? r : null
     } catch { return null }
   }
@@ -218,7 +229,7 @@ module.exports = function initRecorder(ctx) {
     if (!resolveBus) return null
     let cands = ''
     try {
-      cands = await fr.executeJavaScript(`(function(){var out=[];var els=document.querySelectorAll('button,a,input,select,textarea,[role="button"],[onclick]');for(var i=0;i<els.length&&out.length<60;i++){var e=els[i];var r=e.getBoundingClientRect();if(!r.width&&!r.height)continue;var t=(e.innerText||e.value||e.placeholder||e.getAttribute&&e.getAttribute('aria-label')||'').trim().slice(0,40);var id=e.id&&!/^el-id-\\d|\\d{6,}/.test(e.id)?('#'+e.id):'';out.push(e.tagName.toLowerCase()+(id?' '+id:'')+(t?' \\''+t+'\\'':'')+(e.name?' name='+e.name:''))}return out.join('\\n')})()`, true)
+      cands = await evalJs(fr, `(function(){var out=[];var els=document.querySelectorAll('button,a,input,select,textarea,[role="button"],[onclick]');for(var i=0;i<els.length&&out.length<60;i++){var e=els[i];var r=e.getBoundingClientRect();if(!r.width&&!r.height)continue;var t=(e.innerText||e.value||e.placeholder||e.getAttribute&&e.getAttribute('aria-label')||'').trim().slice(0,40);var id=e.id&&!/^el-id-\\d|\\d{6,}/.test(e.id)?('#'+e.id):'';out.push(e.tagName.toLowerCase()+(id?' '+id:'')+(t?' \\''+t+'\\'':'')+(e.name?' name='+e.name:''))}return out.join('\\n')})()`, true)
     } catch {}
     const gateId = 'g' + Date.now().toString(36) + '_h' + (i + 1)
     const intent = (ev.act === 'input' ? '填写' : ev.act + ' ') + (ev.text || ev.lb || ev.ph || ev.sel || '')
@@ -266,7 +277,7 @@ module.exports = function initRecorder(ctx) {
       try {
         // anchorExpr 而非 findElExpr:探锚点要断言"整段可跳过",不能拿 selAlt 里的弱候选(__text__ 前缀匹配 /
         // nth-of-type 兜底)当证据 —— 撞上一个无关的"确定"按钮就会静默跳掉中间的真实业务步并报 PASS。详见 anchorExpr。
-        const hit = await frameFor(wc, e2).executeJavaScript(`(()=>{var __el=null;return !!(${anchorExpr(e2)})})()`, true)
+        const hit = await evalJs(frameFor(wc, e2), `(()=>{var __el=null;return !!(${anchorExpr(e2)})})()`, true)
         if (hit) return j
       } catch {}
     }
@@ -320,7 +331,7 @@ module.exports = function initRecorder(ctx) {
       // SPA 路由变化:用 history.pushState + popstate,避免整页 reload 清空 SPA 状态
       if (ev.spa && !ev._restorePreState) {
         try {
-          await wc.executeJavaScript(`(()=>{try{history.pushState({},'',${JSON.stringify(ev.url)});window.dispatchEvent(new PopStateEvent('popstate'))}catch(e){}})()`, true)
+          await evalJs(wc, `(()=>{try{history.pushState({},'',${JSON.stringify(ev.url)});window.dispatchEvent(new PopStateEvent('popstate'))}catch(e){}})()`, true)
           return { ok: true }
         } catch (e) { return { ok: false, err: e.message } }
       }
@@ -335,7 +346,7 @@ module.exports = function initRecorder(ctx) {
         try {
           const ls = ev._restorePreState.local || '{}'
           const ss = ev._restorePreState.session || '{}'
-          await wc.executeJavaScript(`(()=>{try{var l=JSON.parse(${JSON.stringify(ls)});Object.keys(l).forEach(k=>localStorage.setItem(k,l[k]));var s=JSON.parse(${JSON.stringify(ss)});Object.keys(s).forEach(k=>sessionStorage.setItem(k,s[k]));}catch(e){}})()`, true)
+          await evalJs(wc, `(()=>{try{var l=JSON.parse(${JSON.stringify(ls)});Object.keys(l).forEach(k=>localStorage.setItem(k,l[k]));var s=JSON.parse(${JSON.stringify(ss)});Object.keys(s).forEach(k=>sessionStorage.setItem(k,s[k]));}catch(e){}})()`, true)
           // reload 让 SPA 在恢复后的 storage 状态下重新跑入口逻辑
           try { wc.reload() } catch {}
           await new Promise((res) => { const t = setTimeout(res, 12000); wc.once('did-stop-loading', () => { clearTimeout(t); res() }) })
@@ -354,7 +365,7 @@ module.exports = function initRecorder(ctx) {
     }
     if (ev.act === 'click') {
       try {
-        const r = await fr.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';__el.scrollIntoView({block:'center'});__el.click();return 'OK';})()`, true)
+        const r = await evalJs(fr, `(()=>{var __el=null;if(!(${elExpr}))return 'NF';__el.scrollIntoView({block:'center'});__el.click();return 'OK';})()`, true)
         return r === 'OK' ? { ok: true } : { ok: false, err: 'selector(+alt) not found' }
       } catch (e) { return { ok: false, err: e.message } }
     }
@@ -362,7 +373,7 @@ module.exports = function initRecorder(ctx) {
       // 密码步录制时不存明文:没带运行参数就显式失败(优于静默清空密码框);登录态靠 preState 恢复兜底
       if (ev.secret && !ev.value) return { ok: false, err: 'password 步未提供运行参数(录制未存明文,请把该步设为参数或先在浏览器登录)', secret: true }
       try {
-        const r = await fr.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';
+        const r = await evalJs(fr, `(()=>{var __el=null;if(!(${elExpr}))return 'NF';
           var v=${JSON.stringify(String(ev.value == null ? '' : ev.value))};
           if (__el.isContentEditable){__el.focus();__el.innerText=v}
           else{var p=Object.getOwnPropertyDescriptor(__el.__proto__,'value');p&&p.set?p.set.call(__el,v):(__el.value=v);}
@@ -372,7 +383,7 @@ module.exports = function initRecorder(ctx) {
     }
     if (ev.act === 'select') {
       try {
-        const r = await fr.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';
+        const r = await evalJs(fr, `(()=>{var __el=null;if(!(${elExpr}))return 'NF';
           var v=${JSON.stringify(String(ev.value == null ? '' : ev.value))};
           var p=Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value');
           p&&p.set?p.set.call(__el,v):(__el.value=v);
@@ -388,7 +399,7 @@ module.exports = function initRecorder(ctx) {
     }
     if (ev.act === 'check') {
       try {
-        const r = await fr.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';
+        const r = await evalJs(fr, `(()=>{var __el=null;if(!(${elExpr}))return 'NF';
           var want=${ev.checked ? 'true' : 'false'};
           if(__el.checked!==want){__el.click();}
           if(__el.checked!==want){
@@ -403,23 +414,23 @@ module.exports = function initRecorder(ctx) {
     if (ev.act === 'key') {
       try {
         // 先在目标 frame 里 focus 元素,再由 webContents 发键(sendInputEvent 打到当前聚焦 frame)
-        await fr.executeJavaScript(`(()=>{var __el=null;if(${elExpr})__el.focus();})()`, true)
+        await evalJs(fr, `(()=>{var __el=null;if(${elExpr})__el.focus();})()`, true)
         wc.sendInputEvent({ type: 'keyDown', keyCode: ev.key })
         wc.sendInputEvent({ type: 'keyUp', keyCode: ev.key })
         if (ev.key === 'Enter') {
-          try { await fr.executeJavaScript(`(()=>{var __el=null;if((${elExpr})&&__el.form){__el.form.requestSubmit?__el.form.requestSubmit():__el.form.submit()}})()`, true) } catch {}
+          try { await evalJs(fr, `(()=>{var __el=null;if((${elExpr})&&__el.form){__el.form.requestSubmit?__el.form.requestSubmit():__el.form.submit()}})()`, true) } catch {}
         }
         return { ok: true }
       } catch (e) { return { ok: false, err: e.message } }
     }
     if (ev.act === 'submit') {
       try {
-        const r = await fr.executeJavaScript(`(()=>{var __el=null;if(!(${elExpr}))return 'NF';if(__el.tagName==='FORM'){__el.requestSubmit?__el.requestSubmit():__el.submit()}else{__el.click()}return 'OK';})()`, true)
+        const r = await evalJs(fr, `(()=>{var __el=null;if(!(${elExpr}))return 'NF';if(__el.tagName==='FORM'){__el.requestSubmit?__el.requestSubmit():__el.submit()}else{__el.click()}return 'OK';})()`, true)
         return r === 'OK' ? { ok: true } : { ok: false, err: 'selector(+alt) not found' }
       } catch (e) { return { ok: false, err: e.message } }
     }
     if (ev.act === 'scroll') {
-      try { await wc.executeJavaScript(`window.scrollTo(${Number(ev.x) || 0}, ${Number(ev.y) || 0})`, true); return { ok: true } } catch (e) { return { ok: false, err: e.message } }
+      try { await evalJs(wc, `window.scrollTo(${Number(ev.x) || 0}, ${Number(ev.y) || 0})`, true); return { ok: true } } catch (e) { return { ok: false, err: e.message } }
     }
     return { ok: true }
   }
@@ -460,10 +471,10 @@ module.exports = function initRecorder(ctx) {
           const hit = tab.console.find((c) => c.level >= 2 && (c.message || '').includes(v))
           pass = !hit; detail = hit ? '仍出现: ' + hit.message.split('\n')[0].slice(0, 120) : '✓ 未再出现'
         } else if (a.kind === 'no_element') {
-          const r = await wc.executeJavaScript(`!document.querySelector(${JSON.stringify(a.value)})`, true)
+          const r = await evalJs(wc, `!document.querySelector(${JSON.stringify(a.value)})`, true)
           pass = !!r; detail = pass ? '✓ 已消失' : '元素仍存在'
         } else if (a.kind === 'has_element') {
-          const r = await wc.executeJavaScript(`!!document.querySelector(${JSON.stringify(a.value)})`, true)
+          const r = await evalJs(wc, `!!document.querySelector(${JSON.stringify(a.value)})`, true)
           pass = !!r; detail = pass ? '✓ 已出现' : '元素仍不存在'
         } else if (a.kind === 'no_net') {
           const v = String(a.value)
@@ -524,7 +535,7 @@ module.exports = function initRecorder(ctx) {
     // 弹窗自动应答桩:原生 confirm/alert/prompt 会同步阻塞渲染进程,无人值守回放遇「确认提交?」直接挂死。
     // confirm 恒返回 true(银行提交流程标配),应答记录随报告透出;整页 navigate 会清掉桩,导航成功后重注入
     const DLG_STUB = `;(function(){try{window.__bocom_dlgs=window.__bocom_dlgs||[];window.alert=function(m){window.__bocom_dlgs.push({k:'alert',m:String(m).slice(0,120)})};window.confirm=function(m){window.__bocom_dlgs.push({k:'confirm',m:String(m).slice(0,120)});return true};window.prompt=function(m,d){window.__bocom_dlgs.push({k:'prompt',m:String(m).slice(0,120)});return d==null?'':String(d)}}catch(e){}})()`
-    try { await wc.executeJavaScript(DLG_STUB, true) } catch {}
+    try { await evalJs(wc, DLG_STUB, true) } catch {}
     // 抓"修复后"状态:清空之前的报错/网络,重头开始
     tab.console = []; tab.errN = 0; tab.warnN = 0
     tab.net = []; tab.netById = new Map()
@@ -638,7 +649,7 @@ module.exports = function initRecorder(ctx) {
         break
       }
       if (r.ok && ev.act === 'navigate') {
-        try { await wc.executeJavaScript(DLG_STUB, true) } catch {}   // 整页加载清掉桩 → 重注入
+        try { await evalJs(wc, DLG_STUB, true) } catch {}   // 整页加载清掉桩 → 重注入
         if (r.redirected) { redirectFast = true; log('replay: 导航被重定向(可能已登录/路由守卫),后续步启用快速失败+锚点跳段') }
       }
       // 级联失败检测:连续 3 个非 navigate 步失败 → 后续大概率都依赖前面失败步,提前 break 不无谓继续。
@@ -704,13 +715,13 @@ module.exports = function initRecorder(ctx) {
       let pass = false, serr = ''
       try {
         pass = rec.success.kind === 'text'
-          ? await wc.executeJavaScript(`((document.body&&document.body.innerText)||'').includes(${JSON.stringify(sv)})`, true)
-          : await wc.executeJavaScript(`!!document.querySelector(${JSON.stringify(sv)})`, true)
+          ? await evalJs(wc, `((document.body&&document.body.innerText)||'').includes(${JSON.stringify(sv)})`, true)
+          : await evalJs(wc, `!!document.querySelector(${JSON.stringify(sv)})`, true)
       } catch (e) { serr = e.message }
       successRes = { pass: !!pass, kind: rec.success.kind, value: sv, err: serr }
     }
     let dialogs = []
-    try { dialogs = (await wc.executeJavaScript('window.__bocom_dlgs||[]', true)) || [] } catch {}
+    try { dialogs = (await evalJs(wc, 'window.__bocom_dlgs||[]', true)) || [] } catch {}
     const cov = covOn ? await stopCoverage(tab) : null
     const hitInfo = cov ? coverageHits(cov, changedFiles) : []
     // 自愈回写:换环境(_baseSwapped)不写(DOM 可能不同);仅对有 id 的技能持久化修正后的选择器,下次直接命中
