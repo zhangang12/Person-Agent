@@ -323,7 +323,9 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     S.sessionInfo.set(sessionId, { wc: e.sender, serve })
     const model = replayModel(e.sender.id, sessionId)
     S.pushServeHealth && S.pushServeHealth(e.sender, serve)
-    const ctx = loadMemory() + loadProjectContext(dir); if (ctx) S.firstMsgCtx.set(sessionId, ctx)
+    // carryCtx=压缩续聊的接力摘要:上一段对话的要点随首条消息带进新会话(用户气泡不显示,回放展示层会剥)
+    const carry = opts && typeof opts.carryCtx === 'string' && opts.carryCtx.trim() ? '<上轮对话接力摘要>\n' + opts.carryCtx.trim().slice(0, 20000) + '\n</上轮对话接力摘要>\n\n' : ''
+    const ctx = loadMemory() + loadProjectContext(dir) + carry; if (ctx) S.firstMsgCtx.set(sessionId, ctx)
     recordHistory(sessionId, 'BocomHermes 对话', dir)
     // 旧 serve 若已无任何会话引用且是自起的 → 退休,不留孤儿进程
     if (oldServe && oldServe !== serve) {

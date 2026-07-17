@@ -237,7 +237,7 @@
     H.closeSelf()
   }
   $('go').addEventListener('click', go)
-  goalEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go() } })
+  goalEl.addEventListener('keydown', (e) => { if (e.isComposing || e.keyCode === 229) return; if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go() } })   // IME 组合态不发送
   setTimeout(() => { try { goalEl.focus() } catch (e) {} }, 60)
 
   // 窗口控制

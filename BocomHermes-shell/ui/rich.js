@@ -6,7 +6,14 @@
   'use strict'
   const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const FLOC = /([\w./\\-]+\.[A-Za-z]\w*):(\d+)/g
-  const linkify = (s) => s.replace(FLOC, (m, f, l) => '<a class="floc" data-file="' + f + '" data-line="' + l + '">' + m + '</a>')
+  // http(s) 链接可点(系统浏览器打开):以前回答里的 URL 是死文本,只能手抄。跑在 esc 之后 → 匹配已转义文本,
+  // &amp; 是 URL 常客要吃进去;结尾的中英文标点/右括号大概率是句子的不是 URL 的,剥掉
+  const EXTURL = /(https?:\/\/[^\s<>"'一-鿿＀-￯　-〿]+)/g   // 排除 CJK 与全角标点:真实 URL 里中文都是百分号编码,裸中文=句子黏连
+  const extlink = (s) => s.replace(EXTURL, (m) => {
+    let u = m; const trail = u.match(/[)）\]。，,;；.!?、]+$/); if (trail) u = u.slice(0, -trail[0].length)
+    return '<a class="extlink" data-url="' + u + '" title="在系统浏览器打开">' + u + '</a>' + (trail ? trail[0] : '')
+  })
+  const linkify = (s) => extlink(s.replace(FLOC, (m, f, l) => '<a class="floc" data-file="' + f + '" data-line="' + l + '">' + m + '</a>'))
   const inline = (s) => linkify(esc(s))
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
@@ -173,6 +180,9 @@
   }
   function wireActions(root, h) {
     root.addEventListener('click', (e) => {
+      // 外链:系统浏览器打开(主进程 shell.openExternal 只认 http/https)。内置在 wireActions,各页面零接线
+      const ext = e.target.closest('a.extlink')
+      if (ext) { e.preventDefault(); try { window.BocomHermes && window.BocomHermes.openExternalUrl && window.BocomHermes.openExternalUrl(ext.dataset.url) } catch (_) {} return }
       const btn = e.target.closest('button[data-act]'); if (!btn || btn.disabled) return
       const act = btn.dataset.act
       // 多文件 diff 的整组动作（按钮在 .rsetbar 里，不在某个 .rblk 内）

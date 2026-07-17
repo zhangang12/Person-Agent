@@ -42,6 +42,10 @@
   .proj { font-size: 10.5px; font-family: var(--mono); color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 999px; padding: 2px 8px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; transition: color .12s, border-color .12s, background .12s; }
   .proj:hover { color: var(--txt); border-color: var(--accent); }
   .proj.empty { color: var(--accent); border-color: var(--accent); background: rgba(74,168,255,.08); }
+  /* 上下文用量 chip:安静的估算,只在开始有分量(≥5%)时出现;70% 转警示、90% 转红 —— 点击压缩续聊 */
+  #ctxchip { font-variant-numeric: tabular-nums; }
+  #ctxchip.ctxwarn { color: var(--warn-txt); border-color: var(--warn-border); background: var(--warn-bg); }
+  #ctxchip.ctxdanger { color: var(--diff-del); border-color: var(--diff-del); background: var(--diff-del-bg); }
   /* 模型选择 */
   .modelchip { display: inline-flex; align-items: center; gap: 4px; max-width: 134px; }
   .model-menu { position: fixed; z-index: 100; min-width: 210px; max-width: 290px; max-height: 340px; overflow-y: auto; background: var(--glass-bg); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border: 1px solid var(--composer-border); border-radius: 12px; padding: 5px; box-shadow: 0 10px 34px rgba(0,0,0,.28); }
@@ -117,6 +121,8 @@
   .ai blockquote { margin: 6px 0; padding: 3px 11px; border-left: 2.5px solid var(--c-quote); color: var(--c-quote); background: var(--composer-bg); border-radius: 0 7px 7px 0; }
   .floc { color: var(--accent); cursor: pointer; text-decoration: none; border-bottom: 1px dotted var(--accent); }
   .floc:hover { opacity: .75; }
+  .extlink { color: var(--accent); cursor: pointer; text-decoration: underline; text-decoration-color: rgba(74,168,255,.4); word-break: break-all; }
+  .extlink:hover { opacity: .8; }
   .ai table { border-collapse: collapse; margin: 7px 0; font-size: 13px; display: block; max-width: 100%; overflow-x: auto; }
   .ai th, .ai td { border: .5px solid var(--composer-border); padding: 4px 8px; text-align: left; vertical-align: top; }
   .ai th { font-weight: 600; background: var(--composer-bg); white-space: nowrap; }
@@ -264,6 +270,7 @@
       <span id="ttl" class="ttl">对话</span>
       <span id="proj" class="proj"></span>
       <span id="model" class="proj modelchip nodrag" title="选择模型（仅影响本卡）">默认模型</span>
+      <span id="ctxchip" class="proj nodrag" hidden></span>
       <span id="hb" class="hb" title="引擎保活心跳检测中…"><i class="hb-dot"></i><span class="hb-txt">保活</span></span>
       <button id="bverbose" class="hbtn nodrag" title="过程详情：开=每个工具自动展开入参/结果；关=紧凑一行摘要(点击单个可展开)" aria-label="过程详情"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="3.5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="3.5" cy="18" r="1.2" fill="currentColor" stroke="none"/></svg></button>
       <button id="bprobe" class="hbtn nodrag" title="保活心跳日志（看 POST /heartbeat 的报文）" aria-label="保活日志"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5 7 5-14 2.5 7H21"/></svg></button>
@@ -368,6 +375,7 @@
   const projEl = document.getElementById('proj')
   // 项目标签 = 本卡视角:显示【本卡绑定】的目录,点击只切换本卡(不动全局、不影响其它卡)
   function paintProj(name, dir) {
+    try { curDir = dir || curDir } catch {}
     const txt = (name && name !== '未选目录') ? name : ''
     projEl.textContent = txt || '未选目录'
     projEl.title = '本卡项目目录：' + (dir || txt || '未选') + '\n点击切换（仅影响本卡，立即重建会话）'
@@ -427,6 +435,7 @@
   function paintModelChip(m) {
     curModelKey = (m && m.modelID) ? ((m.providerID || '') + '/' + m.modelID) : ''
     setModelLabel(m && m.modelID ? (m.name || m.modelID) : '')
+    try { refreshCtxLimit() } catch {}   // 换模型 → 上下文上限跟着换(读 serve 元数据 limit.context)
   }
   async function openModelMenu() {
     const r = modelEl.getBoundingClientRect()
@@ -462,6 +471,75 @@
   document.addEventListener('click', (e) => { if (!menuEl.hidden && !menuEl.contains(e.target) && e.target !== modelEl) menuEl.hidden = true })
   // 进卡的初始 chip 由 boot 处 cardInit 回包绘制(= 本卡 override || 全局默认);这里先给全局默认兜底
   try { const gm = (window.BocomHermes.getSettings && window.BocomHermes.getSettings().model) || null; if (gm && gm.modelID) paintModelChip(gm) } catch (e) {}
+
+  // ── 上下文用量指示 + 压缩续聊 ─────────────────────────────────────────────
+  // 用量=本会话进过上下文的字符估算(发出的消息 + 回答/思考 + 父会话工具入参/结果;注入背景与子agent隔离上下文不计)。
+  // 上限=当前模型元数据的 limit.context(serve /config/providers 真实值),serve 没报才回退 128k。
+  // tokens ≈ 字符/1.6(中英混排粗估) —— 这是指示器不是计费表,量级对就有用。
+  const ctxChip = document.getElementById('ctxchip')
+  let ctxUsedChars = 0, ctxLimitTokens = 0, curDir = ''
+  const countedToolParts = new Set()
+  async function refreshCtxLimit() {
+    try {
+      if (!modelsCache || !modelsCache.length) { modelsCache = await window.BocomHermes.listModels(); if (modelsCache && modelsCache.length) modelsCacheAt = Date.now() }
+      const m = curModelKey && (modelsCache || []).find((x) => x.providerID + '/' + x.modelID === curModelKey)
+      ctxLimitTokens = (m && m.ctx) || 128000
+    } catch { ctxLimitTokens = ctxLimitTokens || 128000 }
+    paintCtxChip()
+  }
+  function paintCtxChip() {
+    if (!ctxLimitTokens) { ctxChip.hidden = true; return }
+    const est = Math.round(ctxUsedChars / 1.6)
+    const pct = est / ctxLimitTokens
+    if (pct < 0.05) { ctxChip.hidden = true; return }
+    ctxChip.hidden = false
+    ctxChip.textContent = '上下文 ~' + Math.round(pct * 100) + '%'
+    ctxChip.classList.toggle('ctxwarn', pct >= 0.7 && pct < 0.9)
+    ctxChip.classList.toggle('ctxdanger', pct >= 0.9)
+    ctxChip.title = '本会话上下文估算:约 ' + (est > 999 ? (est / 1000).toFixed(1) + 'k' : est) + ' / ' + Math.round(ctxLimitTokens / 1000) + 'k tokens'
+      + (pct >= 0.7 ? '\n越接近上限回答质量越差 —— 点击「压缩续聊」:把本段对话总结成接力摘要,开新会话无缝继续' : '\n点击可提前压缩续聊')
+  }
+  const bumpCtx = (n) => { if (n > 0) { ctxUsedChars += n; paintCtxChip() } }
+  // 压缩续聊:让模型自己写接力摘要 → 新会话随首条消息注入 → 本卡无缝切换(Claude Code /compact 的对齐)
+  async function runCompact() {
+    if (busy || !cardReady) { addNote('正在回答中，等这轮结束再压缩', 'muted'); return }
+    if (document.getElementById('memPop')) return
+    const pop = document.createElement('div'); pop.id = 'memPop'
+    pop.style.cssText = 'position:absolute;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35);border-radius:14px;'
+    const box = document.createElement('div')
+    box.style.cssText = 'width:86%;max-width:460px;background:var(--glass-bg);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border:1px solid var(--composer-border);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;box-shadow:0 10px 34px rgba(0,0,0,.3);'
+    box.innerHTML = '<div style="font-size:13px;font-weight:600;color:var(--txt)">压缩续聊</div>'
+      + '<div style="font-size:12px;color:var(--txt2);line-height:1.6">让模型把本段对话总结成「接力摘要」，然后开一段新会话继续 —— 结论、路径、未完成事项都会带过去，上下文占用回到起点。原对话内容会从本卡清空（引擎侧历史仍在，可从卡坞找回）。</div>'
+    const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;'
+    const cancel = document.createElement('button'); cancel.className = 'rbtn-ghost'; cancel.textContent = '取消'
+    const go = document.createElement('button'); go.className = 'rbtn-primary'; go.textContent = '压缩并续聊'
+    cancel.addEventListener('click', () => pop.remove())
+    pop.addEventListener('click', (e) => { if (e.target === pop) pop.remove() })
+    go.addEventListener('click', async () => {
+      pop.remove()
+      addNote('压缩续聊:正在让模型总结本段对话…', 'muted')
+      const ok = await turn('请把我们这段对话压缩成一份「接力摘要」，供新会话继续用。包含：1) 正在做的事与目标 2) 已确认的关键结论/决定（保留文件路径、命令、数据） 3) 未完成事项与下一步 4) 需要沿用的约束与偏好。只输出摘要正文。')
+      const ais = feed.querySelectorAll('.msg.ai')
+      const summary = ok && ais.length ? String(ais[ais.length - 1].dataset.raw || '') : ''
+      if (!summary.trim()) { addNote('压缩失败：没拿到摘要，继续用原会话（可稍后重试）', 'muted'); return }
+      try {
+        setBusy(true)
+        const r = await window.BocomHermes.cardReinit({ dir: curDir, carryCtx: summary })
+        resetConversation()
+        paintProj(r.project, r.dir); paintModelChip(r.model); curDir = r.dir || curDir
+        ctxUsedChars = summary.length; countedToolParts.clear(); paintCtxChip(); refreshCtxLimit()
+        const d = document.createElement('details'); d.className = 'reason'
+        d.innerHTML = '<summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>接力摘要（已随新会话注入）</summary><div class="body"></div>'
+        d.querySelector('.body').textContent = summary
+        feed.appendChild(d)
+        addNote('已压缩续聊：新会话就绪，摘要已注入，直接继续提问即可。', 'muted')
+        cardReady = true; setBusy(false); maybeDrain()
+      } catch (e) { setBusy(false); addNote('开新会话失败：' + (e.message || e) + '（原会话不受影响）', 'muted') }
+    })
+    row.append(cancel, go); box.appendChild(row); pop.appendChild(box)
+    ;(document.querySelector('.card') || document.body).appendChild(pop)
+  }
+  ctxChip.addEventListener('click', runCompact)
 
   // 点 文件:行 链接 → 在编辑器打开
   feed.addEventListener('click', (e) => {
@@ -550,6 +628,7 @@
     // toolEls/subAgents 也得清:feed 清空后它们攥的全是 detached DOM —— 旧引用既是内存泄漏,
     // 撞上同 partID 时 renderTool 还会去更新一个不在页面上的节点(工具日志"凭空消失")
     toolEls.clear(); subAgents.clear(); if (_saTick) { clearInterval(_saTick); _saTick = null }
+    try { ctxUsedChars = 0; countedToolParts.clear(); paintCtxChip() } catch {}
   }
 
   function addMsg(text, who) {
@@ -558,6 +637,27 @@
     if (who === 'ai') { d.dataset.raw = text || ''; d.innerHTML = renderMarkdown(text); if (text) addCopyBtn(d) } else d.textContent = text
     feed.appendChild(d); scrollFeed(true)   // 新消息=离散动作,强制到底(流式增量才守卫)
     return d
+  }
+  let lastSend = null   // 本轮发出的 {text, files}:错误重试/重新回答都免重打
+  // 出错后的可行动提示:错误信息 + 「重试本轮」按钮(同一条消息原样重发,内网网关抖动场景的刚需)
+  function addRetryNote(msg) {
+    const d = document.createElement('div'); d.className = 'note muted'
+    d.textContent = msg
+    if (lastSend) {
+      const b = document.createElement('button'); b.className = 'rbtn-ghost'; b.textContent = '重试本轮'
+      b.style.cssText = 'margin-left:8px;font-size:11px;vertical-align:baseline;'
+      b.addEventListener('click', () => { if (busy || !lastSend) return; d.remove(); turn(lastSend.text, null, lastSend.files) })
+      d.appendChild(b)
+    }
+    feed.appendChild(d); scrollFeed(true)
+  }
+  // AI 回答悬停「重新回答」:把同样的问题再问一遍(新答案追加在下方,不覆盖旧的)
+  function addRegenBtn(el, prompt, files) {
+    if (el._regen) return; el._regen = true
+    const b = document.createElement('button'); b.className = 'copybtn'; b.style.right = '32px'; b.title = '重新回答（把同样的问题再问一遍）'
+    b.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.3"/><path d="M21 3v5h-5"/></svg>'
+    b.addEventListener('click', (e) => { e.stopPropagation(); if (busy) return; turn(prompt, null, files) })
+    el.appendChild(b)
   }
   // AI 回答悬停右上角一键复制(复制原文,不是渲染后的 HTML)
   function addCopyBtn(el) {
@@ -660,6 +760,7 @@
         ? '<div class="tsec">' + todo.rows + '</div>'
         : (inStr ? '<div class="tsec"><span class="tsl">入参</span><pre>' + esc(inStr.slice(0, 4000)) + '</pre></div>' : '')
           + (outStr ? '<div class="tsec' + (data.error ? ' e' : '') + '"><span class="tsl">' + (data.error ? '错误' : '结果') + '</span><pre>' + esc(outStr.slice(0, 20000)) + '</pre></div>' : ''))
+    try { if (!opts.sub && (done || err) && partID && !countedToolParts.has(partID)) { countedToolParts.add(partID); bumpCtx(inStr.length + outStr.length) } } catch {}   // 工具入参+结果进上下文,按 partID 只记一次
     // 状态行登记:运行中登记(带子agent名),完成/出错注销
     const slName = String(name) + (data.title ? '(' + String(data.title).slice(0, 40) + ')' : '') + (opts.sub && opts.agentName ? ' @' + opts.agentName : '')
     if (done || err) runningTools.delete(partID); else runningTools.set(partID, slName)
@@ -770,6 +871,8 @@
   async function turn(text, target, files) {
     const ai = target || addMsg('', 'ai')
     const PH = target ? '运行中…' : '思考中…'; ai.textContent = PH
+    if (!target) lastSend = { text, files }   // 网关抖了能一键重试,不用重打
+    try { bumpCtx((text || '').length) } catch {}
     curAnswer = ai; curReason = null; answerParts = new Map(); reasonParts = new Map(); subAgents.clear(); toolEls.clear(); if (_saTick) { clearInterval(_saTick); _saTick = null }; setBusy(true)   // toolEls 跨轮清:上一轮的工具块已定格在 feed 里,Map 只清引用防无限涨
     let ok = true
     try {
@@ -785,7 +888,8 @@
       if (finalText) ai.innerHTML = renderMarkdown(finalText)
       else if (st.think) ai.textContent = '（本轮只有思考过程，见上方思考块）'
       else if (!ai.textContent.trim() || ai.textContent === PH) ai.textContent = '（无文本输出）'
-      if (!target && finalText) { ai.dataset.raw = finalText; addCopyBtn(ai) }   // 答完挂复制按钮(流式中不挂,免被逐帧重渲染冲掉)
+      try { bumpCtx(finalText.length + (st.think ? st.think.length : 0)) } catch {}
+      if (!target && finalText) { ai.dataset.raw = finalText; addCopyBtn(ai); if ((text || '').length <= 8000) addRegenBtn(ai, text, files) }   // 答完挂复制/重新回答(流式中不挂,免被逐帧重渲染冲掉)
       // 思考块答完【不折叠不移除】:历史每一轮的思考链路都留在对话流里可回看;想收起手动点标题
     } catch (e) {
       ok = false
@@ -796,10 +900,11 @@
       if (pst.rest) {
         ai.innerHTML = renderMarkdown(pst.rest)
         if (!target) { ai.dataset.raw = pst.rest; addCopyBtn(ai) }
-        addNote('回合中断：' + (e.message || e) + '（以上是中断前已收到的部分回答）', 'muted')
+        addRetryNote('回合中断：' + (e.message || e) + '（以上是中断前已收到的部分回答）')
       } else {
         if (!target) ai.className = 'msg ai err'
         ai.textContent = '出错：' + (e.message || e)
+        if (!target) addRetryNote('内网网关抖动是常态，可直接重试（同一条消息，不用重打）')
       }
     } finally { for (const [id, s] of subAgents) if (!s.done) subAgentDone(id, 'done'); curAnswer = null; curReason = null; setBusy(false); scrollFeed(); maybeDrain() }
     return ok
@@ -868,8 +973,10 @@
     // 现在气泡立即上屏(半透明 + ⏳),本轮一结束按序自动发出(复用注入队列 maybeDrain)。
     if (busy || !cardReady) {
       el.classList.add('queued')
-      const q = document.createElement('span'); q.className = 'qtag'; q.textContent = '排队中 · 本轮结束后发出'; el.appendChild(q)
-      pendingInjects.push({ text: full || '(见附件)', files: images, el })
+      const q = document.createElement('span'); q.className = 'qtag'; q.textContent = '排队中 · 点此取消'; q.style.cursor = 'pointer'; q.title = '取消这条排队消息'; el.appendChild(q)
+      const qi = { text: full || '(见附件)', files: images, el }
+      q.addEventListener('click', () => { const at = pendingInjects.indexOf(qi); if (at >= 0) { pendingInjects.splice(at, 1); el.remove() } })   // 反悔权:出队 + 撤气泡
+      pendingInjects.push(qi)
       return
     }
     turn(full || '(见附件)', null, images)
@@ -907,6 +1014,7 @@
   }
   ci.addEventListener('input', () => { autoGrow(); const v = ci.value; if (v[0] === '/') openSkillMenu(v.slice(1)); else if (skillMenuOpen()) hideSkillMenu() })
   ci.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229) return   // 中文输入法组合态:选字的 Enter/↑↓ 是给候选框的,不发送不翻历史(不守=半截拼音被发出去)
     if (skillMenuOpen()) {
       if (e.key === 'ArrowDown') { e.preventDefault(); moveSkillSel(1); return }
       if (e.key === 'ArrowUp') { e.preventDefault(); moveSkillSel(-1); return }

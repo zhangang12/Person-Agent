@@ -81,6 +81,7 @@ function submit() {
 }
 
 q.addEventListener('keydown', e => {
+  if (e.isComposing || e.keyCode === 229) return;   // IME 组合态不发送
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() }
   if (e.key === 'Escape') H.closeOrbInput()
 })

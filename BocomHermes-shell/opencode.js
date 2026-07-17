@@ -357,7 +357,9 @@ async function listModels(info) {
       for (const mid of Object.keys(models)) {
         const m = models[mid] || {}
         const inp = (m.capabilities || {}).input || {}
-        out.push({ providerID: p.id, modelID: mid, name: m.name || mid, provider: p.name || p.id, image: !!inp.image })
+        // ctx=模型上下文上限(tokens,来自 serve 的模型元数据 limit.context) —— 上下文用量指示按真实值算,serve 没报才由 UI 回退默认
+        const lim = m.limit || m.limits || {}
+        out.push({ providerID: p.id, modelID: mid, name: m.name || mid, provider: p.name || p.id, image: !!inp.image, ctx: +lim.context > 0 ? +lim.context : null })
       }
     }
     return out
@@ -388,6 +390,7 @@ function stripInjected(t) {
     .replace(/<个人记忆>[\s\S]*?<\/个人记忆>\s*/g, '')
     .replace(/<项目背景>[\s\S]*?<\/项目背景>\s*/g, '')
     .replace(/<作答技能:[^>\n]{0,120}>[\s\S]*?<\/作答技能>\s*/g, '')
+    .replace(/<上轮对话接力摘要>[\s\S]*?<\/上轮对话接力摘要>\s*/g, '')   // 压缩续聊注入的摘要,同样不进用户气泡
     .trim()
 }
 // 从正文里拆 <think> 段(这个网关的模型思考常以 <think> 混在 text 里,不走标准 reasoning part):
