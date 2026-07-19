@@ -1,5 +1,6 @@
 'use strict'
 const { exec } = require('child_process')
+const knowledge = require('./knowledge')
 
 module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, recordHistory, touchHistory }) {
   // ── 个人记忆库 ──────────────────────────────────────────────────────────────
@@ -60,6 +61,13 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
       + `分析、探索、读写代码时一律在此目录内进行;不要访问或分析其它路径下的项目/目录。\n`
     const body = parts.length ? ('\n以下是本项目的说明文档,供参考:\n\n' + parts.join('\n\n---\n\n')) : ''
     return `<项目背景>\n${anchor}${body}</项目背景>\n\n`
+  }
+
+  // 项目级知识库(任务尾蒸馏的落点,src/knowledge.js):按工作目录匹配,新卡首条消息随背景注入。
+  // 与【全局】个人记忆 memory.md 分开 —— 系统级事实是项目资产,写全局会污染其它项目。
+  function loadKnowledge(dir) {
+    if (!dir) return ''
+    try { return knowledge.injectText(fs.readFileSync(knowledge.fileFor(dir, require('electron').app.getPath('userData')), 'utf8'), dir) } catch { return '' }
   }
 
   // ── 作答技能库(指令型:slash 选中后把方法论指令预置到消息前 → 提升产出质量;区别于录制回放技能)──
@@ -139,6 +147,18 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     S.pendingPerm.set(requestId + ':meta', { tool, detail: detail || '' })   // 供审计留痕(批准/拒绝了什么)
     si.wc.send('permission-request', { requestId, tool, detail: detail || '' })   // detail=要改的文件/要跑的命令，便于知情审批
   }
+  // 交互提问路由:serve 的 question 工具需要用户点选回答 —— 弹到对话卡(交互提问卡),应答经 question-reply IPC 回 serve。
+  // 只路由到对话卡:reqflow/reqplan 等管线窗口(sessionInfo 带 tag.scope)没有提问 UI,会话无主/卡已毁同理 ——
+  // 一律自动 reject 兜底(不拒就把回合挂死,实测 88s 等用户 Esc)。子 agent 的提问会路由回父卡(dispatch 已归到根会话)。
+  function onQuestion({ sessionId, requestId, questions, v2, serve }) {
+    const si = S.sessionInfo.get(sessionId)
+    if (!si || !si.wc || si.wc.isDestroyed() || (si.tag && si.tag.scope)) {
+      try { oc.rejectQuestion((si && si.serve) || serve, sessionId, requestId, v2) } catch {}
+      return
+    }
+    S.pendingQuestion.set(requestId, { sessionId, v2: !!v2, serve: si.serve || serve })
+    si.wc.send('question-request', { requestId, questions: questions || [] })
+  }
   function onText({ sessionId, text, role, partID, kind, status, delta, toolInput, toolOutput, toolTitle, toolError, subagent, agentId, agentName, taskChild, taskDesc }) {
     const si = S.sessionInfo.get(sessionId); if (!si || !si.wc || si.wc.isDestroyed()) return
     if (role && role !== 'assistant') return
@@ -173,6 +193,15 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
       if (!subagent && /^todowrite$/i.test(String(text || '')) && toolInput && S.wfTodos) {
         try { const inp = typeof toolInput === 'string' ? JSON.parse(toolInput) : toolInput; if (inp && Array.isArray(inp.todos)) S.wfTodos(si.wc.id, inp.todos) } catch {}
       }
+      // write/edit 落盘(主 Agent 与子 Agent 都收,只收成功完成的)→ 注册表产出文件清单,进存档与 workflow_result;
+      // 升格方拿到路径就能自己读产物,不用问用户。与渲染层成果抽屉同一份信号,各管各的:那边管展示,这边管外传。
+      if (/^(write|edit)(_[a-z]+)*$/i.test(String(text || '')) && toolInput && S.wfFiles && !toolError && /complet|success|done/i.test(String(status || ''))) {
+        try {
+          const inp = typeof toolInput === 'string' ? JSON.parse(toolInput) : toolInput
+          const fp = inp && (inp.filePath || inp.path || inp.filename)
+          if (fp) S.wfFiles(si.wc.id, path.isAbsolute(String(fp)) ? String(fp) : path.resolve((si.serve && si.serve.dir) || '.', String(fp)))
+        } catch {}
+      }
       si.wc.send('card-stream', { kind: 'tool', text, partID, status: status || '', input: toolInput, output: toolOutput, title: toolTitle, error: toolError, sub: !!subagent, agentId: agentId || '', agentName: agentName || '', taskChild: taskChild || '', taskDesc: taskDesc || '', readN, sessionId, tag }); return
     }
     if (!subagent && !role && kind !== 'reasoning' && text === S.sentPrompt.get(sessionId)) return   // "回显自己prompt"过滤只对父会话
@@ -183,7 +212,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     buf[partID] = full
     si.wc.send('card-stream', { kind: kind || 'text', text: full, partID, sub: !!subagent, agentId: agentId || '', agentName: agentName || '', sessionId, tag })
   }
-  S.handlers = { onPermission, onText }
+  S.handlers = { onPermission, onText, onQuestion }
 
   // ── Unified diff 解析 + 直接写文件 ─────────────────────────────────────────
   function parseDiff(text) {
@@ -310,7 +339,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
       S.sessionInfo.set(ns, { wc: e.sender, serve })
       const model1 = replayModel(e.sender.id, ns)
       S.pushServeHealth && S.pushServeHealth(e.sender, serve)
-      const ctx1 = loadMemory() + loadProjectContext(dir); if (ctx1) S.firstMsgCtx.set(ns, ctx1)
+      const ctx1 = loadMemory() + loadProjectContext(dir) + loadKnowledge(dir); if (ctx1) S.firstMsgCtx.set(ns, ctx1)
       recordHistory(ns, wantTitle || (h && h.title), dir)
       return { sessionId: ns, project: proj, dir, model: model1, reattached: false, stale: true }
     }
@@ -322,7 +351,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     S.sessionInfo.set(sessionId, { wc: e.sender, serve })
     const model0 = replayModel(e.sender.id, sessionId)
     S.pushServeHealth && S.pushServeHealth(e.sender, serve)
-    const ctx0 = loadMemory() + loadProjectContext(dir); if (ctx0) S.firstMsgCtx.set(sessionId, ctx0)
+    const ctx0 = loadMemory() + loadProjectContext(dir) + loadKnowledge(dir); if (ctx0) S.firstMsgCtx.set(sessionId, ctx0)
     recordHistory(sessionId, wantTitle, dir)
     return { sessionId, project: dir ? path.basename(dir) : '未选目录', dir, model: model0, reattached: false }
   })
@@ -349,7 +378,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     S.pushServeHealth && S.pushServeHealth(e.sender, serve)
     // carryCtx=压缩续聊的接力摘要:上一段对话的要点随首条消息带进新会话(用户气泡不显示,回放展示层会剥)
     const carry = opts && typeof opts.carryCtx === 'string' && opts.carryCtx.trim() ? '<上轮对话接力摘要>\n' + opts.carryCtx.trim().slice(0, 20000) + '\n</上轮对话接力摘要>\n\n' : ''
-    const ctx = loadMemory() + loadProjectContext(dir) + carry; if (ctx) S.firstMsgCtx.set(sessionId, ctx)
+    const ctx = loadMemory() + loadProjectContext(dir) + loadKnowledge(dir) + carry; if (ctx) S.firstMsgCtx.set(sessionId, ctx)
     recordHistory(sessionId, 'BocomHermes 对话', dir)
     // 旧 serve 若已无任何会话引用且是自起的 → 退休,不留孤儿进程
     if (oldServe && oldServe !== serve) {
@@ -369,7 +398,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     if (ctxPrefix) {
       S.firstMsgCtx.delete(sessionId); log('inject project context (' + ctxPrefix.length + ' chars) for ' + sessionId)
       // 后台动作可视化:注入了什么背景要让用户在对话里看得见(一行灰字),不能只躺在日志里
-      try { if (!e.sender.isDestroyed()) e.sender.send('card-note', { text: '已随首条消息注入背景：个人记忆 + 项目上下文（' + ctxPrefix.length + ' 字）', tone: 'muted' }) } catch {}
+      try { if (!e.sender.isDestroyed()) e.sender.send('card-note', { text: '已随首条消息注入背景：个人记忆 + 项目上下文 + 项目知识（' + ctxPrefix.length + ' 字）', tone: 'muted' }) } catch {}
     }
     // 作答技能：选中的技能把方法论指令静默预置到用户原文前（用户气泡仍显示原文）
     let skillPrefix = ''
@@ -465,6 +494,24 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     if (si) oc.replyPermission(si.serve, sessionId, requestId, d)
     // 审计:写/执行类操作的人工批准(工具+目标),reject 也记(留痕拒绝)
     try { S.audit && S.audit('permission', (d === 'reject' ? '拒绝' : '批准' + (d === 'always' ? '(总是)' : '')) + '权限:' + ((meta && meta.tool) || '?'), { decision: d, tool: meta && meta.tool, detail: (meta && meta.detail || '').slice(0, 300), sessionId }) } catch {}
+  })
+
+  // 交互提问卡的应答回传:reply=用户点选/自定义的答案(labels 按问题序),reject=拒绝回答(等价 TUI 的 Esc)
+  ipcMain.handle('question-reply', async (_e, { requestId, answers }) => {
+    const q = S.pendingQuestion.get(requestId); S.pendingQuestion.delete(requestId)
+    if (!q) return { ok: false, err: '这个提问已失效(可能已被应答或回合中断)' }
+    try {
+      await oc.replyQuestion(q.serve, q.sessionId, requestId, Array.isArray(answers) ? answers : [], q.v2)
+      try { S.audit && S.audit('question', '回答提问', { requestId, answers: JSON.stringify(answers || []).slice(0, 300), sessionId: q.sessionId }) } catch {}
+      return { ok: true }
+    } catch (e) { return { ok: false, err: String((e && e.message) || e) } }
+  })
+  ipcMain.handle('question-reject', async (_e, { requestId }) => {
+    const q = S.pendingQuestion.get(requestId); S.pendingQuestion.delete(requestId)
+    if (!q) return { ok: false, err: '这个提问已失效(可能已被应答或回合中断)' }
+    try { await oc.rejectQuestion(q.serve, q.sessionId, requestId, q.v2) } catch {}
+    try { S.audit && S.audit('question', '拒绝回答提问', { requestId, sessionId: q.sessionId }) } catch {}
+    return { ok: true }
   })
 
   ipcMain.handle('open-loc', (e, { file, line }) => {

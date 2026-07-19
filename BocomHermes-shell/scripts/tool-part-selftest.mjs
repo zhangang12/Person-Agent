@@ -303,5 +303,32 @@ await (async () => {
   srv.close()
 })()
 
+// 用例17:question.asked —— 有应答通道(onQuestion)路由给卡片弹提问卡,没有才自动 reject(治"交互提问挂死 88s 等人 Esc")
+await (async () => {
+  console.log('用例17:question.asked 路由 —— 有卡弹提问卡,无卡自动拒(v1/v2 端点)')
+  const http = await import('node:http')
+  const posts = []
+  const srv = http.createServer((req, res) => {
+    if (req.method === 'POST') posts.push(req.url)
+    res.setHeader('content-type', 'application/json'); res.end('true')
+  })
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r))
+  const info = { base: 'http://127.0.0.1:' + srv.address().port }
+  const asked = []
+  const onQuestion = (q) => asked.push(q)
+  // 有 onQuestion:路由给卡片(带问题与请求 id),不发 reject
+  dispatch({ type: 'question.asked', properties: { id: 'que_r1', sessionID: 'ses_q1', questions: [{ question: '确认?', header: 'h', options: [] }] } }, null, () => {}, info, onQuestion)
+  ok('有应答通道 → 路由给卡片(请求id/会话/问题都在)', asked.length === 1 && asked[0].requestId === 'que_r1' && asked[0].sessionId === 'ses_q1' && asked[0].questions.length === 1, asked)
+  await new Promise((r) => setTimeout(r, 200))
+  ok('有应答通道 → 不发 reject', posts.length === 0, posts)
+  // 无 onQuestion(会话无主/管线窗口):v1 → POST /question/:id/reject;v2 → /api/session/:sid/question/:id/reject
+  dispatch({ type: 'question.asked', properties: { id: 'que_v1', sessionID: 'ses_q2', questions: [] } }, null, () => {}, info)
+  dispatch({ type: 'question.v2.asked', properties: { id: 'que_v2', sessionID: 'ses_q3', questions: [] } }, null, () => {}, info)
+  await new Promise((r) => setTimeout(r, 300))
+  ok('无通道 v1 → POST /question/que_v1/reject', posts.includes('/question/que_v1/reject'), posts)
+  ok('无通道 v2 → POST /api/session/ses_q3/question/que_v2/reject', posts.includes('/api/session/ses_q3/question/que_v2/reject'), posts)
+  srv.close()
+})()
+
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

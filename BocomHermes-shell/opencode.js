@@ -504,11 +504,22 @@ async function replyPermission(info, sessionId, requestId, decision) {
   const p = info.permStyle === 'new' ? `/permission/${requestId}/reply` : `/session/${sessionId}/permissions/${requestId}`
   try { await api(info.base, 'POST', p, { reply: decision }) } catch (e) { console.error('permission reply failed:', e.message) }
 }
+// 交互提问(question)应答:v1=/question/:id/reply|reject;v2=/api/session/:sid/question/:id/...(端子不存在的旧 serve 会 404)。
+// reply 给调用方返回成败(卡片要据此定格提问卡/提示重答);reject 多为兜底触发,吞错打日志即可。
+async function replyQuestion(info, sessionId, requestId, answers, v2) {
+  const p = v2 ? `/api/session/${sessionId}/question/${requestId}/reply` : `/question/${requestId}/reply`
+  await api(info.base, 'POST', p, { answers })
+}
+async function rejectQuestion(info, sessionId, requestId, v2) {
+  const p = v2 ? `/api/session/${sessionId}/question/${requestId}/reject` : `/question/${requestId}/reject`
+  try { await api(info.base, 'POST', p); console.log('auto-rejected question ' + requestId + ' (no card to answer)') }
+  catch (e) { console.error('question reject failed:', e.message) }
+}
 
 // 事件循环每次重连都读 info.base —— 心跳重启把 serve 换到新端口后,本循环会自动接上新 base,无需重启循环。
 // info.dead = true(外部 serve 被清出 pool)时退出。
 async function runEventLoop(info, handlers, log) {
-  const { onPermission, onText } = handlers || {}
+  const { onPermission, onText, onQuestion } = handlers || {}
   for (;;) {
     if (info.dead) { log('event loop stopped (' + (info.dir || '(home)') + ')'); return }
     const base = info.base
@@ -545,14 +556,14 @@ async function runEventLoop(info, handlers, log) {
           // 见到没分类过的会话 → 懒加载会话树建 子→父 映射(保证子agent事件能路由回父卡片)
           { const evp = ev && ev.properties; const evSid = evp && (evp.sessionID || evp.sessionId || (evp.info && (evp.info.sessionID || evp.info.id)))
             if (evSid && !classifiedSessions.has(evSid) && !childToParent.has(evSid)) refreshSessionTree(info.base) }
-          dispatch(ev, onPermission, onText)
+          dispatch(ev, onPermission, onText, info, onQuestion)
         }
       }
       } finally { clearInterval(wd) }   // 内层读循环结束(正常断/看门狗掐)都摘定时器,不漏
     } catch (e) { if (info.dead) return; log('event stream dropped, reconnect 2s: ' + e.message); await sleep(2000) }
   }
 }
-function dispatch(ev, onPermission, onText) {
+function dispatch(ev, onPermission, onText, info, onQuestion) {
   const type = ev?.type ?? ''
   const p = ev.properties ?? ev.data ?? ev
   // 学习 子会话→父会话 映射:带 parentID 的【会话】事件(task 子agent 创建的子会话)。据此把子agent事件路由回父卡片。
@@ -587,6 +598,17 @@ function dispatch(ev, onPermission, onText) {
     const detail = argOf(p.tool) || argOf(p.permission) || argOf(p.metadata) || argOf(p)
       || (typeof p.title === 'string' && p.title !== tool ? p.title : '') || ''
     if (requestId && onPermission) onPermission({ sessionId, requestId, tool, detail: String(detail).slice(0, 200) })
+    return
+  }
+  // 交互提问工具(question):路由给卡片弹【交互提问卡】让用户点选回答(经 onQuestion,应答走 replyQuestion);
+  // 没有应答通道时(会话无主/通道未接)才自动 reject 兜底 —— 不拒就是挂死(实测卡 88s 等用户 Esc)。
+  // v2 事件(question.v2.asked)走 /api/ 前缀端点;旧 serve 无此端点会 404,rejectQuestion 里 catch 打日志即可。
+  if (type === 'question.asked' || type === 'question.v2.asked') {
+    const requestId = p.id ?? p.requestID ?? p.questionID
+    const r = route(p.sessionID ?? p.sessionId)
+    const v2 = type.includes('v2')
+    if (requestId && onQuestion) onQuestion({ sessionId: r.sessionId, requestId, questions: Array.isArray(p.questions) ? p.questions : [], v2, serve: info })
+    else if (info && requestId) rejectQuestion(info, p.sessionID ?? p.sessionId, requestId, v2)
     return
   }
   // 流式增量（本版 bocomcode 实测主路径）：message.part.delta { partID, field:'text', delta }
@@ -764,5 +786,5 @@ function retireIfOrphan(info, inUseBases) {
   return true
 }
 
-module.exports = { ensureServe, createSession, sendMessage, listModels, checkMcp, abort, replyPermission, sessionExists, getMessages, pollTurnParts, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, AUTO_ALLOW,
+module.exports = { ensureServe, createSession, sendMessage, listModels, checkMcp, abort, replyPermission, replyQuestion, rejectQuestion, sessionExists, getMessages, pollTurnParts, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, AUTO_ALLOW,
   __test: { dispatch, waitAssistantText, extractText, pickTurnText, abortedSince, abortedSids, normalizeMessages, stripInjected, splitThink } }

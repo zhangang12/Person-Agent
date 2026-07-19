@@ -3,6 +3,8 @@
 //   · 调 run_workflow → relay 到主进程 spawnWorkflow → 开一张工作流卡(Claude Code 式:单主 Agent
 //     在连续上下文里自拆 + task 并行派子 Agent 深挖 + 自综合;规划先行,用户批准后才开跑)。
 //   · workflow_result 取成果:内存注册表按轮快照(进行中也能取),关卡/重启后由 userData/workflows/ 存档兜底。
+//   · memory_add 任务尾蒸馏:把"系统级、三个月仍真"的事实写进项目知识库(userData/knowledge/,按项目分库),
+//     下次开卡随首条消息自动注入 —— 知识不落盘等于探索没发生(设计备忘 §7)。项目归属取 MCP 进程 cwd。
 //   · 工具描述本身就是"何时升格"的判据 —— 升格与否是 Agent 在上下文里自主决定,不是规则触发。
 import fs from 'node:fs'
 import path from 'node:path'
@@ -57,8 +59,25 @@ const TOOLS = [
   },
   {
     name: 'workflow_result',
-    description: '取回某个动态工作流的成果(成果按轮快照进注册表并存档,进行中也能取到最新阶段成果,完成后取终稿全文)。用户问"刚才那个工作流结果怎样/基于结果继续做 X"时调这个,拿到成果直接接着干活。',
+    description: '取回某个动态工作流的成果与产出文件清单(成果按轮快照,进行中也能取到最新阶段成果,完成后取终稿全文+落盘文件路径;返回 done、或 busy=false 且已有阶段成果,都说明活已交付,拿去直接用别干等)。用户问"刚才那个工作流结果怎样/基于结果继续做 X"时调这个,拿到成果直接接着干活。',
     inputSchema: { type: 'object', properties: { id: { type: 'string', description: '工作流 id(run_workflow 返回过);省略 = 最近一个' } } },
+  },
+  {
+    name: 'memory_add',
+    description:
+      '把「关于本系统、三个月后大概率仍成立」的事实写进项目知识库(按项目分库存放,下次开卡自动注入上下文)。\n' +
+      '【三问判据,全过才写】① 系统级(代码结构/业务规则/部署真相),不是本次任务的进度或改动清单;② 三个月后大概率仍真;③ 有明确重用场景。\n' +
+      '工作流收尾必蒸馏:每条一句话讲清事实,anchors 挂证据(file:行号),scene 写什么时候该想起它。没够格的事实就别调,宁缺勿滥。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: '一句话事实(系统级 + 三个月仍真 + 有场景)' },
+        anchors: { type: 'array', items: { type: 'string' }, description: '证据锚点,形如 src/foo.js:88(至多 6 个,可空)' },
+        scene: { type: 'string', description: '重用场景:什么任务该想起它(可空)' },
+        confidence: { type: 'string', enum: ['verified', 'suspected'], description: 'verified=亲自核实过;suspected=存疑待核(默认 verified)' },
+        entries: { type: 'array', description: '一次写多条时用 entries[{text,anchors,scene,confidence}](与单条参数二选一)', items: { type: 'object' } },
+      },
+    },
   },
 ]
 
@@ -69,19 +88,30 @@ async function callTool(name, a) {
     if (!goal) return '需要 goal(交给小队的总目标)'
     const r = await relayPost('/orch/run', { goal })
     return '已拉起动态工作流,id=' + (r.id != null ? r.id : '?') + '(卡片已打开:主 Agent 自拆 + 并行派子 Agent 深挖 + 自综合,过程可视、用户可插话)。'
+      + '注意:它的第一份计划要用户在卡片里点【开始执行】批准 —— 若用户不知道,提醒他去批准,批准后它自动开跑。'
       + '之后调 workflow_result(id="' + (r.id != null ? r.id : '') + '") 取回成果继续用(进行中也能取到最新阶段成果);现在可以先和用户讨论别的。'
   }
   if (name === 'workflow_result') {
     const body = {}
     if (a.id != null && String(a.id).trim()) body.id = String(a.id).trim()
     const r = await relayPost('/orch/result', body)
-    if (r.status === 'running') return '工作流 #' + r.id + ' 仍在进行(第 ' + (r.round || '?') + ' 轮):' + r.goal
+    const filesTxt = (r.files && r.files.length) ? '\n产出文件:\n' + r.files.map((f) => '- ' + f).join('\n') + '\n' : ''
+    if (r.status === 'running') return '工作流 #' + r.id + ' 仍在进行(第 ' + (r.round || '?') + ' 轮)' + (r.busy === false ? ',当前空闲(可能在等用户批准计划或插话)' : '') + ':' + r.goal + filesTxt
       + (r.final ? '\n\n【最新阶段成果(快照,后续还会更新)】\n' + r.final : '\n还没有阶段成果,稍后再调 workflow_result。')
     // archived = 该工作流来自之前的运行(注册表已随重启清空),成果取自磁盘存档
     const bits = [r.status === 'archived' ? '已存档(历史运行)' : r.status]
     if (r.rounds != null) bits.push(r.rounds + ' 轮')
     if (r.elapsedMs != null) bits.push(Math.round(r.elapsedMs / 1000) + 's')
-    return '工作流 #' + r.id + '(' + bits.join(' · ') + ')\n目标:' + (r.goal || '') + (r.archive ? '\n存档:' + r.archive : '') + '\n\n' + (r.final || '(无成果)')
+    return '工作流 #' + r.id + '(' + bits.join(' · ') + ')\n目标:' + (r.goal || '') + (r.archive ? '\n存档:' + r.archive : '') + filesTxt + '\n\n' + (r.final || '(无成果)')
+  }
+  if (name === 'memory_add') {
+    // 项目归属以 MCP 进程的 cwd 为准(serve spawn 时继承项目目录),不信 Agent 自报的 dir —— 防写错库
+    const body = { dir: process.cwd() }
+    if (Array.isArray(a.entries) && a.entries.length) body.entries = a.entries
+    else { body.text = String(a.text || '').trim(); body.anchors = a.anchors; body.scene = a.scene; body.confidence = a.confidence }
+    if (!body.entries && !body.text) return '需要 text(要写的事实)或 entries(多条)'
+    const r = await relayPost('/orch/memory-add', body)
+    return '已写入项目知识库:' + (r.added || 0) + ' 条新增' + (r.dupes ? ',' + r.dupes + ' 条重复跳过' : '') + '(按项目分库存放,下次开卡自动注入)。'
   }
   throw new Error('未知工具: ' + name)
 }

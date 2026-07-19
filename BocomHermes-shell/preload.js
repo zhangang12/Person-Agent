@@ -42,6 +42,10 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   clearHistory: () => ipcRenderer.invoke('clear-history'),
   // 工作流（动态编排）
   spawnWorkflow: (goal) => ipcRenderer.invoke('spawn-workflow', goal),
+  // 卡坞工作流面板:合并清单(注册表+存档) / 点一条聚焦活卡或打开存档
+  wfList: () => ipcRenderer.invoke('wf-list'),
+  wfOpen: (it) => ipcRenderer.invoke('wf-open', it),
+  wfDelete: (id) => ipcRenderer.invoke('wf-delete', id),
   // 需求分析（多Agent 对抗 → 三类清单）
   openReqAnalysis: () => ipcRenderer.invoke('open-req-analysis'),
   pickReqDocPath: () => ipcRenderer.invoke('pick-req-doc-path'),
@@ -83,6 +87,10 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   applyDiff: (diffText) => ipcRenderer.invoke('apply-diff', diffText),
   onPermission: (cb) => ipcRenderer.on('permission-request', (_e, p) => cb(p)),
   permissionReply: (requestId, decision) => ipcRenderer.send('permission-reply', { requestId, decision }),
+  // 交互提问卡:serve question 工具提问 → 卡片点选回答(reply) / 拒绝(reject)
+  onQuestion: (cb) => ipcRenderer.on('question-request', (_e, p) => cb(p)),
+  questionReply: (requestId, answers) => ipcRenderer.invoke('question-reply', { requestId, answers }),
+  questionReject: (requestId) => ipcRenderer.invoke('question-reject', { requestId }),
   // 任务状态上报（busy 切换时通知主进程，用于托盘徽标 + 完成提醒）
   reportBusy: (busy) => ipcRenderer.send('card-busy', busy),
   // 个人记忆库

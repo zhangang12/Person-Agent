@@ -1,4 +1,4 @@
-﻿'use strict'
+'use strict'
 const USE_ACRYLIC = false
 const { clipboard, session, Notification, desktopCapturer } = require('electron')
 const email = require('./email')
@@ -172,7 +172,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (opts && opts.wf) {
       query.wf = '1'
       S.wfRegistry = S.wfRegistry || new Map(); S.wfCardByWc = S.wfCardByWc || new Map()
-      const reg = { id: String(id), goal: disp || title || '', status: 'running', round: 0, rounds: 0, at: Date.now(), archive: null, final: '', todos: null, elapsedMs: 0 }
+      const reg = { id: String(id), wcId, goal: disp || title || '', status: 'running', round: 0, rounds: 0, at: Date.now(), archive: null, final: '', todos: null, files: [], elapsedMs: 0 }
       S.wfRegistry.set(reg.id, reg); S.wfCardByWc.set(wcId, reg)
       if (S.wfRegistry.size > 50) { const k = S.wfRegistry.keys().next().value; S.wfRegistry.delete(k) }
     }
@@ -252,7 +252,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       '6. 【自己综合成产出】子 Agent 结论回到你的连续上下文,由【你】整合成最终产出,形状随第 1 条(该给代码给可运行改动、该给诊断给根因 + 修复、该给结论给有据结论、该成文写文档)。综合是你的活,不另开 reducer。',
       '7. 【产出落文件的时机】只有产出是【长文档 / 手册】、或详细内容会撑爆上下文时才写盘:每块一个 .md(默认 ' + (dir ? dir + '/docs/handbook/' : '<模块>/docs/handbook/') + '<块名>.md,首次写文件弹权限确认),最后你亲自写索引 README(定位 + 闭环 + 各块一段话链到对应 md + 分歧点)。代码改动 / 诊断 / 简短结论【不必】写盘,直接在回答里交付。',
       '8. 【收尾必验证,不靠信念交差】改了代码就跑测试 / 构建 / 驱动一遍看真过;下了关键结论就派子 Agent 交叉核实,别自证。一波不够深、或冒出新待挖点就【再派一波】—— 目标是把事做透,不是一遍浅 pass 交差。',
-      '9. 【规划先行,批准再跑】你的第一轮只做规划:轻量勘察后用 todowrite 列出执行计划,并输出简短拆解思路(怎么拆 / 哪些并行派子 Agent / 预计产出形态)。然后【直接结束这轮回答】等用户批准 —— 批准或调整意见会以新消息进来,界面上有批准按钮。【严禁】调用 question / ask 之类的交互提问工具去等答复:那个通道在这里没人应答,会把你永远挂死。第一轮不做实质执行(不写文件、不改代码、不派执行型子 Agent);用户批准后,再按(修订后的)计划开跑。',
+      '9. 【规划先行,批准再跑】你的第一轮只做规划:轻量勘察后用 todowrite 列出执行计划,并输出简短拆解思路(怎么拆 / 哪些并行派子 Agent / 预计产出形态)。然后【直接结束这轮回答】等用户批准 —— 批准或调整意见会以新消息进来,界面上有批准按钮。【不要】调用 question / ask 之类的交互提问工具去等批准:批准走卡片上的【开始执行】按钮,提问通道不是为批准设的。第一轮不做实质执行(不写文件、不改代码、不派执行型子 Agent);用户批准后,再按(修订后的)计划开跑。',
+      '10. 【收尾必蒸馏】交付前,回顾这一程挖到的真相,用 memory_add 把【关于该系统、三个月后大概率仍成立】的事实写进项目知识库(下次开卡自动注入):每条一句话 + anchors 挂证据(file:行号) + scene 写重用场景。任务进度、本次改了哪些文件【不要】写 —— 只留系统级知识;没有够格的事实就跳过,宁缺勿滥。',
       dir ? '工作目录:' + dir + ' —— 一律在此目录内核实与改动,不访问其它项目。' : '',
       '</动态工作流规程>',
     ].filter(Boolean).join('\n')
@@ -265,14 +266,24 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   }
   // ── 工作流成果注册表(新路径):session.js 每轮回调,orch-mcp workflow_result / 卡坞据此取成果 ──
   // 每轮终答即最新成果(快照式,不等"全部结束"):升格方随时可取、关窗不丢(存档落盘)。
+  // status 语义:running=还有未完 todo(或没用过 todo);done=todo 全勾 或 关卡。翻转只在轮末重算 ——
+  // 升格方拿 workflow_result 据此知道"活干完了",不再死等一个不关卡就永远 running 的工作流。
   S.wfTurnDone = (wcId, finalText) => {
     const reg = S.wfCardByWc && S.wfCardByWc.get(wcId); if (!reg) return
     reg.rounds++; reg.round = reg.rounds
     const t = String(finalText == null ? '' : finalText); if (t.trim()) reg.final = t
     reg.elapsedMs = Date.now() - reg.at
+    const open = (reg.todos || []).some((x) => !/complet|cancel/i.test(String(x && x.status || '')))
+    const wasDone = reg.status === 'done'
+    reg.status = (reg.todos && reg.todos.length && !open) ? 'done' : 'running'
+    if (!wasDone && reg.status === 'done') {   // 首次全勾:桌面通知一声(长跑工作流用户多半不在跟前)
+      try { new Notification({ title: '工作流完成', body: String(reg.goal).slice(0, 80) }).show() } catch {}
+    }
     try { S.wfArchive(reg) } catch (e) { log('wf archive err: ' + e.message) }
   }
   S.wfTodos = (wcId, todos) => { const reg = S.wfCardByWc && S.wfCardByWc.get(wcId); if (reg && Array.isArray(todos)) reg.todos = todos }
+  // write/edit 落盘路径(主 Agent 与子 Agent 都收,session.js 在工具事件里回调)→ 存档+workflow_result 可取出产物位置
+  S.wfFiles = (wcId, fp) => { const reg = S.wfCardByWc && S.wfCardByWc.get(wcId); if (reg && fp && !reg.files.includes(fp)) reg.files.push(fp) }
   S.wfArchive = (reg) => {
     if (!reg || !reg.final) return
     const dirW = path.join(app.getPath('userData'), 'workflows'); fs.mkdirSync(dirW, { recursive: true })
@@ -282,7 +293,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       reg.archive = path.join(dirW, stamp + '_' + reg.id + '_' + slug + '.md')
     }
     const todoLines = (reg.todos || []).map((t) => '- [' + (/complet/i.test(String(t && t.status || '')) ? 'x' : ' ') + '] ' + String((t && (t.content || t.text || t.title)) || '')).join('\n')
-    fs.writeFileSync(reg.archive, '# 工作流:' + reg.goal + '\n\n- id:' + reg.id + ' · 轮次:' + reg.rounds + ' · 用时:' + Math.round((reg.elapsedMs || 0) / 1000) + 's · 状态:' + reg.status + '\n\n## 任务清单\n' + (todoLines || '(无)') + '\n\n## 最终成果(最近一轮回答)\n\n' + reg.final)
+    const fileLines = (reg.files || []).map((f) => '- ' + f).join('\n')
+    fs.writeFileSync(reg.archive, '# 工作流:' + reg.goal + '\n\n- id:' + reg.id + ' · 轮次:' + reg.rounds + ' · 用时:' + Math.round((reg.elapsedMs || 0) / 1000) + 's · 状态:' + reg.status + '\n\n## 任务清单\n' + (todoLines || '(无)') + '\n\n## 产出文件\n' + (fileLines || '(无)') + '\n\n## 最终成果(最近一轮回答)\n\n' + reg.final)
   }
 
   // ── 需求分析（多Agent 对抗 → 三类清单）────────────────────────────────────────
@@ -1300,6 +1312,73 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('spawn-fanout-roles', (_e, { goal, roles }) => spawnFanout(goal, roles))
   ipcMain.handle('get-fanout-roles', () => Object.entries(ROLES).map(([k, [label]]) => ({ key: k, label })))
   ipcMain.handle('spawn-workflow', (_e, goal) => spawnWorkflow(goal))
+  // ── 卡坞工作流面板:现行(内存注册表)+ 历史(磁盘存档)合并出清单;点一条聚焦活卡或打开存档 ──
+  ipcMain.handle('wf-list', () => {
+    const out = []
+    const regs = S.wfRegistry ? [...S.wfRegistry.values()] : []
+    for (const r of regs) out.push({
+      id: r.id, goal: r.goal, status: r.status, rounds: r.rounds, elapsedMs: r.elapsedMs,
+      files: (r.files || []).length, at: r.at, archive: r.archive || '',
+      live: !!(S.wfCardByWc && S.wfCardByWc.has(r.wcId)), busy: !!(S.isCardBusy && S.isCardBusy(r.wcId)),
+    })
+    const seen = new Set(regs.map((r) => r.archive).filter(Boolean))
+    try {   // 磁盘存档补进来(注册表只 50 条且重启即空):goal 只读文件头 2KB,别为个列表把整份存档读进来
+      const dirW = path.join(app.getPath('userData'), 'workflows')
+      const arcs = fs.readdirSync(dirW).filter((f) => /^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}_\d+_.+\.md$/.test(f))
+        .map((f) => { const p = path.join(dirW, f); let m = 0; try { m = fs.statSync(p).mtimeMs } catch {}; return { f, p, m } })
+        .sort((a, b) => b.m - a.m).slice(0, 40)
+      for (const a of arcs) {
+        if (seen.has(a.p)) continue
+        let goal = ''
+        try {
+          const fd = fs.openSync(a.p, 'r'); const buf = Buffer.alloc(2048)
+          const n = fs.readSync(fd, buf, 0, 2048, 0); fs.closeSync(fd)
+          goal = ((buf.toString('utf8', 0, n).match(/^# 工作流:(.*)$/m) || [])[1] || '').trim()
+        } catch {}
+        out.push({ id: a.f.split('_')[1], goal: goal || a.f, status: 'archived', rounds: 0, elapsedMs: 0, files: 0, at: a.m, archive: a.p, live: false, busy: false })
+      }
+    } catch {}
+    const rank = { running: 0, done: 1, archived: 2 }   // 进行中置顶,其余按时间倒序
+    out.sort((a, b) => (rank[a.status] != null ? rank[a.status] : 3) - (rank[b.status] != null ? rank[b.status] : 3) || (b.at || 0) - (a.at || 0))
+    return out.slice(0, 60)
+  })
+  ipcMain.handle('wf-open', (_e, it) => {
+    try {
+      const r = (S.wfRegistry ? [...S.wfRegistry.values()] : []).find((x) => String(x.id) === String(it && it.id))
+      if (r && r.wcId != null && S.wfCardByWc && S.wfCardByWc.has(r.wcId)) {   // 卡还活着 → 聚焦
+        const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === r.wcId)
+        if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); return { ok: true, kind: 'focus' } }
+      }
+      const ap = String((it && it.archive) || (r && r.archive) || '')        // 卡已关 → 打开存档
+      if (ap && fs.existsSync(ap)) { shell.openPath(ap); return { ok: true, kind: 'archive' } }
+      return { ok: false, err: '卡片已关且没有存档' }
+    } catch (e) { return { ok: false, err: e.message } }
+  })
+  // 删除工作流记录:卡还开着的一律拒(关卡时注册表会重写 + 重新存档,删了也会复活 —— 必须先关卡);
+  // 卡已关 → 摘注册表 + 删存档文件(注册表没有的纯历史存档同此)。id 只跟文件名比对,不拼路径,防注入。
+  ipcMain.handle('wf-delete', (_e, id) => {
+    try {
+      const sid = String(id == null ? '' : id).trim()
+      if (!sid) return { ok: false, err: '缺少 id' }
+      const reg = S.wfRegistry ? S.wfRegistry.get(sid) : null
+      if (reg && reg.wcId != null && S.wfCardByWc && S.wfCardByWc.has(reg.wcId))
+        return { ok: false, err: '这张工作流卡还开着 —— 先关卡,再删记录' }
+      if (reg) S.wfRegistry.delete(sid)
+      let removed = false
+      const kill = (p) => { try { if (p && fs.existsSync(p)) { fs.unlinkSync(p); removed = true } } catch {} }
+      if (reg && reg.archive) kill(reg.archive)
+      if (!reg) {   // 纯历史存档:按文件名里的 id 找到再删
+        try {
+          const dirW = path.join(app.getPath('userData'), 'workflows')
+          const hit = fs.readdirSync(dirW).find((f) => /^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}_\d+_.+\.md$/.test(f) && f.split('_')[1] === sid)
+          if (hit) kill(path.join(dirW, hit))
+        } catch {}
+      }
+      if (!reg && !removed) return { ok: false, err: '没有找到这条记录(可能已删过)' }
+      try { S.audit && S.audit('workflow', '删除工作流记录', { id: sid }) } catch {}
+      return { ok: true }
+    } catch (e) { return { ok: false, err: e.message } }
+  })
   // 任务编排引擎体检:配置文件写了 ≠ serve 带上了(外部 serve 早于注册启动 = 静默没工具)。
   // 问 serve 实际加载的 /config;端点不认识时 known:false,前端只提示不吓人。
   ipcMain.handle('orch-tools-status', async () => {
@@ -1314,6 +1393,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
 
   // ── 任务完成通知 ────────────────────────────────────────────────────────────
   const busyCards = new Set()   // 正在运行任务的 webContents id
+  S.isCardBusy = (wcId) => busyCards.has(wcId)   // 暴露给 relay:/orch/result 据此区分"干活中"与"空闲(等批准/等插话)"
   function sendOrbState(state) {
     if (S.inputWin && !S.inputWin.isDestroyed()) S.inputWin.webContents.send('orb-state', state)
   }

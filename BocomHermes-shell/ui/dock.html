@@ -74,6 +74,20 @@
   .seclbl .clr { font-size: 11px; font-weight: 400; color: var(--txt3); background: none; border: none; cursor: pointer; padding: 2px 4px; border-radius: 5px; }
   .seclbl .clr:hover { color: var(--diff-del); }
 
+  /* 工作流面板:现行(进行中置顶)+历史存档合并;点活卡聚焦、点历史开存档 */
+  .wflist { flex: none; max-height: 168px; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; padding-right: 2px; }
+  .wflist::-webkit-scrollbar { width: 7px; } .wflist::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  .wfst { display: inline-block; font-size: 9.5px; font-weight: 600; border-radius: 999px; padding: 0 6px; margin-right: 6px; line-height: 15px; }
+  .wfst.running { background: rgba(74,168,255,.16); color: var(--accent); }
+  .wfst.done { background: rgba(43,182,115,.14); color: #2bb673; }
+  .wfst.archived { background: var(--orb-bg); color: var(--txt3); }
+  /* 记录删除:行内 ✕,两步确认(第一次点变"删?",3s 不复原则复位) */
+  .wfitem { position: relative; }
+  .wfitem .t, .wfitem .meta { padding-right: 24px; }   /* 给 ✕ 让位,别压字 */
+  .wfdel { position: absolute; top: 6px; right: 7px; border: none; background: transparent; color: var(--txt3); font-size: 11px; cursor: pointer; padding: 2px 5px; border-radius: 6px; }
+  .wfdel:hover { color: var(--diff-del); background: var(--hover); }
+  .wfdel.confirm { color: var(--diff-del); font-weight: 700; background: var(--hover); }
+
   .list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; padding-right: 2px; }
   .list::-webkit-scrollbar { width: 7px; } .list::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
   .item { text-align: left; background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 12px; padding: 10px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 5px; transition: border-color .15s; }
@@ -130,6 +144,9 @@
     </div>
     <div class="hint2"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>任务编排示例：跑技能「XX导出」→ 核对导出数据 → 把问题发邮件给某某</div>
 
+    <div class="seclbl" id="wfLbl" hidden>工作流 · 点一条聚焦卡片 / 看存档<span class="sp"></span><button id="wfRefresh" class="clr nodrag">刷新</button></div>
+    <div id="wfList" class="wflist nodrag" hidden></div>
+
     <div class="seclbl">最近会话 · 点一条续接 <span class="sp"></span><button id="clear" class="clr nodrag">清空</button></div>
     <div id="list" class="list nodrag"></div>
   </div>
@@ -169,6 +186,46 @@
     }
   }
   render()
+
+  // ── 工作流面板:现行(注册表,进行中置顶)+ 历史存档;点活卡聚焦、点历史开存档。4s 自刷(状态很轻) ──
+  const wfLbl = $('wfLbl'), wfListEl = $('wfList')
+  async function renderWf() {
+    let items = []
+    try { items = (await H.wfList()) || [] } catch (e) {}
+    wfLbl.hidden = wfListEl.hidden = !items.length
+    if (!items.length) return
+    wfListEl.innerHTML = ''
+    for (const w of items) {
+      const stName = w.status === 'running' ? (w.busy ? '进行中' : '待操作') : w.status === 'done' ? '已完成' : '存档'
+      const meta = [w.rounds ? w.rounds + ' 轮' : '', w.elapsedMs ? Math.round(w.elapsedMs / 1000) + 's' : '', w.files ? '产出 ' + w.files : '', rel(w.at || Date.now())].filter(Boolean).join(' · ')
+      const el = document.createElement('div'); el.className = 'item wfitem'
+      el.innerHTML = '<span class="t"><span class="wfst ' + esc(w.status) + '">' + stName + '</span>' + esc(w.goal || '工作流') + '</span>'
+        + '<span class="meta">' + esc(meta) + '</span>'
+      el.title = (w.live ? (w.busy ? '运行中 — 点击聚焦卡片' : '空闲中(可能在等你批准计划) — 点击聚焦卡片') : '卡片已关 — 点击打开存档') + (w.archive ? '\n' + w.archive : '')
+      el.addEventListener('click', async () => { try { await H.wfOpen({ id: w.id, archive: w.archive }) } catch (e) {} })
+      // 删除记录(两步确认):卡还开着主进程会拒,原因在 meta 行临时亮出
+      const del = document.createElement('button'); del.className = 'wfdel'; del.textContent = '✕'; del.title = '删除这条记录(存档文件一并删)'
+      del.addEventListener('click', async (e) => {
+        e.stopPropagation()
+        if (!del.classList.contains('confirm')) {
+          del.classList.add('confirm'); del.textContent = '删?'
+          setTimeout(() => { del.classList.remove('confirm'); del.textContent = '✕' }, 3000)
+          return
+        }
+        let r
+        try { r = await H.wfDelete(w.id) } catch (e2) { r = { ok: false, err: String((e2 && e2.message) || e2) } }
+        if (r && r.ok) { renderWf(); return }
+        const metaEl = el.querySelector('.meta')
+        if (metaEl) { const old = metaEl.textContent; metaEl.textContent = '⚠ ' + ((r && r.err) || '删除失败'); setTimeout(() => { metaEl.textContent = old }, 3000) }
+        del.classList.remove('confirm'); del.textContent = '✕'
+      })
+      el.appendChild(del)
+      wfListEl.appendChild(el)
+    }
+  }
+  renderWf()
+  setInterval(renderWf, 4000)
+  $('wfRefresh').addEventListener('click', renderWf)
 
   // 工作目录:对话/工作流都对它说话(grounding 的真相源)
   const projBtn = $('proj'), projN = $('projn')

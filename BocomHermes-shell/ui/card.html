@@ -75,10 +75,27 @@
   .abadge { position: absolute; top: -4px; right: -6px; min-width: 13px; height: 13px; padding: 0 3px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 9px; font-family: var(--mono); line-height: 13px; text-align: center; pointer-events: none; }
   .abadge[hidden] { display: none; }
   .hbtn.hasbadge { position: relative; }
+  /* 子 Agent 侧边栏:task fan-out 的子 Agent 不再串行刷主 feed,挪进右侧抽屉(左列表右窗格,异步实时更新) */
+  .subdraw .ad-body { flex-direction: row; }
+  .sd-list { flex: none; width: 34%; min-width: 108px; overflow-y: auto; border-right: .5px solid var(--composer-border); padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+  .sd-item { text-align: left; background: transparent; border: none; border-radius: 8px; padding: 6px 8px; cursor: pointer; display: flex; flex-direction: column; gap: 2px; }
+  .sd-item:hover { background: var(--hover); }
+  .sd-item.on { background: var(--hover); box-shadow: inset 2px 0 0 var(--accent); }
+  .sd-item .si-name { font-size: 12px; font-weight: 600; color: var(--txt); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sd-item .si-meta { font-size: 10px; font-family: var(--mono); color: var(--txt3); font-variant-numeric: tabular-nums; }
+  .sd-item.done .si-meta { color: var(--green); } .sd-item.err .si-meta { color: var(--diff-del); }
+  .sd-pane { flex: 1; min-width: 0; overflow-y: auto; padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 4px; }
+  .sd-pane::-webkit-scrollbar, .sd-list::-webkit-scrollbar { width: 5px; }
+  .sd-pane::-webkit-scrollbar-thumb, .sd-list::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  .sd-empty { color: var(--txt3); font-size: 11.5px; padding: 12px 4px; line-height: 1.6; }
+  /* 窗格内复用原内联块的思考/产出样式(选择器从 .subagent 换成 .sd-pane) */
+  .sd-pane .sa-reason { font-size: 12px; color: var(--txt2); white-space: pre-wrap; line-height: 1.55; max-height: 200px; overflow-y: auto; border-left: 2px solid var(--c-think); padding: 2px 9px; opacity: .92; }
+  .sd-pane .sa-reason::-webkit-scrollbar { width: 5px; } .sd-pane .sa-reason::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  .sd-pane .sa-out { font-size: 13px; color: var(--txt); line-height: 1.5; overflow-wrap: anywhere; margin-top: 3px; padding-top: 4px; border-top: .5px dashed var(--composer-border); }
   .hd { display: flex; align-items: center; gap: 7px; flex: none; }
   .icn { width: 16px; height: 16px; flex: none; display: inline-flex; }
   .ttl { flex: 1; font-size: 13px; font-weight: 650; letter-spacing: .01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .toolbox .ts2, .toolbox .tsum, .subagent .sa-meta { font-variant-numeric: tabular-nums; }   /* 耗时/计数列数字等宽,流式刷新不抖 */
+  .toolbox .ts2, .toolbox .tsum { font-variant-numeric: tabular-nums; }   /* 耗时/计数列数字等宽,流式刷新不抖 */
   .proj { font-size: 10.5px; font-family: var(--mono); color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 999px; padding: 2px 8px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; transition: color .12s, border-color .12s, background .12s; }
   .proj:hover { color: var(--txt); border-color: var(--accent); }
   .proj.empty { color: var(--accent); border-color: var(--accent); background: rgba(74,168,255,.08); }
@@ -229,6 +246,24 @@
   .perm .t { flex: 1; font-size: 12px; color: var(--warn-txt); }
   .perm .ok { font-size: 11px; font-weight: 600; color: var(--warn-btn-fg); background: var(--warn-btn); padding: 4px 10px; border-radius: 7px; border: none; cursor: pointer; }
   .perm .no { font-size: 11px; color: var(--txt2); background: transparent; border: none; cursor: pointer; padding: 4px 6px; }
+  /* 交互提问卡(question 工具的应答通道):选项点选,答完定格成一行留痕 */
+  .qbox { flex-direction: column; align-items: stretch; gap: 8px; }
+  .qbox .qhead { font-size: 11px; font-weight: 700; color: var(--accent); letter-spacing: .03em; }
+  .qbox .qsec { display: flex; flex-direction: column; gap: 5px; }
+  .qbox .qt { font-size: 13px; color: var(--txt); line-height: 1.5; }
+  .qbox .qt .qh { display: inline-block; font-size: 10px; font-weight: 700; color: var(--accent); background: rgba(74,168,255,.12); border-radius: 999px; padding: 0 8px; margin-right: 6px; line-height: 16px; }
+  .qbox .qopts { display: flex; flex-direction: column; gap: 4px; }
+  .qbox .qopt { text-align: left; background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 9px; padding: 6px 10px; cursor: pointer; display: flex; flex-direction: column; gap: 1px; }
+  .qbox .qopt:hover { border-color: var(--accent); }
+  .qbox .qopt.on { border-color: var(--accent); background: rgba(74,168,255,.1); box-shadow: inset 2px 0 0 var(--accent); }
+  .qbox .qopt .ql { font-size: 12.5px; font-weight: 600; color: var(--txt); }
+  .qbox .qopt .qd { font-size: 11px; color: var(--txt3); line-height: 1.4; }
+  .qbox .qconfirm { align-self: flex-start; font-size: 11px; font-weight: 600; color: var(--warn-btn-fg); background: var(--warn-btn); padding: 4px 10px; border-radius: 7px; border: none; cursor: pointer; }
+  .qbox .qcustom { background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 8px; padding: 6px 9px; color: var(--txt); font-size: 12px; outline: none; font-family: var(--font); }
+  .qbox .qcustom:focus { border-color: var(--accent); }
+  .qbox .qskip { align-self: flex-start; }
+  .qbox .qdone { font-size: 12px; color: var(--txt2); }
+  .qbox.answered { opacity: .82; }
 
   /* 分诊 / 进度播报行 */
   .note { align-self: flex-start; max-width: 92%; font-size: 11.5px; color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-left: 2.5px solid var(--accent); border-radius: 0 9px 9px 0; padding: 5px 10px; white-space: pre-wrap; line-height: 1.45; }
@@ -258,22 +293,8 @@
   .toolbox .tsec.e pre { color: var(--diff-del); }
   .toolbox.wf > summary { border: .5px solid var(--accent); background: rgba(74,168,255,.08); }   /* 升格工作流仍保留高亮框:它是大事件,值得一个盒子 */
   .toolbox.wf .tn { color: var(--accent); font-family: inherit; }
-  /* 子agent富容器(可"进入"):折叠块,点开=看它的 思考 + 完整工具(入参/结果,复用 .toolbox) + 产出,对齐主 Agent */
-  .subagent { align-self: flex-start; max-width: 92%; background: var(--composer-bg); border: .5px solid var(--composer-border); border-left: 3px solid var(--c-think); border-radius: 0 11px 11px 0; margin: 3px 0; overflow: hidden; }
-  .subagent > summary { cursor: pointer; padding: 6px 11px; list-style: none; display: flex; align-items: center; gap: 7px; user-select: none; transition: background .12s; }
-  .subagent > summary:hover { background: var(--hover); }
-  .subagent > summary::-webkit-details-marker { display: none; }
-  .subagent .sa-chev { flex: none; color: var(--txt3); transition: transform .15s; }
-  .subagent[open] .sa-chev { transform: rotate(90deg); }
-  .subagent .sa-ic { flex: none; }
-  .subagent .sa-name { font-size: 12.5px; font-weight: 600; color: var(--c-think); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  .subagent .sa-meta { margin-left: auto; flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--txt3); font-variant-numeric: tabular-nums; }
-  .subagent.done .sa-meta { color: var(--green); } .subagent.err .sa-meta { color: var(--diff-del); }
-  .subagent .sa-body { padding: 2px 10px 8px 14px; display: flex; flex-direction: column; gap: 3px; }
-  .subagent .sa-reason { font-size: 12px; color: var(--txt2); white-space: pre-wrap; line-height: 1.55; max-height: 200px; overflow-y: auto; border-left: 2px solid var(--c-think); padding: 2px 9px; opacity: .92; }
-  .subagent .sa-reason::-webkit-scrollbar { width: 5px; } .subagent .sa-reason::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
-  .subagent .sa-out { font-size: 13px; color: var(--txt); line-height: 1.5; overflow-wrap: anywhere; margin-top: 3px; padding-top: 4px; border-top: .5px dashed var(--composer-border); }
-  /* 子agent紧凑组(.subbox)样式仍在共享组件 agentmon.js(reqflow/reqplan 用);本卡已改用上面的 .subagent 富容器 */
+  /* 子 Agent 的展示已挪到右侧侧边栏(#subdraw,样式见上);思考/产出样式在 .sd-pane 作用域下。
+     子agent紧凑组(.subbox)样式仍在共享组件 agentmon.js(reqflow/reqplan 用) */
   /* 体验感:滚动守卫的"跳到最新"悬浮键 + AI 回答悬停复制 */
   .card { position: relative; }
   .jumpbtn { position: absolute; left: 50%; bottom: 64px; transform: translateX(-50%); z-index: 8; display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--txt); background: var(--glass-bg); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border: .5px solid var(--composer-border); border-radius: 999px; padding: 5px 12px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.2); }
@@ -323,6 +344,7 @@
       <button id="bauto" class="hbtn nodrag" hidden title="自动批准（本工作流）：开=本卡的写文件/执行命令等权限请求自动放行，fan-out 不再逐个打断；关=每次人工确认。范围仅限本卡，关卡即失效" aria-label="自动批准"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/><path d="M14 3h7v7" opacity=".45"/></svg></button>
       <button id="bverbose" class="hbtn nodrag" title="过程详情：开=每个工具自动展开入参/结果；关=紧凑一行摘要(点击单个可展开)" aria-label="过程详情"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="3.5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="3.5" cy="18" r="1.2" fill="currentColor" stroke="none"/></svg></button>
       <button id="bprobe" class="hbtn nodrag" title="保活心跳日志（看 POST /heartbeat 的报文）" aria-label="保活日志"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5 7 5-14 2.5 7H21"/></svg></button>
+      <button id="bsub" class="hbtn hasbadge nodrag" hidden title="子 Agent 面板：task 派出的子 Agent 在这里异步活动（思考/工具/产出），不占用对话流；徽标=还在跑的个数" aria-label="子 Agent 面板"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 20c0-3.6 3-5.4 6.5-5.4s6.5 1.8 6.5 5.4"/><circle cx="17.5" cy="9.5" r="2.3"/><path d="M15.8 14.9c3 .5 5.7 2 5.7 5.1"/></svg><span id="bsubBadge" class="abadge" hidden>0</span></button>
       <button id="bart" class="hbtn hasbadge nodrag" title="成果预览：本卡最近一轮的最终结论 + 模型 write/edit 落盘的产出文件（右侧滑出，点文件可看内容）" aria-label="成果预览"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/><path d="M7 9h4M7 13h4"/></svg><span id="bartBadge" class="abadge" hidden>0</span></button>
       <button id="pin" class="hbtn nodrag" title="置顶" aria-label="置顶"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l-1.2 5.2L17 12v2H7v-2l3.2-2.8z"/><path d="M12 14v6"/></svg></button>
       <button id="max" class="hbtn nodrag" title="最大化 / 还原" aria-label="最大化"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></button>
@@ -354,6 +376,19 @@
             <div class="ad-sechd" id="ad-viewtitle">文件内容</div>
             <div id="ad-viewwrap" class="ai ad-viewwrap"><div class="ad-empty">点上方「产出文件」里的任意一条，这里渲染它的内容（.md 走 markdown，其它纯文本）</div></div>
           </div>
+        </div>
+      </div>
+      <!-- 子 Agent 侧边栏:task fan-out 的子 Agent 异步活动面板(左列表右窗格),思考/工具/产出全程实时;
+           不再内联进主 feed —— fan-out 一多,对话流里全是子 Agent 的串行块(用户实测:主 Agent 自己的事都被淹了) -->
+      <div id="subdraw" class="artdraw subdraw nodrag" hidden>
+        <div class="ad-hd">
+          <span class="ad-title">子 Agent</span>
+          <span class="ad-sub">异步活动 · 不占对话流</span>
+          <button id="sd-x" class="ad-x" aria-label="关闭">✕</button>
+        </div>
+        <div class="ad-body">
+          <div id="sd-list" class="sd-list"></div>
+          <div id="sd-pane" class="sd-pane"><div class="sd-empty">主 Agent 用 task 派子 Agent 并行干活时,这里会列出它们;点任意一个看它的思考 / 工具 / 产出全程</div></div>
         </div>
       </div>
     </div>
@@ -721,6 +756,7 @@
     if (!menuEl.hidden) { menuEl.hidden = true; return }
     if (skillMenuOpen()) return
     try { if (artDraw && !artDraw.hidden) { artClose(); return } } catch {}   // artDraw 在后面才声明,这里只在按键时取值(必已初始化)
+    try { if (subDraw && !subDraw.hidden) { sdClose(); return } } catch {}   // subDraw 同样在后面才声明,同上
     if (busy) {
       try { window.BocomHermes.cardAbort() } catch {}
       sl.classList.remove('ok'); sl.innerHTML = '<span class="sl-spin">✻</span><span class="sl-main">正在停止…（等引擎收尾，几秒内结束）</span>'; sl.hidden = false
@@ -755,6 +791,8 @@
     // toolEls/subAgents 也得清:feed 清空后它们攥的全是 detached DOM —— 旧引用既是内存泄漏,
     // 撞上同 partID 时 renderTool 还会去更新一个不在页面上的节点(工具日志"凭空消失")
     toolEls.clear(); subAgents.clear(); if (_saTick) { clearInterval(_saTick); _saTick = null }
+    if (sdList && sdPane) { sdList.innerHTML = ''; sdPane.innerHTML = '' }   // 侧边栏一并清(它不在 feed 里,feed.innerHTML='' 清不到)
+    sdActiveId = ''; sdPaintBadge()
     try { ctxUsedChars = 0; countedToolParts.clear(); paintCtxChip() } catch {}
   }
 
@@ -827,6 +865,74 @@
     }
     showPermission(requestId, tool, detail)
   })
+
+  // ── 交互提问卡(question 工具的应答通道):问题+选项弹在对话流里,点选即答(serve /question/:id/reply)。
+  // 单选点够问题数自动提交;多选(multiple)先勾再按 ✓ 选定;custom=true 给自定义文本输入;「跳过」= 拒绝(等价 TUI 的 Esc)。
+  // 答完/拒完盒子定格成一行留痕。超时无人答也不碍事:回合可被 Esc 中断,提问请求随工具中止自然失效(再答会收到"已失效")。
+  function showQuestion(requestId, questions) {
+    const box = document.createElement('div'); box.className = 'perm qbox'
+    const head = document.createElement('div'); head.className = 'qhead'; head.textContent = '模型在等你回答'
+    box.appendChild(head)
+    const answers = []
+    let sent = false
+    const finish = (summary) => {
+      if (sent) return; sent = true
+      box.classList.add('answered'); box.innerHTML = ''
+      const s = document.createElement('span'); s.className = 'qdone'; s.textContent = summary; box.appendChild(s)
+      scrollFeed()
+    }
+    const maybeSend = async () => {
+      if (sent || answers.length < (questions || []).length || answers.some((a) => !a || !a.length)) return
+      const r = await window.BocomHermes.questionReply(requestId, answers)
+      if (r && r.ok) finish('✓ 已回答:' + answers.map((a) => a.join('、')).join(' / '))
+      else finish('⚠ 回答没送达:' + ((r && r.err) || '未知错误') + '(可直接把答复打在输入框发出)')
+    }
+    ;(questions || []).forEach((q, qi) => {
+      const sec = document.createElement('div'); sec.className = 'qsec'
+      const qt = document.createElement('div'); qt.className = 'qt'
+      qt.innerHTML = (q.header ? '<span class="qh"></span>' : '') + '<span class="qq"></span>'
+      if (q.header) qt.querySelector('.qh').textContent = q.header
+      qt.querySelector('.qq').textContent = q.question || ''
+      sec.appendChild(qt)
+      const opts = document.createElement('div'); opts.className = 'qopts'
+      const picked = new Set()
+      const multi = !!q.multiple
+      const mark = () => { answers[qi] = [...picked]; maybeSend() }
+      ;(q.options || []).forEach((op) => {
+        const b = document.createElement('button'); b.className = 'qopt'
+        b.innerHTML = '<span class="ql"></span><span class="qd"></span>'
+        b.querySelector('.ql').textContent = op.label || '?'
+        if (op.description) b.querySelector('.qd').textContent = op.description
+        b.addEventListener('click', () => {
+          if (sent || sec.classList.contains('locked')) return
+          if (multi) { picked.has(op.label) ? picked.delete(op.label) : picked.add(op.label); b.classList.toggle('on', picked.has(op.label)) }   // 多选:勾完按 ✓ 选定才算数
+          else { picked.clear(); picked.add(op.label); opts.querySelectorAll('.qopt').forEach((x) => x.classList.remove('on')); b.classList.add('on'); mark() }
+        })
+        opts.appendChild(b)
+      })
+      sec.appendChild(opts)
+      if (multi) {
+        const c = document.createElement('button'); c.className = 'qconfirm'; c.textContent = '✓ 选定'
+        c.addEventListener('click', () => { if (!sent && picked.size) { sec.classList.add('locked'); mark() } })
+        sec.appendChild(c)
+      }
+      if (q.custom) {
+        const ci = document.createElement('input'); ci.className = 'qcustom'; ci.placeholder = '或输入自定义回答,Enter 提交'
+        ci.addEventListener('keydown', (e) => { if (e.key === 'Enter' && ci.value.trim() && !sent) { answers[qi] = [ci.value.trim()]; ci.disabled = true; maybeSend() } })
+        sec.appendChild(ci)
+      }
+      box.appendChild(sec)
+    })
+    const rej = document.createElement('button'); rej.className = 'no qskip'; rej.textContent = '跳过(拒绝回答)'
+    rej.addEventListener('click', async () => {
+      if (sent) return
+      const r = await window.BocomHermes.questionReject(requestId)
+      finish(r && r.ok ? '✕ 已跳过(拒绝回答)' : '⚠ 拒绝没送达(可直接把答复打在输入框发出)')
+    })
+    box.appendChild(rej)
+    feed.appendChild(box); scrollFeed(true)   // 提问需被看到,强制到底
+  }
+  window.BocomHermes.onQuestion(({ requestId, questions }) => showQuestion(requestId, questions))
 
   // 流式：text → 答案气泡；reasoning → 思考折叠块（答案上方）
   // 一轮回答可能有多个 text 片段（文本→工具调用→文本），按 partID 累积、按到达顺序拼接，
@@ -980,8 +1086,9 @@
       if (done || err) runningTools.delete(partID); else runningTools.set(partID, '任务清单')
       paintStatus(); scrollFeed(); return
     }
-    // 交互提问工具(question/ask/elicit):serve 端等人答,但这张卡没有该应答通道 —— 挂上提示,别让用户干等
-    if (!opts.sub && /^(question|ask|elicit)$/i.test(String(name)) && !done && !err && !el._qNoted) {
+    // 交互提问工具:serve 原生 question 由交互提问卡应答(showQuestion,见 onQuestion 接线);
+    // MCP 的 ask/elicit 没接通道 —— 挂提示兜底,别让用户干等
+    if (!opts.sub && /^(ask|elicit)$/i.test(String(name)) && !done && !err && !el._qNoted) {
       el._qNoted = true
       addNote('⚠ 模型调用了交互提问工具(' + name + '),本卡没有它的应答通道 —— 若长时间停着:按 Esc 中断本轮,把答复直接打在输入框发出即可', 'muted')
     }
@@ -1037,24 +1144,42 @@
   }
   function scheduleFlush() { if (!_flushQueued) { _flushQueued = true; requestAnimationFrame(flushStream) } }
 
-  // ── 子agent富容器(可"进入"):每个 agentId 一个折叠块,点开=看它的【思考 + 完整工具(入参/结果)+ 产出】,和主 Agent 一样详实 ──
-  // opencode 用 task 起子agent并行干活,主进程把子会话事件路由回本卡(sub=true,带 agentId)。工具直接复用主 Agent 的 renderTool(container=本块工具区)。
-  const subAgents = new Map()   // agentId -> { el, name, meta, reason, tools, out, reasonParts, outParts, toolIds, count, t0, doneAt, done }
-  let _saTick = null
+  // ── 子 Agent 侧边栏(异步,不占主 feed):task 派出的子 Agent 各有一个窗格,思考/工具/产出全程实时更新。
+  // 旧实现:每个子 Agent 一个 <details> 内联进 feed —— fan-out 一多,主 Agent 自己的对话流被子 Agent 串行刷屏。
+  // 现在:主 feed 只留主 Agent 的 task 调用行(见 onStream task 分支,可点击跳窗格);子 Agent 内部活动全在这里。
+  // opencode 用 task 起子agent并行干活,主进程把子会话事件路由回本卡(sub=true,带 agentId)。工具仍复用主 Agent 的 renderTool(container=本窗格工具区)。
+  const subAgents = new Map()   // agentId -> { item, pane, name, meta, reason, tools, out, reasonParts, outParts, toolIds, count, t0, doneAt, done }
+  let _saTick = null, sdActiveId = '', sdClosedThisTurn = false
+  const bsub = document.getElementById('bsub'), bsubBadge = document.getElementById('bsubBadge')
+  const subDraw = document.getElementById('subdraw'), sdList = document.getElementById('sd-list'), sdPane = document.getElementById('sd-pane')
   const saMeta = (s) => (s.count ? s.count + ' 次调用 · ' : '') + Math.max(0, Math.round(((s.done ? s.doneAt : Date.now()) - s.t0) / 1000)) + 's' + (s.done ? '' : ' · 运行中')
   function saTick() { let run = false; for (const s of subAgents.values()) if (!s.done) { run = true; s.meta.textContent = saMeta(s) } if (!run && _saTick) { clearInterval(_saTick); _saTick = null } }
+  function sdPaintBadge() {   // 徽标=还在跑的个数;没有子 Agent 时按钮整个藏起来
+    let run = 0; for (const s of subAgents.values()) if (!s.done) run++
+    if (bsub) bsub.hidden = subAgents.size === 0
+    if (bsubBadge) { bsubBadge.hidden = run === 0; bsubBadge.textContent = String(run) }
+  }
+  function sdSelect(agentId) { sdActiveId = agentId; for (const [id, s] of subAgents) { s.item.classList.toggle('on', id === agentId); s.pane.hidden = id !== agentId } }
+  function sdOpen() { if (subDraw) { subDraw.hidden = false }; if (bsub) bsub.classList.add('on') }
+  function sdClose() { if (subDraw) { subDraw.hidden = true }; if (bsub) bsub.classList.remove('on') }
+  if (bsub) bsub.addEventListener('click', () => { if (subDraw && subDraw.hidden) { sdClosedThisTurn = false; sdOpen() } else { sdClosedThisTurn = true; sdClose() } })
+  const sdX = document.getElementById('sd-x'); if (sdX) sdX.addEventListener('click', () => { sdClosedThisTurn = true; sdClose() })
   function subAgent(agentId, name) {
     let s = subAgents.get(agentId)
     if (s) { if (name && name !== '子agent' && s.name.textContent !== name) s.name.textContent = name; return s }
-    const el = document.createElement('details'); el.className = 'subagent'; el.open = true   // 默认展开 —— 直接看到它的思考/工具/产出全程(想收起可手动折叠)
-    el.innerHTML = '<summary><svg class="sa-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg><span class="sa-ic">⏺</span><span class="sa-name"></span><span class="sa-meta">运行中…</span></summary>'
-      + '<div class="sa-body"><div class="sa-reason" hidden></div><div class="sa-tools"></div><div class="sa-out" hidden></div></div>'
-    if (curAnswer && curAnswer.parentNode === feed) feed.insertBefore(el, curAnswer); else feed.appendChild(el)
-    s = { el, name: el.querySelector('.sa-name'), meta: el.querySelector('.sa-meta'), reason: el.querySelector('.sa-reason'), tools: el.querySelector('.sa-tools'), out: el.querySelector('.sa-out'), reasonParts: new Map(), outParts: new Map(), toolIds: new Set(), count: 0, t0: Date.now(), doneAt: 0, done: false }
+    const item = document.createElement('button'); item.className = 'sd-item'
+    item.innerHTML = '<span class="si-name"></span><span class="si-meta">运行中…</span>'
+    const pane = document.createElement('div')
+    pane.innerHTML = '<div class="sa-reason" hidden></div><div class="sa-tools"></div><div class="sa-out" hidden></div>'
+    item.addEventListener('click', () => { sdSelect(agentId); sdOpen() })
+    if (sdList && sdPane) { const ph = sdPane.querySelector('.sd-empty'); if (ph && ph.parentNode) ph.remove(); sdList.appendChild(item); sdPane.appendChild(pane) }
+    s = { item, pane, name: item.querySelector('.si-name'), meta: item.querySelector('.si-meta'), reason: pane.querySelector('.sa-reason'), tools: pane.querySelector('.sa-tools'), out: pane.querySelector('.sa-out'), reasonParts: new Map(), outParts: new Map(), toolIds: new Set(), count: 0, t0: Date.now(), doneAt: 0, done: false }
     s.name.textContent = name || '子agent'
     subAgents.set(agentId, s)
+    sdSelect(agentId)                 // 新子 Agent 自动成为当前窗格
+    if (!sdClosedThisTurn) sdOpen()   // 本轮没被手动关过 → 自动滑出:fan-out 必须被看见(cbe809d 的初衷),只是不再占对话流
+    sdPaintBadge()
     if (!_saTick) _saTick = setInterval(saTick, 1000)
-    scrollFeed()
     return s
   }
   function subAgentDone(agentId, status, name) {
@@ -1062,12 +1187,13 @@
     if (name) s.name.textContent = name
     s.done = true; s.doneAt = Date.now()
     const err = /error|fail|deny|reject/i.test(status || '')
-    s.el.classList.toggle('done', !err); s.el.classList.toggle('err', err)
-    s.meta.textContent = saMeta(s)   // 收尾只置状态,【不折叠】—— 思考/工具/产出的过程留着可回看(修"结果出来后压缩成空白框")
+    s.item.classList.toggle('done', !err); s.item.classList.toggle('err', err)
+    s.meta.textContent = saMeta(s)
+    sdPaintBadge()
   }
 
   window.BocomHermes.onStream(({ kind, text, partID, status, input, output, title, error, sub, agentId, agentName, taskChild, taskDesc }) => {
-    if (sub) {                                            // 子agent活动 → 进它自己的富容器(思考/工具/产出),点开可"进入"看全程
+    if (sub) {                                            // 子agent活动 → 进侧边栏它自己的窗格(思考/工具/产出),不占主 feed
       const s = subAgent(agentId || '_', agentName)
       if (kind === 'tool') {
         if (partID && !s.toolIds.has(partID)) { s.toolIds.add(partID); s.count++ }
@@ -1093,12 +1219,13 @@
       if (text === 'task') {                              // 父会话的 task 工具 = 起/收一个子agent
         const gid = taskChild || ''
         const fin = /complet|success|done|finish|error|fail|deny|reject/i.test(status || '')
-        if (gid && subAgents.has(gid)) { if (fin) subAgentDone(gid, status || '', taskDesc || '') ; return }
-        // 内联 task 子Agent(这台 serve 的 task 不建独立子会话,不走 sub 路由)——【实时】渲染成可见块,
-        // 用 task 的 description 当名字。fan-out 时三个 task 就是三个"子Agent · 深挖X · 运行中"并排实时更新,
-        // 不再是"主 Agent 一条消息静默转圈,不知道在干啥"。以前 else-if(fin) 只在完成时才渲,跑的 1-2 分钟全空白。
+        // 主 feed 只留这一行紧凑的 task 调用(它是主 Agent 自己的事件):能看到"派了谁、跑完没、结论是啥";
+        // 子 Agent 的思考/工具/产出全程在侧边栏窗格(点这一行跳过去)。有 gid(真子会话)时完成即勾掉侧边栏对应项。
         const desc = (input && (input.description || input.title)) || taskDesc || title || '子任务'
         renderTool(partID || '_', 'task', status || '', { input, output, title: String(desc).slice(0, 60), error })
+        const tEl = partID && toolEls.get(partID)
+        if (tEl && !tEl._sdWired) { tEl._sdWired = true; tEl.addEventListener('click', () => { if (gid && subAgents.has(gid)) { sdSelect(gid); sdOpen() } }) }
+        if (gid && subAgents.has(gid) && fin) subAgentDone(gid, status || '', taskDesc || '')
         return
       }
       renderTool(partID || '_', text, status || '', { input, output, title, error })
@@ -1125,7 +1252,10 @@
     }
     if (!target) lastSend = { text, files }   // 网关抖了能一键重试,不用重打
     try { bumpCtx((text || '').length) } catch {}
-    curAnswer = ai; curReason = null; answerParts = new Map(); reasonParts = new Map(); subAgents.clear(); toolEls.clear(); if (_saTick) { clearInterval(_saTick); _saTick = null }; setBusy(true)   // toolEls 跨轮清:上一轮的工具块已定格在 feed 里,Map 只清引用防无限涨
+    curAnswer = ai; curReason = null; answerParts = new Map(); reasonParts = new Map(); subAgents.clear(); toolEls.clear(); if (_saTick) { clearInterval(_saTick); _saTick = null }   // toolEls 跨轮清:上一轮的工具块已定格在 feed 里,Map 只清引用防无限涨
+    // 侧边栏随新回合重置:上一轮子 Agent 的结论已沉淀进 task 结果/最终答案,窗格不留跨轮(防无限涨);手动关抽屉的记录也复位
+    if (sdList && sdPane) { sdList.innerHTML = ''; sdPane.innerHTML = '<div class="sd-empty">主 Agent 用 task 派子 Agent 并行干活时,这里会列出它们;点任意一个看它的思考 / 工具 / 产出全程</div>' }
+    sdActiveId = ''; sdClosedThisTurn = false; sdPaintBadge(); setBusy(true)
     let ok = true
     try {
       const reply = await window.BocomHermes.cardSend(text, files, activeSkill && activeSkill.id)

@@ -3,6 +3,7 @@
 // ctx 注入外部模块(email/attachments/...)+ window.js 内后定义但已提升的 function(createMailCenter 等)。
 // 对外回传 3 个被 window.js 外部调用点用到的函数:effectiveSmtp/effectiveOb/startIdleWatcher。
 'use strict'
+const knowledge = require('./knowledge')
 module.exports = function initMail(ctx) {
   const { S, app, path, fs, shell, ipcMain, log, oc, Notification, email, attachments, mailCache, emailSummarySeen, db, initOutbox, openOutbox, sendOrbState, createMailCenter, openMailView, spawnCard, spawnWorkflow, maybeSuggestMeeting, skillList, skillRun, skillRunBatch, skillPageRead, skillPageAct, skillTakeoverDone } = ctx
   // 解析"有效的" SMTP 配置:sameAsImap=true 时用户名/密码从 IMAP 取(host/port/secure 仍从 SMTP 取)
@@ -298,10 +299,11 @@ module.exports = function initMail(ctx) {
             const id = String(a.id == null ? '' : a.id).trim()
             const w = id ? regs.find((r) => String(r.id) === id) : regs[regs.length - 1]   // 不带 id = 最近一个
             if (w) {
-              if (w.status === 'running') return reply({ ok: true, id: w.id, status: 'running', round: w.round, goal: w.goal, final: String(w.final || '').slice(0, 14000) })   // 新路径快照式:进行中也带最新一轮成果(没有则空)
+              // busy=卡当前是否有回合在跑(window.js S.isCardBusy):升格方据此区分"干活中"与"空闲(等批准/等插话)"
+              if (w.status === 'running') return reply({ ok: true, id: w.id, status: 'running', round: w.round, goal: w.goal, busy: S.isCardBusy ? !!S.isCardBusy(w.wcId) : undefined, files: w.files || [], final: String(w.final || '').slice(0, 14000) })   // 新路径快照式:进行中也带最新一轮成果(没有则空)
               let full = w.final || ''
               try { if (w.archive) full = fs.readFileSync(w.archive, 'utf8') } catch {}
-              return reply({ ok: true, id: w.id, status: w.status, goal: w.goal, rounds: w.rounds, elapsedMs: w.elapsedMs, archive: w.archive || '', final: String(full).slice(0, 14000) })
+              return reply({ ok: true, id: w.id, status: w.status, goal: w.goal, rounds: w.rounds, elapsedMs: w.elapsedMs, archive: w.archive || '', files: w.files || [], final: String(full).slice(0, 14000) })
             }
             // 注册表是内存的(重启即空)→ 兜底翻存档目录:文件名嵌 id(时间戳_id_目标.md),带 id 精确找,不带取最新
             try {
@@ -313,10 +315,34 @@ module.exports = function initMail(ctx) {
               if (hit) {
                 const full = fs.readFileSync(hit.p, 'utf8')
                 const goal = ((full.match(/^# 工作流:(.*)$/m) || [])[1] || '').trim()
-                return reply({ ok: true, id: hit.f.split('_')[1], status: 'archived', goal, archive: hit.p, final: full.slice(0, 14000) })
+                const prodSec = (full.match(/## 产出文件\n([\s\S]*?)(\n## |$)/) || [])[1] || ''   // 产出文件清单也从存档解析带回(旧存档没这节 → 空数组)
+                const prodFiles = prodSec.split('\n').map((l) => l.replace(/^- /, '').trim()).filter((l) => l && l !== '(无)')
+                return reply({ ok: true, id: hit.f.split('_')[1], status: 'archived', goal, archive: hit.p, files: prodFiles, final: full.slice(0, 14000) })
               }
             } catch {}
             return reply({ error: id ? ('没有 id=' + id + ' 的工作流(现有: ' + regs.map((r) => r.id).join(',') + ')') : '还没有任何工作流记录' })
+          }
+          // ── 任务尾蒸馏写入:Agent 调 memory_add(orch-mcp)→ 追加进本项目知识库(按 dir 分库、去重),下次开卡自动注入 ──
+          if (req.url === '/orch/memory-add') {
+            const dir = String(a.dir || '').trim()
+            const raw = Array.isArray(a.entries) ? a.entries : [{ text: a.text, anchors: a.anchors, scene: a.scene, confidence: a.confidence }]
+            const clean = raw.map((e) => ({
+              text: String((e && e.text) || '').slice(0, 500),
+              anchors: Array.isArray(e && e.anchors) ? e.anchors.slice(0, 6) : [],
+              scene: String((e && e.scene) || '').slice(0, 80),
+              confidence: e && e.confidence,
+            })).filter((e) => e.text.trim()).slice(0, 20)
+            if (!dir) return reply({ error: '缺少 dir(项目目录)' })
+            if (!clean.length) return reply({ error: '没有可写条目(text 为空)' })
+            try {
+              const f = knowledge.fileFor(dir, app.getPath('userData'))
+              fs.mkdirSync(path.dirname(f), { recursive: true })
+              let old = ''; try { old = fs.readFileSync(f, 'utf8') } catch {}
+              const r = knowledge.appendEntries(old, clean)
+              fs.writeFileSync(f, r.content)
+              try { S.audit && S.audit('knowledge', '蒸馏写入项目知识库', { dir, added: r.added, dupes: r.dupes }) } catch {}
+              return reply({ ok: true, added: r.added, dupes: r.dupes, file: f })
+            } catch (e) { return reply({ error: e.message }) }
           }
           // ── 浏览器技能(SKILL):录制一次 → 存成命名技能 → agent 按名字带参回放 ──
           // 执行统一走 GUI 主进程的强回放引擎(selAlt fallback + 登录态恢复 + 红框可视化),

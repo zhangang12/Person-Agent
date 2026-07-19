@@ -1,4 +1,4 @@
-﻿'use strict'
+'use strict'
 const { app, BrowserWindow, WebContentsView, globalShortcut, ipcMain, screen, dialog, Tray, Menu, nativeImage, shell, clipboard, session, net, Notification } = require('electron')
 const path = require('path')
 const fs = require('fs')
@@ -29,7 +29,7 @@ const S = {
   history: [],
   cardSeq: 0,
   inputWin: null, settingsWin: null, dockWin: null, tray: null,
-  sessionByWc: new Map(), sessionInfo: new Map(), pendingPerm: new Map(),
+  sessionByWc: new Map(), sessionInfo: new Map(), pendingPerm: new Map(), pendingQuestion: new Map(),
   streamBuf: new Map(), sentPrompt: new Map(), firstMsgCtx: new Map(), workflows: new Map(),
   handlers: null,   // 由 initSession 填入
 }
