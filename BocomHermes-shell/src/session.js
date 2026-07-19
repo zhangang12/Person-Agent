@@ -10,6 +10,32 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
   ipcMain.handle('memory-read', () => { try { return fs.readFileSync(memoryFile, 'utf8') } catch { return '' } })
   ipcMain.handle('memory-write', (_e, text) => { try { fs.writeFileSync(memoryFile, text, 'utf8'); return true } catch { return false } })
 
+  // ── 成果抽屉读文件 ──────────────────────────────────────────────────────────
+  // 卡片「成果预览」点产出文件 → 读回内容渲染。只放行用户自己的地盘(全局/本卡项目目录、后端目录、userData),
+  // 防模型给来的路径任意读盘。判包含用 realpath + path.relative(防 /proj2 蹭 /proj 前缀、防 ../ 逃逸、
+  // 防 macOS /tmp→/private/tmp 这类符号链接误判);>512KB 不读 —— 抽屉是预览,不是编辑器。
+  const READ_FILE_MAX = 512 * 1024
+  const realpathOrSelf = (x) => { try { return fs.realpathSync(x) } catch { return x } }
+  ipcMain.handle('read-file-text', (_e, absPath) => {
+    try {
+      const p0 = String(absPath || '').trim()
+      if (!p0) return { ok: false, err: '路径为空' }
+      const p = realpathOrSelf(path.resolve(p0))
+      const roots = [S.settings.projectDir, S.settings.backendDir]
+      if (S.cardDir) for (const d of S.cardDir.values()) roots.push(d)   // 本卡可能单独切过目录(cardDir),与全局 projectDir 不同
+      roots.push(require('electron').app.getPath('userData'))
+      const inRoot = roots.filter(Boolean).some((r) => {
+        const rel = path.relative(realpathOrSelf(path.resolve(String(r))), p)
+        return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
+      })
+      if (!inRoot) return { ok: false, err: '路径不在项目目录/userData 之内，已拦截' }
+      const st = fs.statSync(p)
+      if (!st.isFile()) return { ok: false, err: '不是普通文件' }
+      if (st.size > READ_FILE_MAX) return { ok: false, err: '文件超过 512KB（实际 ' + Math.round(st.size / 1024) + 'KB），不预览' }
+      return { ok: true, text: fs.readFileSync(p, 'utf8') }
+    } catch (e) { return { ok: false, err: String((e && e.message) || e) } }
+  })
+
   // ── 项目上下文注入 ──────────────────────────────────────────────────────────
   function loadProjectContext(dir) {
     if (!dir) return ''
@@ -111,16 +137,10 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     if (!si.wc || si.wc.isDestroyed()) { oc.replyPermission(si.serve, sessionId, requestId, 'reject'); return }
     S.pendingPerm.set(requestId, sessionId)
     S.pendingPerm.set(requestId + ':meta', { tool, detail: detail || '' })   // 供审计留痕(批准/拒绝了什么)
-    // 「在等人批准」要记账:lastAt 只在 onText 打点,弹了审批框之后整个等人窗口期时间戳是冻结的 →
-    // 工作流的空转看门狗(src/orch.js)会把"用户去吃饭了"当成黑洞,20 分钟(高读会话 6 分钟)后把会话杀掉,
-    // 还报"连续 20 分钟无任何活动"。等人不是空转,看门狗见 awaitPerm>0 就不判死(用户随时可以点停止)。
-    si.lastAt = Date.now()
-    si.awaitPerm = (si.awaitPerm || 0) + 1
     si.wc.send('permission-request', { requestId, tool, detail: detail || '' })   // detail=要改的文件/要跑的命令，便于知情审批
   }
   function onText({ sessionId, text, role, partID, kind, status, delta, toolInput, toolOutput, toolTitle, toolError, subagent, agentId, agentName, taskChild, taskDesc }) {
     const si = S.sessionInfo.get(sessionId); if (!si || !si.wc || si.wc.isDestroyed()) return
-    si.lastAt = Date.now()   // 流活动时间戳:工作流空转看门狗据此判"会话是否还活着"(慢≠死,有动静就不杀)
     if (role && role !== 'assistant') return
     const tag = si.tag || null   // 登记方自定义的任务身份(scope/kind/id…)：随 card-stream 下发,窗口按并发任务分组(监控组件 agentmon)
     // 诊断:分别确认子agent的【工具】和【文本/思考】是否路由到父卡片(排查"工具没进 🔍 组")
@@ -149,6 +169,10 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
           }
         }
       } catch {}
+      // 工作流卡:主 Agent 的 todowrite 清单进成果注册表(存档里能看到任务清单与勾选状态)
+      if (!subagent && /^todowrite$/i.test(String(text || '')) && toolInput && S.wfTodos) {
+        try { const inp = typeof toolInput === 'string' ? JSON.parse(toolInput) : toolInput; if (inp && Array.isArray(inp.todos)) S.wfTodos(si.wc.id, inp.todos) } catch {}
+      }
       si.wc.send('card-stream', { kind: 'tool', text, partID, status: status || '', input: toolInput, output: toolOutput, title: toolTitle, error: toolError, sub: !!subagent, agentId: agentId || '', agentName: agentName || '', taskChild: taskChild || '', taskDesc: taskDesc || '', readN, sessionId, tag }); return
     }
     if (!subagent && !role && kind !== 'reasoning' && text === S.sentPrompt.get(sessionId)) return   // "回显自己prompt"过滤只对父会话
@@ -383,7 +407,25 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     }, 1200) }
     const stopPoll = () => { if (poll) { clearInterval(poll); poll = null } }
     startPoll()
-    try { return await oc.sendMessage(si.serve, sessionId, msg, model, fileArr, onNote) }
+    try {
+      const out = await oc.sendMessage(si.serve, sessionId, msg, model, fileArr, onNote)
+      // 工作流卡:每轮终答进成果注册表+存档(升格方 workflow_result 取的就是它)。
+      // POST 返回可能只带本轮【最后一条】消息(实测:多波 fan-out 轮的 12k 字结论在中段 text part,返回只剩 317 字收尾)——
+      // 改从消息端点取"最后一个 user 之后的全部 assistant 文本"当本轮完整终答,谁长用谁。
+      try {
+        if (S.wfTurnDone && S.wfCardByWc && S.wfCardByWc.has(e.sender.id)) {
+          let full = String(out || '')
+          try {
+            const msgs = await oc.getMessages(si.serve, sessionId)
+            let lastU = -1; (msgs || []).forEach((m, i) => { if (m && m.role === 'user') lastU = i })
+            const t = (msgs || []).slice(lastU + 1).filter((m) => m && m.role === 'assistant' && m.text).map((m) => m.text).join('\n').trim()
+            if (t.length > full.length) full = t
+          } catch {}
+          S.wfTurnDone(e.sender.id, full)
+        }
+      } catch {}
+      return out
+    }
     catch (err) {
       const m = String((err && err.message) || err)
       if (/ECONNREFUSED|ECONNRESET|socket hang up|ENOTFOUND|EPIPE|fetch failed/i.test(m))
@@ -420,7 +462,6 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     const sessionId = S.pendingPerm.get(requestId); const meta = S.pendingPerm.get(requestId + ':meta'); S.pendingPerm.delete(requestId); S.pendingPerm.delete(requestId + ':meta')
     const si = sessionId && S.sessionInfo.get(sessionId)
     const d = decision === 'always' ? 'always' : decision === 'once' ? 'once' : 'reject'
-    if (si) { si.awaitPerm = Math.max(0, (si.awaitPerm || 1) - 1); si.lastAt = Date.now() }   // 人答完了:解除"等人"记账,空转计时从此刻重新起算(别把等人那段算进空转)
     if (si) oc.replyPermission(si.serve, sessionId, requestId, d)
     // 审计:写/执行类操作的人工批准(工具+目标),reject 也记(留痕拒绝)
     try { S.audit && S.audit('permission', (d === 'reject' ? '拒绝' : '批准' + (d === 'always' ? '(总是)' : '')) + '权限:' + ((meta && meta.tool) || '?'), { decision: d, tool: meta && meta.tool, detail: (meta && meta.detail || '').slice(0, 300), sessionId }) } catch {}

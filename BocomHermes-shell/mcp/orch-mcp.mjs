@@ -1,7 +1,8 @@
 // BocomHermes · 动态工作流编排 MCP(本地 stdio,零业务依赖)
-// 给对话 Agent 一个能力:当它判断"这事自己一个人扛不动"时,自主拉起一支动态小队。
-//   · 调 run_workflow → relay 到主进程 spawnWorkflow → 跑 orchestrator.js(LLM 动态拆图 +
-//     按依赖并行 + 任务账本 + 看结果重规划 + 人审闸口),不是写死角色的并行。
+// 给对话 Agent 一个能力:当它判断"这事自己一个人扛不动"时,自主升格给动态工作流。
+//   · 调 run_workflow → relay 到主进程 spawnWorkflow → 开一张工作流卡(Claude Code 式:单主 Agent
+//     在连续上下文里自拆 + task 并行派子 Agent 深挖 + 自综合;规划先行,用户批准后才开跑)。
+//   · workflow_result 取成果:内存注册表按轮快照(进行中也能取),关卡/重启后由 userData/workflows/ 存档兜底。
 //   · 工具描述本身就是"何时升格"的判据 —— 升格与否是 Agent 在上下文里自主决定,不是规则触发。
 import fs from 'node:fs'
 import path from 'node:path'
@@ -39,24 +40,24 @@ const TOOLS = [
   {
     name: 'run_workflow',
     description:
-      '把一个复杂任务交给一支"动态小队"并行处理(开一个工作流窗口:LLM 按复杂度动态拆子任务、按依赖并行、看结果重规划、有人审闸口)。\n' +
-      '【何时调用 —— 你自己判断,不是规则】当任务满足以下任一,调它比自己一个人做更好:\n' +
+      '把一个复杂目标升格给"动态工作流"(开一张主 Agent 卡:它在连续上下文里自己规划(todo 清单可见)、用 task 工具一次并行派多个子 Agent 深挖、自己综合成品;过程全程可视,用户可随时插话引导或中止)。\n' +
+      '【何时调用 —— 你自己判断,不是规则】当任务满足以下任一,升格比自己一个人做更好:\n' +
+      ' · 需要大范围深读代码/资料(几十上百个文件),该由多个子 Agent 用各自独立的上下文分头深读;\n' +
       ' · 需要并行探查多个相对独立的来源(如 代码 + 数据库 + 文档),分头更快;\n' +
-      ' · 需要多个独立视角互相校验(如 实现方 + 专挑刺的评审方);\n' +
-      ' · 步骤多、且后面依赖前面的产出,值得拆成带依赖的任务图。\n' +
-      '【何时不要调】简单查询、解释、小改动、闲聊 —— 直接自己答,别拉队(拉队更慢更贵)。\n' +
-      '【拿不准】倾向先自己做;真觉得划算再升格。升格后过程对用户可见、可中止、第一份计划要用户批准。',
+      ' · 需要多个独立视角互相校验(如 实现方 + 专挑刺的评审方)。\n' +
+      '【何时不要调】简单查询、解释、小改动、闲聊 —— 直接自己答,别升格(更慢更贵)。\n' +
+      '【拿不准】倾向先自己做;真觉得划算再升格。',
     inputSchema: {
       type: 'object',
       properties: {
-        goal: { type: 'string', description: '交给小队的总目标,一句话讲清要达成什么(把你已掌握的关键上下文也写进去,子 Agent 看不到本对话)' },
+        goal: { type: 'string', description: '总目标,一句话讲清要达成什么(把你已掌握的关键上下文也写进去,工作流主 Agent 看不到本对话)' },
       },
       required: ['goal'],
     },
   },
   {
     name: 'workflow_result',
-    description: '取回某个动态工作流的成果(工作流不是一次性的:成果已存档,随时可取回继续用)。进行中 → 返回状态;完成 → 返回最终成果全文。用户问"刚才那个工作流结果怎样/基于结果继续做 X"时调这个,拿到成果直接接着干活。',
+    description: '取回某个动态工作流的成果(成果按轮快照进注册表并存档,进行中也能取到最新阶段成果,完成后取终稿全文)。用户问"刚才那个工作流结果怎样/基于结果继续做 X"时调这个,拿到成果直接接着干活。',
     inputSchema: { type: 'object', properties: { id: { type: 'string', description: '工作流 id(run_workflow 返回过);省略 = 最近一个' } } },
   },
 ]
@@ -67,15 +68,20 @@ async function callTool(name, a) {
     const goal = String(a.goal || '').trim()
     if (!goal) return '需要 goal(交给小队的总目标)'
     const r = await relayPost('/orch/run', { goal })
-    return '已拉起动态工作流,id=' + (r.id != null ? r.id : '?') + '(窗口已打开:按复杂度拆解 → 并行执行 → 汇总;第一份计划等用户批准)。'
-      + '完成后调 workflow_result(id="' + (r.id != null ? r.id : '') + '") 取回成果全文继续用;现在可以先和用户讨论别的。'
+    return '已拉起动态工作流,id=' + (r.id != null ? r.id : '?') + '(卡片已打开:主 Agent 自拆 + 并行派子 Agent 深挖 + 自综合,过程可视、用户可插话)。'
+      + '之后调 workflow_result(id="' + (r.id != null ? r.id : '') + '") 取回成果继续用(进行中也能取到最新阶段成果);现在可以先和用户讨论别的。'
   }
   if (name === 'workflow_result') {
     const body = {}
     if (a.id != null && String(a.id).trim()) body.id = String(a.id).trim()
     const r = await relayPost('/orch/result', body)
-    if (r.status === 'running') return '工作流 #' + r.id + ' 仍在进行(第 ' + (r.round || '?') + ' 轮):' + r.goal + '\n稍后再调 workflow_result 取成果。'
-    return '工作流 #' + r.id + '(' + r.status + ' · ' + (r.rounds || 0) + ' 轮 · ' + Math.round((r.elapsedMs || 0) / 1000) + 's)\n目标:' + r.goal + (r.archive ? '\n存档:' + r.archive : '') + '\n\n' + (r.final || '(无成果)')
+    if (r.status === 'running') return '工作流 #' + r.id + ' 仍在进行(第 ' + (r.round || '?') + ' 轮):' + r.goal
+      + (r.final ? '\n\n【最新阶段成果(快照,后续还会更新)】\n' + r.final : '\n还没有阶段成果,稍后再调 workflow_result。')
+    // archived = 该工作流来自之前的运行(注册表已随重启清空),成果取自磁盘存档
+    const bits = [r.status === 'archived' ? '已存档(历史运行)' : r.status]
+    if (r.rounds != null) bits.push(r.rounds + ' 轮')
+    if (r.elapsedMs != null) bits.push(Math.round(r.elapsedMs / 1000) + 's')
+    return '工作流 #' + r.id + '(' + bits.join(' · ') + ')\n目标:' + (r.goal || '') + (r.archive ? '\n存档:' + r.archive : '') + '\n\n' + (r.final || '(无成果)')
   }
   throw new Error('未知工具: ' + name)
 }

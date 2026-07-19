@@ -297,11 +297,26 @@ module.exports = function initMail(ctx) {
             const regs = S.wfRegistry ? [...S.wfRegistry.values()] : []
             const id = String(a.id == null ? '' : a.id).trim()
             const w = id ? regs.find((r) => String(r.id) === id) : regs[regs.length - 1]   // 不带 id = 最近一个
-            if (!w) return reply({ error: id ? ('没有 id=' + id + ' 的工作流(现有: ' + regs.map((r) => r.id).join(',') + ')') : '还没有任何工作流记录' })
-            if (w.status === 'running') return reply({ ok: true, id: w.id, status: 'running', round: w.round, goal: w.goal })
-            let full = w.final || ''
-            try { if (w.archive) full = fs.readFileSync(w.archive, 'utf8') } catch {}
-            return reply({ ok: true, id: w.id, status: w.status, goal: w.goal, rounds: w.rounds, elapsedMs: w.elapsedMs, archive: w.archive || '', final: String(full).slice(0, 14000) })
+            if (w) {
+              if (w.status === 'running') return reply({ ok: true, id: w.id, status: 'running', round: w.round, goal: w.goal, final: String(w.final || '').slice(0, 14000) })   // 新路径快照式:进行中也带最新一轮成果(没有则空)
+              let full = w.final || ''
+              try { if (w.archive) full = fs.readFileSync(w.archive, 'utf8') } catch {}
+              return reply({ ok: true, id: w.id, status: w.status, goal: w.goal, rounds: w.rounds, elapsedMs: w.elapsedMs, archive: w.archive || '', final: String(full).slice(0, 14000) })
+            }
+            // 注册表是内存的(重启即空)→ 兜底翻存档目录:文件名嵌 id(时间戳_id_目标.md),带 id 精确找,不带取最新
+            try {
+              const dirW = path.join(app.getPath('userData'), 'workflows')
+              const files = fs.readdirSync(dirW).filter((f) => /^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}_\d+_.+\.md$/.test(f))
+                .map((f) => ({ f, p: path.join(dirW, f), m: fs.statSync(path.join(dirW, f)).mtimeMs }))
+                .sort((x, y) => y.m - x.m)
+              const hit = id ? files.find((x) => x.f.split('_')[1] === id) : files[0]
+              if (hit) {
+                const full = fs.readFileSync(hit.p, 'utf8')
+                const goal = ((full.match(/^# 工作流:(.*)$/m) || [])[1] || '').trim()
+                return reply({ ok: true, id: hit.f.split('_')[1], status: 'archived', goal, archive: hit.p, final: full.slice(0, 14000) })
+              }
+            } catch {}
+            return reply({ error: id ? ('没有 id=' + id + ' 的工作流(现有: ' + regs.map((r) => r.id).join(',') + ')') : '还没有任何工作流记录' })
           }
           // ── 浏览器技能(SKILL):录制一次 → 存成命名技能 → agent 按名字带参回放 ──
           // 执行统一走 GUI 主进程的强回放引擎(selAlt fallback + 登录态恢复 + 红框可视化),

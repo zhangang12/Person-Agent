@@ -286,7 +286,7 @@ function pickTurnText(list) {
   // sig=活动指纹(助手消息数:总part数:文本长:思考长:工具忙),它变了 = 回合还在推进。思考长度必须计入 ——
   // 长思考期间 text 不动,只看 text 会把"正在想"误判成"答完了"。toolRunning=有工具 part 还没到终态:
   // 这是"文本稳定但没答完"唯一可靠的机器信号(答案截半截的根子就是文本稳定 + 工具在跑的间隙)。
-  let nParts = 0, rLen = 0, toolRunning = false
+  let nParts = 0, rLen = 0, toolRunning = false, tLen = 0
   for (const m of asst) {
     const parts = (m?.parts ?? m?.data?.parts ?? m?.info?.parts) || []
     nParts += parts.length || 0
@@ -296,11 +296,15 @@ function pickTurnText(list) {
       else if (p.type === 'tool') {
         const st = String((p.state && p.state.status) || p.status || '')
         if (st && !/complet|success|done|error|fail|cancel|abort/i.test(st)) toolRunning = true
+        // 工具细节也计入指纹:task 子agent 长跑期间父消息的 文本/思考 都不动,唯一会动的是工具 part 的
+        // 状态/入参/结果(如子agent进度回写)。不计入的话 fan-out 长波会被空转窗口误判"没进展"提前收走。
+        tLen += st.length + String((p.state && (p.state.title || '')) || p.title || '').length
+          + String((p.state && (p.state.output != null ? p.state.output : '')) || p.output || '').length
       }
     }
   }
   return { done: laDone && !!laText, text, laDone, laText, toolRunning,
-    sig: asst.length + ':' + nParts + ':' + text.length + ':' + rLen + ':' + (toolRunning ? 1 : 0) }   // 收尾 = 最后一条 assistant 已完成【且带文本】
+    sig: asst.length + ':' + nParts + ':' + text.length + ':' + rLen + ':' + (toolRunning ? 1 : 0) + ':' + tLen }   // 收尾 = 最后一条 assistant 已完成【且带文本】
 }
 // maxMs=绝对上限(防永久 hang);idleMs=空转上限(sig 一直不动才算空转)。
 // 超时【抛错,不再返回空串】:返回 '' 会让上层无法区分"黑洞会话"和"跑完了没话说" —— 编排层照单全收记成
@@ -308,8 +312,10 @@ function pickTurnText(list) {
 // 已经吐了半截文本的,返回半截(有总比无强);一个字都没有的,抛错让上层重试/报错。
 async function waitAssistantText(info, sessionId, maxMs = 1800000, idleMs = 600000) {
   const t0 = Date.now()
-  let prev = '', stable = 0, doneNoTextTicks = 0, sig = '', lastMove = Date.now(), lastErr = null
-  while (Date.now() - t0 < maxMs && Date.now() - lastMove < idleMs) {
+  let prev = '', stable = 0, doneNoTextTicks = 0, sig = '', lastMove = Date.now(), lastErr = null, toolBusy = false
+  // 工具在跑(如 task 子agent的 fan-out 长波)时空转容忍放宽到 25 分钟:父消息可能整波都不动,10 分钟就收会截走半截;
+  // 真黑洞仍有 maxMs 绝对上限兜底。工具不跑时维持原 idleMs。
+  while (Date.now() - t0 < maxMs && Date.now() - lastMove < (toolBusy ? Math.max(idleMs, 1500000) : idleMs)) {
     // 自适应轮询:前 6 秒密探(450ms)——简单问题一完成就尽快收,少等半拍;之后疏探(750ms)——
     // 长任务不必频繁打 GET /message。实测这台 serve 首字要 12s(模型 TTFT),客户端能省的就这半秒量级。
     await sleep(Date.now() - t0 < 6000 ? 450 : 750)
@@ -320,6 +326,7 @@ async function waitAssistantText(info, sessionId, maxMs = 1800000, idleMs = 6000
     const list = Array.isArray(raw) ? raw : (raw && raw.data) || []
     const r = pickTurnText(list)
     prev = r.text || prev
+    toolBusy = !!r.toolRunning
     if (r.done) return r.text                                              // 最后一条已完成且带文本 → 收(最快路径)
     // 稳定即收的判据升级:不再按"这台 serve 有没有完成标记"二选一 ——
     //   · 完成标记打得晚的 serve(实测内网:completed 可能等会话级收尾/标题生成才落),死等它 = 简单问题也 70s(用户实测,终端 10 倍速于卡片);
@@ -484,7 +491,10 @@ async function pollTurnParts(info, sid) {
         if (text) out.push({ partID: p.id, kind: p.type === 'text' ? 'text' : 'reasoning', text })
       } else if (p.type === 'tool') {
         const st = p.state || {}
-        out.push({ partID: p.id, kind: 'tool', text: p.tool || 'tool', status: st.status || '', input: st.input, output: st.output, title: st.title, error: st.error })
+        // partID 必须与 SSE 路径(message.part.updated 处)同构:(callID || id) + ':tool' ——
+        // 否则同一个工具调用会被渲染成两行(SSE 一行、轮询兜底又一行),卡片按 partID 幂等去重就失效了。
+        const cid = String(p.callID || p.id || p.partID || p.tool || '')
+        out.push({ partID: cid + ':tool', kind: 'tool', text: p.tool || 'tool', status: st.status || '', input: st.input, output: st.output, title: st.title, error: st.error })
       }
     }
   }

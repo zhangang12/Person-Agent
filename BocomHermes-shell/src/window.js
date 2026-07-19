@@ -167,6 +167,15 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (sid) query.sid = sid
     if (msg) query.msg = msg
     if (disp) query.disp = disp
+    // 工作流卡:登记进成果注册表(id=卡id,与 orch-mcp run_workflow 返回给 Agent 的一致),每轮终答由
+    // S.wfTurnDone 更新+存档 —— 升格后 workflow_result 才真取得回成果(以前只有 legacy 引擎写注册表,新路径断链)
+    if (opts && opts.wf) {
+      query.wf = '1'
+      S.wfRegistry = S.wfRegistry || new Map(); S.wfCardByWc = S.wfCardByWc || new Map()
+      const reg = { id: String(id), goal: disp || title || '', status: 'running', round: 0, rounds: 0, at: Date.now(), archive: null, final: '', todos: null, elapsedMs: 0 }
+      S.wfRegistry.set(reg.id, reg); S.wfCardByWc.set(wcId, reg)
+      if (S.wfRegistry.size > 50) { const k = S.wfRegistry.keys().next().value; S.wfRegistry.delete(k) }
+    }
     win.loadFile(path.join(__dirname, '..', 'ui', 'card.html'), { query })
     // opts.flash:加载完后闪一下任务栏 + 短暂置顶 + 抢焦点 → 用户一眼能找到新弹的卡
     if (opts && opts.flash) {
@@ -191,6 +200,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         const inUseBases = new Set([...S.sessionInfo.values()].map((si) => si.serve && si.serve.base).filter(Boolean))
         try { if (oc.retireIfOrphan(oldServe, inUseBases)) log('card closed: serve ' + oldServe.base + ' 已退休(无会话引用)') } catch {}
       }
+      // 工作流卡收尾:注册表置 done + 落最终存档(关窗不丢,workflow_result 仍可取回)
+      const wreg = S.wfCardByWc && S.wfCardByWc.get(wcId)
+      if (wreg) { wreg.status = 'done'; wreg.elapsedMs = Date.now() - wreg.at; S.wfCardByWc.delete(wcId); try { S.wfArchive && S.wfArchive(wreg) } catch (e2) { log('wf archive err: ' + e2.message) } }
       forgetBusy(wcId)   // 关卡即清"忙"，避免球卡在思考态
     })
     return id
@@ -217,26 +229,31 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     return keys.length
   }
 
-  // 「动态工作流」= Claude Code 式:单个【主 Agent】在连续上下文里自己拆解 → 用 task 工具并行派子 Agent 深挖 → 自己综合。
-  // 不再是"独立规划器分轮吐任务图 + 另开 worker 会话 + reduce/review"(orchestrator.js/src/orch.js,现降为 legacy 不再默认走)。
-  // 128k 纪律是这套成立的关键:主 Agent 只装"结论"不装"原料",深读交给有各自 128k 的子 Agent,只回精炼发现;
-  // 实现成一张卡 → 白捡卡片的【上下文用量 chip + 压缩续聊】做 128k 安全网 + 【子 Agent 富容器】做 fan-out 可视化。
+  // 「动态工作流」= Claude Code 式:单个【主 Agent】在连续上下文里自己【看清形状 → 规划 → 执行 → 综合】,
+  // 用 task 工具并行派子 Agent 分担重活(深读/评审/交叉验证),自己综合成【与任务匹配的产出】(代码/诊断/结论/文档)。
+  // 通用化:不再过拟合"探索→写手册"一种形状;旧"独立规划器分轮 + worker 摘要 + reduce 冷拼"引擎(orchestrator.js/src/orch.js/ui/workflow.html)已退役删除。
+  // 128k 纪律仍是关键:主 Agent 只装"结论/索引"不装"原料",深读交给有各自 128k 的子 Agent。
+  // 实现成一张卡 → 白捡卡片的【上下文用量 chip + 压缩续聊】做 128k 安全网 + 【子 Agent 富容器 + todo 勾选清单】做过程可视化。
   function workflowSystemPrompt(dir) {
     return [
       '<动态工作流规程>',
-      '你要独立完成一个需要拆解的复杂目标(常见:大范围探索一个代码模块 → 整理开发手册/业务逻辑文档)。像资深工程师那样【自己规划、自己执行、自己综合】——你是唯一主导者,不等外部给你分步骤。',
+      '你是一名资深工程师,要独立完成一个需要拆解的复杂目标。自己【看清形状 → 规划 → 执行 → 综合】,你是唯一主导者,不等外部给你分步骤。你手里有一件普通对话没有的利器:task 工具能【一次并行派多个子 Agent】,每个子 Agent 有它自己独立的 128k 上下文,替你并行读大片代码 / 干重活 —— 用好它是这套流程的核心。',
       '',
-      '【铁律:你的上下文只有 128k。既要读远超 128k 的代码,又要产出可能很长的文档 —— 唯一的活法是把详细内容【写进文件】,你自己只握"索引 + 一句话摘要"。】',
-      '1. 轻量定位:自己用 grep/glob + 读几个入口/目录清单摸清这个模块【分成哪几块】(按子目录/分层/职责)。【绝不】自己通读整个模块几十上百个文件 —— 那会撑爆你 128k。',
-      '2. 【深读+写盘,一块一个子Agent】把模块拆成 N 块,一次并行派 N 个 task 子Agent,每个负责一块。给每个子Agent的指令必须是:',
-      '   · 深读这一块(每个函数/接口/数据结构/关键业务规则,带 file:行号 证据),不是"扫一眼";',
-      '   · 把这一块的【详细文档直接写成一个 .md 文件】(路径见第4条),这样详细内容留在文件里、不占你我的上下文;',
-      '   · 只回你【一句话 + 文件路径】:"已写 <文件>,覆盖X,关键结论/业务规则3-5条"。【不要】把整块文档贴回给你。',
-      '3. 【能并行就一次并行派】各块彼此独立,一条消息里一次派多个子Agent并行跑,别一个个串。',
-      '4. 【产出落文件】文档默认写到模块的 docs/ 目录(如 ' + (dir ? dir + '/docs/handbook/' : '<模块>/docs/handbook/') + '<块名>.md);首次写文件会弹权限确认,用户批准即可。每块一个 md;最后你【亲自写一份索引/总览】(docs/handbook/README.md):模块定位 + 业务闭环 + 各块一段话概述并链到对应 md + 子Agent间的分歧点。你手里只有文件路径和每块一句话,上下文始终很轻。',
-      '5. 【做透才停,不够就再派一波】一波子Agent回来后,若发现某块还不够深、或冒出新的待挖点,就【再派一波】。不是一遍浅 pass 就交差 —— 目标是一份能上手的开发手册,不是提纲。',
-      '6. 高风险结论(关键业务判断)派一个子Agent交叉验证,别自证。',
-      dir ? '7. 工作目录:' + dir + ' —— 一律在此目录内核实与写文档,不访问其它项目。' : '',
+      '1. 【先看清目标的形状,再定打法】产出随形状走,别把什么都做成"写一堆 .md":',
+      '   · 研究 / 答疑 → 有据可查的结论;· 实现 / 改造 → 可运行的代码改动;· 排查 → 定位到根因的诊断 + 修复;· 探索成文 → 开发手册 / 业务文档。',
+      '2. 【定计划并让它可见】非琐碎目标先用 todowrite 列出步骤清单,开工把当前步标 in_progress、做完立刻标 completed(一次只推进一步)—— 既是你自己的进度锚,也让用户看见你在干什么。琐碎目标可略。',
+      '3. 【轻量勘察,绝不通读】自己只用 grep/glob + 读几个入口 / 清单摸清"分成哪几块、边界在哪"。你的 128k 很宝贵,【绝不】自己通读整个模块几十上百个文件 —— 那会撑爆你、让综合时变笨。',
+      '4. 【重活并行下放子 Agent】一块工作满足【彼此独立 + 需深读很多文件 + 能同时干】三条时,用 task 工具【一条消息里一次派多个子 Agent 并行跑】,别一个个串。每个子 Agent 的指令要边界清晰:',
+      '   · 只干这一块、深读到位(带 file:行号 证据),不是扫一眼;',
+      '   · 只回你【精炼结论】:关键发现 + file:行号 + 至多几行关键代码,【严禁】把大段原文 / 整块文档贴回你的上下文;',
+      '   · 若这一块产出本身就长(如一份分册文档),让子 Agent【直接写成文件】(见第7条),只回你【一句话 + 文件路径】。',
+      '   这样 N 个子 Agent 各读几百个文件,回到你这只有 N 条精炼结论 ≈ 几千字,离 128k 还远。',
+      '5. 【别过度拆解】fan-out 有开销:简单目标、或你自己两三次读就能搞定的,【直接自己做】,别硬拆 N 块派 N 个子 Agent。满足第 4 条那三个"且"才派。',
+      '6. 【自己综合成产出】子 Agent 结论回到你的连续上下文,由【你】整合成最终产出,形状随第 1 条(该给代码给可运行改动、该给诊断给根因 + 修复、该给结论给有据结论、该成文写文档)。综合是你的活,不另开 reducer。',
+      '7. 【产出落文件的时机】只有产出是【长文档 / 手册】、或详细内容会撑爆上下文时才写盘:每块一个 .md(默认 ' + (dir ? dir + '/docs/handbook/' : '<模块>/docs/handbook/') + '<块名>.md,首次写文件弹权限确认),最后你亲自写索引 README(定位 + 闭环 + 各块一段话链到对应 md + 分歧点)。代码改动 / 诊断 / 简短结论【不必】写盘,直接在回答里交付。',
+      '8. 【收尾必验证,不靠信念交差】改了代码就跑测试 / 构建 / 驱动一遍看真过;下了关键结论就派子 Agent 交叉核实,别自证。一波不够深、或冒出新待挖点就【再派一波】—— 目标是把事做透,不是一遍浅 pass 交差。',
+      '9. 【规划先行,批准再跑】你的第一轮只做规划:轻量勘察后用 todowrite 列出执行计划,并输出简短拆解思路(怎么拆 / 哪些并行派子 Agent / 预计产出形态)。然后【直接结束这轮回答】等用户批准 —— 批准或调整意见会以新消息进来,界面上有批准按钮。【严禁】调用 question / ask 之类的交互提问工具去等答复:那个通道在这里没人应答,会把你永远挂死。第一轮不做实质执行(不写文件、不改代码、不派执行型子 Agent);用户批准后,再按(修订后的)计划开跑。',
+      dir ? '工作目录:' + dir + ' —— 一律在此目录内核实与改动,不访问其它项目。' : '',
       '</动态工作流规程>',
     ].filter(Boolean).join('\n')
   }
@@ -244,7 +261,28 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const g = String(goal || '').trim() || '未命名工作流'
     const dir = S.settings.projectDir || ''
     // msg=系统规程+目标(发给 serve);disp=目标(用户气泡只显示目标,规程不露)。返回卡 id,与旧签名兼容。
-    return spawnCard('工作流 · ' + g.slice(0, 20), null, workflowSystemPrompt(dir) + '\n\n【总目标】\n' + g, g, { flash: true })
+    return spawnCard('工作流 · ' + g.slice(0, 20), null, workflowSystemPrompt(dir) + '\n\n【总目标】\n' + g, g, { flash: true, wf: true })
+  }
+  // ── 工作流成果注册表(新路径):session.js 每轮回调,orch-mcp workflow_result / 卡坞据此取成果 ──
+  // 每轮终答即最新成果(快照式,不等"全部结束"):升格方随时可取、关窗不丢(存档落盘)。
+  S.wfTurnDone = (wcId, finalText) => {
+    const reg = S.wfCardByWc && S.wfCardByWc.get(wcId); if (!reg) return
+    reg.rounds++; reg.round = reg.rounds
+    const t = String(finalText == null ? '' : finalText); if (t.trim()) reg.final = t
+    reg.elapsedMs = Date.now() - reg.at
+    try { S.wfArchive(reg) } catch (e) { log('wf archive err: ' + e.message) }
+  }
+  S.wfTodos = (wcId, todos) => { const reg = S.wfCardByWc && S.wfCardByWc.get(wcId); if (reg && Array.isArray(todos)) reg.todos = todos }
+  S.wfArchive = (reg) => {
+    if (!reg || !reg.final) return
+    const dirW = path.join(app.getPath('userData'), 'workflows'); fs.mkdirSync(dirW, { recursive: true })
+    if (!reg.archive) {
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')
+      const slug = String(reg.goal).slice(0, 24).replace(/[\\/:*?"<>|\s]+/g, '_') || 'wf'
+      reg.archive = path.join(dirW, stamp + '_' + reg.id + '_' + slug + '.md')
+    }
+    const todoLines = (reg.todos || []).map((t) => '- [' + (/complet/i.test(String(t && t.status || '')) ? 'x' : ' ') + '] ' + String((t && (t.content || t.text || t.title)) || '')).join('\n')
+    fs.writeFileSync(reg.archive, '# 工作流:' + reg.goal + '\n\n- id:' + reg.id + ' · 轮次:' + reg.rounds + ' · 用时:' + Math.round((reg.elapsedMs || 0) / 1000) + 's · 状态:' + reg.status + '\n\n## 任务清单\n' + (todoLines || '(无)') + '\n\n## 最终成果(最近一轮回答)\n\n' + reg.final)
   }
 
   // ── 需求分析（多Agent 对抗 → 三类清单）────────────────────────────────────────
