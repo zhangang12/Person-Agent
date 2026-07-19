@@ -3,10 +3,8 @@ const { app, BrowserWindow, WebContentsView, globalShortcut, ipcMain, screen, di
 const path = require('path')
 const fs = require('fs')
 const oc = require('./opencode')
-const orch = require('./orchestrator')
 const initWindow  = require('./src/window')
 const initSession = require('./src/session')
-const initOrch    = require('./src/orch')
 const initTrigger = require('./src/trigger')
 const initTodos   = require('./src/todos')
 const initReqAnalysis = require('./src/reqanalysis-ipc')
@@ -139,7 +137,6 @@ app.whenReady().then(() => {
   S.createOrb = createOrb   // 留给 window-all-closed 兜底拉起球
 
   initSession(S, { ipcMain, path, fs, shell, oc, log, recordHistory, touchHistory })
-  initOrch(S, { ipcMain, oc, orch, log, app, path, fs })
   const todosApi = initTodos(S, { ipcMain, app, path, fs, log })
   S.todosApi = todosApi   // window.js 的会议抽取在运行期经 S 调 addSuggestion(初始化顺序无环)
   initTrigger(S, { path, fs, app, log, spawnEmailCard, createMailCenter, Notification })

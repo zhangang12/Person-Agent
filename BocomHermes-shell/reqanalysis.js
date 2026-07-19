@@ -8,7 +8,7 @@
 'use strict'
 
 const { clusterByTopic, analyzeCluster } = require('./align.js')
-const { extractJson } = require('./orchestrator.js')
+const { extractJson } = require('./src/extract-json.js')
 
 const clip = (s, n = 220) => { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n) + '…' : s }
 

@@ -12,8 +12,6 @@
     "compat": "node scripts/compat-check.mjs",
     "permcheck": "node scripts/permission-probe.mjs",
     "jsonschema": "node scripts/json-schema-probe.mjs",
-    "orch:test": "node scripts/orchestrator-selftest.mjs",
-    "orch:run": "node scripts/orchestrator-run.mjs",
     "align:test": "node scripts/align-selftest.mjs",
     "req:test": "node scripts/reqanalysis-selftest.mjs",
     "plan:test": "node scripts/reqplan-selftest.mjs",
@@ -30,6 +28,7 @@
     "mcp:mail": "node mcp/mail-mcp.mjs",
     "mcp:repro:test": "node mcp/repro-selftest.mjs",
     "repro:e2e": "electron scripts/e2e-repro-test.mjs",
+    "bars:e2e": "electron scripts/e2e-bars.mjs",
     "mcp:config": "node mcp/print-config.mjs"
   },
   "dependencies": {
@@ -49,7 +48,6 @@
       "main.js",
       "preload.js",
       "opencode.js",
-      "orchestrator.js",
       "align.js",
       "reqanalysis.js",
       "reqplan.js",
