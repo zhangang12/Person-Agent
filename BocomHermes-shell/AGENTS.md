@@ -45,6 +45,7 @@ BocomHermes-shell/
 │   ├── audit.js       # 审计流水：userData/audit.jsonl，append-only，启动时裁剪到 5000 行
 │   ├── httpcap.js     # HTTP 正向代理抓包(仅 HTTP)
 │   ├── todos.js / todo-reminder.js / trigger.js / reqanalysis-ipc.js / extract-json.js / cdp-format.js
+│   ├── knowledge.js   # 项目级知识库(任务尾蒸馏落点,纯逻辑可单测):slug/条目追加去重/注入裁剪
 ├── ui/                # 全部窗口页面（原生 HTML，脚本内联）：card.html(对话卡,~117KB)、browser.html(~115KB)、
 │                      #   orb.html/orb-input.html(悬浮球)、dock.html(卡坞)、mailcenter.html、skills.html、
 │                      #   settings.html、glass.css(双主题设计令牌,html[data-theme] 驱动)等
@@ -85,6 +86,7 @@ npm run mail:test      # 邮件解析
 npm run tool:test      # 工具 part 解析
 npm run compact:test   # 录制事件压缩
 npm run card:ui:test   # card.html 主脚本无头自测：vm + DOM 桩真跑（抓 TDZ/esc 类运行时雷）
+npm run knowledge:test # 项目知识库(knowledge.js)：slug 稳定/追加去重/注入裁剪
 npm run mcp:browser:test   # 浏览器 MCP 端到端(需本机 Edge/Chrome)
 npm run mcp:httpcap:test   # 抓包代理端到端
 npm run mcp:repro:test     # 复现取证 MCP
