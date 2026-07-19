@@ -3,3 +3,4 @@ dist/
 out/
 *.log
 opencode-wire-dump.txt
+scripts/e2e-bars-preload.cjs
