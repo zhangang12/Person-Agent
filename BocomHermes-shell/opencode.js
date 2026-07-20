@@ -20,6 +20,45 @@ const loggedChildren = new Set()  // 每个子会话映射只打一次日志
 const partKind = new Map()        // partID -> 'reasoning'|'text'：从 message.part.updated 学到，供 message.part.delta 路由
 const childToParent = new Map()   // 子会话ID -> 父会话ID：task 子agent 会创建带 parentID 的子会话,据此把子agent事件路由回父卡片
 const childTitle = new Map()      // 子会话ID -> 标题(如 "Explore codebase (@explore subagent)"),给卡片显示子agent名
+// ── 真实 token 计量(tokens plumbing)─────────────────────────────────────────
+// 卡片"上下文用量 chip / 80% 自动压缩"需要 serve 的真实用量,不是字符估算。
+// 数据源(opencode 线格式,两条都接,谁有算谁):
+//   ① SSE message.updated 事件:properties.info 是 assistant 消息元数据,带 tokens {input,output,reasoning,cache{read,write}}
+//   ② GET /session/:sid/message 消息列表:assistant 条目的 info.tokens 同上(pollTurnParts 每轮都在拉,顺手摘)
+// 归一成 { input, output, reasoning, cacheRead, cacheWrite, prompt, total, at }:
+//   prompt = input + cacheRead + cacheWrite  ← 最近一次调用实际进上下文的量(水位按它算)
+//   total  = prompt + output + reasoning     ← 全量(展示用)
+const usageBySession = new Map()   // sid(根会话) -> 归一用量(只留最新一条 assistant 的,它含全量上下文)
+// 各 serve 版本字段形状不一(tokens / usage;cache.read / cache_read;prompt_tokens / input_tokens),逐个兜底,全没有返回 null
+function normalizeUsage(src) {
+  if (!src || typeof src !== 'object') return null
+  const t = (src.tokens && typeof src.tokens === 'object') ? src.tokens : (src.usage && typeof src.usage === 'object') ? src.usage : src
+  const num = (v) => (+v > 0 ? +v : 0)
+  const cache = (t.cache && typeof t.cache === 'object') ? t.cache : {}
+  const input = num(t.input ?? t.input_tokens ?? t.prompt_tokens ?? t.prompt)
+  const output = num(t.output ?? t.output_tokens ?? t.completion_tokens ?? t.completion)
+  const reasoning = num(t.reasoning ?? t.reasoning_tokens)
+  const cacheRead = num(cache.read ?? cache.cacheRead ?? t.cache_read ?? t.cacheRead)
+  const cacheWrite = num(cache.write ?? cache.cacheWrite ?? t.cache_write ?? t.cacheWrite)
+  const prompt = input + cacheRead + cacheWrite
+  const total = prompt + output + reasoning
+  if (!total) return null
+  return { input, output, reasoning, cacheRead, cacheWrite, prompt, total, at: Date.now() }
+}
+// 记录一条 assistant 消息的用量:按消息自带 sid 登记(卡片只查根会话的;子agent是隔离上下文,不计入它的水位);新值覆盖旧值(用量单调涨,最新=最全)
+function noteUsage(sid, msgInfo) {
+  if (!sid) return
+  const u = normalizeUsage(msgInfo)
+  if (!u) return
+  if (usageBySession.size > 500) usageBySession.clear()   // 粗粒度防涨:sid 全局唯一,清空只影响极老会话
+  usageBySession.set(sid, u)
+}
+// 卡片读取通道(IPC 由装配层接):取该会话最近一次 assistant 调用的真实用量,没有返回 null(调用方回退字符估算)
+function getSessionUsage(info, sid) {
+  const hit = sid && usageBySession.get(sid)
+  if (hit) return hit
+  return null   // SSE 没报过就是真没有;GET 兜底由 pollTurnParts 顺手摘(不另发请求,内网 serve 能少打一次是一次)
+}
 // 顺着 parentID 链找到根(卡片对应的)会话。子agent可嵌套,最多向上走几层。
 function rootSession(sid) {
   let cur = sid, guard = 0
@@ -483,6 +522,7 @@ async function pollTurnParts(info, sid) {
   for (const m of list.slice(lastUserIdx + 1)) {
     const role = m?.info?.role ?? m?.role
     if (role !== 'assistant') continue
+    noteUsage(sid, m?.info ?? m)   // 顺手摘真实 token 用量(assistant info.tokens),卡片上下文水位用;没有该字段时自动跳过
     const parts = m?.parts ?? m?.data?.parts ?? m?.info?.parts ?? []
     for (const p of Array.isArray(parts) ? parts : []) {
       if (!p || !p.id) continue
@@ -609,6 +649,13 @@ function dispatch(ev, onPermission, onText, info, onQuestion) {
     const v2 = type.includes('v2')
     if (requestId && onQuestion) onQuestion({ sessionId: r.sessionId, requestId, questions: Array.isArray(p.questions) ? p.questions : [], v2, serve: info })
     else if (info && requestId) rejectQuestion(info, p.sessionID ?? p.sessionId, requestId, v2)
+    return
+  }
+  // message.updated:assistant 消息元数据(含 tokens 用量)—— 真实 token 计量的 SSE 来源。
+  // 摘下来登记给卡片上下文水位用;不带 tokens 的消息(user/早期快照)normalizeUsage 自动跳过。
+  if (type === 'message.updated' || type === 'session.message' || type === 'message.completed') {
+    const mi = (p.info && typeof p.info === 'object') ? p.info : (p.message && typeof p.message === 'object') ? p.message : null
+    if (mi) noteUsage(mi.sessionID ?? mi.sessionId ?? p.sessionID ?? p.sessionId, mi)
     return
   }
   // 流式增量（本版 bocomcode 实测主路径）：message.part.delta { partID, field:'text', delta }
@@ -786,5 +833,5 @@ function retireIfOrphan(info, inUseBases) {
   return true
 }
 
-module.exports = { ensureServe, createSession, sendMessage, listModels, checkMcp, abort, replyPermission, replyQuestion, rejectQuestion, sessionExists, getMessages, pollTurnParts, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, AUTO_ALLOW,
+module.exports = { ensureServe, createSession, sendMessage, listModels, checkMcp, abort, replyPermission, replyQuestion, rejectQuestion, sessionExists, getMessages, pollTurnParts, getSessionUsage, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, AUTO_ALLOW,
   __test: { dispatch, waitAssistantText, extractText, pickTurnText, abortedSince, abortedSids, normalizeMessages, stripInjected, splitThink } }

@@ -65,9 +65,56 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
 
   // 项目级知识库(任务尾蒸馏的落点,src/knowledge.js):按工作目录匹配,新卡首条消息随背景注入。
   // 与【全局】个人记忆 memory.md 分开 —— 系统级事实是项目资产,写全局会污染其它项目。
-  function loadKnowledge(dir) {
+  // 注入前跑防腐校验 C1-C4(knowledge.auditEntries):死锚点条目隔离不注入、行漂移就近重定位并回写锚点行号、
+  // churn 超阈标黄带 [待复核];两级索引按 target(首条消息/goal 片段)做场景命中优先注入。
+  // 检查是开卡热路径:文件 mtime/churn 结果在 knowledge.js 进程内缓存,不会每次开卡全量 grep/git。
+  const KNOWLEDGE_CHURN_MAX = 300   // C4 阈值兜底默认:自 verified(日期节代理)以来锚点文件累计改动行数;旋钮 settings.knobs.knowledgeChurnMax 优先
+  // C4 阈值旋钮化:settings.knobs.knowledgeChurnMax(非正数/缺失回退默认 300)
+  function knowledgeChurnMax() {
+    const v = +(S.settings && S.settings.knobs && S.settings.knobs.knowledgeChurnMax)
+    return Number.isFinite(v) && v > 0 ? Math.floor(v) : KNOWLEDGE_CHURN_MAX
+  }
+  // 防腐依赖注入工厂:锚点是模型写的相对路径,一律围栏在项目目录内(防越界读盘);读不了的文件/无 git 不炸,对应检查跳过。
+  function knowledgeDeps(dir) {
+    const inDir = (rel) => {
+      try {
+        const abs = path.resolve(dir, String(rel || ''))
+        const r = path.relative(dir, abs)
+        return (r.startsWith('..') || path.isAbsolute(r)) ? null : abs
+      } catch { return null }
+    }
+    return {
+      existsFile: (rel) => { const p = inDir(rel); try { return !!p && fs.statSync(p).isFile() } catch { return false } },
+      readFile: (rel) => {   // >1MB 不做符号校验(性能),返回 null → 该锚点 unchecked
+        const p = inDir(rel); if (!p) return null
+        try { if (fs.statSync(p).size > 1024 * 1024) return null; return fs.readFileSync(p, 'utf8') } catch { return null }
+      },
+      mtimeOf: (rel) => { const p = inDir(rel); try { return p ? fs.statSync(p).mtimeMs : undefined } catch { return undefined } },
+      churnOf: (rel, since) => {   // git log --numstat 累计增删行数;非 git 仓库/无 git → null(跳过 C4,不影响注入)
+        if (!inDir(rel)) return null
+        try {
+          const out = require('child_process').execFileSync('git', ['log', '--since=' + since, '--numstat', '--format=', '--', String(rel)], { cwd: dir, timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).toString()
+          let n = 0
+          for (const l of out.split('\n')) { const m = l.match(/^(\d+)\s+(\d+)/); if (m) n += (+m[1]) + (+m[2]) }
+          return n
+        } catch { return null }
+      },
+    }
+  }
+  // target = 两级索引的"当前目标文本":卡片标题(普通卡=首条消息前 24 字,工作流卡=goal 前 20 字)或压缩续聊的接力摘要。
+  // 注意:首条消息全文要到 card-send 才可见,而注入前缀在 card-init 构建,故只能用标题/摘要片段做确定性命中;
+  // 工作流完整 goal 需 window.js 透传(本波不动 window.js),或后续波次改为 card-send 时懒构建知识注入。target 为空 → 退化为纯新→旧。
+  function loadKnowledge(dir, target) {
     if (!dir) return ''
-    try { return knowledge.injectText(fs.readFileSync(knowledge.fileFor(dir, require('electron').app.getPath('userData')), 'utf8'), dir) } catch { return '' }
+    try {
+      const file = knowledge.fileFor(dir, require('electron').app.getPath('userData'))
+      const raw = fs.readFileSync(file, 'utf8')
+      const audit = knowledge.auditEntries(raw, knowledgeDeps(dir), { dir, churnMaxLines: knowledgeChurnMax() })
+      if (audit.content && audit.content !== raw) {   // C3 行漂移重定位 → 回写知识库文件里的新锚点行号
+        try { fs.writeFileSync(file, audit.content); log('knowledge: relocated anchors, rewrote ' + path.basename(file)) } catch {}
+      }
+      return knowledge.injectText(raw, dir, { target: target || '', audit })
+    } catch { return '' }
   }
 
   // ── 作答技能库(指令型:slash 选中后把方法论指令预置到消息前 → 提升产出质量;区别于录制回放技能)──
@@ -339,7 +386,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
       S.sessionInfo.set(ns, { wc: e.sender, serve })
       const model1 = replayModel(e.sender.id, ns)
       S.pushServeHealth && S.pushServeHealth(e.sender, serve)
-      const ctx1 = loadMemory() + loadProjectContext(dir) + loadKnowledge(dir); if (ctx1) S.firstMsgCtx.set(ns, ctx1)
+      const ctx1 = loadMemory() + loadProjectContext(dir) + loadKnowledge(dir, wantTitle || (h && h.title) || ''); if (ctx1) S.firstMsgCtx.set(ns, ctx1)
       recordHistory(ns, wantTitle || (h && h.title), dir)
       return { sessionId: ns, project: proj, dir, model: model1, reattached: false, stale: true }
     }
@@ -351,7 +398,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     S.sessionInfo.set(sessionId, { wc: e.sender, serve })
     const model0 = replayModel(e.sender.id, sessionId)
     S.pushServeHealth && S.pushServeHealth(e.sender, serve)
-    const ctx0 = loadMemory() + loadProjectContext(dir) + loadKnowledge(dir); if (ctx0) S.firstMsgCtx.set(sessionId, ctx0)
+    const ctx0 = loadMemory() + loadProjectContext(dir) + loadKnowledge(dir, wantTitle); if (ctx0) S.firstMsgCtx.set(sessionId, ctx0)
     recordHistory(sessionId, wantTitle, dir)
     return { sessionId, project: dir ? path.basename(dir) : '未选目录', dir, model: model0, reattached: false }
   })
@@ -378,7 +425,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     S.pushServeHealth && S.pushServeHealth(e.sender, serve)
     // carryCtx=压缩续聊的接力摘要:上一段对话的要点随首条消息带进新会话(用户气泡不显示,回放展示层会剥)
     const carry = opts && typeof opts.carryCtx === 'string' && opts.carryCtx.trim() ? '<上轮对话接力摘要>\n' + opts.carryCtx.trim().slice(0, 20000) + '\n</上轮对话接力摘要>\n\n' : ''
-    const ctx = loadMemory() + loadProjectContext(dir) + loadKnowledge(dir) + carry; if (ctx) S.firstMsgCtx.set(sessionId, ctx)
+    const ctx = loadMemory() + loadProjectContext(dir) + loadKnowledge(dir, (opts && opts.carryCtx) || '') + carry; if (ctx) S.firstMsgCtx.set(sessionId, ctx)
     recordHistory(sessionId, 'BocomHermes 对话', dir)
     // 旧 serve 若已无任何会话引用且是自起的 → 退休,不留孤儿进程
     if (oldServe && oldServe !== serve) {
@@ -485,6 +532,15 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
   ipcMain.on('card-abort', (e) => {
     const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
     if (si) oc.abort(si.serve, sessionId)
+  })
+
+  // 卡片上下文用量 chip:取本卡会话最近一次 assistant 调用的真实 token 用量(opencode.js 经 SSE/轮询登记)。
+  // 无会话或无数据 → null(卡片静默回落字符估算);tokens=实际进上下文的量(input+cacheRead+cacheWrite),limit 留给后续模型元数据。
+  ipcMain.handle('card-usage', (e) => {
+    const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
+    if (!si) return null
+    const u = oc.getSessionUsage(si.serve, sessionId)
+    return u ? { tokens: u.prompt, total: u.total, limit: null } : null
   })
 
   ipcMain.on('permission-reply', (_e, { requestId, decision }) => {

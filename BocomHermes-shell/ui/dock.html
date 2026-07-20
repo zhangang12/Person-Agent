@@ -81,6 +81,7 @@
   .wfst.running { background: rgba(74,168,255,.16); color: var(--accent); }
   .wfst.done { background: rgba(43,182,115,.14); color: #2bb673; }
   .wfst.archived { background: var(--orb-bg); color: var(--txt3); }
+  .wfst.queued { background: var(--warn-bg); color: var(--warn-txt); }   /* 排队位:并发度满时的等待队列 */
   /* 记录删除:行内 ✕,两步确认(第一次点变"删?",3s 不复原则复位) */
   .wfitem { position: relative; }
   .wfitem .t, .wfitem .meta { padding-right: 24px; }   /* 给 ✕ 让位,别压字 */
@@ -136,6 +137,11 @@
       <div class="pp-lbl">内置能力</div>
       <div id="ppBuiltins" class="pp-row"></div>
     </div>
+    <!-- 动态工作流的模板快捷发起:选中「动态工作流」模式才出现 —— wfTemplates() 通道缺席整排隐藏;点 chip 把 goalPrefix 填进描述框,补完目标回车即发 -->
+    <div id="wfTplPanel" class="pipe-panel nodrag" hidden>
+      <div class="pp-lbl">工作流模板</div>
+      <div id="wfTpls" class="pp-row"></div>
+    </div>
     <div id="attRow" class="att-row nodrag"></div>
     <div id="dropHint" class="drop-hint">松手上传 — 文档解析成文本，图片走多模态识别</div>
     <div class="newrow nodrag">
@@ -190,11 +196,23 @@
   // ── 工作流面板:现行(注册表,进行中置顶)+ 历史存档;点活卡聚焦、点历史开存档。4s 自刷(状态很轻) ──
   const wfLbl = $('wfLbl'), wfListEl = $('wfList')
   async function renderWf() {
-    let items = []
-    try { items = (await H.wfList()) || [] } catch (e) {}
-    wfLbl.hidden = wfListEl.hidden = !items.length
-    if (!items.length) return
+    // 契约:旧=数组(只有工作流);新=对象带 queued 排队位([{goal,position,at}])。两种形态都接住,缺席静默。
+    let r = null
+    try { r = await H.wfList() } catch (e) {}
+    const items = Array.isArray(r) ? r : ((r && (r.items || r.list)) || [])
+    const queued = (!Array.isArray(r) && r && Array.isArray(r.queued)) ? r.queued : []
+    wfLbl.hidden = wfListEl.hidden = !items.length && !queued.length
+    if (!items.length && !queued.length) return
     wfListEl.innerHTML = ''
+    // 排队位:并发度满时等待中的工作流(徽章风格与 running/done/archived 一致);无 queued 不显示
+    for (const q of queued) {
+      const goalTxt = String(q.goal || '')
+      const el = document.createElement('div'); el.className = 'item wfitem'
+      el.innerHTML = '<span class="t"><span class="wfst queued">排队中 #' + (q.position != null ? q.position : '?') + '</span>' + esc(goalTxt.slice(0, 30)) + (goalTxt.length > 30 ? '…' : '') + '</span>'
+        + '<span class="meta">' + esc(rel(q.at || Date.now())) + ' 入队</span>'
+      el.title = '排队中 —— 并发度已满，前面的工作流完成会自动开跑\n' + goalTxt
+      wfListEl.appendChild(el)
+    }
     for (const w of items) {
       const stName = w.status === 'running' ? (w.busy ? '进行中' : '待操作') : w.status === 'done' ? '已完成' : '存档'
       const meta = [w.rounds ? w.rounds + ' 轮' : '', w.elapsedMs ? Math.round(w.elapsedMs / 1000) + 's' : '', w.files ? '产出 ' + w.files : '', rel(w.at || Date.now())].filter(Boolean).join(' · ')
@@ -242,7 +260,33 @@
   // 模式:自动(Agent 自判要不要升格) / 任务编排(单执行体按描述顺序走业务链) / 动态工作流(单主 Agent 连续上下文里自拆+并行派子Agent+自综合,Claude Code 式)
   let mode = 'auto'
   const MODES = { mAuto: 'auto', mPipe: 'pipeline', mWf: 'wf' }
-  for (const id of Object.keys(MODES)) $(id).addEventListener('click', () => { mode = MODES[id]; for (const k of Object.keys(MODES)) $(k).classList.toggle('on', k === id); paintPipePanel(); goalEl.focus() })
+  for (const id of Object.keys(MODES)) $(id).addEventListener('click', () => { mode = MODES[id]; for (const k of Object.keys(MODES)) $(k).classList.toggle('on', k === id); paintPipePanel(); paintWfTpls(); goalEl.focus() })
+
+  // ── 动态工作流模板快捷发起:模板=预置 goalPrefix,点 chip 填进描述框,用户补完目标按 Enter/箭头即走现有发起链 ──
+  // wfTemplates() 通道缺席(后端未接入)时整排保持 hidden,不报错。
+  const wfTplPanel = $('wfTplPanel'), wfTpls = $('wfTpls')
+  let wfTplsLoaded = false
+  async function paintWfTpls() {
+    wfTplPanel.hidden = mode !== 'wf'
+    if (wfTplPanel.hidden || wfTplsLoaded) return
+    if (typeof H.wfTemplates !== 'function') return   // 通道缺席:整排隐藏
+    let tpls = []
+    try { tpls = (await H.wfTemplates()) || [] } catch (e) { tpls = [] }
+    if (!tpls.length) return   // 空模板同样整排隐藏
+    wfTplsLoaded = true
+    wfTpls.innerHTML = ''
+    for (const t of tpls) {
+      const b = document.createElement('button'); b.className = 'pp-chip skill'
+      b.textContent = t.name || t.id || '模板'
+      b.title = (t.hint ? t.hint + '\n' : '') + '目标前缀：' + (t.goalPrefix || '')
+      b.addEventListener('click', () => {
+        goalEl.value = t.goalPrefix || ''   // goal = goalPrefix + 用户输入,确认(Enter/go)走 startConversation(mode:'wf')
+        goalEl.focus()
+        try { goalEl.setSelectionRange(goalEl.value.length, goalEl.value.length) } catch (e) {}
+      })
+      wfTpls.appendChild(b)
+    }
+  }
 
   // ── 任务编排牌桌:录制技能 + 内置能力,点 chip 拼进描述;导入技能(复用技能中心同一条白名单净化链) ──
   const pipePanel = $('pipePanel'), ppSkills = $('ppSkills'), ppBuiltins = $('ppBuiltins')

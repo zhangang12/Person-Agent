@@ -335,13 +335,44 @@ module.exports = function initMail(ctx) {
             if (!dir) return reply({ error: '缺少 dir(项目目录)' })
             if (!clean.length) return reply({ error: '没有可写条目(text 为空)' })
             try {
+              // 写时校验"无源不立"(复用注入防腐同一判定器 knowledge.auditEntries,只跑 C1/C2):
+              //   无锚点 → 拒写(锚点必填);C1 锚点文件不存在 → 拒写;C2 符号 grep 不到 → 不拒,confidence 降级 suspected 落库。
+              // deps 只给 existsFile/readFile(按项目目录 dir 解析+围栏相对路径)—— C3 行漂移/C4 churn 是注入侧的事,写时不查;
+              // 不给 mtimeOf → knowledge.js 进程内缓存不生效,每次实查(写时校验要的就是新鲜结果)。
+              const inDir = (rel) => {
+                try {
+                  const abs = path.resolve(dir, String(rel || ''))
+                  const r = path.relative(dir, abs)
+                  return (r.startsWith('..') || path.isAbsolute(r)) ? null : abs
+                } catch { return null }
+              }
+              const deps = {
+                existsFile: (rel) => { const p = inDir(rel); try { return !!p && fs.statSync(p).isFile() } catch { return false } },
+                readFile: (rel) => { const p = inDir(rel); if (!p) return null; try { if (fs.statSync(p).size > 1024 * 1024) return null; return fs.readFileSync(p, 'utf8') } catch { return null } },
+              }
+              const rejected = []
+              const pass = []
+              for (const e of clean) {
+                if (!e.anchors.length) { rejected.push({ text: e.text, reason: '锚点必填' }); continue }
+                const v = knowledge.auditEntries(knowledge.fmtEntry(e), deps, { dir })
+                const a0 = v.entries && v.entries[0]
+                const dead = a0 ? (a0.anchors || []).filter((x) => x.state === 'dead') : []
+                const c1 = dead.find((x) => /^C1/.test(String(x.why || '')))
+                if (c1) { rejected.push({ text: e.text, reason: 'C1 锚点文件不存在: ' + c1.file }); continue }
+                if (dead.length) e.confidence = 'suspected'   // C2 符号找不到 → 降级落库(宁放过不误杀)
+                pass.push(e)
+              }
               const f = knowledge.fileFor(dir, app.getPath('userData'))
+              if (!pass.length) {   // 全被拦下:不动库,只回拒写清单(响应保持 { ok, added, dupes } 形状 + rejected)
+                try { S.audit && S.audit('knowledge', '蒸馏写入项目知识库', { dir, added: 0, dupes: 0, rejected: rejected.length }) } catch {}
+                return reply({ ok: true, added: 0, dupes: 0, rejected, file: f })
+              }
               fs.mkdirSync(path.dirname(f), { recursive: true })
               let old = ''; try { old = fs.readFileSync(f, 'utf8') } catch {}
-              const r = knowledge.appendEntries(old, clean)
+              const r = knowledge.appendEntries(old, pass)
               fs.writeFileSync(f, r.content)
-              try { S.audit && S.audit('knowledge', '蒸馏写入项目知识库', { dir, added: r.added, dupes: r.dupes }) } catch {}
-              return reply({ ok: true, added: r.added, dupes: r.dupes, file: f })
+              try { S.audit && S.audit('knowledge', '蒸馏写入项目知识库', { dir, added: r.added, dupes: r.dupes, rejected: rejected.length }) } catch {}
+              return reply({ ok: true, added: r.added, dupes: r.dupes, rejected, file: f })
             } catch (e) { return reply({ error: e.message }) }
           }
           // ── 浏览器技能(SKILL):录制一次 → 存成命名技能 → agent 按名字带参回放 ──

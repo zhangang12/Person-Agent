@@ -14,6 +14,7 @@ const { cdpConsoleLevel, fmtRO, fmtException, resolveFrame } = require('./cdp-fo
 const initMail = require('./mail')
 const initMcpConfig = require('./mcp-config')
 const initBrowser = require('./browser')
+const knowledge = require('./knowledge')   // 项目知识库治理 IPC 用(纯逻辑,落盘/审计在本文件)
 
 module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }) {
   // 纯文件 IO 函数搬进 recorder-core 的 initStore 工厂,这里注入依赖后解构使用
@@ -22,7 +23,26 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   S.orbInputWin = null
   S.browser = { win: null, tabs: [], activeId: null, consoleH: 0, seq: 0, mode: 'standalone', leftW: 0, cardView: null, cardWcId: null, _dragging: false }
   // ── 设置 ────────────────────────────────────────────────────────────────────
-  function loadSettings() { try { return { ...S.settings, ...JSON.parse(fs.readFileSync(S.settingsFile, 'utf8')) } } catch { return { ...S.settings } } }
+  // 阈值旋钮(治理波次):弱模型补偿参数全部进 settings.json 的 knobs 节,可拧松/随模型升级逐档退掉;
+  // 此处给默认值并深合并(浅合并会被 settings.json 里缺字段的 knobs 整棵覆盖默认值)。
+  const DEFAULT_KNOBS = {
+    approvalTimeoutMin: 0,        // 批准闸超时分钟,0=永不
+    watchdogRounds: 3,            // 看门狗判定轮数
+    watchdogOverlap: 0.7,         // 看门狗绕圈重合度
+    watchdogEscalateRounds: 2,    // 看门狗升级轮数
+    ctxCompactPct: 0.8,           // 自动压缩水位阈值
+    autoCompactMax: 5,            // 自动压缩次数上限
+    todoNudgeRounds: 3,           // todo 停滞提醒轮数
+    knowledgeChurnMax: 300,       // 知识 C4 churn 阈值(行)
+    wfConcurrency: 2,             // 工作流并发上限(超限排队)
+  }
+  const mergeKnobs = (k) => ({ ...DEFAULT_KNOBS, ...((k && typeof k === 'object') ? k : {}) })
+  function loadSettings() {
+    try {
+      const p = JSON.parse(fs.readFileSync(S.settingsFile, 'utf8'))
+      return { ...S.settings, ...p, knobs: mergeKnobs(p && p.knobs) }
+    } catch { return { ...S.settings, knobs: mergeKnobs(S.settings && S.settings.knobs) } }
+  }
   function saveSettings() { try { fs.writeFileSync(S.settingsFile, JSON.stringify(S.settings)) } catch {} }
   // ── 邮件子系统 ──────────────────────────────────────────────────────────────
   // 收发/发件箱安全闸门/IMAP IDLE/本地中继/mail-cache/待办-邮件闭环/DB 只读中继,整块搬进 ./mail 的
@@ -203,6 +223,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       // 工作流卡收尾:注册表置 done + 落最终存档(关窗不丢,workflow_result 仍可取回)
       const wreg = S.wfCardByWc && S.wfCardByWc.get(wcId)
       if (wreg) { wreg.status = 'done'; wreg.elapsedMs = Date.now() - wreg.at; S.wfCardByWc.delete(wcId); try { S.wfArchive && S.wfArchive(wreg) } catch (e2) { log('wf archive err: ' + e2.message) } }
+      if (wreg) { try { wfDequeue() } catch {} }   // 关卡腾出并发位 → 排队工作流补位(出队触发点②)
       forgetBusy(wcId)   // 关卡即清"忙"，避免球卡在思考态
     })
     return id
@@ -258,11 +279,40 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       '</动态工作流规程>',
     ].filter(Boolean).join('\n')
   }
+  // 工作流并发闸:running 数 ≥ knobs.wfConcurrency 时不直接开卡,进内存队列(S.wfQueue,重启即清);
+  // 出队触发点 = ① wfTurnDone 判 done ② 工作流卡关闭(spawnCard closed 回调) ③ wf-delete 删记录。
+  S.wfQueue = S.wfQueue || []
+  function wfConcurrency() {   // 并发上限旋钮:非正整数/缺失回退 2
+    const n = Math.floor(+(S.settings.knobs && S.settings.knobs.wfConcurrency))
+    return Number.isFinite(n) && n >= 1 ? n : 2
+  }
+  function wfRunningCount() {
+    return S.wfRegistry ? [...S.wfRegistry.values()].filter((r) => r.status === 'running').length : 0
+  }
   function spawnWorkflow(goal) {
     const g = String(goal || '').trim() || '未命名工作流'
+    if (wfRunningCount() >= wfConcurrency()) {
+      S.wfQueue.push({ goal: g, at: Date.now() })
+      log('workflow queued (running ' + wfRunningCount() + '/' + wfConcurrency() + ', position ' + S.wfQueue.length + '): ' + g.slice(0, 60))
+      return { queued: true, position: S.wfQueue.length }
+    }
     const dir = S.settings.projectDir || ''
     // msg=系统规程+目标(发给 serve);disp=目标(用户气泡只显示目标,规程不露)。返回卡 id,与旧签名兼容。
     return spawnCard('工作流 · ' + g.slice(0, 20), null, workflowSystemPrompt(dir) + '\n\n【总目标】\n' + g, g, { flash: true, wf: true })
+  }
+  // 出队补位:队列非空且有空位 → shift 开下一张并桌面通知。guard 防重入(判 done/关卡/删记录可能同拍连发)。
+  let wfDequeuing = false
+  function wfDequeue() {
+    if (wfDequeuing || !S.wfQueue || !S.wfQueue.length) return
+    if (wfRunningCount() >= wfConcurrency()) return
+    wfDequeuing = true
+    try {
+      const next = S.wfQueue.shift()
+      if (!next) return
+      const id = spawnWorkflow(next.goal)
+      log('workflow dequeued → card ' + JSON.stringify(id) + ': ' + String(next.goal).slice(0, 60))
+      try { new Notification({ title: 'BocomHermes · 工作流', body: '排队的工作流已开跑：' + String(next.goal).slice(0, 60) }).show() } catch {}
+    } finally { wfDequeuing = false }
   }
   // ── 工作流成果注册表(新路径):session.js 每轮回调,orch-mcp workflow_result / 卡坞据此取成果 ──
   // 每轮终答即最新成果(快照式,不等"全部结束"):升格方随时可取、关窗不丢(存档落盘)。
@@ -280,6 +330,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       try { new Notification({ title: '工作流完成', body: String(reg.goal).slice(0, 80) }).show() } catch {}
     }
     try { S.wfArchive(reg) } catch (e) { log('wf archive err: ' + e.message) }
+    if (reg.status === 'done') wfDequeue()   // 判 done → 腾出并发位,排队工作流补位(出队触发点①)
   }
   S.wfTodos = (wcId, todos) => { const reg = S.wfCardByWc && S.wfCardByWc.get(wcId); if (reg && Array.isArray(todos)) reg.todos = todos }
   // write/edit 落盘路径(主 Agent 与子 Agent 都收,session.js 在工具事件里回调)→ 存档+workflow_result 可取出产物位置
@@ -1268,6 +1319,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       backendDir: S.settings.backendDir || '',
       reqRepos: (S.settings.reqProfile && S.settings.reqProfile.repos) || [],
       planMode: S.settings.planMode !== false,
+      knobs: mergeKnobs(S.settings.knobs),   // 阈值旋钮(治理波次):完整 9 键随设置下发,渲染端不必各自兜底
       model: S.settings.model || null,   // 全局默认模型(对话坞设)
       encryptionAvailable: email.encryptionAvailable(),   // false → 密码只能明文落盘,设置面板要红字告警
       outboxHoldSeconds: S.settings.outboxHoldSeconds == null ? 15 : S.settings.outboxHoldSeconds,   // 发信延迟窗(软撤回),0=立即发
@@ -1312,6 +1364,94 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('spawn-fanout-roles', (_e, { goal, roles }) => spawnFanout(goal, roles))
   ipcMain.handle('get-fanout-roles', () => Object.entries(ROLES).map(([k, [label]]) => ({ key: k, label })))
   ipcMain.handle('spawn-workflow', (_e, goal) => spawnWorkflow(goal))
+  // 工作流模板(对话坞模板入口;常量清单,goalPrefix 预置到目标前,引导主 Agent 按对应形状干活)
+  const WF_TEMPLATES = [
+    { id: 'explore-doc', name: '探索成文', hint: '大规模探索后蒸馏成文档', goalPrefix: '【探索成文】系统性地探索以下主题，fan-out 子代理分头摸底，最后蒸馏成结构化文档落盘：' },
+    { id: 'review', name: '评审', hint: '多视角对抗评审', goalPrefix: '【评审】对以下对象做多视角(正确性/性能/安全/可维护性)对抗评审，输出按严重度分级的问题清单：' },
+    { id: 'troubleshoot', name: '排查', hint: '定位问题根因', goalPrefix: '【排查】定位以下问题的根因：先收集证据(日志/代码/复现路径)，形成假设逐一验证，给出根因与修复建议：' },
+  ]
+  ipcMain.handle('wf-templates', () => WF_TEMPLATES)
+  // ── 项目知识库治理 IPC(纯逻辑在 src/knowledge.js;此处负责文件 IO/落盘/审计)────────────────
+  // 防腐依赖注入工厂(与 session.js 同款):锚点相对路径一律围栏在项目目录内;读不了/非 git 对应检查自动跳过。
+  function knowledgeDeps(dir) {
+    const inDir = (rel) => {
+      try {
+        const abs = path.resolve(dir, String(rel || ''))
+        const r = path.relative(dir, abs)
+        return (r.startsWith('..') || path.isAbsolute(r)) ? null : abs
+      } catch { return null }
+    }
+    return {
+      existsFile: (rel) => { const p = inDir(rel); try { return !!p && fs.statSync(p).isFile() } catch { return false } },
+      readFile: (rel) => {   // >1MB 不做符号校验(性能),返回 null → 该锚点 unchecked
+        const p = inDir(rel); if (!p) return null
+        try { if (fs.statSync(p).size > 1024 * 1024) return null; return fs.readFileSync(p, 'utf8') } catch { return null }
+      },
+      mtimeOf: (rel) => { const p = inDir(rel); try { return p ? fs.statSync(p).mtimeMs : undefined } catch { return undefined } },
+      churnOf: (rel, since) => {   // git log --numstat 累计增删行数;非 git 仓库/无 git → null(跳过 C4)
+        if (!inDir(rel)) return null
+        try {
+          const out = require('child_process').execFileSync('git', ['log', '--since=' + since, '--numstat', '--format=', '--', String(rel)], { cwd: dir, timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).toString()
+          let n = 0
+          for (const l of out.split('\n')) { const m = l.match(/^(\d+)\s+(\d+)/); if (m) n += (+m[1]) + (+m[2]) }
+          return n
+        } catch { return null }
+      },
+    }
+  }
+  const knowledgeChurnMaxKnob = () => {   // C4 阈值旋钮(与 session.js 注入侧同口径)
+    const v = +(S.settings.knobs && S.settings.knobs.knowledgeChurnMax)
+    return Number.isFinite(v) && v > 0 ? Math.floor(v) : 300
+  }
+  // 条目清单:文件不存在=空库(ok:true 空表,治理界面照常打开)
+  ipcMain.handle('knowledge-list', (_e, dir) => {
+    const d = String(dir || '').trim()
+    const file = knowledge.fileFor(d, app.getPath('userData'))
+    let raw = ''
+    try { raw = fs.readFileSync(file, 'utf8') } catch {}
+    const entries = knowledge.listEntries(raw)
+    return { ok: true, file, entries, stats: { total: entries.length } }
+  })
+  // 健康度:真实 deps 跑 C1-C4;C3 行漂移重定位出新内容 → 先回写知识库文件再响应
+  ipcMain.handle('knowledge-audit', (_e, dir) => {
+    const d = String(dir || '').trim()
+    if (!d) return { ok: false, err: '缺少 dir(项目目录)' }
+    try {
+      const file = knowledge.fileFor(d, app.getPath('userData'))
+      let raw = ''
+      try { raw = fs.readFileSync(file, 'utf8') } catch {}
+      const audit = knowledge.auditEntries(raw, knowledgeDeps(d), { dir: d, churnMaxLines: knowledgeChurnMaxKnob() })
+      if (audit.content && audit.content !== raw) {
+        try { fs.writeFileSync(file, audit.content); log('knowledge-audit: relocated anchors, rewrote ' + path.basename(file)) } catch {}
+      }
+      return { ok: true, entries: audit.entries, stats: audit.stats }
+    } catch (e) { return { ok: false, err: String((e && e.message) || e) } }
+  })
+  // 编辑条目(index 定位;patch={text?,anchors?,scene?,confidence?})→ 写盘 + 审计留痕
+  ipcMain.handle('knowledge-edit', (_e, dir, index, patch) => {
+    const d = String(dir || '').trim()
+    try {
+      const file = knowledge.fileFor(d, app.getPath('userData'))
+      const raw = fs.readFileSync(file, 'utf8')
+      const next = knowledge.editEntry(raw, index, patch || {})
+      if (next !== raw) fs.writeFileSync(file, next)
+      try { S.audit && S.audit('knowledge', '编辑知识条目', { dir: path.basename(d), index: +index || 0 }) } catch {}
+      return { ok: true }
+    } catch (e) { return { ok: false, err: String((e && e.message) || e) } }
+  })
+  // 删除条目(indexes 批量;空日期节自动清理)→ 写盘 + 审计留痕
+  ipcMain.handle('knowledge-delete', (_e, dir, indexes) => {
+    const d = String(dir || '').trim()
+    const list = Array.isArray(indexes) ? indexes : []
+    try {
+      const file = knowledge.fileFor(d, app.getPath('userData'))
+      const raw = fs.readFileSync(file, 'utf8')
+      const next = knowledge.deleteEntries(raw, list)
+      if (next !== raw) fs.writeFileSync(file, next)
+      try { S.audit && S.audit('knowledge', '删除知识条目', { dir: path.basename(d), count: list.length }) } catch {}
+      return { ok: true }
+    } catch (e) { return { ok: false, err: String((e && e.message) || e) } }
+  })
   // ── 卡坞工作流面板:现行(内存注册表)+ 历史(磁盘存档)合并出清单;点一条聚焦活卡或打开存档 ──
   ipcMain.handle('wf-list', () => {
     const out = []
@@ -1340,7 +1480,12 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     } catch {}
     const rank = { running: 0, done: 1, archived: 2 }   // 进行中置顶,其余按时间倒序
     out.sort((a, b) => (rank[a.status] != null ? rank[a.status] : 3) - (rank[b.status] != null ? rank[b.status] : 3) || (b.at || 0) - (a.at || 0))
-    return out.slice(0, 60)
+    // 响应改对象信封 { items, queued }:数组挂自定义属性过不了 IPC 结构化克隆,queued 只能在对象字段上带。
+    // queued = 并发闸外排队等待的工作流(position 从 1 起,字段名与 dock 前端约定一致)
+    return {
+      items: out.slice(0, 60),
+      queued: (S.wfQueue || []).map((q, i) => ({ goal: q.goal, position: i + 1, at: q.at })),
+    }
   })
   ipcMain.handle('wf-open', (_e, it) => {
     try {
@@ -1376,6 +1521,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       }
       if (!reg && !removed) return { ok: false, err: '没有找到这条记录(可能已删过)' }
       try { S.audit && S.audit('workflow', '删除工作流记录', { id: sid }) } catch {}
+      try { wfDequeue() } catch {}   // 删记录后复查一次排队(出队触发点③;无空位时自动空转)
       return { ok: true }
     } catch (e) { return { ok: false, err: e.message } }
   })
@@ -1526,6 +1672,16 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     if (patch && typeof patch.browserArgs === 'string') S.settings.browserArgs = patch.browserArgs.trim()
     if (patch && typeof patch.planMode === 'boolean') S.settings.planMode = patch.planMode
     if (patch && patch.outboxHoldSeconds !== undefined) S.settings.outboxHoldSeconds = Math.max(0, Math.min(parseInt(patch.outboxHoldSeconds) || 0, 3600))
+    // 阈值旋钮:只收白名单 9 键,数值化(非数值忽略,防脏值进 settings.json)
+    if (patch && patch.knobs && typeof patch.knobs === 'object') {
+      S.settings.knobs = mergeKnobs(S.settings.knobs)
+      for (const k of Object.keys(DEFAULT_KNOBS)) {
+        const v = patch.knobs[k]
+        if (v === undefined) continue
+        const n = Number(v)
+        if (Number.isFinite(n)) S.settings.knobs[k] = n
+      }
+    }
     if (patch && 'model' in patch) S.settings.model = (patch.model && patch.model.modelID) ? { providerID: patch.model.providerID, modelID: patch.model.modelID, name: patch.model.name } : null   // 全局默认模型(对话坞设;卡片可覆盖)
     if (patch && patch.imap) {
       S.settings.imap = S.settings.imap || {}

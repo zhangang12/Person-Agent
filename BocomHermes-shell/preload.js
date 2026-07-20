@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   clearHistory: () => ipcRenderer.invoke('clear-history'),
   // 工作流（动态编排）
   spawnWorkflow: (goal) => ipcRenderer.invoke('spawn-workflow', goal),
+  wfTemplates: () => ipcRenderer.invoke('wf-templates'),   // 工作流模板(探索成文/评审/排查,常量清单)
   // 卡坞工作流面板:合并清单(注册表+存档) / 点一条聚焦活卡或打开存档
   wfList: () => ipcRenderer.invoke('wf-list'),
   wfOpen: (it) => ipcRenderer.invoke('wf-open', it),
@@ -77,6 +78,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   getDropPath: (file) => { try { return webUtils.getPathForFile(file) } catch (e) { return (file && file.path) || '' } },
   listModels: () => ipcRenderer.invoke('list-models'),
   cardSetModel: (m) => ipcRenderer.invoke('card-set-model', m),
+  cardUsage: () => ipcRenderer.invoke('card-usage'),   // 本卡会话真实 token 用量(serve 实测;无数据返回 null,前端回落字符估算)
   cardAbort: () => ipcRenderer.send('card-abort'),
   onStream: (cb) => ipcRenderer.on('card-stream', (_e, p) => cb(p)),
   onServeHealth: (cb) => ipcRenderer.on('serve-health', (_e, p) => cb(p)),
@@ -96,6 +98,11 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   // 个人记忆库
   memoryRead: () => ipcRenderer.invoke('memory-read'),
   memoryWrite: (text) => ipcRenderer.invoke('memory-write', text),
+  // 项目知识库治理(按项目目录 dir 分库;健康度=防腐 C1-C4 校验结果)
+  knowledgeList: (dir) => ipcRenderer.invoke('knowledge-list', dir),
+  knowledgeAudit: (dir) => ipcRenderer.invoke('knowledge-audit', dir),
+  knowledgeEdit: (dir, index, patch) => ipcRenderer.invoke('knowledge-edit', dir, index, patch),
+  knowledgeDelete: (dir, indexes) => ipcRenderer.invoke('knowledge-delete', dir, indexes),
   // 成果抽屉读文件:仅限项目目录 / userData 之内、≤512KB（主进程侧校验），返回 { ok, text, err }
   readFileText: (absPath) => ipcRenderer.invoke('read-file-text', absPath),
   // 审计流水

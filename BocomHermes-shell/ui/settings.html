@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh">
 <head>
 <meta charset="utf-8" />
@@ -37,6 +37,31 @@
   .btn-ghost { font-size: 12.5px; color: var(--txt2); background: transparent; border: 1px solid var(--composer-border); border-radius: 9px; padding: 7px 14px; cursor: pointer; }
   .btn-ghost:hover { color: var(--txt); }
   .lock { font-size: 10.5px; color: var(--warn-txt); background: var(--warn-bg); border: .5px solid var(--warn-border); border-radius: 999px; padding: 2px 8px; }
+  /* 智能体旋钮:两列网格,数字小输入 + 中文说明 */
+  .knob-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px 14px; }
+  .knob { display: flex; flex-direction: column; gap: 4px; }
+  .knob .kl { font-size: 11.5px; color: var(--txt2); display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+  .knob .kl code { font-family: var(--mono); font-size: 10px; color: var(--txt3); }
+  .knob .in { width: 92px; padding: 5px 8px; }
+  /* 项目知识库:条目卡 + 体检三色(绿默认/黄警示/红隔离) */
+  .kn-bar { display: flex; align-items: center; gap: 7px; }
+  .kn-bar select.in { flex: 1; min-width: 0; }
+  .kn-list { display: flex; flex-direction: column; gap: 7px; max-height: 280px; overflow-y: auto; padding-right: 2px; }
+  .kn-list::-webkit-scrollbar { width: 6px; } .kn-list::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  .kn-item { background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+  .kn-item.kn-yellow { background: var(--warn-bg); border-color: var(--warn-border); }
+  .kn-item.kn-red { background: var(--diff-del-bg); border-color: var(--diff-del); }
+  .kn-meta { display: flex; align-items: center; gap: 7px; font-size: 10.5px; color: var(--txt3); flex-wrap: wrap; }
+  .kn-status { font-size: 9px; flex: none; }
+  .kn-conf { font-size: 9.5px; font-weight: 600; border-radius: 999px; padding: 0 7px; line-height: 15px; background: var(--orb-bg); color: var(--txt2); border: .5px solid var(--orb-border); }
+  .kn-text { font-size: 12px; color: var(--txt); line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+  .kn-anchors { font-family: var(--mono); font-size: 10.5px; color: var(--txt3); word-break: break-all; }
+  .kn-reasons { font-size: 10.5px; line-height: 1.5; }
+  .kn-ops { display: flex; gap: 6px; margin-top: 2px; }
+  .kn-ops .chip { font-size: 10.5px; padding: 2px 9px; }
+  .kn-edit { display: flex; flex-direction: column; gap: 5px; border-top: .5px dashed var(--composer-border); padding-top: 6px; }
+  .kn-edit .in { font-size: 12px; }
+  .kn-edit textarea.in { resize: vertical; min-height: 54px; font-family: var(--font); }
 </style>
 </head>
 <body>
@@ -82,6 +107,11 @@
           <span>方案模式(推荐 · 默认开)— Agent 先出修复方案,等你"批准方案"才动手 edit</span>
         </label>
         <span class="hint">关:Agent 直接 edit(权限弹窗逐次确认)。开:多一步"方案 → 批准 → 改",改完自动展示 git diff。</span>
+      </div>
+
+      <div class="fld">
+        <span class="lbl">智能体旋钮 <span class="hint" style="font-weight:400">（工作流 / 看门狗 / 压缩续聊的阈值 · 随保存生效，对话卡下一条消息起用新值）</span></span>
+        <div id="knobGrid" class="knob-grid"></div>
       </div>
 
       <div id="encWarn" style="display:none;margin-bottom:10px;padding:8px 11px;border-radius:8px;font-size:12px;line-height:1.5;color:var(--diff-del);background:var(--diff-del-bg);border:.5px solid var(--diff-del)">
@@ -139,6 +169,17 @@
           <button id="clearBackend" class="chip" style="display:none">清除</button>
         </div>
         <span class="hint">配置后，「发给 Agent」遇到后端 / 接口问题会自动在<strong>后端仓库</strong>里另起一个 agent 调查并修复（opencode 一个 serve 只认一个目录，所以前后端各用各的）。前端 = 上面「当前项目目录」，后端 = 这里。</span>
+      </div>
+
+      <div class="fld">
+        <span class="lbl">项目知识库 <span class="hint" style="font-weight:400">（Agent 蒸馏的系统级事实 · 按项目落盘，注入后续会话）</span></span>
+        <div class="kn-bar">
+          <select id="knProject" class="in"></select>
+          <button id="knReload" class="chip">刷新</button>
+          <button id="knAudit" class="chip" title="逐条体检：锚点失效 / 内容陈旧 / 重复会标黄或标红">健康检查</button>
+        </div>
+        <span id="knStats" class="hint"></span>
+        <div id="knList" class="kn-list"></div>
       </div>
     </div>
     <div class="ft nodrag">
@@ -280,10 +321,182 @@
     } catch (e) { dbMsg.style.color = 'var(--diff-del)'; dbMsg.textContent = '✗ ' + (e.message || '连接失败') }
   })
 
+  // ── 智能体旋钮(settings.knobs.*):读不到/输坏一律回默认,绝不写脏值 ──────────
+  const KNOB_DEFAULTS = { approvalTimeoutMin: 0, watchdogRounds: 3, watchdogOverlap: 0.7, watchdogEscalateRounds: 2, ctxCompactPct: 0.8, autoCompactMax: 5, todoNudgeRounds: 3, knowledgeChurnMax: 300, wfConcurrency: 2 }
+  const KNOB_DEFS = [
+    { k: 'approvalTimeoutMin', name: '批准闸超时', step: 1, min: 0, hint: '工作流计划批准闸超过该分钟数自动开跑；0 = 永不自动批准（保守默认）' },
+    { k: 'watchdogRounds', name: '看门狗判绕圈轮数', step: 1, min: 2, hint: '连续这么多轮读同一批文件且 todo 无进展，判定在绕圈并注入提醒' },
+    { k: 'watchdogOverlap', name: '看门狗重合度', step: 0.05, min: 0.1, max: 1, hint: '读文件集合重合度（∩/∪）达到该比例记为"同一批"；调高=更宽容' },
+    { k: 'watchdogEscalateRounds', name: '看门狗升级轮数', step: 1, min: 1, hint: '注入绕圈提醒后再绕这么多轮，升级为醒目横幅（判死权给人，不自动杀）' },
+    { k: 'ctxCompactPct', name: '上下文压缩水位', step: 0.05, min: 0.3, max: 0.98, hint: '上下文水位达到该比例自动压缩续聊；模型变强后可调高' },
+    { k: 'autoCompactMax', name: '自动压缩上限', step: 1, min: 1, hint: '一段工作流最多自动压缩续聊次数，到顶转人工（上下文 chip 仍可手动点）' },
+    { k: 'todoNudgeRounds', name: 'todo 停滞提醒', step: 1, min: 1, hint: 'todo 清单连续这么多轮未更新，下一条消息尾部附系统提醒' },
+    { k: 'knowledgeChurnMax', name: '知识库翻腾上限', step: 10, min: 50, hint: '项目知识库条目达到该规模触发蒸馏整理（条目数，见下方知识库面板）' },
+    { k: 'wfConcurrency', name: '工作流并发度', step: 1, min: 1, hint: '同时运行的动态工作流数量，超出部分排队（卡坞可见排队位）' },
+  ]
+  const knobInputs = {}
+  ;(function buildKnobs() {
+    const grid = $('knobGrid')
+    const saved = (cur.knobs && typeof cur.knobs === 'object') ? cur.knobs : {}   // 防御:knobs 缺席/某键缺席都用默认
+    for (const d of KNOB_DEFS) {
+      const wrap = document.createElement('div'); wrap.className = 'knob'
+      const lab = document.createElement('span'); lab.className = 'kl'
+      lab.appendChild(document.createTextNode(d.name))
+      const code = document.createElement('code'); code.textContent = d.k; lab.appendChild(code)
+      const inp = document.createElement('input'); inp.type = 'number'; inp.className = 'in'
+      inp.step = String(d.step); if (d.min != null) inp.min = String(d.min); if (d.max != null) inp.max = String(d.max)
+      const v = +saved[d.k]; inp.value = Number.isFinite(v) ? String(v) : String(KNOB_DEFAULTS[d.k])
+      knobInputs[d.k] = inp
+      const hint = document.createElement('span'); hint.className = 'hint'; hint.textContent = d.hint
+      wrap.append(lab, inp, hint); grid.appendChild(wrap)
+    }
+  })()
+  function collectKnobs() {
+    const out = {}
+    for (const d of KNOB_DEFS) {
+      const v = +knobInputs[d.k].value
+      out[d.k] = Number.isFinite(v) ? v : KNOB_DEFAULTS[d.k]
+    }
+    return out
+  }
+
+  // ── 项目知识库(查看/体检/编辑/删除;knowledge* 通道缺席时空态静默,绝不抛)────
+  const knSel = $('knProject'), knListEl = $('knList'), knStats = $('knStats'), knAuditBtn = $('knAudit')
+  const escH = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  // 项目来源:当前项目目录 + 最近仓库(去重);一个都没有就给引导空态
+  ;(function fillKnProjects() {
+    const seen = new Set(), dirs = []
+    if (cur.projectDir) dirs.push(cur.projectDir)
+    for (const d of (cur.recentDirs || [])) dirs.push(d)
+    knSel.innerHTML = ''
+    const uniq = dirs.filter((d) => d && !seen.has(d) && seen.add(d))
+    if (!uniq.length) { knSel.innerHTML = '<option value="">（先在上方选择当前项目目录）</option>'; knSel.disabled = true; return }
+    for (const d of uniq) { const o = document.createElement('option'); o.value = d; o.textContent = base(d); o.title = d; knSel.appendChild(o) }
+    knSel.value = (cur.projectDir && seen.has(cur.projectDir)) ? cur.projectDir : uniq[0]
+  })()
+  let knEntries = []   // 最近一次 list 结果;体检后就地刷新状态,不整表重拉
+  function paintKnStats(total, audit) {
+    if (audit) knStats.textContent = '共 ' + (total || 0) + ' 条 · 绿 ' + (audit.green || 0) + ' / 黄 ' + (audit.yellow || 0) + ' / 红 ' + (audit.red || 0)
+    else knStats.textContent = total ? '共 ' + total + ' 条（未体检）' : ''
+  }
+  async function loadKnowledge() {
+    const dir = knSel.disabled ? '' : knSel.value
+    knEntries = []
+    if (!dir) { knListEl.innerHTML = '<span class="hint">先在上方「当前项目目录」选一个仓库 —— 知识库按项目落盘。</span>'; paintKnStats(0); return }
+    if (typeof window.BocomHermes.knowledgeList !== 'function') { knListEl.innerHTML = '<span class="hint">知识库后端通道尚未接入（本版壳未带），接入后此处自动可用。</span>'; paintKnStats(0); return }
+    knListEl.innerHTML = '<span class="hint">读取中…</span>'
+    let r = null
+    try { r = await window.BocomHermes.knowledgeList(dir) } catch (e) { r = { ok: false, err: String((e && e.message) || e) } }
+    if (!r || r.ok === false) { knListEl.innerHTML = '<span class="hint">读取失败：' + escH((r && (r.err || r.error)) || '未知错误') + '</span>'; paintKnStats(0); return }
+    knEntries = Array.isArray(r.entries) ? r.entries : []
+    paintKnStats((r.stats && r.stats.total) != null ? r.stats.total : knEntries.length)
+    renderKnList()
+  }
+  function renderKnList() {
+    knListEl.innerHTML = ''
+    if (!knEntries.length) {
+      knListEl.innerHTML = '<span class="hint">还没有知识条目 —— 工作流收尾时 Agent 会自动蒸馏系统级事实到这里（命令踩坑、环境事实、项目约定…），后续会话自动注入。</span>'
+      return
+    }
+    for (const e of knEntries) knListEl.appendChild(buildKnItem(e))
+  }
+  function buildKnItem(e) {
+    const el = document.createElement('div'); el.className = 'kn-item'; el.dataset.index = e.index
+    const meta = document.createElement('div'); meta.className = 'kn-meta'
+    const st = document.createElement('span'); st.className = 'kn-status'; st.textContent = '●'; st.style.color = 'var(--txt3)'; st.title = '未体检'
+    meta.appendChild(st)
+    if (e.date) { const d = document.createElement('span'); d.textContent = e.date; meta.appendChild(d) }
+    if (e.confidence != null && e.confidence !== '') {
+      const c = document.createElement('span'); c.className = 'kn-conf'
+      const cv = +e.confidence
+      c.textContent = '置信 ' + (Number.isFinite(cv) && cv <= 1 ? Math.round(cv * 100) + '%' : e.confidence)
+      meta.appendChild(c)
+    }
+    if (e.scene) { const sc = document.createElement('span'); sc.textContent = '场景:' + e.scene; meta.appendChild(sc) }
+    el.appendChild(meta)
+    const tx = document.createElement('div'); tx.className = 'kn-text'; tx.textContent = e.text || e.raw || ''; el.appendChild(tx)
+    const anchors = Array.isArray(e.anchors) ? e.anchors : []
+    if (anchors.length) { const an = document.createElement('div'); an.className = 'kn-anchors'; an.textContent = '⚓ ' + anchors.join(' · '); el.appendChild(an) }
+    const ops = document.createElement('div'); ops.className = 'kn-ops'
+    const ed = document.createElement('button'); ed.className = 'chip'; ed.textContent = '编辑'
+    ed.addEventListener('click', () => openKnEdit(el, e))
+    const del = document.createElement('button'); del.className = 'chip'; del.textContent = '删除'
+    del.addEventListener('click', async () => {
+      // 两步确认(同卡坞记录删除):3s 不复原则复位
+      if (!del.classList.contains('confirm')) {
+        del.classList.add('confirm'); del.textContent = '删?'; del.style.color = 'var(--diff-del)'
+        setTimeout(() => { del.classList.remove('confirm'); del.textContent = '删除'; del.style.color = '' }, 3000)
+        return
+      }
+      if (typeof window.BocomHermes.knowledgeDelete !== 'function') return
+      try { await window.BocomHermes.knowledgeDelete(knSel.value, [e.index]) } catch (e2) {}
+      loadKnowledge()   // 后端已处理缓存,直接重拉
+    })
+    ops.append(ed, del); el.appendChild(ops)
+    return el
+  }
+  function openKnEdit(itemEl, e) {
+    if (itemEl.querySelector('.kn-edit')) return   // 已在编辑态
+    const box = document.createElement('div'); box.className = 'kn-edit'
+    const ta = document.createElement('textarea'); ta.className = 'in'; ta.value = e.text || e.raw || ''
+    const sc = document.createElement('input'); sc.className = 'in'; sc.value = e.scene || ''; sc.placeholder = '场景（可选）'
+    const an = document.createElement('input'); an.className = 'in'; an.value = (Array.isArray(e.anchors) ? e.anchors : []).join(', '); an.placeholder = '锚点，逗号分隔（可选）'
+    const row = document.createElement('div'); row.className = 'row'
+    const ok = document.createElement('button'); ok.className = 'chip'; ok.textContent = '保存'
+    const no = document.createElement('button'); no.className = 'chip'; no.textContent = '取消'
+    row.append(ok, no); box.append(ta, sc, an, row); itemEl.appendChild(box)
+    ok.addEventListener('click', async () => {
+      if (typeof window.BocomHermes.knowledgeEdit !== 'function') return
+      const patch = {
+        text: ta.value.trim(),
+        scene: sc.value.trim(),
+        anchors: an.value.split(/[,，;；\n]/).map((s) => s.trim()).filter(Boolean),
+      }
+      try { await window.BocomHermes.knowledgeEdit(knSel.value, e.index, patch) } catch (e2) {}
+      loadKnowledge()
+    })
+    no.addEventListener('click', () => box.remove())
+  }
+  // 健康检查:按 status 就地给条目上色(不整表重拉),头部亮绿/黄/红计数
+  knAuditBtn.addEventListener('click', async () => {
+    const dir = knSel.disabled ? '' : knSel.value
+    if (!dir || typeof window.BocomHermes.knowledgeAudit !== 'function') return   // 通道缺席静默
+    knAuditBtn.disabled = true
+    let r = null
+    try { r = await window.BocomHermes.knowledgeAudit(dir) } catch (e) { r = { ok: false, err: String((e && e.message) || e) } }
+    knAuditBtn.disabled = false
+    if (!r || r.ok === false) {
+      knStats.textContent = '体检失败：' + ((r && (r.err || r.error)) || '未知错误')
+      return
+    }
+    const byIndex = new Map((Array.isArray(r.entries) ? r.entries : []).map((a) => [a.index, a]))
+    for (const child of knListEl.children) {
+      const a = byIndex.get(+child.dataset.index); if (!a) continue   // index 与 list 一致;对不上就跳过
+      child.classList.toggle('kn-yellow', a.status === 'yellow')
+      child.classList.toggle('kn-red', a.status === 'red')
+      const st = child.querySelector('.kn-status')
+      if (st) {
+        st.style.color = a.status === 'green' ? 'var(--green)' : a.status === 'yellow' ? 'var(--warn-txt)' : 'var(--diff-del)'
+        st.title = a.status === 'green' ? '正常' : a.status === 'yellow' ? '黄标(建议修)' : '红标(已隔离,不再注入)'
+      }
+      let rl = child.querySelector('.kn-reasons')
+      const reasons = Array.isArray(a.reasons) ? a.reasons : []
+      if (reasons.length && a.status !== 'green') {
+        if (!rl) { rl = document.createElement('div'); rl.className = 'kn-reasons'; child.insertBefore(rl, child.querySelector('.kn-ops')) }
+        rl.style.color = a.status === 'red' ? 'var(--diff-del)' : 'var(--warn-txt)'
+        rl.textContent = (a.status === 'red' ? '⛔ ' : '⚠ ') + reasons.join('；')
+      } else if (rl) rl.remove()
+    }
+    if (r.stats) paintKnStats(r.stats.total, r.stats)
+  })
+  $('knReload').addEventListener('click', loadKnowledge)
+  knSel.addEventListener('change', loadKnowledge)
+  loadKnowledge()
+
   // 保存（IMAP/SMTP/代理/启动参数已分别移到「邮件中心」「浏览器」，此处不再处理）
   const msg = $('msg')
   async function save(silent) {
-    const patch = { editorCmd: editorCmd.value, planMode: !!planMode.checked }
+    const patch = { editorCmd: editorCmd.value, planMode: !!planMode.checked, knobs: collectKnobs() }
     if (!cur.serveBinLocked) patch.serveBin = serveBin.value
     patch.ob = {
       host: $('obHost').value.trim(),
