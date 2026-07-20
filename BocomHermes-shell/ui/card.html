@@ -763,6 +763,16 @@
     autoCompactN++
     compactCore(true)
   }
+  // 产出兜底(工作流卡,对应规程第7条【默认必须落盘产出 MD】):todo 全勾(快完成)却零落盘产出 →
+  // 注入系统提醒补 MD(一次,不循环唠叨;有产出自然不触发;没列 todo 的极简单目标不打扰)
+  let wfProduceNag = false
+  function maybeWfProduceNag() {
+    if (!wfMode || wfProduceNag || compacting || planPending || !latestTodos.length) return
+    if (latestTodos.some((t) => !/complet|cancel/i.test(String(t && t.status || '')))) return   // 还有未完项,不算"快完成"
+    if (artFileList.length) return
+    wfProduceNag = true
+    injectMessage('(系统提醒:工作流即将完成,但尚未有任何落盘产出。按规程第 7 条【默认必须落盘产出 MD】:把最终成果写成 docs/ 下的 MD 文档(报告/手册/清单/改动说明),写完再交付;确有理由不落盘的,请在交付回答里明确说明理由。)', '⚠ 系统提醒:尚无落盘产出 —— 请补写 MD 文档')
+  }
   // settings 旋钮读取(防御):装配波会把旋钮写进 settings.json 的 knobs.*;读不到就用默认值,绝不抛。
   // 本波用到的 key:knobs.approvalTimeoutMin / watchdogRounds / watchdogOverlap / watchdogEscalateRounds
   //               / ctxCompactPct / autoCompactMax / todoNudgeRounds(波2D 接入;knobNum 每次现读,改设置下一条消息即生效)
@@ -1603,7 +1613,7 @@
       for (const [id, s] of subAgents) if (!s.done) subAgentDone(id, 'done')
       curAnswer = null; curReason = null; setBusy(false); scrollFeed()
       try { wdFinalizeRound(); wdCheck() } catch {}   // 进展型看门狗:结算本轮读文件集合并判绕圈(可能注入提醒/挂横幅)
-      maybeDrain(); maybeShowPlanBar()
+      maybeDrain(); maybeShowPlanBar(); maybeWfProduceNag()   // 轮末:补计划批准条 → 产出兜底(快完成零落盘产出 → 提醒补 MD)
       // 轮末:先补计划批准条(规划先行),再查自动压缩续航(工作流卡)。
       // 自动压缩前先拉一次 serve 真实用量(cardUsage 通道缺席则静默立即回落,阈值继续吃字符估算)
       pollRealUsage().catch(() => {}).finally(() => { try { maybeAutoCompact() } catch {} })

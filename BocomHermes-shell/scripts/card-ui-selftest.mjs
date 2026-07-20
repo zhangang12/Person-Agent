@@ -530,6 +530,73 @@ console.log('用例13:工作流卡(wf=1) —— 规划先行 / 自动批准 / to
   ok('压缩后自动续跑(接力续执行消息已发出)', /接力摘要已随本消息注入/.test(cont), cont.slice(0, 60))
 }
 
+console.log('用例13b:工作流卡产出兜底 —— todo 全勾却零落盘产出 → 自动提醒补 MD;只提醒一次')
+{
+  const byId5 = new Map(), created5 = [], cbs5 = {}, sends5 = []
+  let reply5 = '计划:1) 勘察 2) 分析(等批准)'
+  const doc5 = {
+    getElementById: (id) => {
+      if (id === 'planBar' || id === 'memPop') { const hit = created5.find((c) => c.el.id === id && c.el.parentNode); return hit ? hit.el : null }
+      if (!byId5.has(id)) byId5.set(id, fakeEl('div')); return byId5.get(id)
+    },
+    createElement: (t) => { const e = fakeEl(t); created5.push({ tag: String(t), el: e }); return e },
+    addEventListener: () => {}, removeEventListener: () => {},
+    querySelector: () => fakeEl('div'), querySelectorAll: () => [],
+    documentElement: fakeEl('html'), body: fakeEl('body'), title: '',
+  }
+  const bocom5 = new Proxy({}, {
+    get: (t, k) => {
+      const key = String(k)
+      if (/^on[A-Z]/.test(key)) return (f) => { cbs5[key] = f }
+      if (key === 'getTheme') return () => 'light'
+      if (key === 'getSettings') return () => ({})
+      if (key === 'getDropPath') return () => ''
+      if (key === 'cardInit') return async () => ({ sessionId: 'w5', project: 'demo', dir: 'C:/demo', model: null, reattached: false })
+      if (key === 'cardSend') return async (text) => { sends5.push(String(text == null ? '' : text)); await new Promise((r) => setTimeout(r, 20)); return reply5 }
+      if (key === 'listModels') return async () => []
+      return async () => null
+    },
+  })
+  const win5 = new Proxy({ BocomHermes: bocom5, Rich: { renderMarkdown: (s) => String(s == null ? '' : s), wireActions: () => {} }, innerWidth: 800, innerHeight: 600 }, { get: (t, k) => (k in t ? t[k] : undefined), set: (t, k, v) => { t[k] = v; return true } })
+  let exp5 = null
+  const base5 = {
+    console, setTimeout, setInterval, clearTimeout, clearInterval, Promise, JSON, Math, Date, Array, Object, String, Number, Boolean,
+    Map, Set, URLSearchParams, RegExp, Error, Symbol, Proxy, Reflect,
+    requestAnimationFrame: (f) => { try { f() } catch {} },
+    document: doc5, window: win5, BocomHermes: bocom5,
+    location: { search: '?wf=1&title=' + encodeURIComponent('工作流 · 兜底') + '&msg=' + encodeURIComponent('分析X') },
+    localStorage: lsStore(),
+    navigator: { clipboard: { writeText: async () => {} } },
+    __export: (o) => { exp5 = o },
+  }
+  const sb5 = new Proxy(base5, { has: () => true, get: (t, k) => (k in t ? t[k] : undefined) })
+  const tail5 = '\n;__export({ turnFn: turn })'
+  let err5 = null
+  try { vm.runInNewContext(main + tail5, sb5, { timeout: 8000 }) } catch (e) { err5 = e }
+  ok('wf=1 启动不抛(用例13b)', !err5, err5 && err5.message)
+  await new Promise((r) => setTimeout(r, 140))   // boot:规划轮走完,批准条挂出
+  const goBtn5 = created5.filter((c) => c.tag === 'button').map((c) => c.el).find((e) => e.textContent === '开始执行')
+  ok('批准条挂出(用例13b)', !!goBtn5)
+  goBtn5._fire('click')   // 批准开跑
+  await new Promise((r) => setTimeout(r, 80))
+  // 执行中途:todo 还没全勾 → 不提醒
+  cbs5.onStream({ kind: 'tool', text: 'todowrite', partID: 'pb_td1', status: 'completed', input: { todos: [{ content: '勘察', status: 'completed' }, { content: '分析', status: 'in_progress' }] } })
+  reply5 = '分析中…'
+  await exp5.turnFn('推进')
+  ok('todo 未全勾 → 不提醒', !sends5.some((s) => /落盘产出/.test(s)), sends5.length)
+  // todo 全勾 + 零落盘 → 轮末注入"补 MD"提醒并自动发出
+  cbs5.onStream({ kind: 'tool', text: 'todowrite', partID: 'pb_td2', status: 'completed', input: { todos: [{ content: '勘察', status: 'completed' }, { content: '分析', status: 'completed' }] } })
+  reply5 = '最终结论(没写文件)。'
+  await exp5.turnFn('收尾')
+  await new Promise((r) => setTimeout(r, 60))
+  ok('零落盘产出 → 自动注入补 MD 提醒', sends5.some((s) => /尚未有任何落盘产出/.test(s) && /MD 文档/.test(s)), (sends5[sends5.length - 1] || '').slice(0, 80))
+  // 提醒只发一次;有了产出更不会再发
+  cbs5.onStream({ kind: 'tool', text: 'write', partID: 'pb_w1', status: 'completed', input: { filePath: 'C:/demo/docs/x.md' } })
+  const nBefore = sends5.filter((s) => /落盘产出/.test(s)).length
+  await exp5.turnFn('再推进')
+  ok('提醒只发一次(不循环唠叨)', sends5.filter((s) => /落盘产出/.test(s)).length === nBefore)
+}
+
 console.log('用例14:工作流卡首轮即实质执行 → 批准闸自动跳过(不让用户批一个已完成的计划)')
 {
   // 复刻真实事故:弱模型没守"首轮只规划",第一轮就边干边交 —— todo 出现 completed 项,轮末绝不能再弹批准条
