@@ -7,7 +7,6 @@ const initWindow  = require('./src/window')
 const initSession = require('./src/session')
 const initTrigger = require('./src/trigger')
 const initTodos   = require('./src/todos')
-const initReqAnalysis = require('./src/reqanalysis-ipc')
 const initAudit   = require('./src/audit')
 
 // 日志：打包后没有终端，console 看不到 → 同时写到 userData/BocomHermes.log
@@ -132,7 +131,7 @@ app.whenReady().then(() => {
 
   initAudit(S, { app, path, fs, ipcMain, log })   // 先于 initWindow:S.audit 供各埋点处调用
   const deps = { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }
-  const { createOrb, createBrowser, createWorkspace, createSkillCenter, createMailCenter, openMailView, toggleOrbInput, buildTray, spawnEmailCard, snapAsk, recordHistory, touchHistory, spawnReqConfirm, spawnReqPlan } = initWindow(S, deps)
+  const { createOrb, createBrowser, createWorkspace, createSkillCenter, createMailCenter, openMailView, toggleOrbInput, buildTray, spawnEmailCard, snapAsk, recordHistory, touchHistory } = initWindow(S, deps)
   S.snapAsk = snapAsk
   S.createOrb = createOrb   // 留给 window-all-closed 兜底拉起球
 
@@ -141,7 +140,6 @@ app.whenReady().then(() => {
   S.todosApi = todosApi   // window.js 的会议抽取在运行期经 S 调 addSuggestion(初始化顺序无环)
   initTrigger(S, { path, fs, app, log, spawnEmailCard, createMailCenter, Notification })
   require('./src/todo-reminder')(S, { log, Notification, BrowserWindow, todosApi, createMailCenter, openMailView })
-  initReqAnalysis(S, { ipcMain, app, path, fs, oc, log, dialog, shell, spawnReqConfirm, spawnReqPlan })
 
   // 代理:settings.proxy 在场即应用(支持 'http://host:port' 或 PAC 'pac+http://...')
   if (S.settings && S.settings.proxy) {

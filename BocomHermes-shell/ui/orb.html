@@ -159,12 +159,6 @@ html,body{width:280px;height:280px;background:transparent;overflow:hidden;user-s
     <span class="ri-lbl">设置</span>
   </div>
 
-  <!-- 功能模块 6: 需求分析（Word → 多Agent 对抗 → 三类清单）-->
-  <div class="ri" id="ri-reqdoc" title="需求分析：拖入 Word 需求文档，多Agent 对抗读出明确/不明确/矛盾">
-    <svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h5"/></svg>
-    <span class="ri-lbl">需求分析</span>
-  </div>
-
   <!-- 球体 -->
   <div class="sphere" id="sphere">
     <div class="eyes">
@@ -235,7 +229,6 @@ document.getElementById('ri-workspace').addEventListener('click', () => H.openBr
 document.getElementById('ri-email').addEventListener('click', () => { H.openMailCenter() })
 document.getElementById('ri-skills').addEventListener('click', () => H.openSkillCenter())
 document.getElementById('ri-settings').addEventListener('click', () => H.openSettings())
-document.getElementById('ri-reqdoc').addEventListener('click', () => H.openReqAnalysis())
 
 // 点击反馈：按下即播放涟漪脉冲（解决"点了没反应、生硬"）
 document.querySelectorAll('.ri').forEach(el => {

@@ -328,49 +328,6 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     fs.writeFileSync(reg.archive, '# 工作流:' + reg.goal + '\n\n- id:' + reg.id + ' · 轮次:' + reg.rounds + ' · 用时:' + Math.round((reg.elapsedMs || 0) / 1000) + 's · 状态:' + reg.status + '\n\n## 任务清单\n' + (todoLines || '(无)') + '\n\n## 产出文件\n' + (fileLines || '(无)') + '\n\n## 最终成果(最近一轮回答)\n\n' + reg.final)
   }
 
-  // ── 需求分析（多Agent 对抗 → 三类清单）────────────────────────────────────────
-  function spawnReqAnalysis(docPath) {
-    const id = ++S.cardSeq
-    const col = (id - 1) % 4, row = Math.floor((id - 1) / 4) % 4
-    const wx = 200 + col * 56, wy = 70 + row * 50 + col * 18
-    const win = new BrowserWindow(baseOpts({
-      width: 700, height: 840, minWidth: 480, minHeight: 460, resizable: true,
-      alwaysOnTop: false, skipTaskbar: false, x: wx, y: wy,
-    }))
-    const wcId = win.webContents.id
-    win.loadFile(path.join(__dirname, '..', 'ui', 'reqflow.html'), { query: { docPath: docPath || '', id: String(id), ...orbAnchorFor(wx, wy, 700, 840) } })
-    win.on('closed', () => {
-      const r = S.reqRuns && S.reqRuns.get(wcId)
-      if (r) { try { r.ac.abort() } catch {}; for (const s of r.sessions) { try { oc.abort(r.serve, s) } catch {}; S.sessionInfo.delete(s) }; S.reqRuns.delete(wcId) }
-    })
-    return id
-  }
-  function spawnReqConfirm(reportId) {
-    const id = ++S.cardSeq
-    const win = new BrowserWindow(baseOpts({
-      width: 720, height: 840, minWidth: 480, minHeight: 460, resizable: true,
-      alwaysOnTop: false, skipTaskbar: false, x: 270, y: 96,
-    }))
-    win.loadFile(path.join(__dirname, '..', 'ui', 'reqconfirm.html'), { query: { reportId: reportId || '', ...orbAnchorFor(270, 96, 720, 840) } })
-    return win.webContents.id
-  }
-  function spawnReqPlan(reportId) {
-    const win = new BrowserWindow(baseOpts({
-      width: 740, height: 860, minWidth: 480, minHeight: 460, resizable: true,
-      alwaysOnTop: false, skipTaskbar: false, x: 320, y: 80,
-    }))
-    win.loadFile(path.join(__dirname, '..', 'ui', 'reqplan.html'), { query: { reportId: reportId || '', ...orbAnchorFor(320, 80, 740, 860) } })
-    return win.webContents.id
-  }
-  // 卡内"选择文件"用：只返回路径，不另开卡（在当前需求分析卡里就地开跑）
-  async function pickReqDocPath() {
-    const r = await dialog.showOpenDialog({
-      title: '选择需求文档（Word .docx）', properties: ['openFile'],
-      filters: [{ name: 'Word 文档', extensions: ['docx'] }, { name: '全部文件', extensions: ['*'] }],
-    })
-    return (!r.canceled && r.filePaths[0]) ? r.filePaths[0] : null
-  }
-
   // 规则法识别邮件里的会议 → 产出"建议待办"(pending 态,人工确认后才进正式待办);
   // 抽取器保守(解析不出可信时间只给建议不给提醒),误报靠确认区兜底。产出即广播 UI 刷新
   function maybeSuggestMeeting(em) {
@@ -1183,7 +1140,6 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       { label: '调试工作台（Agent + 浏览器）', accelerator: 'Ctrl+Shift+B', click: () => createWorkspace() },
       { label: '录制与回放（浏览器技能）', accelerator: 'Ctrl+Shift+R', click: () => createSkillCenter() },
       { label: '邮件（收件箱 · 摘要 · 设置）', accelerator: 'Ctrl+Shift+M', click: () => createMailCenter() },
-      { label: '需求分析（Word）', click: () => spawnReqAnalysis('') },
       { label: '发件箱', click: openOutbox },
       { label: '待办事项', click: () => createMailCenter('todos') },
       { label: '截图提问', accelerator: 'Ctrl+Shift+S', click: () => snapAsk() },
@@ -1511,8 +1467,6 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       return { ...chk, external: !!serve.external, regChanged: !!S.mcpRegChangedAt }
     } catch (e) { return { known: false, error: e.message } }
   })
-  ipcMain.handle('open-req-analysis', () => spawnReqAnalysis(''))
-  ipcMain.handle('pick-req-doc-path', () => pickReqDocPath())
 
   // ── 任务完成通知 ────────────────────────────────────────────────────────────
   const busyCards = new Set()   // 正在运行任务的 webContents id
@@ -2620,5 +2574,5 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('open-history', (_e, { sid, title }) => spawnCard(title, sid))
   ipcMain.handle('clear-history', () => { S.history = []; saveHistory(); return true })
 
-  return { createOrb, createBrowser, createWorkspace, createSkillCenter, createMailCenter, openMailView, spawnCard, spawnWorkflow, spawnReqAnalysis, spawnReqConfirm, spawnReqPlan, spawnEmailCard, snapAsk, toggleInput, toggleOrbInput, buildTray, openDock, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory }
+  return { createOrb, createBrowser, createWorkspace, createSkillCenter, createMailCenter, openMailView, spawnCard, spawnWorkflow, spawnEmailCard, snapAsk, toggleInput, toggleOrbInput, buildTray, openDock, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory }
 }

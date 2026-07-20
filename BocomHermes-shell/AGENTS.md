@@ -27,9 +27,6 @@ BocomHermes-shell/
 ├── preload.js         # contextBridge 安全桥，暴露 window.BocomHermes.*（全部 IPC API 在此，约 230 行）
 ├── opencode.js        # serve 连接层：按项目目录分池 spawn serve、会话/消息/中止/SSE 事件流、
 │                      #   权限审批路由、子 agent 会话(parentID)路由回父卡片
-├── align.js           # 需求分析·对齐引擎（话题聚簇，纯逻辑可单测）
-├── reqanalysis.js     # 需求分析管线（5 个对抗读者 persona → 对齐 → 三类清单，纯逻辑）
-├── reqplan.js         # 出详设管线（需求点 → grep 定位代码切片 → 详设卡，纯逻辑）
 ├── src/
 │   ├── window.js      # ⚠ 最大模块(~178KB)：所有窗口工厂(orb/卡片/工作台/技能中心/邮件中心…)、
 │   │                  #   大部分 IPC 处理器、托盘、设置、历史、快照提问等
@@ -44,7 +41,7 @@ BocomHermes-shell/
 │   ├── mcp-config.js  # 把 8 个自带 MCP server 一键注册进 opencode.json(备份+深合并)
 │   ├── audit.js       # 审计流水：userData/audit.jsonl，append-only，启动时裁剪到 5000 行
 │   ├── httpcap.js     # HTTP 正向代理抓包(仅 HTTP)
-│   ├── todos.js / todo-reminder.js / trigger.js / reqanalysis-ipc.js / extract-json.js / cdp-format.js
+│   ├── todos.js / todo-reminder.js / trigger.js / cdp-format.js
 │   ├── knowledge.js   # 项目级知识库(任务尾蒸馏落点,纯逻辑可单测):slug/条目追加去重/注入裁剪
 ├── ui/                # 全部窗口页面（原生 HTML，脚本内联）：card.html(对话卡,~117KB)、browser.html(~115KB)、
 │                      #   orb.html/orb-input.html(悬浮球)、dock.html(卡坞)、mailcenter.html、skills.html、
@@ -79,11 +76,8 @@ npm run dist:mac       # macOS：dmg + zip（x64/arm64）
 **没有测试框架**（无 jest/mocha/vitest）。测试 = `scripts/*.mjs` 与 `mcp/*-selftest.mjs` 里的**零依赖自测脚本**：自写 `ok()` 断言、打印 `✓/✗`、进程退出码表成败。改代码后跑对应的自测：
 
 ```bash
-npm run align:test     # 对齐引擎(align.js)：假裁判函数，不连模型
-npm run req:test       # 需求分析管线(reqanalysis.js)：注入假 run/ground
-npm run plan:test      # 出详设管线(reqplan.js)
 npm run mail:test      # 邮件解析
-npm run tool:test      # 工具 part 解析
+npm run tool:test      # 工具 part 解析 + question 路由 + 生成挂死判据
 npm run compact:test   # 录制事件压缩
 npm run card:ui:test   # card.html 主脚本无头自测：vm + DOM 桩真跑（抓 TDZ/esc 类运行时雷）
 npm run knowledge:test # 项目知识库(knowledge.js)：slug 稳定/追加去重/注入裁剪
@@ -96,7 +90,7 @@ npm run bars:e2e           # card.html 真 Chromium 渲染 e2e：重放工作流
 
 另有一批**探针脚本**（需要真实运行中的 serve，不是离线自测）：`npm run compat`（serve API 兼容自检，对内网 bocomcode / 公网 opencode 各跑一遍对比）、`permcheck`、`jsonschema`、`modelroute`。
 
-写新自测时沿用同一风格：文件头注释说明"测什么、怎么跑"，纯逻辑模块（如 align.js/reqanalysis.js/reqplan.js/recorder-core.js）设计时就要求**可注入依赖、不连真模型**。
+写新自测时沿用同一风格：文件头注释说明"测什么、怎么跑"，纯逻辑模块（如 knowledge.js/recorder-core.js）设计时就要求**可注入依赖、不连真模型**。
 
 ## 代码风格约定
 

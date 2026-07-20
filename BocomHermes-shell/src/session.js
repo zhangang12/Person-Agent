@@ -198,7 +198,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     si.wc.send('permission-request', { requestId, tool, detail: detail || '' })   // detail=要改的文件/要跑的命令，便于知情审批
   }
   // 交互提问路由:serve 的 question 工具需要用户点选回答 —— 弹到对话卡(交互提问卡),应答经 question-reply IPC 回 serve。
-  // 只路由到对话卡:reqflow/reqplan 等管线窗口(sessionInfo 带 tag.scope)没有提问 UI,会话无主/卡已毁同理 ——
+  // 只路由到对话卡:管线/监控窗口(sessionInfo 带 tag.scope)没有提问 UI,会话无主/卡已毁同理 ——
   // 一律自动 reject 兜底(不拒就把回合挂死,实测 88s 等用户 Esc)。子 agent 的提问会路由回父卡(dispatch 已归到根会话)。
   function onQuestion({ sessionId, requestId, questions, v2, serve }) {
     const si = S.sessionInfo.get(sessionId)
@@ -212,7 +212,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
   function onText({ sessionId, text, role, partID, kind, status, delta, toolInput, toolOutput, toolTitle, toolError, subagent, agentId, agentName, taskChild, taskDesc }) {
     const si = S.sessionInfo.get(sessionId); if (!si || !si.wc || si.wc.isDestroyed()) return
     if (role && role !== 'assistant') return
-    const tag = si.tag || null   // 登记方自定义的任务身份(scope/kind/id…)：随 card-stream 下发,窗口按并发任务分组(监控组件 agentmon)
+    const tag = si.tag || null   // 登记方自定义的任务身份(scope/kind/id…)：随 card-stream 下发,窗口可按并发任务分组
     // 诊断:分别确认子agent的【工具】和【文本/思考】是否路由到父卡片(排查"工具没进 🔍 组")
     if (subagent) {
       if (kind === 'tool' && !si._subToolLogged) { si._subToolLogged = true; log('子agent工具已路由: ' + text + '  agent=' + (agentName || '') + ' id=' + (agentId || '')) }
