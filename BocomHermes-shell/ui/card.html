@@ -106,6 +106,33 @@
   .sd-pane .sa-reason { font-size: 12px; color: var(--txt2); white-space: pre-wrap; line-height: 1.55; max-height: 200px; overflow-y: auto; border-left: 2px solid var(--c-think); padding: 2px 9px; opacity: .92; }
   .sd-pane .sa-reason::-webkit-scrollbar { width: 5px; } .sd-pane .sa-reason::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
   .sd-pane .sa-out { font-size: 13px; color: var(--txt); line-height: 1.5; overflow-wrap: anywhere; margin-top: 3px; padding-top: 4px; border-top: .5px dashed var(--composer-border); }
+  /* 活视图(监控态):本卡动态结构(目标/todo计划/子Agent fan-out/产出)的实时树图,与对话流全幅切换 */
+  .midwrap[hidden] { display: none; }   /* author display:flex 会盖掉 UA 的 [hidden] 规则,必须显式补 */
+  .liveview { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 14px 14px; display: flex; flex-direction: column; gap: 12px; }
+  .liveview[hidden] { display: none; }
+  .liveview::-webkit-scrollbar { width: 6px; } .liveview::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+  .lv-sec { display: flex; flex-direction: column; gap: 5px; }
+  .lv-h { font-size: 11px; font-weight: 700; color: var(--txt3); letter-spacing: .04em; display: flex; align-items: baseline; gap: 7px; }
+  .lv-h .lv-n { font-weight: 400; font-family: var(--mono); font-size: 10px; color: var(--txt3); }
+  .lv-goal { font-size: 13px; font-weight: 600; color: var(--txt); line-height: 1.5; }
+  .lv-stat { font-size: 11px; color: var(--txt3); }
+  .lv-bar { height: 5px; border-radius: 3px; background: var(--composer-bg); overflow: hidden; }
+  .lv-barf { height: 100%; background: var(--accent); border-radius: 3px; transition: width .3s; }
+  .lv-todo { display: flex; align-items: baseline; gap: 7px; font-size: 12px; color: var(--txt2); line-height: 1.5; }
+  .lv-todo .tstat { flex: none; font-size: 11px; }
+  .lv-todo.done { color: var(--txt3); text-decoration: line-through; text-decoration-color: var(--composer-border); }
+  .lv-node { display: flex; align-items: center; gap: 9px; text-align: left; background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 10px; padding: 7px 11px; cursor: pointer; }
+  .lv-node:hover { border-color: var(--accent); }
+  .lv-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--txt3); }
+  .lv-node.run .lv-dot { background: var(--accent); animation: lvPulse 1.2s ease-in-out infinite; }
+  .lv-node.done .lv-dot { background: var(--green); }
+  .lv-node.err .lv-dot { background: var(--diff-del); }
+  @keyframes lvPulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+  .lv-nname { font-size: 12.5px; font-weight: 600; color: var(--txt); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lv-nmeta { margin-left: auto; flex: none; font-family: var(--mono); font-size: 10px; color: var(--txt3); font-variant-numeric: tabular-nums; }
+  .lv-file { font-family: var(--mono); font-size: 11px; color: var(--txt2); background: transparent; border: none; text-align: left; padding: 2px 4px; border-radius: 6px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lv-file:hover { background: var(--hover); color: var(--accent); }
+  .lv-empty { font-size: 12px; color: var(--txt3); line-height: 1.7; padding: 4px 2px; }
   .hd { display: flex; align-items: center; gap: 7px; flex: none; }
   .icn { width: 16px; height: 16px; flex: none; display: inline-flex; }
   .ttl { flex: 1; font-size: 13px; font-weight: 650; letter-spacing: .01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -358,6 +385,7 @@
       <button id="bverbose" class="hbtn nodrag" title="过程详情：开=每个工具自动展开入参/结果；关=紧凑一行摘要(点击单个可展开)" aria-label="过程详情"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="3.5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="3.5" cy="18" r="1.2" fill="currentColor" stroke="none"/></svg></button>
       <button id="bprobe" class="hbtn nodrag" title="保活心跳日志（看 POST /heartbeat 的报文）" aria-label="保活日志"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5 7 5-14 2.5 7H21"/></svg></button>
       <button id="bsub" class="hbtn hasbadge nodrag" hidden title="子 Agent 面板：task 派出的子 Agent 在这里异步活动（思考/工具/产出），不占用对话流；徽标=还在跑的个数" aria-label="子 Agent 面板"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 20c0-3.6 3-5.4 6.5-5.4s6.5 1.8 6.5 5.4"/><circle cx="17.5" cy="9.5" r="2.3"/><path d="M15.8 14.9c3 .5 5.7 2 5.7 5.1"/></svg><span id="bsubBadge" class="abadge" hidden>0</span></button>
+      <button id="blive" class="hbtn nodrag" title="活视图：把本卡的 目标/todo计划/子Agent fan-out/产出文件 画成实时结构图（监控态，再点返回对话流）" aria-label="活视图"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="19" r="2.2"/><circle cx="19" cy="19" r="2.2"/><path d="M12 7.5v4m0 0l-5.5 5.5M12 11.5l5.5 5.5"/></svg></button>
       <button id="bart" class="hbtn hasbadge nodrag" title="成果预览：本卡最近一轮的最终结论 + 模型 write/edit 落盘的产出文件（右侧滑出，点文件可看内容）" aria-label="成果预览"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/><path d="M7 9h4M7 13h4"/></svg><span id="bartBadge" class="abadge" hidden>0</span></button>
       <button id="pin" class="hbtn nodrag" title="置顶" aria-label="置顶"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l-1.2 5.2L17 12v2H7v-2l3.2-2.8z"/><path d="M12 14v6"/></svg></button>
       <button id="max" class="hbtn nodrag" title="最大化 / 还原" aria-label="最大化"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></button>
@@ -406,6 +434,8 @@
         </div>
       </div>
     </div>
+    <!-- 活视图(监控态):与 #midwrap 全幅切换 —— 本卡动态结构的实时树图,数据全来自本卡现有采集,纯展示零执行 -->
+    <div id="liveview" class="liveview nodrag" hidden></div>
     <div id="quick" class="quick nodrag"></div>
     <div id="attRow" class="att-row nodrag"></div>
     <div id="dropHint" class="drop-hint">松手上传 — 文档解析成文本，图片走多模态识别</div>
@@ -919,6 +949,7 @@
     if (skillMenuOpen()) return
     try { if (artDraw && !artDraw.hidden) { artClose(); return } } catch {}   // artDraw 在后面才声明,这里只在按键时取值(必已初始化)
     try { if (subDraw && !subDraw.hidden) { sdClose(); return } } catch {}   // subDraw 同样在后面才声明,同上
+    try { if (liveOn) { lvToggle(false); return } } catch {}   // 活视图同理:先退回对话流,再按才是中断
     if (busy) {
       try { window.BocomHermes.cardAbort() } catch {}
       sl.classList.remove('ok'); sl.innerHTML = '<span class="sl-spin">✻</span><span class="sl-main">正在停止…（等引擎收尾，几秒内结束）</span>'; sl.hidden = false
@@ -1245,6 +1276,7 @@
     const outStr = data.error ? String(data.error) : (data.output != null ? String(data.output) : '')
     if (isTodo) {                                           // 任务清单卡:标题行(名称+进度) + 勾选行;没有可展示项就整卡隐藏(不留空白块)
       const todo = todoHtml(asObj(data.input))
+      try { const inp = asObj(data.input); if (!opts.sub && inp && Array.isArray(inp.todos)) latestTodos = inp.todos } catch {}   // 活视图的计划数据(只认主 Agent 的)
       el.hidden = !todo
       if (todo) el.innerHTML = '<div class="tdc-hd"><span class="tdc-name">任务清单</span><span>' + esc(todo.meta) + (done || err ? '' : ' · 更新中…') + '</span></div>' + todo.rows
       try { if (!opts.sub && (done || err) && partID && !countedToolParts.has(partID)) { countedToolParts.add(partID); bumpCtx(inStr.length) } } catch {}
@@ -1397,12 +1429,69 @@
   function subAgentDone(agentId, status, name) {
     const s = subAgents.get(agentId); if (!s || s.done) return
     if (name) s.name.textContent = name
-    s.done = true; s.doneAt = Date.now()
+    s.done = true; s.doneAt = Date.now(); s._st = status || ''
     const err = /error|fail|deny|reject/i.test(status || '')
     s.item.classList.toggle('done', !err); s.item.classList.toggle('err', err)
     s.meta.textContent = saMeta(s)
     sdPaintBadge()
   }
+
+  // ── 活视图(监控态):本卡动态结构的实时树图 —— 目标/计划进度/子Agent fan-out/产出文件。
+  // 数据全来自本卡现有采集(todo 事件/subAgents/artFileList),纯展示零执行;与对话流全幅切换,Esc 或再点返回。
+  let latestTodos = []   // 最近一次主 Agent todowrite 的清单(renderTool 的 todo 分支捕获,子 Agent 的不算)
+  const blive = document.getElementById('blive'), liveView = document.getElementById('liveview')
+  let liveOn = false, liveTick = null
+  const lvEsc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  function lvTodoRow(t) {
+    const st = String((t && t.status) || ''), txt = String((t && (t.content || t.text || t.title)) || '')
+    if (/complet/i.test(st)) return '<div class="lv-todo done"><span class="tstat">☒</span><span>' + lvEsc(txt) + '</span></div>'
+    if (/progress|doing|current/i.test(st)) return '<div class="lv-todo"><span class="tstat">◐</span><span>' + lvEsc(txt) + '</span></div>'
+    return '<div class="lv-todo"><span class="tstat">☐</span><span>' + lvEsc(txt) + '</span></div>'
+  }
+  function renderLive() {
+    if (!liveView) return
+    const parts = []
+    // 目标 + 主 Agent 状态
+    const doneN = latestTodos.filter((t) => /complet/i.test(String(t && t.status || ''))).length
+    parts.push('<div class="lv-sec"><div class="lv-h">目标</div><div class="lv-goal">' + lvEsc(dispMsg || title) + '</div>'
+      + '<div class="lv-stat">主 Agent:' + (busy ? '工作中' : '空闲') + ' · 第 ' + turnN + ' 轮' + (autoCompactN ? ' · 已自动压缩 ' + autoCompactN + ' 次' : '') + '</div></div>')
+    // 计划(todo 进度条 + 勾选清单)
+    if (latestTodos.length) {
+      parts.push('<div class="lv-sec"><div class="lv-h">计划 <span class="lv-n">' + doneN + '/' + latestTodos.length + '</span></div>'
+        + '<div class="lv-bar"><div class="lv-barf" style="width:' + Math.round(doneN * 100 / latestTodos.length) + '%"></div></div>'
+        + latestTodos.map(lvTodoRow).join('') + '</div>')
+    }
+    // 子 Agent fan-out(按派出顺序;点节点 → 回对话流开它的侧边栏窗格)
+    const subs = [...subAgents.entries()].sort((a, b) => a[1].t0 - b[1].t0)
+    if (subs.length) {
+      const runN = subs.filter(([, s]) => !s.done).length
+      parts.push('<div class="lv-sec"><div class="lv-h">子 Agent <span class="lv-n">' + (runN ? runN + ' 在跑 · ' : '') + subs.length + ' 个</span></div>'
+        + subs.map(([id, s]) => {
+            const cls = s.done ? (/error|fail/i.test(String(s._st || '')) ? 'err' : 'done') : 'run'
+            const stTxt = s.done ? (cls === 'err' ? '出错' : '完成') : '运行中'
+            return '<button class="lv-node ' + cls + '" data-aid="' + lvEsc(id) + '"><span class="lv-dot"></span><span class="lv-nname">' + lvEsc(s.name.textContent) + '</span><span class="lv-nmeta">' + lvEsc(stTxt + ' · ' + saMeta(s)) + '</span></button>'
+          }).join('') + '</div>')
+    }
+    // 产出文件(点 → 回对话流开成果抽屉看内容)
+    if (artFileList.length) {
+      parts.push('<div class="lv-sec"><div class="lv-h">产出文件 <span class="lv-n">' + artFileList.length + '</span></div>'
+        + artFileList.map((p) => '<button class="lv-file" data-p="' + lvEsc(p) + '">' + lvEsc(artRel(p)) + '</button>').join('') + '</div>')
+    }
+    if (!latestTodos.length && !subs.length && !artFileList.length)
+      parts.push('<div class="lv-empty">还没有可画的结构 —— 主 Agent 列出 todo 计划、派子 Agent 或落盘文件后,这里会实时成图。</div>')
+    liveView.innerHTML = parts.join('')
+    liveView.querySelectorAll('.lv-node').forEach((b) => b.addEventListener('click', () => { const id = b.getAttribute('data-aid'); lvToggle(false); if (id && subAgents.has(id)) { sdSelect(id); sdOpen() } }))
+    liveView.querySelectorAll('.lv-file').forEach((b) => b.addEventListener('click', () => { const p = b.getAttribute('data-p'); lvToggle(false); artOpen(); if (p) openArtFile(p) }))
+  }
+  function lvToggle(on) {
+    liveOn = on == null ? !liveOn : !!on
+    if (liveView) liveView.hidden = !liveOn
+    const mw = document.getElementById('midwrap'); if (mw) mw.hidden = liveOn
+    if (blive) blive.classList.toggle('on', liveOn)
+    if (liveOn) { renderLive(); if (!liveTick) liveTick = setInterval(renderLive, 1000) }
+    else if (liveTick) { clearInterval(liveTick); liveTick = null }
+  }
+  if (blive) blive.addEventListener('click', () => lvToggle())
 
   window.BocomHermes.onStream(({ kind, text, partID, status, input, output, title, error, sub, agentId, agentName, taskChild, taskDesc }) => {
     if (sub) {                                            // 子agent活动 → 进侧边栏它自己的窗格(思考/工具/产出),不占主 feed

@@ -421,6 +421,27 @@ console.log('用例12d:输入草稿持久化 —— 输入即存 / 发送即清 
   ok('续接后草稿恢复到输入框', exp4 && exp4.ci.value === '没发出去的草稿', exp4 && exp4.ci.value)
 }
 
+console.log('用例12e:活视图 —— 实时结构图(目标/todo/子Agent/产出),全幅切换')
+{
+  const lv = byId.get('liveview'), bl = byId.get('blive')
+  // 喂数据:主 Agent todowrite + 子 Agent 活动 + 落盘文件
+  cbs.onStream({ kind: 'tool', text: 'todowrite', partID: 'lv_td', status: 'completed', input: { todos: [{ content: '勘察边界', status: 'completed' }, { content: '并行深读', status: 'in_progress' }, { content: '综合产出', status: 'pending' }] } })
+  cbs.onStream({ kind: 'tool', text: 'task', partID: 'lv_tk', status: 'running', input: { description: '深读支付模块' }, taskChild: 'ses_lvA', taskDesc: '深读支付模块' })
+  cbs.onStream({ kind: 'reasoning', partID: 'lv_r1', text: '先看入口', sub: true, agentId: 'ses_lvA', agentName: '深读支付模块' })
+  cbs.onStream({ kind: 'tool', text: 'write', partID: 'lv_w1', status: 'completed', input: { filePath: 'C:/demo/docs/pay.md' } })
+  bl._fire('click')   // 开活视图
+  const mw = byId.get('midwrap')   // midwrap 是 lvToggle 里才首次 getElementById 的,点击后才注册进桩
+  ok('全幅切换(liveview 出,midwrap 隐)', lv.hidden === false && mw.hidden === true, lv.hidden + '/' + mw.hidden)
+  const html = lv.innerHTML
+  ok('目标与主 Agent 状态渲出', /主 Agent/.test(html) && /第 \d+ 轮/.test(html), html.slice(0, 160))
+  ok('计划进度 1/3 + 进度条 33%', /1\/3/.test(html) && /width:33%/.test(html), html.match(/lv-n">[^<]*</))
+  ok('todo 三种记号都在(☒/◐/☐)', html.includes('☒') && html.includes('◐') && html.includes('☐'))
+  ok('子 Agent 节点在(运行中+名字+data-aid)', /lv-node run/.test(html) && /深读支付模块/.test(html) && /data-aid="ses_lvA"/.test(html))
+  ok('产出文件行在(docs/pay.md)', /docs\/pay\.md/.test(html))
+  bl._fire('click')   // 再点返回
+  ok('再点返回(liveview 隐,midwrap 出)', lv.hidden === true && mw.hidden === false)
+}
+
 console.log('用例13:工作流卡(wf=1) —— 规划先行 / 自动批准 / todo 提醒 / 自动压缩续航')
 {
   // 第二个独立上下文按 wf=1 启动。动态 id(planBar/memPop)对齐真 DOM:不存在返回 null,挂上可查,remove 后消失
