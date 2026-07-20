@@ -57,8 +57,11 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
     }
     // 显式锚定工作目录(唯一真相源):外部/global 模式的 serve 常忽略会话级 ?directory=,模型会漂到
     // 其它项目路径(如桌面同级目录)。用强指令把它钉在当前项目 —— 也会传导到它派生的 task 子agent的探索路径。
-    const anchor = `当前项目工作目录（唯一真相源）：${dir}\n`
-      + `分析、探索、读写代码时一律在此目录内进行;不要访问或分析其它路径下的项目/目录。\n`
+    // 配了后端仓库(backendDir)时放开只读副仓:跨仓探查可读不可写(写仍只落主仓)—— 脚本仓/后端仓场景的硬通道。
+    const backend = S.settings.backendDir || ''
+    const anchor = `当前项目工作目录（主仓,唯一可写真相源）：${dir}\n`
+      + (backend ? `副仓（只读,跨仓探查允许）：${backend}\n写与改只落主仓;副仓可以 grep/glob/read 读,但【严禁】写、改、删它;其它路径仍不许访问。\n`
+                 : `分析、探索、读写代码时一律在此目录内进行;不要访问或分析其它路径下的项目/目录。\n`)
     const body = parts.length ? ('\n以下是本项目的说明文档,供参考:\n\n' + parts.join('\n\n---\n\n')) : ''
     return `<项目背景>\n${anchor}${body}</项目背景>\n\n`
   }

@@ -13,7 +13,7 @@ BocomHermes 的「研发流程功能」路线图在 `docs/研发功能路线图.
 
 **关键纠偏(必须记住):** 那份 `docs/信贷-需求到详设-解决方案.md` 大方案**用户判定"落不了地"已弃用**——它假设了内网根本没有的东西(领域本体/制度库/向量RAG/claim账本框架/状态机闸口)。新方向只信内网唯一可信的两样:**代码仓库 + 数据库**。需求文档是"待核对的主张",代码+DB 是"真相"。本质:**拿需求文档逐条到代码+DB 找证据 → 改动点(挂 file:line / 表.字段)+ 需求问题(文档 vs 代码/DB 的缺口/冲突/歧义)**。不建领域大脑——领域知识就编码在代码和 DB 里。
 
-底座几乎现成:需求文档解析复用 `src/attachments.js` 的 extractText(PDF/DOCX/XLSX);代码检索用 opencode serve 原生 Read/Grep/Glob;DB 用已有 `db-mcp`(db_columns_grep/db_schema/db_query);fan-out 用 `src/orch.js`。要建的是薄编排层 + 独立窗口。
+底座几乎现成:需求文档解析复用 `src/attachments.js` 的 extractText(PDF/DOCX/XLSX);代码检索用 opencode serve 原生 Read/Grep/Glob;DB 用已有 `db-mcp`(db_columns_grep/db_schema/db_query);fan-out 用动态工作流卡(`src/window.js` spawnWorkflow,单主 Agent 连续上下文自拆+并行派子 Agent+自综合;旧 `src/orch.js` 已退役删除)。要建的是薄编排层 + 独立窗口。
 
 **核心机制(2026-06-26 用户定死,技术深水):多Agent 对抗式分析需求文档。** 真实需求是脏数据(没格式/标准、诉求藏在吐槽里、多叫法、范围模糊、外部引用、跨页矛盾、V1残留),单个 opencode Agent 搞不定。机制:
 - **让多个 Agent 各自独立、互不通气地读同一份文档**(角色分化:业务字面/数据派/流程派/挑刺对抗派/历史跨页派)。

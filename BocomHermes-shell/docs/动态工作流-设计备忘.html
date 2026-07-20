@@ -373,6 +373,11 @@
     <header>
       <div class="doc-eyebrow">BOCOMHERMES · 设计备忘（教学版）· 2026-07</div>
       <h1>动态工作流：治什么病、怎么治、还缺哪一环</h1>
+      <div class="doc-sub" style="border-left:3px solid var(--accent,#4aa8ff);padding-left:10px;margin-bottom:10px">
+        <strong>架构演进提示（2026-07-20 注）：</strong>文中「独立 Planner 分轮 replan + worker 摘要 + 交接单 + 泳道图」描绘的是<strong>已退役的旧引擎</strong>。
+        现行动态工作流是 <strong>Claude Code 式</strong>：单主 Agent 在连续上下文里自拆 + task 并行派子 Agent + 自综合（见 <code>src/window.js</code> workflowSystemPrompt）。
+        本文的<strong>原则部分</strong>（128k 纪律、蒸馏、防腐校验、两级索引、旋钮原则）仍然有效且已逐项落地。
+      </div>
       <div class="doc-sub">
         底座是 <span class="k">opencode serve</span> × <span class="k">MiniMax M2.5（192k）</span>——一个在上下文管理、记忆、技能调用上都明显弱于
         Claude Code / Codex 的引擎。外壳的使命是把弱模型抬到<strong>真能独立干活</strong>的水位。

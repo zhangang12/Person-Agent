@@ -229,33 +229,13 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     return id
   }
 
-  // 预设角色库（label、提示词前缀）
-  const ROLES = {
-    security:  ['安全·风险',   '请从安全漏洞、边界处理、异常情况、权限校验等角度深度审视以下内容，逐条列出问题（必改/建议/可忽略）并给出修法：\n\n'],
-    perf:      ['性能·质量',   '请从性能瓶颈、代码质量、可读性、可维护性等角度深度审视以下内容，逐条列出改进点（必改/建议/可忽略）：\n\n'],
-    biz:       ['业务·逻辑',   '请从业务逻辑正确性、需求覆盖度、边界场景、数据一致性等角度深度审视以下内容，逐条列出问题（必改/建议/可忽略）：\n\n'],
-    arch:      ['架构·设计',   '请从系统架构、模块划分、接口设计、扩展性等角度深度评审以下内容，给出架构层面的建议与风险：\n\n'],
-    test:      ['测试·覆盖',   '请为以下内容设计完整的测试方案，包含单元/集成/边界用例，并指出当前可能缺失的测试场景：\n\n'],
-    doc:       ['文档·注释',   '请为以下内容生成完整的中文技术文档（包含功能说明、参数、返回值、使用示例、注意事项）：\n\n'],
-    refactor:  ['重构·简化',   '请审视以下代码，找出可以简化、消除重复、提升可读性的点，给出重构建议并写出重构后的代码：\n\n'],
-  }
-
-  function spawnFanout(goal, roleKeys) {
-    const keys = (roleKeys && roleKeys.length) ? roleKeys : ['security', 'perf', 'biz']
-    const shortGoal = goal.length > 28 ? goal.slice(0, 27) + '…' : goal
-    keys.forEach((k) => {
-      const [label, prefix] = ROLES[k] || [k, '']
-      spawnCard(label + ' · ' + shortGoal, null, prefix + goal)
-    })
-    return keys.length
-  }
-
   // 「动态工作流」= Claude Code 式:单个【主 Agent】在连续上下文里自己【看清形状 → 规划 → 执行 → 综合】,
   // 用 task 工具并行派子 Agent 分担重活(深读/评审/交叉验证),自己综合成【与任务匹配的产出】(代码/诊断/结论/文档)。
   // 通用化:不再过拟合"探索→写手册"一种形状;旧"独立规划器分轮 + worker 摘要 + reduce 冷拼"引擎(orchestrator.js/src/orch.js/ui/workflow.html)已退役删除。
   // 128k 纪律仍是关键:主 Agent 只装"结论/索引"不装"原料",深读交给有各自 128k 的子 Agent。
   // 实现成一张卡 → 白捡卡片的【上下文用量 chip + 压缩续聊】做 128k 安全网 + 【子 Agent 富容器 + todo 勾选清单】做过程可视化。
-  function workflowSystemPrompt(dir) {
+  // 跨仓:配了 backendDir 时锚文本放开"主仓可写 + 副仓只读"(与 session.js 项目背景锚同口径),脚本仓/后端仓可探查不可改。
+  function workflowSystemPrompt(dir, backendDir) {
     return [
       '<动态工作流规程>',
       '你是一名资深工程师,要独立完成一个需要拆解的复杂目标。自己【看清形状 → 规划 → 执行 → 综合】,你是唯一主导者,不等外部给你分步骤。你手里有一件普通对话没有的利器:task 工具能【一次并行派多个子 Agent】,每个子 Agent 有它自己独立的 128k 上下文,替你并行读大片代码 / 干重活 —— 用好它是这套流程的核心。',
@@ -275,7 +255,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       '8. 【收尾必验证,不靠信念交差】改了代码就跑测试 / 构建 / 驱动一遍看真过;下了关键结论就派子 Agent 交叉核实,别自证。一波不够深、或冒出新待挖点就【再派一波】—— 目标是把事做透,不是一遍浅 pass 交差。',
       '9. 【规划先行,批准再跑】你的第一轮只做规划:轻量勘察后用 todowrite 列出执行计划,并输出简短拆解思路(怎么拆 / 哪些并行派子 Agent / 预计产出形态)。然后【直接结束这轮回答】等用户批准 —— 批准或调整意见会以新消息进来,界面上有批准按钮。【不要】调用 question / ask 之类的交互提问工具去等批准:批准走卡片上的【开始执行】按钮,提问通道不是为批准设的。第一轮不做实质执行(不写文件、不改代码、不派执行型子 Agent);用户批准后,再按(修订后的)计划开跑。',
       '10. 【收尾必蒸馏】交付前,回顾这一程挖到的真相,用 memory_add 把【关于该系统、三个月后大概率仍成立】的事实写进项目知识库(下次开卡自动注入):每条一句话 + anchors 挂证据(file:行号) + scene 写重用场景。任务进度、本次改了哪些文件【不要】写 —— 只留系统级知识;没有够格的事实就跳过,宁缺勿滥。',
-      dir ? '工作目录:' + dir + ' —— 一律在此目录内核实与改动,不访问其它项目。' : '',
+      dir ? ('工作目录(主仓):' + dir + ' —— 核实与改动一律落此仓。' + (backendDir ? '副仓(只读,跨仓探查允许):' + backendDir + ' —— 可 grep/glob/read/db 只读探查,【严禁】写/改/删它;产出与改动只写主仓。' : '一律在此目录内核实与改动,不访问其它项目。')) : '',
       '</动态工作流规程>',
     ].filter(Boolean).join('\n')
   }
@@ -298,7 +278,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     }
     const dir = S.settings.projectDir || ''
     // msg=系统规程+目标(发给 serve);disp=目标(用户气泡只显示目标,规程不露)。返回卡 id,与旧签名兼容。
-    return spawnCard('工作流 · ' + g.slice(0, 20), null, workflowSystemPrompt(dir) + '\n\n【总目标】\n' + g, g, { flash: true, wf: true })
+    return spawnCard('工作流 · ' + g.slice(0, 20), null, workflowSystemPrompt(dir, S.settings.backendDir || '') + '\n\n【总目标】\n' + g, g, { flash: true, wf: true })
   }
   // 出队补位:队列非空且有空位 → shift 开下一张并桌面通知。guard 防重入(判 done/关卡/删记录可能同拍连发)。
   let wfDequeuing = false
@@ -1360,9 +1340,6 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     const m = S.cardFiles; if (!m) return []
     const f = m.get(String(id)); if (f) m.delete(String(id)); return f || []
   })
-  ipcMain.handle('spawn-fanout', (_e, goal, roles) => spawnFanout(goal, roles))
-  ipcMain.handle('spawn-fanout-roles', (_e, { goal, roles }) => spawnFanout(goal, roles))
-  ipcMain.handle('get-fanout-roles', () => Object.entries(ROLES).map(([k, [label]]) => ({ key: k, label })))
   ipcMain.handle('spawn-workflow', (_e, goal) => spawnWorkflow(goal))
   // 工作流模板(对话坞模板入口;常量清单,goalPrefix 预置到目标前,引导主 Agent 按对应形状干活)
   const WF_TEMPLATES = [
@@ -2643,5 +2620,5 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('open-history', (_e, { sid, title }) => spawnCard(title, sid))
   ipcMain.handle('clear-history', () => { S.history = []; saveHistory(); return true })
 
-  return { createOrb, createBrowser, createWorkspace, createSkillCenter, createMailCenter, openMailView, spawnCard, spawnFanout, spawnWorkflow, spawnReqAnalysis, spawnReqConfirm, spawnReqPlan, spawnEmailCard, snapAsk, toggleInput, toggleOrbInput, buildTray, openDock, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory }
+  return { createOrb, createBrowser, createWorkspace, createSkillCenter, createMailCenter, openMailView, spawnCard, spawnWorkflow, spawnReqAnalysis, spawnReqConfirm, spawnReqPlan, spawnEmailCard, snapAsk, toggleInput, toggleOrbInput, buildTray, openDock, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory }
 }

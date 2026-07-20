@@ -141,7 +141,7 @@
 
 | 能力 | 用处 |
 |---|---|
-| `src/orch.js` fan-out + `onBeforeBatch` 人审三态 | spawn 多 Agent + 二次确认的骨架 |
+| 动态工作流卡(`src/window.js` spawnWorkflow) | spawn 多 Agent 的骨架:单主 Agent 连续上下文自拆+并行派子 Agent+自综合(旧 `src/orch.js` fan-out + `onBeforeBatch` 已退役删除) |
 | opencode serve 原生 Read/Grep/Glob | grounder 读代码(不用建 git_grep) |
 | `db-mcp`(db_tables/schema/columns_grep/query) | grounder 读 DB,字段级反查 |
 | `src/attachments.js` `extractText` | 需求文档解析(PDF/DOCX/XLSX),提出来给本地文件用 |
