@@ -9,6 +9,9 @@
 <style>
   /* 整张卡 JS 拖动:关掉 app-region,靠鼠标事件移动窗口(同需求分析卡) */
   .glass, .card { -webkit-app-region: no-drag; }
+  /* hidden 必须压过本卡的 flex 类:Chromium 里 .pipe-panel{display:flex} 这类作者样式会顶掉 UA 的 [hidden] 隐藏(实测),
+     不加这条的话 pipePanel/wfTplPanel/wfLbl/stepPrev 设了 hidden 也照样显示 */
+  [hidden] { display: none !important; }
   .card { display: flex; flex-direction: column; height: 100%; padding: 12px 14px 14px; gap: 11px; }
   .hd { display: flex; align-items: center; gap: 8px; flex: none; cursor: grab; }
   .hd:active { cursor: grabbing; }
@@ -68,6 +71,35 @@
   .pp-chip:hover { color: var(--txt); border-color: var(--accent); background: var(--hover); }
   .pp-chip.skill { color: var(--accent); border-color: rgba(74,168,255,.35); }
   .pp-empty { font-size: 11px; color: var(--txt3); padding: 2px 0; }
+  /* 编排模板排(F1/F2):用户模板 chip 内嵌 ✕(两步确认删);点 chip 有 {{var}} 时弹内联小表单逐变量填值 */
+  .pp-chip .tx { margin-left: 6px; font-size: 10px; color: var(--txt3); }
+  .pp-chip .tx:hover, .pp-chip .tx.confirm { color: var(--diff-del); font-weight: 700; }
+  .pp-tplf { display: flex; flex-direction: column; gap: 5px; border-top: .5px dashed var(--composer-border); padding-top: 6px; }
+  .pp-tplf-row { display: flex; align-items: center; gap: 6px; }
+  .pp-tplf-lab { flex: none; font-size: 10.5px; color: var(--txt3); font-family: var(--mono); max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pp-tplf-inp { flex: 1; min-width: 0; background: var(--glass-bg); border: 1px solid var(--composer-border); border-radius: 7px; padding: 4px 8px; color: var(--txt); font-size: 12px; font-family: var(--font); outline: none; }
+  .pp-tplf-inp:focus { border-color: var(--accent); }
+  .pp-mini-btn { border: .5px solid var(--composer-border); background: transparent; color: var(--txt2); font-size: 11.5px; border-radius: 8px; padding: 4px 12px; cursor: pointer; font-family: var(--font); }
+  .pp-mini-btn:hover { border-color: var(--accent); color: var(--txt); }
+  .pp-mini-btn.on { background: var(--brand); color: var(--send-fg); border-color: transparent; font-weight: 600; }
+  /* 定时编排小区块(F3):每条 = goal 截 30 字 + HH:MM + ✕两步确认删;底部 time input + 添加(goal 取当前描述框) */
+  .pp-sched-item { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--txt2); }
+  .pp-sched-item .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pp-sched-item .tm { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--txt3); }
+  .pp-sched-del { flex: none; border: none; background: transparent; color: var(--txt3); font-size: 11px; cursor: pointer; padding: 1px 5px; border-radius: 5px; }
+  .pp-sched-del:hover, .pp-sched-del.confirm { color: var(--diff-del); background: var(--hover); }
+  .pp-sched-add { display: flex; align-items: center; gap: 6px; }
+  .pp-sched-add input[type="time"] { background: var(--glass-bg); border: 1px solid var(--composer-border); border-radius: 7px; padding: 3px 7px; color: var(--txt); font-size: 11.5px; font-family: var(--mono); outline: none; }
+  .pp-sched-add .hint { font-size: 10.5px; color: var(--txt3); }
+  /* 步骤预览条(F4):每步一 chip(序号+文本+↑↓调序+✕删除);底部智能(整段)/严格(逐步)两种开跑 */
+  .stchip { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; color: var(--txt2); border: .5px solid var(--composer-border); border-radius: 9px; padding: 3px 5px 3px 8px; }
+  .stchip b { color: var(--accent); font-size: 10px; margin-right: 2px; }
+  .stchip .st { max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stchip .stb { border: none; background: transparent; color: var(--txt3); cursor: pointer; font-size: 11px; padding: 0 3px; border-radius: 4px; line-height: 16px; }
+  .stchip .stb:hover:not(:disabled) { color: var(--txt); background: var(--hover); }
+  .stchip .stb:disabled { opacity: .3; cursor: default; }
+  .stchip .stb.del:hover { color: var(--diff-del); }
+  .st-actions { display: flex; gap: 8px; justify-content: flex-end; }
 
   .seclbl { flex: none; font-size: 11px; font-weight: 600; color: var(--txt3); letter-spacing: .03em; padding: 4px 2px 0; display: flex; align-items: center; }
   .seclbl .sp { flex: 1; }
@@ -82,12 +114,18 @@
   .wfst.done { background: rgba(43,182,115,.14); color: #2bb673; }
   .wfst.archived { background: var(--orb-bg); color: var(--txt3); }
   .wfst.queued { background: var(--warn-bg); color: var(--warn-txt); }   /* 排队位:并发度满时的等待队列 */
+  .wfst.interrupted { background: var(--diff-del-bg); color: var(--diff-del); }   /* 中断:上一步失败/被掐,可点「↻ 续跑」接着跑 */
+  .wftodo { color: var(--accent); }   /* todo 迷你进度行:3/5 · 正在:xxx(仅 running 且 todoTotal>0 才渲染) */
   /* 记录删除:行内 ✕,两步确认(第一次点变"删?",3s 不复原则复位) */
   .wfitem { position: relative; }
   .wfitem .t, .wfitem .meta { padding-right: 24px; }   /* 给 ✕ 让位,别压字 */
   .wfdel { position: absolute; top: 6px; right: 7px; border: none; background: transparent; color: var(--txt3); font-size: 11px; cursor: pointer; padding: 2px 5px; border-radius: 6px; }
   .wfdel:hover { color: var(--diff-del); background: var(--hover); }
   .wfdel.confirm { color: var(--diff-del); font-weight: 700; background: var(--hover); }
+  /* 续跑小钮(T4):running/interrupted 的编排项行内亮出,从失败步注入续跑指令;与 ✕ 同排其左 */
+  .wfretry { position: absolute; top: 5px; right: 27px; border: .5px solid var(--composer-border); background: transparent; color: var(--txt3); font-size: 10.5px; cursor: pointer; padding: 1px 8px; border-radius: 999px; font-family: var(--font); }
+  .wfretry:hover { color: var(--accent); border-color: var(--accent); background: var(--hover); }
+  .wfitem.hasretry .t, .wfitem.hasretry .meta { padding-right: 84px; }   /* 续跑+✕ 两颗钮一起让位,别压字 */
 
   .list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; padding-right: 2px; }
   .list::-webkit-scrollbar { width: 7px; } .list::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
@@ -136,6 +174,24 @@
       <div id="ppSkills" class="pp-row"></div>
       <div class="pp-lbl">内置能力</div>
       <div id="ppBuiltins" class="pp-row"></div>
+      <!-- F1/F2 编排模板排:pipelineTplList() 取数,通道缺席整排隐藏;点 chip 填描述(有 {{var}} 弹内联小表单),排尾「+ 存为模板」 -->
+      <div id="ppTplWrap" hidden>
+        <div class="pp-lbl">模板</div>
+        <div id="ppTpls" class="pp-row"></div>
+        <div id="ppTplForm" class="pp-tplf" hidden></div>
+      </div>
+      <!-- F3 定时编排:入口展开小区块,列已有定时 + time input 添加;通道缺席整段隐藏 -->
+      <div id="ppSchedWrap" hidden>
+        <div class="pp-lbl"><button id="ppSchedToggle" class="clr" title="定时编排：每天定点用这段描述自动开跑一条任务编排">⏱ 定时编排 ▸</button></div>
+        <div id="ppSchedBox" hidden>
+          <div id="ppSchedList" class="pp-row"></div>
+          <div class="pp-sched-add">
+            <input id="ppSchedTime" type="time" title="每天开跑时间" />
+            <button id="ppSchedAdd" class="pp-mini-btn" title="用当前描述框文本 + 所选时间登记一条定时编排">添加</button>
+            <span class="hint">goal 取当前描述框</span>
+          </div>
+        </div>
+      </div>
     </div>
     <!-- 动态工作流的模板快捷发起:选中「动态工作流」模式才出现 —— wfTemplates() 通道缺席整排隐藏;点 chip 把 goalPrefix 填进描述框,补完目标回车即发 -->
     <div id="wfTplPanel" class="pipe-panel nodrag" hidden>
@@ -149,6 +205,15 @@
       <button id="go" class="go" title="开始（Enter）" aria-label="开始"><svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg></button>
     </div>
     <div class="hint2"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>任务编排示例：跑技能「XX导出」→ 核对导出数据 → 把问题发邮件给某某</div>
+    <!-- F4 步骤预览条:任务编排多步描述提交前弹出,可 ✕ 删步 / ↑↓ 调序;智能=整段交给编排 Agent(现状链路),严格=主进程逐步下发 -->
+    <div id="stepPrev" class="pipe-panel nodrag" hidden>
+      <div class="pp-lbl">步骤预览 · 可删可调序<span class="sp"></span><button id="stCancel" class="clr" title="收起预览，回到编辑">收起</button></div>
+      <div id="stepChips" class="pp-row"></div>
+      <div class="st-actions">
+        <button id="stSmart" class="pp-mini-btn on" title="整段描述一次交给编排 Agent，由它自己按顺序走（现状链路）">智能模式开跑</button>
+        <button id="stStrict" class="pp-mini-btn" title="主进程逐步下发，失败即停">严格模式开跑</button>
+      </div>
+    </div>
 
     <div class="seclbl" id="wfLbl" hidden>工作流 / 编排 · 点一条聚焦卡片 / 看存档<span class="sp"></span><button id="wfRefresh" class="clr nodrag">刷新</button></div>
     <div id="wfList" class="wflist nodrag" hidden></div>
@@ -214,13 +279,39 @@
       wfListEl.appendChild(el)
     }
     for (const w of items) {
-      const stName = (w.kind === 'pipeline' ? '编排·' : '') + (w.status === 'running' ? (w.busy ? '进行中' : '待操作') : w.status === 'done' ? '已完成' : '存档')
+      // T3 中断态:status='interrupted' → 红色「中断」徽章(样式同 running/done/archived 一族)
+      const stTxt = w.status === 'running' ? (w.busy ? '进行中' : '待操作') : w.status === 'done' ? '已完成' : w.status === 'interrupted' ? '中断' : '存档'
+      const stName = (w.kind === 'pipeline' ? '编排·' : '') + stTxt
+      // T2 todo 迷你进度:running 且 todoTotal>0 才显示「3/5 · 正在:〈current 截 20 字〉」
+      const todoBit = (w.status === 'running' && (w.todoTotal | 0) > 0)
+        ? ((w.todoDone | 0) + '/' + w.todoTotal + (w.current ? ' · 正在：' + String(w.current).slice(0, 20) : '')) : ''
       const meta = [w.rounds ? w.rounds + ' 轮' : '', w.elapsedMs ? Math.round(w.elapsedMs / 1000) + 's' : '', w.files ? '产出 ' + w.files : '', rel(w.at || Date.now())].filter(Boolean).join(' · ')
       const el = document.createElement('div'); el.className = 'item wfitem'
       el.innerHTML = '<span class="t"><span class="wfst ' + esc(w.status) + '">' + stName + '</span>' + esc(w.goal || '工作流') + '</span>'
+        + (todoBit ? '<span class="meta wftodo">' + esc(todoBit) + '</span>' : '')
         + '<span class="meta">' + esc(meta) + '</span>'
-      el.title = (w.live ? (w.busy ? '运行中 — 点击聚焦卡片' : '空闲中(可能在等你批准计划) — 点击聚焦卡片') : '卡片已关 — 点击打开存档') + (w.archive ? '\n' + w.archive : '')
+      el.title = (w.live ? (w.busy ? '运行中 — 点击聚焦卡片' : '空闲中(可能在等你批准计划) — 点击聚焦卡片') : '卡片已关 — 点击打开存档') + (w.status === 'interrupted' ? '\n已中断 — 可点「↻ 续跑」从失败步接着跑' : '') + (w.archive ? '\n' + w.archive : '')
       el.addEventListener('click', async () => { try { await H.wfOpen({ id: w.id, archive: w.archive }) } catch (e) {} })
+      // T4 从失败步续跑:running/interrupted 的编排项亮「↻ 续跑」小钮;pipelineRetry 通道缺席不亮
+      if ((w.status === 'running' || w.status === 'interrupted') && w.kind === 'pipeline' && typeof H.pipelineRetry === 'function') {
+        el.classList.add('hasretry')
+        const retry = document.createElement('button'); retry.className = 'wfretry'; retry.textContent = '↻ 续跑'
+        retry.title = '从失败/中断的步骤续跑（往编排卡注入续跑指令）'
+        retry.addEventListener('click', async (e) => {
+          e.stopPropagation()
+          retry.disabled = true
+          let r
+          try { r = await H.pipelineRetry(w.id) } catch (e2) { r = { ok: false, err: String((e2 && e2.message) || e2) } }
+          retry.disabled = false
+          if (r && r.ok) {   // ok:meta 行临时亮「已注入续跑指令」,随后自刷
+            const metas = el.querySelectorAll('.meta'), metaEl = metas[metas.length - 1]
+            if (metaEl) { const old = metaEl.textContent; metaEl.textContent = '✓ 已注入续跑指令'; setTimeout(() => { try { metaEl.textContent = old } catch (e3) {} renderWf() }, 1800) }
+          } else {
+            alert('续跑失败：' + ((r && r.err) || '未知错误'))
+          }
+        })
+        el.appendChild(retry)
+      }
       // 删除记录(两步确认):卡还开着主进程会拒,原因在 meta 行临时亮出
       const del = document.createElement('button'); del.className = 'wfdel'; del.textContent = '✕'; del.title = '删除这条记录(存档文件一并删)'
       del.addEventListener('click', async (e) => {
@@ -314,6 +405,8 @@
     if (pipePanel.hidden) return
     if (!builtinsDone) { builtinsDone = true; for (const x of BUILTINS) ppBuiltins.appendChild(mkChip(x.n, x.p, x.t)) }
     await refreshPipeSkills()   // 每次切进来都刷:技能中心刚录的/刚导入的立即可见(fs 扫一遍很便宜)
+    refreshPipeTpls()           // F1 模板排:每次切进来重取(别处的增删立即可见);通道缺席自隐
+    initSchedEntry()            // F3 定时入口:通道缺席整段隐藏
   }
   async function refreshPipeSkills() {
     ppSkills.innerHTML = '<span class="pp-empty">读取中…</span>'
@@ -325,7 +418,7 @@
     for (const s of skills.slice(0, 30)) {
       const name = s.title || s.id
       const params = Array.isArray(s.params) && s.params.length ? '（' + s.params.map((p) => p.label || p.key).join('、') + '）' : ''
-      ppSkills.appendChild(mkChip(name, '跑技能「' + name + '」', (s.description || '') + (params ? '\n参数:' + params : '') + '\n步骤:' + (s.eventCount || '?') + ' 步' + (s.gates ? ' · 含 ' + s.gates + ' 个人机断点(回放会暂停等人)' : ''), 'skill'))
+      ppSkills.appendChild(mkChip(name, '跑技能「' + name + '」', (s.description || '') + (params ? '\n参数:' + params : '') + '\n步骤:' + (s.eventCount || '?') + ' 步' + (s.gates ? ' · 含 ' + s.gates + ' 个人机断点(回放会暂停等人)' : '') + (s.lastRun ? '\n最近:' + (s.lastRun.ok ? 'PASS' : 'FAIL(' + s.lastRun.fails + ' 步失败)') + ' · ' + rel(s.lastRun.at) : '\n最近:未跑过'), 'skill'))
     }
   }
   // 引擎体检:serve 实际加载的配置里没有我们的 MCP,或注册刚更新而引擎是外部起的(必然旧配置)→ 亮出人话警示。
@@ -350,6 +443,145 @@
     if (r && r.canceled) return
     if (r && r.ok) { await refreshPipeSkills(); goalEl.focus() }
     else { const e2 = document.createElement('span'); e2.className = 'pp-empty'; e2.textContent = '导入失败: ' + ((r && r.error) || '未知错误'); ppSkills.prepend(e2); setTimeout(() => { try { e2.remove() } catch {} }, 6000) }
+  })
+
+  // ── F1/F2 编排模板:pipelineTplList 取数(内置+我的),点 chip 填描述;有 {{var}} 弹内联小表单逐变量替换后填进描述框 ──
+  // 排尾「+ 存为模板」:当前描述框文本 + prompt 问名 → pipelineTplSave 后刷新排;我的模板(builtin=false)带 ✕ 两步确认删
+  const ppTplWrap = $('ppTplWrap'), ppTpls = $('ppTpls'), ppTplForm = $('ppTplForm')
+  function applyTpl(t) {
+    const goal = String(t.goal || '')
+    const vars = (Array.isArray(t.vars) ? t.vars : []).map((v) => String((v && v.name) || v || '').trim()).filter(Boolean)
+    if (!vars.length) {   // 无变量:直接填进描述框,补完目标回车即发
+      goalEl.value = goal
+      goalEl.focus()
+      try { goalEl.setSelectionRange(goalEl.value.length, goalEl.value.length) } catch (e) {}
+      return
+    }
+    // F2 内联变量小表单:逐 {{var}} 一行输入,「填入描述」时整体替换(留空的变量保留占位符,用户可手填)
+    ppTplForm.innerHTML = ''
+    ppTplForm.hidden = false
+    const lbl = document.createElement('div'); lbl.className = 'pp-empty'; lbl.textContent = '填模板变量 —「' + (t.name || '模板') + '」'
+    ppTplForm.appendChild(lbl)
+    const inputs = {}
+    for (const vn of vars) {
+      const row = document.createElement('div'); row.className = 'pp-tplf-row'
+      const lab = document.createElement('span'); lab.className = 'pp-tplf-lab'; lab.textContent = '{{' + vn + '}}'; lab.title = vn
+      const inp = document.createElement('input'); inp.className = 'pp-tplf-inp'; inp.placeholder = vn
+      inputs[vn] = inp
+      row.appendChild(lab); row.appendChild(inp)
+      ppTplForm.appendChild(row)
+    }
+    const btns = document.createElement('div'); btns.className = 'pp-tplf-row'
+    const ok = document.createElement('button'); ok.className = 'pp-mini-btn on'; ok.textContent = '填入描述'
+    const no = document.createElement('button'); no.className = 'pp-mini-btn'; no.textContent = '取消'
+    btns.appendChild(ok); btns.appendChild(no)
+    ppTplForm.appendChild(btns)
+    ok.addEventListener('click', () => {
+      let out = goal
+      for (const vn of vars) out = out.split('{{' + vn + '}}').join(inputs[vn].value.trim() || '{{' + vn + '}}')
+      goalEl.value = out
+      ppTplForm.hidden = true; ppTplForm.innerHTML = ''
+      goalEl.focus()
+    })
+    no.addEventListener('click', () => { ppTplForm.hidden = true; ppTplForm.innerHTML = '' })
+    const first = ppTplForm.querySelector('input'); if (first) setTimeout(() => { try { first.focus() } catch (e) {} }, 30)
+  }
+  async function refreshPipeTpls() {
+    if (typeof H.pipelineTplList !== 'function') { ppTplWrap.hidden = true; return }   // 通道缺席:整排隐藏
+    let tpls = []
+    try { tpls = (await H.pipelineTplList()) || [] } catch (e) { tpls = [] }
+    ppTplWrap.hidden = false
+    ppTplForm.hidden = true; ppTplForm.innerHTML = ''
+    ppTpls.innerHTML = ''
+    if (!tpls.length) {
+      const em = document.createElement('span'); em.className = 'pp-empty'; em.textContent = '还没有模板 — 描述写好后点排尾的「+ 存为模板」'
+      ppTpls.appendChild(em)
+    }
+    for (const t of tpls) {
+      const b = document.createElement('button'); b.className = 'pp-chip' + (t.builtin ? '' : ' skill')
+      b.textContent = t.name || t.id || '模板'
+      b.title = (t.builtin ? '内置模板' : '我的模板') + (t.goal ? '\n' + String(t.goal).slice(0, 140) : '')
+      b.addEventListener('click', () => applyTpl(t))
+      if (!t.builtin) {   // 用户模板带 ✕(两步确认删,同 wfitem 删记录的节奏)
+        const x = document.createElement('span'); x.className = 'tx'; x.textContent = '✕'; x.title = '删除这个模板'
+        x.addEventListener('click', async (e) => {
+          e.stopPropagation()
+          if (!x.classList.contains('confirm')) {
+            x.classList.add('confirm'); x.textContent = '删?'
+            setTimeout(() => { x.classList.remove('confirm'); x.textContent = '✕' }, 3000)
+            return
+          }
+          try { await H.pipelineTplDelete(t.id) } catch (e2) {}
+          refreshPipeTpls()
+        })
+        b.appendChild(x)
+      }
+      ppTpls.appendChild(b)
+    }
+    const sv = document.createElement('button'); sv.className = 'pp-chip'; sv.textContent = '+ 存为模板'
+    sv.title = '把当前描述框文本存成模板（含 {{变量}} 的话，用的时候会逐一询问）'
+    sv.addEventListener('click', async () => {
+      const goal = goalEl.value.trim()
+      if (!goal) { goalEl.focus(); return }
+      const name = String(window.prompt('模板名字：', goal.slice(0, 12)) || '').trim()
+      if (!name) return
+      let r
+      try { r = await H.pipelineTplSave({ name, goal }) } catch (e) { r = { ok: false, err: String((e && e.message) || e) } }
+      if (r && r.ok) refreshPipeTpls()
+      else alert('存模板失败：' + ((r && r.err) || '未知错误'))
+    })
+    ppTpls.appendChild(sv)
+  }
+
+  // ── F3 定时编排:入口展开小区块;列已有定时(goal 截 30 字 + HH:MM + ✕两步确认删),底部 time input + 添加(goal 取当前描述框) ──
+  const ppSchedWrap = $('ppSchedWrap'), ppSchedToggle = $('ppSchedToggle'), ppSchedBox = $('ppSchedBox'), ppSchedList = $('ppSchedList')
+  let schedInitDone = false
+  function initSchedEntry() {
+    if (schedInitDone) return
+    schedInitDone = true
+    ppSchedWrap.hidden = typeof H.pipelineSchedList !== 'function'   // 通道缺席:整段隐藏
+  }
+  ppSchedToggle.addEventListener('click', () => {
+    ppSchedBox.hidden = !ppSchedBox.hidden
+    ppSchedToggle.textContent = ppSchedBox.hidden ? '⏱ 定时编排 ▸' : '⏱ 定时编排 ▾'
+    if (!ppSchedBox.hidden) refreshSched()
+  })
+  async function refreshSched() {
+    let rows = []
+    try { rows = (await H.pipelineSchedList()) || [] } catch (e) { rows = [] }
+    ppSchedList.innerHTML = ''
+    if (!rows.length) { ppSchedList.innerHTML = '<span class="pp-empty">还没有定时编排 — 下面选个时间，goal 用当前描述框文本</span>'; return }
+    for (const s of rows) {
+      const g = String(s.goal || '')
+      const row = document.createElement('div'); row.className = 'pp-sched-item'
+      row.innerHTML = '<span class="t">' + esc(g.slice(0, 30)) + (g.length > 30 ? '…' : '') + '</span><span class="sp"></span><span class="tm">' + esc(s.time || '') + '</span>'
+      row.title = g + '\n每天 ' + (s.time || '') + ' 自动开跑'
+      const x = document.createElement('button'); x.className = 'pp-sched-del'; x.textContent = '✕'; x.title = '删除这条定时(两步确认)'
+      x.addEventListener('click', async () => {
+        if (!x.classList.contains('confirm')) {
+          x.classList.add('confirm'); x.textContent = '删?'
+          setTimeout(() => { x.classList.remove('confirm'); x.textContent = '✕' }, 3000)
+          return
+        }
+        try { await H.pipelineSchedDelete(s.id) } catch (e2) {}
+        refreshSched()
+      })
+      row.appendChild(x)
+      ppSchedList.appendChild(row)
+    }
+  }
+  $('ppSchedAdd').addEventListener('click', async () => {
+    const goal = goalEl.value.trim(), time = $('ppSchedTime').value
+    if (!goal || !time) {   // 轻提示:缺 goal/时间不发 IPC
+      const em = document.createElement('span'); em.className = 'pp-empty'; em.style.color = 'var(--warn-txt)'
+      em.textContent = !goal ? '描述框还是空的 — 先写好要定时跑的编排描述' : '先选个每天开跑的时间'
+      ppSchedList.prepend(em); setTimeout(() => { try { em.remove() } catch (e) {} }, 4000)
+      return
+    }
+    let r
+    try { r = await H.pipelineSchedSave({ goal, time }) } catch (e) { r = { ok: false, err: String((e && e.message) || e) } }
+    if (r && r.ok) refreshSched()
+    else alert('加定时失败：' + ((r && r.err) || '未知错误'))
   })
 
   // 模型选择(全局默认;卡片可单独覆盖):列模型 → setSettings({model})
@@ -408,20 +640,91 @@
 
   // 开新会话:自动=开对话卡(卡里 Agent 可自主升格);动态工作流=开一张会 fan-out 的主 Agent 卡;附件随首条消息带过去
   const goalEl = $('goal')
-  function go() {
+
+  // T9 提交前体检:任务编排缺关键工具(skill_list/skill_run/doc_read/mail_send)就面板内红字拦下不开卡;通道缺席跳过检查
+  const ORCH_NEED = ['skill_list', 'skill_run', 'doc_read', 'mail_send']
+  function missingOrchTools(st) {
+    if (!st || typeof st !== 'object') return []
+    if (st.known === true && st.registered === false) return ORCH_NEED.slice()   // serve 完全没带我们的 MCP = 全缺
+    if (Array.isArray(st.missing)) return ORCH_NEED.filter((t) => st.missing.some((m) => String(m).includes(t)))
+    const pool = st.tools || st.loaded
+    const names = Array.isArray(pool) ? pool.map((x) => String(typeof x === 'string' ? x : (x && (x.name || x.tool)) || ''))
+      : (pool && typeof pool === 'object' ? Object.keys(pool).filter((k) => !!pool[k]) : [])
+    if (!names.length) return []   // 没报工具明细:不拦(卡片内的开工自检仍是兜底)
+    return ORCH_NEED.filter((t) => !names.some((n) => n.includes(t)))
+  }
+  function showPipeBlock(msg) {   // 面板内红字(var(--diff-del)),列出缺啥 + 指引重启引擎;改描述即清(见 goalEl input)
+    let w = $('pipeBlockMsg')
+    if (!w) {
+      w = document.createElement('div'); w.id = 'pipeBlockMsg'; w.className = 'pp-empty'; w.style.color = 'var(--diff-del)'
+      pipePanel.prepend(w)
+    }
+    w.textContent = '⚠ ' + msg
+    pipePanel.hidden = false
+  }
+
+  // F4 步骤预览:按「→ / ，然后 / 然后」切步骤;>1 步弹预览条(每步一 chip:序号+文本+✕ 删+↑↓ 调序),单步直接开跑不弹
+  const stepPrev = $('stepPrev'), stepChips = $('stepChips')
+  let prevSteps = null
+  function splitSteps(text) {
+    return String(text).split(/→|，?然后/g).map((s) => s.replace(/^[\s，,、;；。]+|[\s，,、;；。]+$/g, '')).filter(Boolean)
+  }
+  function openStepPreview(steps) { prevSteps = steps.slice(); paintStepPreview(); stepPrev.hidden = false }
+  function closeStepPreview() { stepPrev.hidden = true; prevSteps = null }
+  function paintStepPreview() {
+    stepChips.innerHTML = ''
+    prevSteps.forEach((s, i) => {
+      const c = document.createElement('span'); c.className = 'stchip'; c.title = s
+      c.innerHTML = '<b>' + (i + 1) + '</b><span class="st">' + esc(s.length > 26 ? s.slice(0, 26) + '…' : s) + '</span>'
+      const up = document.createElement('button'); up.className = 'stb'; up.textContent = '↑'; up.title = '上移一步'; up.disabled = i === 0
+      up.addEventListener('click', () => { const t = prevSteps[i - 1]; prevSteps[i - 1] = prevSteps[i]; prevSteps[i] = t; paintStepPreview() })
+      const dn = document.createElement('button'); dn.className = 'stb'; dn.textContent = '↓'; dn.title = '下移一步'; dn.disabled = i === prevSteps.length - 1
+      dn.addEventListener('click', () => { const t = prevSteps[i + 1]; prevSteps[i + 1] = prevSteps[i]; prevSteps[i] = t; paintStepPreview() })
+      const xx = document.createElement('button'); xx.className = 'stb del'; xx.textContent = '✕'; xx.title = '去掉这步'
+      xx.addEventListener('click', () => { prevSteps.splice(i, 1); if (!prevSteps.length) closeStepPreview(); else paintStepPreview() })
+      c.appendChild(up); c.appendChild(dn); c.appendChild(xx)
+      stepChips.appendChild(c)
+    })
+  }
+  $('stCancel').addEventListener('click', closeStepPreview)
+  $('stSmart').addEventListener('click', () => { closeStepPreview(); reallyGo(null) })   // 智能模式:整段 body 提交(现状链路)
+  $('stStrict').addEventListener('click', () => { const ss = prevSteps ? prevSteps.slice() : null; closeStepPreview(); reallyGo(ss) })   // 严格模式:编辑后 steps 数组 + strict:true
+
+  async function go() {
+    if (!stepPrev.hidden) return   // 预览条开着:先选开跑方式,别重复触发
     const v = goalEl.value.trim()
     if (!v && !pendingAtts.length) return
+    if (mode === 'pipeline') {
+      if (typeof H.orchToolsStatus === 'function') {   // T9:通道缺席跳过检查
+        let st = null
+        try { st = await H.orchToolsStatus() } catch (e) { st = null }
+        const miss = missingOrchTools(st)
+        if (miss.length) {
+          showPipeBlock('缺编排工具：' + miss.join('、') + ' —— 完整重启引擎（opencode/bocomcode serve）让它带上任务编排工具，再开跑')
+          return
+        }
+      }
+      const steps = splitSteps(v)
+      if (steps.length > 1) { openStepPreview(steps); return }   // F4:多步先预览,预览条按钮负责真正开跑
+    }
+    reallyGo(null)
+  }
+  function reallyGo(strictSteps) {
+    const v = goalEl.value.trim()
     const docRefs = pendingAtts.filter((a) => a.kind === 'doc').map((a) => '- ' + a.path + '（' + a.name + '）').join('\n')
     const docNote = docRefs ? '【用户拖入了文档，需要时用 read_document 工具读取其内容】\n' + docRefs : ''
     const images = pendingAtts.filter((a) => a.kind === 'image').map((a) => ({ mime: a.mime, url: a.dataUrl, filename: a.name }))
     const msg = [docNote, v].filter(Boolean).join('\n\n') || '(见附件)'
     const title = (v || (images.length ? '图片对话' : '文档对话')).slice(0, 24)
     const disp = (v || (images.length ? '(图片)' : '(文档)')) + (pendingAtts.length ? ' · 附件 ' + pendingAtts.length : '')
-    try { H.startConversation({ title, msg, disp, files: images, mode }) } catch (e) {}
+    const payload = { title, msg, body: msg, disp, files: images, mode }   // body 与 msg 同文:契约扩展字段,只认 msg 的旧后端也不亏
+    if (mode === 'pipeline' && Array.isArray(strictSteps) && strictSteps.length) { payload.steps = strictSteps; payload.strict = true }
+    try { H.startConversation(payload) } catch (e) {}
     H.closeSelf()
   }
   $('go').addEventListener('click', go)
   goalEl.addEventListener('keydown', (e) => { if (e.isComposing || e.keyCode === 229) return; if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go() } })   // IME 组合态不发送
+  goalEl.addEventListener('input', () => { const w = $('pipeBlockMsg'); if (w) w.remove() })   // 改了描述就清掉体检红字(T9)
   setTimeout(() => { try { goalEl.focus() } catch (e) {} }, 60)
 
   // 窗口控制
@@ -429,7 +732,7 @@
   $('min').addEventListener('click', () => H.minimizeSelf())
   $('max').addEventListener('click', () => H.toggleMaximize())
   $('clear').addEventListener('click', async () => { try { await H.clearHistory() } catch (e) {} render() })
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') H.closeSelf() })
+  document.addEventListener('keydown', (e) => { if (e.key !== 'Escape') return; if (!stepPrev.hidden) { closeStepPreview(); return } H.closeSelf() })   // 预览条开着时 Esc 先收预览,再按才关窗
 
   // 整卡拖动统一在 carddrag.js（见 </body> 前引入）
 </script>

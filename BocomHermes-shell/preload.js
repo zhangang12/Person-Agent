@@ -44,6 +44,14 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   wfList: () => ipcRenderer.invoke('wf-list'),
   wfOpen: (it) => ipcRenderer.invoke('wf-open', it),
   wfDelete: (id) => ipcRenderer.invoke('wf-delete', id),
+  // 任务编排(卡坞):断点重试 / 模板(内置+用户) / 定时编排
+  pipelineRetry: (id) => ipcRenderer.invoke('pipeline-retry', id),
+  pipelineTplList: () => ipcRenderer.invoke('pipeline-tpl-list'),
+  pipelineTplSave: (it) => ipcRenderer.invoke('pipeline-tpl-save', it),
+  pipelineTplDelete: (id) => ipcRenderer.invoke('pipeline-tpl-delete', id),
+  pipelineSchedList: () => ipcRenderer.invoke('pipeline-sched-list'),
+  pipelineSchedSave: (it) => ipcRenderer.invoke('pipeline-sched-save', it),
+  pipelineSchedDelete: (id) => ipcRenderer.invoke('pipeline-sched-delete', id),
   // 对话 ↔ opencode 会话
   cardInit: (opts) => ipcRenderer.invoke('card-init', opts || {}),
   onCardInject: (cb) => ipcRenderer.on('card-inject', (_e, p) => cb(p)),
@@ -177,6 +185,10 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   browserRecList:       ()    => ipcRenderer.invoke('browser-rec-list'),
   browserRecGet:        (id)  => ipcRenderer.invoke('browser-rec-get', id),
   browserRecSkillMd:    (id)  => ipcRenderer.invoke('browser-rec-skillmd', id),   // Codex 四段式技能文档
+  // 录制中实况步骤流:边录边看,删步/改值(见 skills.html 录制面板)
+  browserRecEvents:     ()    => ipcRenderer.invoke('browser-rec-events'),
+  browserRecEventDelete: (i)  => ipcRenderer.invoke('browser-rec-event-delete', i),
+  browserRecEventUpdate: (a)  => ipcRenderer.invoke('browser-rec-event-update', a),
   onBrowserSkillRefined: (cb) => ipcRenderer.on('browser-skill-refined', (_e, d) => cb(d)),   // 存为技能后 Agent 自动精修完成的通知
   browserRecUpdate:     (id, patch) => ipcRenderer.invoke('browser-rec-update', { id, patch }),
   browserRecDelete:     (id)  => ipcRenderer.invoke('browser-rec-delete', id),

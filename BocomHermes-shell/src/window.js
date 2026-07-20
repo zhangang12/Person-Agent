@@ -68,6 +68,17 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     saveHistory()
   }
   function touchHistory(id) { const h = S.history.find((x) => x.id === id); if (h) { h.ts = Date.now(); saveHistory() } }
+  // 会话换 id(引擎侧重建会话等场景):history.json 里把 oldId 条目原地换成 newId,created/title/model 等字段保留
+  function replaceHistoryId(oldId, newId) {
+    const o = String(oldId == null ? '' : oldId), n = String(newId == null ? '' : newId)
+    if (!o || !n || o === n) return false
+    const h = S.history.find((x) => x.id === o)
+    if (!h) return false
+    S.history = S.history.filter((x) => x.id !== n)   // newId 已有条目先摘,防重复
+    h.id = n; h.ts = Date.now()
+    saveHistory()
+    return true
+  }
 
   S.settings = loadSettings()
   loadHistory()
@@ -194,7 +205,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (wfKind) {
       if (opts.wf) query.wf = '1'
       S.wfRegistry = S.wfRegistry || new Map(); S.wfCardByWc = S.wfCardByWc || new Map()
-      const reg = { id: String(id), wcId, kind: wfKind, goal: disp || title || '', status: 'running', round: 0, rounds: 0, at: Date.now(), archive: null, final: '', todos: null, files: [], elapsedMs: 0 }
+      const reg = { id: String(id), wcId, kind: wfKind, goal: disp || title || '', status: 'running', round: 0, rounds: 0, at: Date.now(), archive: null, final: '', todos: null, files: [], actions: [], dir: S.settings.projectDir || '', elapsedMs: 0 }
       S.wfRegistry.set(reg.id, reg); S.wfCardByWc.set(wcId, reg)
       if (S.wfRegistry.size > 50) { const k = S.wfRegistry.keys().next().value; S.wfRegistry.delete(k) }
     }
@@ -213,7 +224,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     win.on('closed', () => {
       const s = S.sessionByWc.get(wcId)
       let oldServe = null
-      if (s) { const si = S.sessionInfo.get(s); if (si) { oldServe = si.serve; oc.abort(si.serve, s) } S.sessionInfo.delete(s); S.streamBuf.delete(s); S.sentPrompt.delete(s); S.firstMsgCtx.delete(s); S.dropPendingPerm && S.dropPendingPerm(s) }   // 未答的审批记录随卡清,别在 pendingPerm 里留孤儿
+      if (s) { const si = S.sessionInfo.get(s); if (si) { oldServe = si.serve; oc.abort(si.serve, s) } S.sessionInfo.delete(s); S.streamBuf.delete(s); S.sentPrompt.delete(s); S.firstMsgCtx.delete(s); S.dropPendingPerm && S.dropPendingPerm(s); if (typeof S.dropPendingQuestion === 'function') S.dropPendingQuestion(s) }   // 未答的审批/提问记录随卡清,别在 pendingPerm/pendingQuestion 里留孤儿
       S.sessionByWc.delete(wcId)
       if (S.cardDir) S.cardDir.delete(wcId)       // per-card 目录/模型状态随卡销毁
       if (S.modelByWc) S.modelByWc.delete(wcId)
@@ -222,9 +233,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         const inUseBases = new Set([...S.sessionInfo.values()].map((si) => si.serve && si.serve.base).filter(Boolean))
         try { if (oc.retireIfOrphan(oldServe, inUseBases)) log('card closed: serve ' + oldServe.base + ' 已退休(无会话引用)') } catch {}
       }
-      // 工作流卡收尾:注册表置 done + 落最终存档(关窗不丢,workflow_result 仍可取回)
+      // 工作流卡收尾:注册表落终态 + 落最终存档(关窗不丢,workflow_result 仍可取回)。
+      // 终态语义:此前已判 done 保持 done;此前还 running 被关卡 = interrupted(列表/重试据此区分"干完了"与"被掐断")。
       const wreg = S.wfCardByWc && S.wfCardByWc.get(wcId)
-      if (wreg) { wreg.status = 'done'; wreg.elapsedMs = Date.now() - wreg.at; S.wfCardByWc.delete(wcId); try { S.wfArchive && S.wfArchive(wreg) } catch (e2) { log('wf archive err: ' + e2.message) } }
+      if (wreg) { wreg.status = wreg.status === 'done' ? 'done' : 'interrupted'; wreg.elapsedMs = Date.now() - wreg.at; S.wfCardByWc.delete(wcId); try { S.wfArchive && S.wfArchive(wreg) } catch (e2) { log('wf archive err: ' + e2.message) } }
       if (wreg) { try { wfDequeue() } catch {} }   // 关卡腾出并发位 → 排队工作流补位(出队触发点②)
       forgetBusy(wcId)   // 关卡即清"忙"，避免球卡在思考态
     })
@@ -272,7 +284,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     return Number.isFinite(n) && n >= 1 ? n : 2
   }
   function wfRunningCount() {
-    return S.wfRegistry ? [...S.wfRegistry.values()].filter((r) => r.status === 'running').length : 0
+    // 并发闸分口径(T8):只占【动态工作流】的并发位 —— 任务编排(pipeline)顺序链是业务执行体,不占位、不被排队
+    return S.wfRegistry ? [...S.wfRegistry.values()].filter((r) => r.status === 'running' && r.kind !== 'pipeline').length : 0
   }
   function spawnWorkflow(goal) {
     const g = String(goal || '').trim() || '未命名工作流'
@@ -301,18 +314,38 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   }
   // ── 工作流成果注册表(新路径):session.js 每轮回调,orch-mcp workflow_result / 卡坞据此取成果 ──
   // 每轮终答即最新成果(快照式,不等"全部结束"):升格方随时可取、关窗不丢(存档落盘)。
-  // status 语义:running=还有未完 todo(或没用过 todo);done=todo 全勾 或 关卡。翻转只在轮末重算 ——
+  // status 语义:running=还有未完 todo(或没用过 todo);done=todo 全勾;interrupted=关卡时还在跑 / 严格模式失败停发。翻转只在轮末重算 ——
   // 升格方拿 workflow_result 据此知道"活干完了",不再死等一个不关卡就永远 running 的工作流。
-  S.wfTurnDone = (wcId, finalText) => {
+  // 严格模式(固定步骤链)下一步下发:走 card-inject 进卡片渲染端,让每一步都过 card-send 通道 ——
+  // 这样 session.js 每轮终答必回调 wfTurnDone,链条闭环不依赖主进程直发后的回合检测。
+  function strictSendNext(reg) {
+    const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === reg.wcId)
+    if (!win) return false
+    const n = reg.strictIdx   // 下一步下标(0 起;steps[0] 已在开卡首条消息里发掉)
+    const step = String(reg.strictSteps[n] || '')
+    if (!step) return false
+    const text = '<任务编排·严格模式>\n【第 ' + (n + 1) + '/' + reg.strictSteps.length + ' 步】只执行这一步并汇报结果;做完等下一步自动下发,不要提前做后续步骤。若本步失败,明说「失败」及原因。\n</任务编排·严格模式>\n' + step
+    try { win.webContents.send('card-inject', { text, disp: '【第 ' + (n + 1) + '/' + reg.strictSteps.length + ' 步】' + step.slice(0, 120) }); reg.strictIdx++; return true } catch { return false }
+  }
+  S.wfTurnDone = (wcId, finalText, snap) => {
     const reg = S.wfCardByWc && S.wfCardByWc.get(wcId); if (!reg) return
     reg.rounds++; reg.round = reg.rounds
     const t = String(finalText == null ? '' : finalText); if (t.trim()) reg.final = t
+    if (snap && snap.aborted) reg.aborted = true   // 本轮被中止(用户点停/中断):注册表+存档留痕
     reg.elapsedMs = Date.now() - reg.at
     const open = (reg.todos || []).some((x) => !/complet|cancel/i.test(String(x && x.status || '')))
     const wasDone = reg.status === 'done'
     reg.status = (reg.todos && reg.todos.length && !open) ? 'done' : 'running'
-    if (!wasDone && reg.status === 'done') {   // 首次全勾:桌面通知一声(长跑工作流用户多半不在跟前)
-      try { new Notification({ title: '工作流完成', body: String(reg.goal).slice(0, 80) }).show() } catch {}
+    // 严格模式推进:步骤未发完时看本轮成败 —— 含失败语义(模型明说失败/无法/放弃)→ 停发并标 interrupted;否则自动下发下一步。
+    // 失败判定只在"还有步要发"时做:全部发完后的收尾汇报常带"无失败"之类否定句,误标 interrupted 没意义。
+    if (reg.strictSteps && reg.strictSteps.length && !reg.strictFailed) {
+      if (reg.strictIdx < reg.strictSteps.length) {
+        if (/失败|无法|放弃/.test(t)) { reg.strictFailed = true; reg.status = 'interrupted'; log('strict pipeline interrupted at step ' + reg.strictIdx + '/' + reg.strictSteps.length + ' (card ' + reg.id + ')') }
+        else { reg.status = 'running'; try { strictSendNext(reg) } catch (e) { log('strict step send err: ' + e.message) } }   // 步骤未发完强制 running,防提前判 done/误通知
+      }
+    }
+    if (!wasDone && reg.status === 'done') {   // 首次全勾:桌面通知一声(长跑工作流用户多半不在跟前);标题按 kind 区分(T1)
+      try { new Notification({ title: reg.kind === 'pipeline' ? '任务编排完成' : '工作流完成', body: String(reg.goal).slice(0, 80) }).show() } catch {}
     }
     try { S.wfArchive(reg) } catch (e) { log('wf archive err: ' + e.message) }
     if (reg.status === 'done') wfDequeue()   // 判 done → 腾出并发位,排队工作流补位(出队触发点①)
@@ -320,6 +353,14 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   S.wfTodos = (wcId, todos) => { const reg = S.wfCardByWc && S.wfCardByWc.get(wcId); if (reg && Array.isArray(todos)) reg.todos = todos }
   // write/edit 落盘路径(主 Agent 与子 Agent 都收,session.js 在工具事件里回调)→ 存档+workflow_result 可取出产物位置
   S.wfFiles = (wcId, fp) => { const reg = S.wfCardByWc && S.wfCardByWc.get(wcId); if (reg && fp && !reg.files.includes(fp)) reg.files.push(fp) }
+  // 执行动作流水(session.js 在关键工具事件里回调):{kind,label,detail} 追加进注册表(上限 50 条/项),并顺带刷一次存档
+  S.wfAction = (wcId, a) => {
+    const reg = S.wfCardByWc && S.wfCardByWc.get(wcId); if (!reg || !a) return
+    reg.actions = Array.isArray(reg.actions) ? reg.actions : []
+    reg.actions.push({ kind: String(a.kind || ''), label: String(a.label || '').slice(0, 120), detail: String(a.detail || '').slice(0, 400), at: Date.now() })
+    if (reg.actions.length > 50) reg.actions.splice(0, reg.actions.length - 50)
+    try { S.wfArchive(reg) } catch (e) { log('wf archive err: ' + e.message) }
+  }
   S.wfArchive = (reg) => {
     if (!reg || !reg.final) return
     const dirW = path.join(app.getPath('userData'), 'workflows'); fs.mkdirSync(dirW, { recursive: true })
@@ -330,7 +371,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     }
     const todoLines = (reg.todos || []).map((t) => '- [' + (/complet/i.test(String(t && t.status || '')) ? 'x' : ' ') + '] ' + String((t && (t.content || t.text || t.title)) || '')).join('\n')
     const fileLines = (reg.files || []).map((f) => '- ' + f).join('\n')
-    fs.writeFileSync(reg.archive, '# ' + (reg.kind === 'pipeline' ? '任务编排' : '工作流') + ':' + reg.goal + '\n\n- id:' + reg.id + ' · 轮次:' + reg.rounds + ' · 用时:' + Math.round((reg.elapsedMs || 0) / 1000) + 's · 状态:' + reg.status + '\n\n## 任务清单\n' + (todoLines || '(无)') + '\n\n## 产出文件\n' + (fileLines || '(无)') + '\n\n## 最终成果(最近一轮回答)\n\n' + reg.final)
+    // 执行动作流水(时间+label+detail;wf-list 卡坞同源展示)
+    const actLines = (reg.actions || []).map((a) => { const d = new Date(a.at || 0); const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ':' + String(d.getSeconds()).padStart(2, '0'); return '- [' + hm + '] ' + (a.kind ? a.kind + ' · ' : '') + a.label + (a.detail ? ' — ' + a.detail : '') }).join('\n')
+    fs.writeFileSync(reg.archive, '# ' + (reg.kind === 'pipeline' ? '任务编排' : '工作流') + ':' + reg.goal + '\n\n- id:' + reg.id + ' · 轮次:' + reg.rounds + ' · 用时:' + Math.round((reg.elapsedMs || 0) / 1000) + 's · 状态:' + reg.status + (reg.aborted ? ' · 曾被中止' : '') + '\n\n## 任务清单\n' + (todoLines || '(无)') + '\n\n## 产出文件\n' + (fileLines || '(无)') + '\n\n## 执行动作\n' + (actLines || '(无)') + '\n\n## 最终成果(最近一轮回答)\n\n' + reg.final)
   }
 
   // 规则法识别邮件里的会议 → 产出"建议待办"(pending 态,人工确认后才进正式待办);
@@ -1283,15 +1326,26 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     '3. 顺序依赖:上一步的产物(文件路径/数据/结论)接给下一步;某步失败就【停】,说清卡在哪、差什么,不要跳过继续、不要编造产物。',
     '4. 不扩大范围:不做描述之外的事,不派子 agent,不通读无关文件。',
     '5. 全链跑完用 3-5 行收尾:每步结果 + 产物位置(文件路径/邮件收件人)。',
+    '6. 某步失败时,把该步 todo 保持 in_progress 并在汇报里写明失败原因;技能报告提示可另开编排时忽略之 —— 后续步骤已在链内,不要再开新编排卡。',
     '</任务编排执行规程>',
     '',
   ].join('\n')
+  // 严格模式(固定步骤链)首条消息前缀:steps[0] 之后由 wfTurnDone 逐轮自动下发(strictSendNext),模型只管当前步
+  const STRICT_PREFIX = '<任务编排·严格模式>\n本次编排按【固定步骤链】逐步下发:每轮只执行当前下发的这一步并汇报结果,不要提前做后续步骤、不要追问后续步骤,做完等下一步自动下发。若某步失败,明说「失败」及原因(会停止下发后续步骤)。\n</任务编排·严格模式>\n'
   ipcMain.handle('start-conversation', (_e, payload) => {
     const { title, msg, disp, files, mode } = payload || {}
     if (mode === 'wf') return { id: spawnWorkflow(msg || title || '') }   // 动态工作流:起单主 Agent fan-out 卡(见 spawnWorkflow);图片暂不支持
     if (mode === 'pipeline') {
       const body = msg || title || ''
-      return { id: spawnCard('任务编排 · ' + String(disp || body).slice(0, 18), null, PIPELINE_RULES + body, disp || body, { flash: true, pipeline: true }) }
+      // 扩展:{steps, strict, files} —— strict=true 且 steps 非空进【严格模式】:开卡只发 steps[0]+严格规程前缀,
+      // 后续每轮 wfTurnDone 自动下发下一步(状态存 reg.strictSteps/reg.strictIdx);files 照普通分支同款暂存(S.cardFiles)
+      const steps = Array.isArray(payload && payload.steps) ? payload.steps.map((s) => String(s == null ? '' : s).trim()).filter(Boolean).slice(0, 20) : []
+      const strict = !!(payload && payload.strict) && steps.length > 0
+      const first = strict ? (PIPELINE_RULES + STRICT_PREFIX + '【第 1/' + steps.length + ' 步】\n' + steps[0]) : (PIPELINE_RULES + body)
+      const id = spawnCard('任务编排 · ' + String(disp || body).slice(0, 18), null, first, disp || body, { flash: true, pipeline: true })
+      if (strict) { const reg = S.wfRegistry && S.wfRegistry.get(String(id)); if (reg) { reg.strictSteps = steps; reg.strictIdx = 1 } }
+      if (Array.isArray(files) && files.length) { S.cardFiles = S.cardFiles || new Map(); S.cardFiles.set(String(id), files) }
+      return { id }
     }
     const id = spawnCard(title || (msg || '').slice(0, 24) || '新对话', null, msg, disp, { flash: true })
     if (Array.isArray(files) && files.length) { S.cardFiles = S.cardFiles || new Map(); S.cardFiles.set(String(id), files) }
@@ -1309,6 +1363,82 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     { id: 'troubleshoot', name: '排查', hint: '定位问题根因', goalPrefix: '【排查】定位以下问题的根因：先收集证据(日志/代码/复现路径)，形成假设逐一验证，给出根因与修复建议：' },
   ]
   ipcMain.handle('wf-templates', () => WF_TEMPLATES)
+  // ── 任务编排模板(F1):内置常量 + 用户模板(userData/pipeline-templates.json)合并;vars 从 goal 的 {{xxx}} 占位提取 ──
+  const PIPELINE_TEMPLATES = [
+    { id: 'export-check-mail', name: '导出→核对→邮件汇报', goal: '读取 {{导出文件}},逐行核对 {{核对要点}} 是否缺失或异常,汇总成 3-5 行核对结论,然后用 mail_send 发邮件给 {{收件人}},标题写「{{报表名}}核对汇报」,正文附结论。' },
+    { id: 'export-anomaly-todo', name: '导出→异常行→加待办', goal: '读取 {{导出文件}},筛出符合 {{异常条件}} 的行,逐条加进待办(标题带行号和关键字段),最后汇报一共加了几条待办、异常集中在哪。' },
+    { id: 'doc-digest-knowledge', name: '读文档→要点→写知识库', goal: '用 doc_read 读 {{文档路径}},提炼 3-7 条三个月后大概率仍成立的要点,用 memory_add 逐条写进项目知识库(每条一句话 + scene 写复用场景),最后列出写入了哪几条。' },
+  ]
+  const pipeTplFile = () => path.join(app.getPath('userData'), 'pipeline-templates.json')
+  const pipeTplLoad = () => { try { const a = JSON.parse(fs.readFileSync(pipeTplFile(), 'utf8')); return Array.isArray(a) ? a : [] } catch { return [] } }
+  const pipeTplVars = (goal) => { const out = new Set(); const re = /\{\{\s*([^{}]+?)\s*\}\}/g; let m; while ((m = re.exec(String(goal || '')))) out.add(m[1]); return [...out] }
+  ipcMain.handle('pipeline-tpl-list', () => [
+    ...PIPELINE_TEMPLATES.map((t) => ({ id: t.id, name: t.name, goal: t.goal, builtin: true, vars: pipeTplVars(t.goal) })),
+    ...pipeTplLoad().map((t) => ({ id: String(t.id || ''), name: String(t.name || ''), goal: String(t.goal || ''), builtin: false, vars: pipeTplVars(t.goal) })),
+  ])
+  ipcMain.handle('pipeline-tpl-save', (_e, it) => {
+    const name = String((it && it.name) || '').trim().slice(0, 40), goal = String((it && it.goal) || '').trim().slice(0, 2000)
+    if (!name || !goal) return { ok: false, err: '模板名称与目标都不能为空' }
+    const list = pipeTplLoad(); list.push({ id: 'u' + Date.now().toString(36), name, goal })
+    try { fs.writeFileSync(pipeTplFile(), JSON.stringify(list, null, 2)); return { ok: true } } catch (e) { return { ok: false, err: e.message } }
+  })
+  ipcMain.handle('pipeline-tpl-delete', (_e, id) => {
+    const sid = String(id == null ? '' : id)
+    if (PIPELINE_TEMPLATES.some((t) => t.id === sid)) return { ok: false, err: '内置模板不能删除' }
+    const list = pipeTplLoad(), next = list.filter((t) => String(t.id) !== sid)
+    if (next.length === list.length) return { ok: false, err: '没有找到这条模板' }
+    try { fs.writeFileSync(pipeTplFile(), JSON.stringify(next, null, 2)); return { ok: true } } catch (e) { return { ok: false, err: e.message } }
+  })
+  // ── 定时任务编排:userData/pipeline-schedules.json;主进程 60s 轮询,到点(HH:MM 命中且今天没跑过)以 pipeline 模式开卡 ──
+  // flash:false 不抢焦点;跑完走 wfTurnDone 的「任务编排完成」通知。lastRun 是内存标记 —— 重启后同一分钟内可能补跑一次,可接受。
+  const pipeSchedFile = () => path.join(app.getPath('userData'), 'pipeline-schedules.json')
+  const pipeSchedLoad = () => { try { const a = JSON.parse(fs.readFileSync(pipeSchedFile(), 'utf8')); return Array.isArray(a) ? a : [] } catch { return [] } }
+  ipcMain.handle('pipeline-sched-list', () => pipeSchedLoad().map((s) => ({ id: String(s.id || ''), goal: String(s.goal || ''), time: String(s.time || '') })))
+  ipcMain.handle('pipeline-sched-save', (_e, it) => {
+    const goal = String((it && it.goal) || '').trim().slice(0, 2000), time = String((it && it.time) || '').trim()
+    if (!goal) return { ok: false, err: '编排目标不能为空' }
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return { ok: false, err: '时间格式要 HH:MM(24 小时制)' }
+    const list = pipeSchedLoad(); list.push({ id: 's' + Date.now().toString(36), goal, time })
+    try { fs.writeFileSync(pipeSchedFile(), JSON.stringify(list, null, 2)); return { ok: true } } catch (e) { return { ok: false, err: e.message } }
+  })
+  ipcMain.handle('pipeline-sched-delete', (_e, id) => {
+    const list = pipeSchedLoad(), next = list.filter((s) => String(s.id) !== String(id == null ? '' : id))
+    if (next.length === list.length) return { ok: false, err: '没有找到这条定时' }
+    try { fs.writeFileSync(pipeSchedFile(), JSON.stringify(next, null, 2)); return { ok: true } } catch (e) { return { ok: false, err: e.message } }
+  })
+  const pipeSchedLastRun = new Map()   // id → 'YYYY-MM-DD'(今天已跑)
+  setInterval(() => {
+    try {
+      const now = new Date()
+      const hm = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0')
+      const today = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0')
+      for (const sc of pipeSchedLoad()) {
+        if (!sc || sc.time !== hm || !sc.goal) continue
+        if (pipeSchedLastRun.get(sc.id) === today) continue
+        pipeSchedLastRun.set(sc.id, today)
+        log('pipeline schedule fired: ' + sc.id + ' ' + sc.time + ' — ' + String(sc.goal).slice(0, 60))
+        try { spawnCard('定时编排 · ' + String(sc.goal).slice(0, 18), null, PIPELINE_RULES + sc.goal, sc.goal, { flash: false, pipeline: true }) } catch (e) { log('pipeline schedule spawn err: ' + e.message) }
+      }
+    } catch {}
+  }, 60000).unref()
+  // 编排重试(卡坞):找到注册表项的活会话,格式化消息直发(oc.sendMessage);卡已关/会话不在 → {ok:false, err}
+  ipcMain.handle('pipeline-retry', async (_e, id) => {
+    try {
+      const reg = S.wfRegistry ? S.wfRegistry.get(String(id == null ? '' : id)) : null
+      if (!reg) return { ok: false, err: '没有找到这条编排记录' }
+      const sid = S.sessionByWc.get(reg.wcId), si = sid && S.sessionInfo.get(sid)
+      if (!sid || !si || !si.serve) return { ok: false, err: '卡片已关或会话不在,无法续聊(可新开一张编排卡)' }
+      const todos = Array.isArray(reg.todos) ? reg.todos : []
+      const idx = todos.findIndex((x) => !/complet|cancel/i.test(String(x && x.status || '')))   // 第一个未完步 = 断点步
+      const stepText = idx >= 0 ? String((todos[idx] && (todos[idx].content || todos[idx].text || todos[idx].title)) || '') : ''
+      const msg = '上次在第 ' + (idx >= 0 ? idx + 1 : '?') + ' 步〈' + (stepText || '未登记步骤') + '〉失败/中断:' + String(reg.final || '').slice(0, 200) + '。请从该步重试并继续后续步骤。'
+      const model = si.model || (S.modelByWc && S.modelByWc.get(reg.wcId)) || S.settings.model || null
+      await oc.sendMessage(si.serve, sid, msg, model)
+      if (reg.status === 'interrupted') reg.status = 'running'   // 续上了 → 摘中断标(严格模式失败标一并清,防停发状态卡死)
+      reg.strictFailed = false
+      return { ok: true }
+    } catch (e) { return { ok: false, err: String((e && e.message) || e) } }
+  })
   // ── 项目知识库治理 IPC(纯逻辑在 src/knowledge.js;此处负责文件 IO/落盘/审计)────────────────
   // 防腐依赖注入工厂(与 session.js 同款):锚点相对路径一律围栏在项目目录内;读不了/非 git 对应检查自动跳过。
   function knowledgeDeps(dir) {
@@ -1394,11 +1524,18 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('wf-list', () => {
     const out = []
     const regs = S.wfRegistry ? [...S.wfRegistry.values()] : []
-    for (const r of regs) out.push({
-      id: r.id, goal: r.goal, status: r.status, kind: r.kind || 'workflow', rounds: r.rounds, elapsedMs: r.elapsedMs,
-      files: (r.files || []).length, at: r.at, archive: r.archive || '',
-      live: !!(S.wfCardByWc && S.wfCardByWc.has(r.wcId)), busy: !!(S.isCardBusy && S.isCardBusy(r.wcId)),
-    })
+    for (const r of regs) {
+      const todos = Array.isArray(r.todos) ? r.todos : []
+      const doneN = todos.filter((x) => /complet|cancel/i.test(String(x && x.status || ''))).length
+      const cur = todos.find((x) => /progress|doing/i.test(String(x && x.status || '')))   // 进行中步(in_progress)→ 卡坞"当前在干哪步"
+      out.push({
+        id: r.id, goal: r.goal, status: r.status, kind: r.kind || 'workflow', rounds: r.rounds, elapsedMs: r.elapsedMs,
+        files: (r.files || []).length, at: r.at, archive: r.archive || '',
+        live: !!(S.wfCardByWc && S.wfCardByWc.has(r.wcId)), busy: !!(S.isCardBusy && S.isCardBusy(r.wcId)),
+        todoDone: doneN, todoTotal: todos.length, current: cur ? String((cur && (cur.content || cur.text || cur.title)) || '') : '',
+        actions: (Array.isArray(r.actions) ? r.actions : []).map((a) => ({ kind: a.kind, label: a.label, detail: a.detail })),
+      })
+    }
     const seen = new Set(regs.map((r) => r.archive).filter(Boolean))
     try {   // 磁盘存档补进来(注册表只 50 条且重启即空):goal 只读文件头 2KB,别为个列表把整份存档读进来
       const dirW = path.join(app.getPath('userData'), 'workflows')
@@ -1415,10 +1552,10 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
           goal = ((head.match(/^# (?:工作流|任务编排):(.*)$/m) || [])[1] || '').trim()
           if (/^# 任务编排:/m.test(head)) kind = 'pipeline'
         } catch {}
-        out.push({ id: a.f.split('_')[1], goal: goal || a.f, status: 'archived', kind, rounds: 0, elapsedMs: 0, files: 0, at: a.m, archive: a.p, live: false, busy: false })
+        out.push({ id: a.f.split('_')[1], goal: goal || a.f, status: 'archived', kind, rounds: 0, elapsedMs: 0, files: 0, at: a.m, archive: a.p, live: false, busy: false, todoDone: 0, todoTotal: 0, current: '', actions: [] })
       }
     } catch {}
-    const rank = { running: 0, done: 1, archived: 2 }   // 进行中置顶,其余按时间倒序
+    const rank = { running: 0, interrupted: 1, done: 2, archived: 3 }   // 进行中置顶,被掐断的次之(要人管),其余按时间倒序
     out.sort((a, b) => (rank[a.status] != null ? rank[a.status] : 3) - (rank[b.status] != null ? rank[b.status] : 3) || (b.at || 0) - (a.at || 0))
     // 响应改对象信封 { items, queued }:数组挂自定义属性过不了 IPC 结构化克隆,queued 只能在对象字段上带。
     // queued = 并发闸外排队等待的工作流(position 从 1 起,字段名与 dock 前端约定一致)
@@ -2133,9 +2270,41 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     const fails = replay.stepReport.filter((s) => !s.ok && !s.transient)
     const retried = replay.stepReport.filter((s) => s.retried && s.ok).length
     const ok = fails.length === 0 && (!replay.success || replay.success.pass)
+    // 失败自动取证包:截图 + 当前 URL + 首个失败步 + 这步试过的选择器 + 页面文本摘要 → userData/evidence/(留最近 60 份)。
+    // 排查选择器失配类失败不用复跑 —— 直接看"它当时到底看到了什么"。报告里带路径(UI 与 Agent 都拿得到)。
+    let evidencePath = ''
+    if (fails.length) {
+      try {
+        const tab = brActive()
+        const wc = tab && tab.view && !tab.view.webContents.isDestroyed() && tab.view.webContents
+        const evDir = path.join(app.getPath('userData'), 'evidence'); fs.mkdirSync(evDir, { recursive: true })
+        const f0 = fails[0]
+        const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
+        let shot = ''
+        if (wc) {
+          try { fs.writeFileSync(path.join(evDir, stamp + '_' + hit.id + '.png'), (await wc.capturePage()).toPNG()); shot = path.join(evDir, stamp + '_' + hit.id + '.png') } catch {}
+        }
+        let url = '', domText = ''
+        if (wc) {
+          try { url = wc.getURL() } catch {}
+          try { domText = await wc.executeJavaScript('(document.title||"")+"\\n"+((document.body&&document.body.innerText)||"").slice(0,3000)', true) } catch {}
+        }
+        const failEv = (rec.events || [])[f0.i - 1]
+        const bundle = { at: new Date().toISOString(), skill: hit.name, id: hit.id, url, failStep: f0,
+          selectorsTried: failEv ? [failEv.sel, ...(failEv.selAlt || [])].filter(Boolean) : [],
+          healed: replay.healed || [], domText, screenshot: shot }
+        evidencePath = path.join(evDir, stamp + '_' + hit.id + '.json')
+        fs.writeFileSync(evidencePath, JSON.stringify(bundle, null, 2))
+        try {   // 只留最近 60 份(.json 与同名 .png 一起清)
+          const all = fs.readdirSync(evDir).filter((f) => f.endsWith('.json')).map((f) => ({ f, m: fs.statSync(path.join(evDir, f)).mtimeMs })).sort((a, b) => b.m - a.m)
+          for (const old of all.slice(60)) { try { fs.unlinkSync(path.join(evDir, old.f)) } catch {}; try { fs.unlinkSync(path.join(evDir, old.f.replace(/\.json$/, '.png'))) } catch {} }
+        } catch {}
+      } catch (e) { log('evidence capture err: ' + e.message) }
+    }
     try { S.audit && S.audit('skill', 'Agent 运行技能「' + hit.name + '」', { by: 'agent', steps: replay.stepReport.length, result: ok ? 'PASS' : (fails.length + ' 步失败'), baseUrl: (a && a.baseUrl) || '' }) } catch {}
     const lines = ['技能「' + hit.name + '」回放 ' + replay.stepReport.length + '/' + replay.totalSteps + ' 步 · ' + (fails.length === 0 ? '✓ 步骤全部成功' : '✗ ' + fails.length + ' 步失败') + (retried ? '(' + retried + ' 步重试后成功)' : '')]
     for (const f of fails.slice(0, 8)) lines.push('  · 步 ' + f.i + ' ' + f.act + ' "' + String(f.sel).slice(0, 60) + '" — ' + f.err)
+    if (evidencePath) lines.push('失败取证包(截图+页面快照): ' + evidencePath)
     const skippedState = replay.stepReport.filter((s) => s.skipped === 'state').length
     if (skippedState) lines.push('· ' + skippedState + ' 步已被页面状态满足自动跳过(登录缓存/无效导航)')
     // 人机断点透明化:等人的步怎么过的(人点的/自动判出的/Agent 给的);【超时】要单独喊出来 —— 那步等于没人管就往下跑了
@@ -2167,14 +2336,32 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     // 触发条件"文件到手就接编排":导出文件已捕获说明主链目标基本达成,个别收尾步失败不该卡死整条链 —— 有失败照样起,报告明说
     if (pp && pp.goal) {
       if (dls.length) {
-        if (!ok) lines.push('注意:回放有失败步骤,但导出文件已捕获 —— 仍按文件启动下载后任务编排(不放心可关掉那张卡)')
-        try {
-          const pipeGoal = composePostPipelineGoal(hit.name, pp.goal, dls)
-          const cardId = spawnCard('任务编排 · ' + hit.name, null, PIPELINE_RULES + pipeGoal, pp.goal, { flash: true, pipeline: true })
-          pipeline = { started: true, files: dls, id: cardId }
-          lines.push('→ 已对下载的 ' + dls.length + ' 个文件启动「任务编排」(单 Agent 顺序执行,见对话卡): ' + dls.map((p) => String(p).split(/[\\/]/).pop()).join('、'))
-          try { S.audit && S.audit('skill', '技能「' + hit.name + '」触发下载后任务编排', { files: dls.map((p) => String(p).split(/[\\/]/).pop()), goal: String(pp.goal).slice(0, 120), cardId }) } catch {}
-        } catch (e) { lines.push('下载后任务编排启动失败: ' + e.message) }
+        // T7 级联超生抑制:调用链是不是 MCP/relay 没有可靠标记(mail.js 中继与 UI 共用 skillRun 入口),
+        // 用保守启发式 —— 同目录已有 running 编排卡(多半就是编排链里的 Agent 在 skill_run)→ 不另开卡,报告改注
+        const projDir = S.settings.projectDir || ''
+        const runningPipe = S.wfRegistry && S.wfCardByWc
+          ? [...S.wfRegistry.values()].find((r) => r.kind === 'pipeline' && r.status === 'running' && (r.dir || '') === projDir && S.wfCardByWc.has(r.wcId))
+          : null
+        if (runningPipe) {
+          lines.push('文件就绪(' + dls.length + ' 个,已在编排链内,不另开编排): ' + dls.map((p) => String(p).split(/[\\/]/).pop()).join('、') + ' —— 完整路径见上方「导出/下载文件」行')
+        } else {
+          if (!ok) lines.push('注意:回放有失败步骤,但导出文件已捕获 —— 仍按文件启动下载后任务编排(不放心可关掉那张卡)')
+          let go = true
+          if (pp.ask) {   // F7「启动前问我」:回放完先弹确认,点了才开编排卡
+            try {
+              const r = await dialog.showMessageBox({ type: 'question', buttons: ['启动编排', '不启动'], defaultId: 0, cancelId: 1, title: '下载后任务编排', message: '技能「' + hit.name + '」已导出 ' + dls.length + ' 个文件', detail: '是否按目标启动任务编排:' + String(pp.goal).slice(0, 120) })
+              go = r && r.response === 0
+            } catch {}
+          }
+          if (!go) lines.push('已按你的选择跳过「下载后任务编排」(文件仍在本地,路径见上方「导出/下载文件」行)')
+          else try {
+            const pipeGoal = composePostPipelineGoal(hit.name, pp.goal, dls)
+            const cardId = spawnCard('任务编排 · ' + hit.name, null, PIPELINE_RULES + pipeGoal, pp.goal, { flash: !pp.silent, pipeline: true })   // F7 silent → 静默后台跑(不抢焦点)
+            pipeline = { started: true, files: dls, id: cardId }
+            lines.push('→ 已对下载的 ' + dls.length + ' 个文件启动「任务编排」(单 Agent 顺序执行,见对话卡): ' + dls.map((p) => String(p).split(/[\\/]/).pop()).join('、'))
+            try { S.audit && S.audit('skill', '技能「' + hit.name + '」触发下载后任务编排', { files: dls.map((p) => String(p).split(/[\\/]/).pop()), goal: String(pp.goal).slice(0, 120), cardId }) } catch {}
+          } catch (e) { lines.push('下载后任务编排启动失败: ' + e.message) }
+        }
       } else {
         lines.push('该技能配了「下载后任务编排」,但本次没捕获到下载文件 —— 请确认导出/下载步骤成功(任务编排未启动)')
       }
@@ -2318,7 +2505,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
           paramCount: (j.params || []).length,
           params: (j.params || []).map((p) => ({ key: p.key, label: p.label || p.key, secret: !!p.secret, default: p.default != null ? String(p.default) : '' })),   // 「录制与回放」中心:填参/批跑映射预览用
           gates: (j.events || []).filter((e) => e && e.human).length,   // 人机断点数(验证码等,卡片上提示"回放会暂停等人")
-          postPipeline: (() => { const pp = j.postPipeline || j.postWorkflow; return (pp && pp.goal) ? { goal: String(pp.goal) } : null })(),   // 下载后任务编排:配了就在卡片上出 chip + ⋯ 里可编辑
+          postPipeline: (() => { const pp = j.postPipeline || j.postWorkflow; return (pp && pp.goal) ? { goal: String(pp.goal), ask: !!pp.ask, silent: !!pp.silent } : null })(),   // 下载后任务编排:配了就在卡片上出 chip + ⋯ 里可编辑(ask/silent 透传给配置弹层)
           noCache: !!j.noCache,   // 技能级禁用缓存(跑前+每次导航前清 HTTP 缓存)
           startUrl: j.startUrl || '',
           expectation: j.expectation || '',
@@ -2333,6 +2520,43 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   })
   // 取整条录制(技能编辑器要列 input 步做参数勾选)
   ipcMain.handle('browser-rec-get', (_e, id) => { try { return readRec(id) } catch { return null } })
+  // ── 录制中实况步骤流(技能中心边录边看,录错当场删/改,不用整段重录)─────────────
+  // 只读投影:secret/人机断点步的值不下发(与导出脱敏同规);步名借 upgradeToSkill 的语义视图,不另写一套。
+  ipcMain.handle('browser-rec-events', () => {
+    const r = S.browser.rec
+    if (!r || !r.active) return { active: false, events: [] }
+    const intents = new Map()
+    try { for (const s of upgradeToSkill({ events: r.events }).steps) intents.set(s.ei, s.intent) } catch {}
+    return {
+      active: true,
+      events: r.events.map((ev, i) => ({
+        i, act: ev.act, intent: intents.get(i) || String((ev && ev.act) || ''),
+        value: (ev && (ev.secret || ev.human)) ? '' : String((ev && ev.value) == null ? '' : ev.value).slice(0, 60),
+        secret: !!(ev && ev.secret), human: !!(ev && ev.human),
+      })),
+    }
+  })
+  // 删步:仅限录制中(保存后走技能编辑器的勾掉/编辑链)。index=当前 events 下标
+  ipcMain.handle('browser-rec-event-delete', (_e, idx) => {
+    const r = S.browser.rec
+    if (!r || !r.active || !Array.isArray(r.events)) return { ok: false }
+    const i = Math.floor(+idx)
+    if (!(i >= 0 && i < r.events.length)) return { ok: false }
+    r.events.splice(i, 1); brSendRecCount()
+    return { ok: true, n: r.events.length }
+  })
+  // 改值:仅非密文、非人机断点的填值/选择步(secret/验证码类各有专属机制,不在录制态改)
+  ipcMain.handle('browser-rec-event-update', (_e, a) => {
+    const r = S.browser.rec
+    if (!r || !r.active || !Array.isArray(r.events)) return { ok: false }
+    const i = Math.floor(+(a && a.index))
+    if (!(i >= 0 && i < r.events.length)) return { ok: false }
+    const ev = r.events[i]
+    if (!ev || (ev.act !== 'input' && ev.act !== 'select')) return { ok: false, err: '只有填值/选择步可改值' }
+    if (ev.secret || ev.human) return { ok: false, err: '密文/人机断点步不改(回放时现场输入)' }
+    ev.value = String((a && a.value) == null ? '' : a.value).slice(0, 500)
+    return { ok: true }
+  })
   // 技能文档(Codex 四段式):现生成保证与 JSON 同步,不读 .skill.md 缓存(那份是给文件系统/Agent 看的)
   ipcMain.handle('browser-rec-skillmd', (_e, id) => { try { return skillMd(readRec(id)) } catch { return null } })
   // 【编译时 Agent·Phase 4(工作流化)】技能精修:「保存为技能」后【自动触发】,不设手动按钮
@@ -2423,6 +2647,15 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
         const pw = patch.postWorkflow
         if (pw && typeof pw.goal === 'string' && pw.goal.trim() && pw.goal.trim().length <= 2000) j.postWorkflow = { goal: pw.goal.trim() }
         else delete j.postWorkflow
+      }
+      if ('postPipeline' in patch) {   // 下载后编排(新字段,UI 保存链走这里):{goal, ask?, silent?};null/空目标 = 清除
+        const pp = patch.postPipeline
+        if (pp && typeof pp.goal === 'string' && pp.goal.trim() && pp.goal.trim().length <= 2000) {
+          j.postPipeline = { goal: pp.goal.trim() }
+          if (pp.ask) j.postPipeline.ask = true        // 启动前问我:回放完弹确认才开编排卡
+          if (pp.silent) j.postPipeline.silent = true  // 静默后台跑:开卡不抢焦点
+        }
+        else delete j.postPipeline
       }
       if ('skipSteps' in patch) {
         const n = (j.events || []).length
@@ -2581,5 +2814,5 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('open-history', (_e, { sid, title }) => spawnCard(title, sid))
   ipcMain.handle('clear-history', () => { S.history = []; saveHistory(); return true })
 
-  return { createOrb, createBrowser, createWorkspace, createSkillCenter, createMailCenter, openMailView, spawnCard, spawnWorkflow, spawnEmailCard, snapAsk, toggleInput, toggleOrbInput, buildTray, openDock, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory }
+  return { createOrb, createBrowser, createWorkspace, createSkillCenter, createMailCenter, openMailView, spawnCard, spawnWorkflow, spawnEmailCard, snapAsk, toggleInput, toggleOrbInput, buildTray, openDock, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory, replaceHistoryId }
 }

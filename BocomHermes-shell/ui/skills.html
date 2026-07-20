@@ -65,6 +65,19 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
   border-radius:9px;padding:8px 16px;cursor:pointer}
 .btn-stop:hover{background:var(--rec);color:#fff}
 
+/* 录制中实况步骤流:边录边看,录错当场删/改,不用整段重录 */
+.rec-steps{flex:none;max-height:180px;overflow-y:auto;margin:0 16px 10px;display:flex;flex-direction:column;gap:3px;
+  border-top:.5px dashed var(--line2);padding-top:8px}
+.rec-steps::-webkit-scrollbar{width:5px}.rec-steps::-webkit-scrollbar-thumb{background:var(--line2);border-radius:3px}
+.rstep{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink2);line-height:1.5}
+.rstep .rsi{flex:none;width:18px;text-align:right;color:var(--ink3);font-size:10px}
+.rstep .rst{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rstep .rsv{color:var(--accent);font-family:var(--mono);font-size:11px}
+.rstep .rsx{flex:none;font-size:10px;color:var(--ink3);border:.5px solid var(--line2);border-radius:999px;padding:0 6px}
+.rstep .rsb{flex:none;background:transparent;border:none;color:var(--ink3);cursor:pointer;font-size:11px;padding:1px 4px;border-radius:5px}
+.rstep .rsb:hover{color:var(--ink);background:var(--hover)}
+.rstep .rsb[data-d]:hover{color:var(--rec)}
+
 /* ── 工具行 ── */
 .tools{flex:none;display:flex;align-items:center;gap:10px;padding:12px 16px 8px}
 .search{flex:1;display:flex;align-items:center;gap:7px;background:var(--panel);border:1px solid var(--line);
@@ -209,6 +222,8 @@ pre.doc{margin:0;font-family:var(--mono);font-size:11.5px;line-height:1.65;white
       </div>
       <button class="btn-stop" id="btnStop">■ 停止并保存</button>
     </div>
+    <!-- 录制中实况步骤流:边录边看,✎ 改值 / ✕ 删步(保存为技能后走技能编辑器) -->
+    <div id="recSteps" class="rec-steps" hidden></div>
   </div>
 
   <div class="tools">
@@ -262,6 +277,8 @@ pre.doc{margin:0;font-family:var(--mono);font-size:11.5px;line-height:1.65;white
     <div class="fld"><label>对下载的文件做什么(人话目标)</label>
       <textarea id="pwGoal" placeholder="例:把导出的用户反馈表逐条归类,统计高频问题,产出一份 Markdown 分析报告" spellcheck="false"></textarea></div>
     <div class="hint">文件的本地路径会自动接在目标后面,工作流的子 Agent 会先读文件再干活。留空并点「关闭编排」= 取消。</div>
+    <label class="ck" style="margin-top:8px"><input type="checkbox" id="pwAsk"> 启动前问我(回放完先弹确认,点了才开编排卡)</label>
+    <label class="ck"><input type="checkbox" id="pwSilent"> 静默后台跑(开编排卡不抢焦点)</label>
   </div>
   <div class="sf"><button class="ghost" id="pwClear">关闭编排</button><button class="ghost" data-x="ovlPw">取消</button><button class="btn-run" id="pwSave">保存</button></div>
 </div></div>
@@ -284,6 +301,30 @@ document.querySelectorAll('[data-x]').forEach((b) => b.addEventListener('click',
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') document.querySelectorAll('.ovl.show').forEach((o) => o.classList.remove('show')) })
 
 // ── 录制:一条流的起点 ────────────────────────────────────────────────────────
+// 录制实况步骤流:边录边看,录错当场 ✕ 删步 / ✎ 改值(1.2s 轮询主进程的当前 events 投影)
+let recPoll = null
+async function refreshRecSteps(){
+  let r = null
+  try { r = await H.browserRecEvents() } catch {}
+  const box = $('recSteps')
+  if (!r || !r.active || !r.events.length) { box.hidden = true; box.innerHTML = ''; return }
+  box.hidden = false
+  box.innerHTML = r.events.map((ev) =>
+    '<div class="rstep"><span class="rsi mono">' + (ev.i + 1) + '</span>'
+    + '<span class="rst">' + esc(ev.intent) + (ev.value ? ' <span class="rsv">= ' + esc(ev.value) + '</span>' : '') + '</span>'
+    + (ev.secret ? '<span class="rsx">密文</span>' : '')
+    + (!ev.secret && !ev.human && (ev.act === 'input' || ev.act === 'select') ? '<button class="rsb" data-e="' + ev.i + '" title="改值">✎</button>' : '')
+    + '<button class="rsb" data-d="' + ev.i + '" title="删掉这步(录错了)">✕</button></div>'
+  ).join('')
+  box.querySelectorAll('[data-d]').forEach((b) => b.addEventListener('click', async () => { await H.browserRecEventDelete(+b.dataset.d); refreshRecSteps() }))
+  box.querySelectorAll('[data-e]').forEach((b) => b.addEventListener('click', async () => {
+    const row = r.events.find((x) => x.i === +b.dataset.e)
+    const nv = prompt('修改这一步的值:', (row && row.value) || '')
+    if (nv == null) return
+    const u = await H.browserRecEventUpdate({ index: +b.dataset.e, value: nv })
+    if (u && u.ok) refreshRecSteps(); else toast((u && u.err) || '改值失败')
+  }))
+}
 function setRec(on, n){
   $('heroIdle').hidden = on; $('heroLive').hidden = !on
   $('hero').classList.toggle('live', on)
@@ -291,6 +332,8 @@ function setRec(on, n){
   $('heroTitle').style.display = on ? 'none' : ''
   $('heroSub').style.display = on ? 'none' : ''
   if (n != null) $('recN').textContent = n
+  if (on) { refreshRecSteps(); if (!recPoll) recPoll = setInterval(refreshRecSteps, 1200) }
+  else { if (recPoll) { clearInterval(recPoll); recPoll = null } $('recSteps').hidden = true; $('recSteps').innerHTML = '' }
 }
 $('btnRec').addEventListener('click', async () => {
   $('btnRec').disabled = true
@@ -534,13 +577,17 @@ let pwIt = null
 function openPw(it){
   pwIt = it
   $('pwTitle').textContent = '下载后任务编排 · ' + (it.title || it.id)
-  $('pwGoal').value = ((it.postPipeline || it.postWorkflow) && (it.postPipeline || it.postWorkflow).goal) || ''
+  const pp = it.postPipeline || it.postWorkflow
+  $('pwGoal').value = (pp && pp.goal) || ''
+  $('pwAsk').checked = !!(pp && pp.ask)
+  $('pwSilent').checked = !!(pp && pp.silent)
   $('ovlPw').classList.add('show')
   setTimeout(() => $('pwGoal').focus(), 60)
 }
 async function savePw(goal){
   if (!pwIt) return
-  const ok = await H.browserRecUpdate(pwIt.id, { postPipeline: goal ? { goal } : null })
+  const pp = goal ? { goal, ask: $('pwAsk').checked, silent: $('pwSilent').checked } : null
+  const ok = await H.browserRecUpdate(pwIt.id, { postPipeline: pp })
   $('ovlPw').classList.remove('show')
   toast(ok ? (goal ? '<span class="ok">✓</span> 已设置「下载后任务编排」' : '<span class="ok">✓</span> 已关闭「下载后任务编排」') : '保存失败')
   pwIt = null
