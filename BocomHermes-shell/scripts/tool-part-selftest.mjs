@@ -330,5 +330,22 @@ await (async () => {
   srv.close()
 })()
 
+// 用例18:generationStalled —— 卡死子 Agent 判据(未收尾+无在跑工具才判死;慢≠死)
+;(() => {
+  console.log('用例18:generationStalled 生成挂死判据(看门狗)')
+  const { generationStalled } = oc
+  const aMsg = (completed, parts) => ({ info: { role: 'assistant', time: completed ? { completed: 1 } : {} }, parts })
+  const toolP = (status) => ({ type: 'tool', tool: 'read', state: { status } })
+  const textP = (t) => ({ type: 'text', text: t })
+  // 实测病灶:reasoning 有、text 空、消息不收尾、无工具 → 挂死
+  ok('写结论挂死(未收尾+无工具)→ true', generationStalled([{ info: { role: 'user' } }, aMsg(false, [{ type: 'reasoning', text: 'I now have enough' }, textP('')])]) === true)
+  // 慢≠死:工具在跑 / 已收尾 / 最后一条是 user
+  ok('有工具在跑(慢,不是死)→ false', generationStalled([aMsg(false, [toolP('running')])]) === false)
+  ok('已收尾 → false', generationStalled([aMsg(true, [textP('结论')])]) === false)
+  ok('最后一条是 user(还没开答)→ false', generationStalled([{ info: { role: 'user' } }]) === false)
+  ok('工具全终态(completed)且消息未收尾 → true(回答中断也算挂死候选)', generationStalled([aMsg(false, [toolP('completed')])]) === true)
+  ok('空消息列表 → false', generationStalled([]) === false)
+})()
+
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

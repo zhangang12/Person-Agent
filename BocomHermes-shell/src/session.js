@@ -261,6 +261,38 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
   }
   S.handlers = { onPermission, onText, onQuestion }
 
+  // ── 卡死子 Agent 看门狗(判死不判慢,与卡内"绕圈看门狗"互补:那条治主 Agent 反复读同批文件,这条治子 Agent 写结论挂死)──
+  // 实测病灶(2026-07-20,两次):子 Agent 探查全做完、写最终结论的 LLM 调用无声挂死(文本空、消息不收尾、serve 无请求级超时),
+  // 父卡 task 永 running 拖住整波。判据:父卡在忙 + 子会话静默 > 5min + generationStalled(最后 assistant 未收尾且无工具在跑)
+  // → 只中止这个子会话(task 报"Task cancelled",主 Agent 重派或带其余结果综合,实测恢复路径)。有工具在跑/已收尾一律放过:慢≠死。
+  const SUB_STALL_MS = 5 * 60 * 1000   // 旋钮候选:生成挂起容忍(网关掉链子常见,但 5min 无字基本是真死)
+  setInterval(async () => {
+    try {
+      const busy = new Map()   // serve.base → { serve, roots: Map<根会话sid → wc> } —— 只盯有卡在忙的 serve,空闲零开销
+      for (const [sid, si] of S.sessionInfo) {
+        if (!si || !si.wc || si.wc.isDestroyed() || !si.serve || !S.isCardBusy || !S.isCardBusy(si.wc.id)) continue
+        const b = busy.get(si.serve.base) || { serve: si.serve, roots: new Map() }
+        b.roots.set(sid, si.wc); busy.set(si.serve.base, b)
+      }
+      for (const { serve, roots } of busy.values()) {
+        const all = await oc.listSessions(serve)
+        for (const [rootSid, wc] of roots) {
+          for (const c of all) {
+            if (!c || !c.id || c.parentID !== rootSid) continue
+            const upd = (c.time && c.time.updated) || 0
+            if (!upd || Date.now() - upd < SUB_STALL_MS) continue   // 有动静就不判死
+            let stalled = false
+            try { stalled = oc.generationStalled(await oc.getRawMessages(serve, c.id)) } catch {}
+            if (!stalled) continue
+            log('watchdog: 子会话 ' + c.id + ' (' + (c.title || '') + ') 静默 >5min 且生成挂死 → 自动中止(父卡可重派)')
+            try { await oc.abort(serve, c.id) } catch {}
+            try { if (!wc.isDestroyed()) wc.send('card-note', { text: '⚠ 子 Agent「' + String(c.title || c.id).slice(0, 40) + '」写结论时挂死(5 分钟无进展),已自动中止 —— 主 Agent 会重派或带其余结果继续', tone: 'muted' }) } catch {}
+          }
+        }
+      }
+    } catch {}
+  }, 90000)
+
   // ── Unified diff 解析 + 直接写文件 ─────────────────────────────────────────
   function parseDiff(text) {
     const files = [], lines = text.split(/\r?\n/)

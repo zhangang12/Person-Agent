@@ -457,6 +457,27 @@ async function sessionExists(info, sid) {
   try { const s = await api(info.base, 'GET', `/session/${sid}`); if (sidOf(s) === sid) return true } catch {}
   try { const list = await api(info.base, 'GET', '/session'); const arr = Array.isArray(list) ? list : (list && list.data) || []; return arr.some((s) => sidOf(s) === sid) } catch { return false }
 }
+// 会话清单(看门狗/诊断用,原始形态:id/parentID/title/time.updated 都在)
+async function listSessions(info) {
+  try { const list = await api(info.base, 'GET', '/session'); return Array.isArray(list) ? list : (list && list.data) || [] } catch { return [] }
+}
+// 原始消息(看门狗判据要 tool 状态/time;getMessages 是归一化的,只剩 role/text)
+async function getRawMessages(info, sid) {
+  try { const r = await api(info.base, 'GET', `/session/${sid}/message`); return Array.isArray(r) ? r : (r && r.data) || [] } catch { return [] }
+}
+// 「生成挂死」判据(卡死子 Agent 看门狗,判死不判慢):最后一条 assistant 未收尾(time.completed 空)
+// 且没有任何在跑工具 = 模型写答案的调用挂起。实测病灶:子 Agent 探查全做完、写结论的 LLM 调用无声挂死
+// (文本空、消息不收尾、serve 无请求级超时),父卡 task 永 running 拖住整波。有工具在跑一律放过 —— 慢≠死。
+function generationStalled(msgs) {
+  const list = Array.isArray(msgs) ? msgs : []
+  let lastA = null
+  for (let i = list.length - 1; i >= 0; i--) { const m = list[i]; const role = (m && m.info && m.info.role) || (m && m.role); if (role === 'assistant') { lastA = m; break } }
+  if (!lastA) return false
+  const inf = lastA.info || lastA
+  if (inf.time && inf.time.completed) return false
+  const parts = lastA.parts || (lastA.data && lastA.data.parts) || []
+  return !parts.some((p) => p && p.type === 'tool' && !/complet|success|done|error|fail|cancel|abort/i.test(String((p.state && p.state.status) || p.status || '')))
+}
 // 重连用：取会话历史消息，归一成 [{role,text}]；端点形态不定，逐个尝试，失败返回 []
 // 注入前缀剥离(仅展示层):首条用户消息在发送时被静默拼上 <个人记忆>/<项目背景>/<作答技能> 背景块,
 // serve 的历史里存的是全文 —— 续接回放时不剥掉,这坨提示词会原样出现在用户自己的气泡里。只影响显示,不碰 serve 数据。
@@ -833,5 +854,5 @@ function retireIfOrphan(info, inUseBases) {
   return true
 }
 
-module.exports = { ensureServe, createSession, sendMessage, listModels, checkMcp, abort, replyPermission, replyQuestion, rejectQuestion, sessionExists, getMessages, pollTurnParts, getSessionUsage, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, AUTO_ALLOW,
+module.exports = { ensureServe, createSession, sendMessage, listModels, checkMcp, abort, replyPermission, replyQuestion, rejectQuestion, sessionExists, listSessions, getMessages, getRawMessages, generationStalled, pollTurnParts, getSessionUsage, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, AUTO_ALLOW,
   __test: { dispatch, waitAssistantText, extractText, pickTurnText, abortedSince, abortedSids, normalizeMessages, stripInjected, splitThink } }
