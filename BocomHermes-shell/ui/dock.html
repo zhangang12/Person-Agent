@@ -150,7 +150,7 @@
     </div>
     <div class="hint2"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>任务编排示例：跑技能「XX导出」→ 核对导出数据 → 把问题发邮件给某某</div>
 
-    <div class="seclbl" id="wfLbl" hidden>工作流 · 点一条聚焦卡片 / 看存档<span class="sp"></span><button id="wfRefresh" class="clr nodrag">刷新</button></div>
+    <div class="seclbl" id="wfLbl" hidden>工作流 / 编排 · 点一条聚焦卡片 / 看存档<span class="sp"></span><button id="wfRefresh" class="clr nodrag">刷新</button></div>
     <div id="wfList" class="wflist nodrag" hidden></div>
 
     <div class="seclbl">最近会话 · 点一条续接 <span class="sp"></span><button id="clear" class="clr nodrag">清空</button></div>
@@ -214,7 +214,7 @@
       wfListEl.appendChild(el)
     }
     for (const w of items) {
-      const stName = w.status === 'running' ? (w.busy ? '进行中' : '待操作') : w.status === 'done' ? '已完成' : '存档'
+      const stName = (w.kind === 'pipeline' ? '编排·' : '') + (w.status === 'running' ? (w.busy ? '进行中' : '待操作') : w.status === 'done' ? '已完成' : '存档')
       const meta = [w.rounds ? w.rounds + ' 轮' : '', w.elapsedMs ? Math.round(w.elapsedMs / 1000) + 's' : '', w.files ? '产出 ' + w.files : '', rel(w.at || Date.now())].filter(Boolean).join(' · ')
       const el = document.createElement('div'); el.className = 'item wfitem'
       el.innerHTML = '<span class="t"><span class="wfst ' + esc(w.status) + '">' + stName + '</span>' + esc(w.goal || '工作流') + '</span>'

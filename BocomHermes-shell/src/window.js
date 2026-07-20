@@ -187,12 +187,14 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (sid) query.sid = sid
     if (msg) query.msg = msg
     if (disp) query.disp = disp
-    // 工作流卡:登记进成果注册表(id=卡id,与 orch-mcp run_workflow 返回给 Agent 的一致),每轮终答由
-    // S.wfTurnDone 更新+存档 —— 升格后 workflow_result 才真取得回成果(以前只有 legacy 引擎写注册表,新路径断链)
-    if (opts && opts.wf) {
-      query.wf = '1'
+    // 工作流卡/任务编排卡:登记进成果注册表(id=卡id,与 orch-mcp run_workflow 返回给 Agent 的一致),每轮终答由
+    // S.wfTurnDone 更新+存档 —— 升格方/用户才取得回成果(以前只有 legacy 引擎写注册表,新路径断链)。
+    // kind=workflow 走 wf=1(规划闸/自动批准/自动压缩);kind=pipeline 只登记(编排按描述顺序执行,不要规划闸)。
+    const wfKind = opts && opts.wf ? 'workflow' : (opts && opts.pipeline) ? 'pipeline' : ''
+    if (wfKind) {
+      if (opts.wf) query.wf = '1'
       S.wfRegistry = S.wfRegistry || new Map(); S.wfCardByWc = S.wfCardByWc || new Map()
-      const reg = { id: String(id), wcId, goal: disp || title || '', status: 'running', round: 0, rounds: 0, at: Date.now(), archive: null, final: '', todos: null, files: [], elapsedMs: 0 }
+      const reg = { id: String(id), wcId, kind: wfKind, goal: disp || title || '', status: 'running', round: 0, rounds: 0, at: Date.now(), archive: null, final: '', todos: null, files: [], elapsedMs: 0 }
       S.wfRegistry.set(reg.id, reg); S.wfCardByWc.set(wcId, reg)
       if (S.wfRegistry.size > 50) { const k = S.wfRegistry.keys().next().value; S.wfRegistry.delete(k) }
     }
@@ -325,7 +327,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     }
     const todoLines = (reg.todos || []).map((t) => '- [' + (/complet/i.test(String(t && t.status || '')) ? 'x' : ' ') + '] ' + String((t && (t.content || t.text || t.title)) || '')).join('\n')
     const fileLines = (reg.files || []).map((f) => '- ' + f).join('\n')
-    fs.writeFileSync(reg.archive, '# 工作流:' + reg.goal + '\n\n- id:' + reg.id + ' · 轮次:' + reg.rounds + ' · 用时:' + Math.round((reg.elapsedMs || 0) / 1000) + 's · 状态:' + reg.status + '\n\n## 任务清单\n' + (todoLines || '(无)') + '\n\n## 产出文件\n' + (fileLines || '(无)') + '\n\n## 最终成果(最近一轮回答)\n\n' + reg.final)
+    fs.writeFileSync(reg.archive, '# ' + (reg.kind === 'pipeline' ? '任务编排' : '工作流') + ':' + reg.goal + '\n\n- id:' + reg.id + ' · 轮次:' + reg.rounds + ' · 用时:' + Math.round((reg.elapsedMs || 0) / 1000) + 's · 状态:' + reg.status + '\n\n## 任务清单\n' + (todoLines || '(无)') + '\n\n## 产出文件\n' + (fileLines || '(无)') + '\n\n## 最终成果(最近一轮回答)\n\n' + reg.final)
   }
 
   // 规则法识别邮件里的会议 → 产出"建议待办"(pending 态,人工确认后才进正式待办);
@@ -1286,7 +1288,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     if (mode === 'wf') return { id: spawnWorkflow(msg || title || '') }   // 动态工作流:起单主 Agent fan-out 卡(见 spawnWorkflow);图片暂不支持
     if (mode === 'pipeline') {
       const body = msg || title || ''
-      return { id: spawnCard('任务编排 · ' + String(disp || body).slice(0, 18), null, PIPELINE_RULES + body, disp || body, { flash: true }) }
+      return { id: spawnCard('任务编排 · ' + String(disp || body).slice(0, 18), null, PIPELINE_RULES + body, disp || body, { flash: true, pipeline: true }) }
     }
     const id = spawnCard(title || (msg || '').slice(0, 24) || '新对话', null, msg, disp, { flash: true })
     if (Array.isArray(files) && files.length) { S.cardFiles = S.cardFiles || new Map(); S.cardFiles.set(String(id), files) }
@@ -1390,7 +1392,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     const out = []
     const regs = S.wfRegistry ? [...S.wfRegistry.values()] : []
     for (const r of regs) out.push({
-      id: r.id, goal: r.goal, status: r.status, rounds: r.rounds, elapsedMs: r.elapsedMs,
+      id: r.id, goal: r.goal, status: r.status, kind: r.kind || 'workflow', rounds: r.rounds, elapsedMs: r.elapsedMs,
       files: (r.files || []).length, at: r.at, archive: r.archive || '',
       live: !!(S.wfCardByWc && S.wfCardByWc.has(r.wcId)), busy: !!(S.isCardBusy && S.isCardBusy(r.wcId)),
     })
@@ -1402,13 +1404,15 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
         .sort((a, b) => b.m - a.m).slice(0, 40)
       for (const a of arcs) {
         if (seen.has(a.p)) continue
-        let goal = ''
+        let goal = '', kind = 'workflow'
         try {
           const fd = fs.openSync(a.p, 'r'); const buf = Buffer.alloc(2048)
           const n = fs.readSync(fd, buf, 0, 2048, 0); fs.closeSync(fd)
-          goal = ((buf.toString('utf8', 0, n).match(/^# 工作流:(.*)$/m) || [])[1] || '').trim()
+          const head = buf.toString('utf8', 0, n)
+          goal = ((head.match(/^# (?:工作流|任务编排):(.*)$/m) || [])[1] || '').trim()
+          if (/^# 任务编排:/m.test(head)) kind = 'pipeline'
         } catch {}
-        out.push({ id: a.f.split('_')[1], goal: goal || a.f, status: 'archived', rounds: 0, elapsedMs: 0, files: 0, at: a.m, archive: a.p, live: false, busy: false })
+        out.push({ id: a.f.split('_')[1], goal: goal || a.f, status: 'archived', kind, rounds: 0, elapsedMs: 0, files: 0, at: a.m, archive: a.p, live: false, busy: false })
       }
     } catch {}
     const rank = { running: 0, done: 1, archived: 2 }   // 进行中置顶,其余按时间倒序
@@ -2163,7 +2167,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
         if (!ok) lines.push('注意:回放有失败步骤,但导出文件已捕获 —— 仍按文件启动下载后任务编排(不放心可关掉那张卡)')
         try {
           const pipeGoal = composePostPipelineGoal(hit.name, pp.goal, dls)
-          const cardId = spawnCard('任务编排 · ' + hit.name, null, PIPELINE_RULES + pipeGoal, pp.goal, { flash: true })
+          const cardId = spawnCard('任务编排 · ' + hit.name, null, PIPELINE_RULES + pipeGoal, pp.goal, { flash: true, pipeline: true })
           pipeline = { started: true, files: dls, id: cardId }
           lines.push('→ 已对下载的 ' + dls.length + ' 个文件启动「任务编排」(单 Agent 顺序执行,见对话卡): ' + dls.map((p) => String(p).split(/[\\/]/).pop()).join('、'))
           try { S.audit && S.audit('skill', '技能「' + hit.name + '」触发下载后任务编排', { files: dls.map((p) => String(p).split(/[\\/]/).pop()), goal: String(pp.goal).slice(0, 120), cardId }) } catch {}

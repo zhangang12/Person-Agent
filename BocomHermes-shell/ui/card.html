@@ -529,6 +529,29 @@
   // 不再监听全局 project-changed 重绘 —— 全局项目只是"新卡默认",本卡标签唯一真相源是 cardInit/cardReinit 回包
   const feed = document.getElementById('feed'), st = document.getElementById('st')
   const ci = document.getElementById('ci'), send = document.getElementById('send')
+  // 输入草稿持久化:误关卡/崩溃/重载不丢字 —— 按 sessionId 存 localStorage(续接同一会话即恢复),
+  // 发送成功即清;>7 天的陈草稿起手清一次防胀。cardInit 后才有 sessionId,那之前输入先不落(极短窗口,可接受)。
+  let draftKey = ''
+  const DRAFT_PREFIX = 'cardDraft:'
+  try {   // 陈草稿清理(起手一次)
+    const cutoff = Date.now() - 7 * 86400000
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i)
+      if (k && k.startsWith(DRAFT_PREFIX)) { try { const d = JSON.parse(localStorage.getItem(k) || '{}'); if (!d.t || d.t < cutoff) localStorage.removeItem(k) } catch { localStorage.removeItem(k) } }
+    }
+  } catch {}
+  function draftSave() {
+    if (!draftKey) return
+    try { const v = ci.value; if (v && v.trim()) localStorage.setItem(draftKey, JSON.stringify({ t: Date.now(), v })); else localStorage.removeItem(draftKey) } catch {}
+  }
+  function draftRestore() {
+    if (!draftKey) return
+    try {
+      const d = JSON.parse(localStorage.getItem(draftKey) || 'null')
+      if (d && typeof d.v === 'string' && d.v.trim() && !ci.value.trim()) { ci.value = d.v; autoGrow(); addNote('已恢复上次未发送的草稿', 'muted') }
+    } catch {}
+  }
+  function draftClear() { if (draftKey) try { localStorage.removeItem(draftKey) } catch {} }
   // 体验感:滚动守卫 —— 只有贴着底部(≤80px)才跟随流式内容;用户上翻看历史时不被硬拽,离底则弹"跳到最新"
   const nearBottom = () => feed.scrollHeight - feed.scrollTop - feed.clientHeight < 80
   const jumpBtn = document.createElement('button'); jumpBtn.className = 'jumpbtn'; jumpBtn.hidden = true
@@ -1446,7 +1469,7 @@
       text = String(text || '') + '\n\n(系统提醒:todo 清单已多轮未更新 —— 用 todowrite 把已完成项标 completed、当前项标 in_progress,保持计划对用户可见)'
       wfTodoLastTurn = turnN   // 提醒过就重置,别每轮唠叨
     }
-    if (!target) lastSend = { text, files }   // 网关抖了能一键重试,不用重打
+    if (!target) { lastSend = { text, files }; draftClear() }   // 网关抖了能一键重试,不用重打;草稿发送即清
     try { bumpCtx((text || '').length) } catch {}
     try { saSnapshot(turnN - 1) } catch {}   // 跨轮回看:清场前把上一轮的子 Agent 活动拍成快照(turnN 已自增,上一轮=turnN-1)
     curAnswer = ai; curReason = null; answerParts = new Map(); reasonParts = new Map(); subAgents.clear(); toolEls.clear(); if (_saTick) { clearInterval(_saTick); _saTick = null }   // toolEls 跨轮清:上一轮的工具块已定格在 feed 里,Map 只清引用防无限涨
@@ -1601,7 +1624,7 @@
     skillBar.innerHTML = '<span class="skill-chip">技能 · ' + esc(activeSkill.name) + '<span class="sx" title="卸载技能">✕</span></span>'
     skillBar.querySelector('.sx').addEventListener('click', () => { activeSkill = null; renderSkillChip() })
   }
-  ci.addEventListener('input', () => { autoGrow(); const v = ci.value; if (v[0] === '/') openSkillMenu(v.slice(1)); else if (skillMenuOpen()) hideSkillMenu() })
+  ci.addEventListener('input', () => { autoGrow(); draftSave(); const v = ci.value; if (v[0] === '/') openSkillMenu(v.slice(1)); else if (skillMenuOpen()) hideSkillMenu() })
   ci.addEventListener('keydown', (e) => {
     if (e.isComposing || e.keyCode === 229) return   // 中文输入法组合态:选字的 Enter/↑↓ 是给候选框的,不发送不翻历史(不守=半截拼音被发出去)
     if (skillMenuOpen()) {
@@ -1745,6 +1768,8 @@
       const r = await window.BocomHermes.cardInit(sid ? { sid, title } : { title })
       paintProj(r.project, r.dir)          // 本卡真实绑定目录
       paintModelChip(r.model)              // 本卡实际生效模型(override || 全局默认),含 boot 期间预选的
+      draftKey = DRAFT_PREFIX + (r.sessionId || '')   // 草稿按会话存:续接/误关重开都能找回
+      if (sid || embedded) draftRestore()             // 续接/调试卡恢复草稿;新卡自动发首条消息,不恢复
       boot.remove()
       cardReady = true
       if (sid) {

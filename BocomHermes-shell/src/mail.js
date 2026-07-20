@@ -314,7 +314,7 @@ module.exports = function initMail(ctx) {
               const hit = id ? files.find((x) => x.f.split('_')[1] === id) : files[0]
               if (hit) {
                 const full = fs.readFileSync(hit.p, 'utf8')
-                const goal = ((full.match(/^# 工作流:(.*)$/m) || [])[1] || '').trim()
+                const goal = ((full.match(/^# (?:工作流|任务编排):(.*)$/m) || [])[1] || '').trim()
                 const prodSec = (full.match(/## 产出文件\n([\s\S]*?)(\n## |$)/) || [])[1] || ''   // 产出文件清单也从存档解析带回(旧存档没这节 → 空数组)
                 const prodFiles = prodSec.split('\n').map((l) => l.replace(/^- /, '').trim()).filter((l) => l && l !== '(无)')
                 return reply({ ok: true, id: hit.f.split('_')[1], status: 'archived', goal, archive: hit.p, files: prodFiles, final: full.slice(0, 14000) })
