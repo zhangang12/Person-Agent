@@ -72,8 +72,8 @@ html,body{width:280px;height:280px;background:transparent;overflow:hidden;user-s
   box-shadow:-24px 2px 48px rgba(0,230,255,.92),-9px 0 20px rgba(0,230,255,.6),26px -2px 48px rgba(60,80,255,.85),9px 0 20px rgba(80,60,255,.55),0 -20px 32px rgba(140,60,255,.5),0 0 110px rgba(0,160,255,.18),inset -13px 0 30px rgba(0,200,255,.2),inset 13px 0 30px rgba(60,60,255,.15);
 }
 
-/* ── 360° 环形菜单：小卡从球心弹出，均匀环绕球体（每卡 position:absolute 无 top/left，
-   靠 .stage 的 flex 居中把静态位置锚在球心，再 translate 摊到各方位）── */
+/* ── 环形菜单:小卡从球心弹出,均匀环绕球体(模块数自适应 —— JS 按 .ri 个数均分 360°,
+   把 --rx/--ry 写进各卡,这里只吃变量;增删模块不用再手算坐标。半径 108:与球体光晕留缝,不挤)── */
 .ri{
   position:absolute;
   width:62px;height:52px;
@@ -95,14 +95,8 @@ html,body{width:280px;height:280px;background:transparent;overflow:hidden;user-s
   letter-spacing:.02em;font-family:-apple-system,BlinkMacSystemFont,sans-serif;
 }
 
-/* 展开：6 模块每 60° 均匀环绕球体（半径 98）*/
-.stage.open .ri{opacity:1;pointer-events:all}
-.stage.open .ri:nth-child(1){transform:translate(0,-98px) scale(1);transition-delay:.03s}
-.stage.open .ri:nth-child(2){transform:translate(85px,-49px) scale(1);transition-delay:.06s}
-.stage.open .ri:nth-child(3){transform:translate(85px,49px) scale(1);transition-delay:.09s}
-.stage.open .ri:nth-child(4){transform:translate(0,98px) scale(1);transition-delay:.12s}
-.stage.open .ri:nth-child(5){transform:translate(-85px,49px) scale(1);transition-delay:.15s}
-.stage.open .ri:nth-child(6){transform:translate(-85px,-49px) scale(1);transition-delay:.18s}
+/* 展开:各卡摊到 JS 算好的环形坐标(均分 360°,起点正上方顺时针),错落入场 */
+.stage.open .ri{opacity:1;pointer-events:all;transform:translate(var(--rx,0),var(--ry,0)) scale(1);transition-delay:var(--rd,0s)}
 
 /* hover 状态：轻微提亮 */
 .ri:hover{
@@ -172,6 +166,18 @@ html,body{width:280px;height:280px;background:transparent;overflow:hidden;user-s
 const H = window.BocomHermes
 const stage = document.getElementById('stage')
 const sphere = document.getElementById('sphere')
+
+// 环形菜单布局(自适应模块数):.ri 有几个就均分 360°,起点正上方顺时针,半径 108;
+// 坐标写进各卡 --rx/--ry(CSS 只在 .open 时吃),增删模块不用再手算 nth-child 坐标
+;(function layoutRing(){
+  const items = [...document.querySelectorAll('.ri')], n = items.length, R = 108
+  items.forEach((el, i) => {
+    const a = (-90 + i * 360 / n) * Math.PI / 180
+    el.style.setProperty('--rx', Math.round(R * Math.cos(a)) + 'px')
+    el.style.setProperty('--ry', Math.round(R * Math.sin(a)) + 'px')
+    el.style.setProperty('--rd', (0.03 * (i + 1)) + 's')
+  })
+})()
 
 // ── 透明区域点击穿透 + 菜单开/合(同信号控制,避免 CSS :hover 被 passthrough 卡住)──
 // 关闭加 350ms 缓冲:菜单已开时,鼠标从球→环形卡片之间必经一段透明区,
