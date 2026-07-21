@@ -144,6 +144,11 @@
   #ctxchip { font-variant-numeric: tabular-nums; }
   #ctxchip.ctxwarn { color: var(--warn-txt); border-color: var(--warn-border); background: var(--warn-bg); }
   #ctxchip.ctxdanger { color: var(--diff-del); border-color: var(--diff-del); background: var(--diff-del-bg); }
+  /* 「已中断」角标:半截气泡右上角,和正常完成一眼区分 */
+  .msg.ai.aborted { position: relative; }
+  .msg.ai.aborted::after { content: '已中断'; position: absolute; top: -8px; right: 10px; font-size: 9.5px; font-weight: 700; color: var(--diff-del); background: var(--glass-bg); border: .5px solid var(--diff-del); border-radius: 999px; padding: 0 7px; line-height: 15px; }
+  /* 多卡辨识度:按 session 染色标题图标(hue-rotate,玻璃卡不再一模一样) */
+  .hd .icn { filter: hue-rotate(var(--card-hue, 0deg)); }
   /* 模型选择 */
   .modelchip { display: inline-flex; align-items: center; gap: 4px; max-width: 134px; }
   .model-menu { position: fixed; z-index: 100; min-width: 210px; max-width: 290px; max-height: 340px; overflow-y: auto; background: var(--glass-bg); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border: 1px solid var(--composer-border); border-radius: 12px; padding: 5px; box-shadow: 0 10px 34px rgba(0,0,0,.28); }
@@ -287,6 +292,16 @@
   .perm .t { flex: 1; font-size: 12px; color: var(--warn-txt); }
   .perm .ok { font-size: 11px; font-weight: 600; color: var(--warn-btn-fg); background: var(--warn-btn); padding: 4px 10px; border-radius: 7px; border: none; cursor: pointer; }
   .perm .no { font-size: 11px; color: var(--txt2); background: transparent; border: none; cursor: pointer; padding: 4px 6px; }
+  /* 权限盒内嵌迷你 diff 预览(edit/write 批准前可见要改成什么样) */
+  .perm .pdiff { flex-basis: 100%; margin-top: 5px; font-family: var(--mono); font-size: 11px; line-height: 1.5; max-height: 150px; overflow: auto; background: var(--composer-bg); border-radius: 8px; padding: 6px 9px; white-space: pre; }
+  .perm .pdiff .add { color: #2bb673; }
+  .perm .pdiff .del { color: var(--diff-del); }
+  /* 待批准 sticky:批准盒被流式顶走后,输入框上方仍钉一枚摘要(点击滚回批准盒) */
+  .permsticky { position: absolute; right: 12px; bottom: 64px; z-index: 9; display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; color: var(--warn-txt); background: var(--warn-bg); border: .5px solid var(--warn-border); border-radius: 999px; padding: 5px 12px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.2); }
+  .permsticky:hover { border-color: var(--warn-txt); }
+  /* 长代码块折叠(>24 行收成 details,摘要"代码 N 行") */
+  .foldcode > summary { cursor: pointer; font-size: 11px; color: var(--txt3); padding: 2px 0; user-select: none; }
+  .foldcode > summary:hover { color: var(--txt); }
   /* 交互提问卡(question 工具的应答通道):选项点选,答完定格成一行留痕 */
   .qbox { flex-direction: column; align-items: stretch; gap: 8px; }
   .qbox .qhead { font-size: 11px; font-weight: 700; color: var(--accent); letter-spacing: .03em; }
@@ -331,6 +346,7 @@
   /* 工具输出:一行就是一行(对齐终端/Claude Code)。之前 pre-wrap+break-word 会把 130 条长路径在任意字符处折行,
      糊成密不透风的"字符砖"(用户看到的"压缩")。改 white-space:pre 不折行,长行横向滚;纵向 340px 内滚(内滚用户认可)。 */
   .toolbox .tsec pre { margin: 0; font-family: var(--mono); font-size: 11.5px; line-height: 1.55; white-space: pre; overflow: auto; max-height: 340px; color: var(--txt); }
+  .toolbox .tsec pre .ttrunc { color: var(--txt3); font-style: italic; }   /* 截断明示(以前静默砍断,用户以为就这么多) */
   .toolbox .tsec.e pre { color: var(--diff-del); }
   .toolbox.wf > summary { border: .5px solid var(--accent); background: rgba(74,168,255,.08); }   /* 升格工作流仍保留高亮框:它是大事件,值得一个盒子 */
   .toolbox.wf .tn { color: var(--accent); font-family: inherit; }
@@ -527,6 +543,13 @@
   const wfMode = params.get('wf') === '1'       // 工作流卡:规划先行 + 自动压缩续航 + 可选自动批准(spawnWorkflow 起卡时带上)
   const ttl = document.getElementById('ttl'); ttl.textContent = title; ttl.title = title
   document.title = title + ' · BocomHermes'   // 任务栏/Alt+Tab 区分各卡
+  // 多卡辨识度:按 sessionId 给标题图标染色(几十张玻璃卡不再一模一样);本轮成功结束标题加 ✓,开新一轮摘掉
+  function applyCardTint(sid) {
+    let h = 0; for (const c of String(sid || '')) h = (h * 31 + c.charCodeAt(0)) % 360
+    document.documentElement.style.setProperty('--card-hue', h + 'deg')
+  }
+  function markDone() { if (!document.title.startsWith('✓ ')) { document.title = '✓ ' + document.title; ttl.textContent = '✓ ' + ttl.textContent } }
+  function unmarkDone() { if (document.title.startsWith('✓ ')) { document.title = document.title.slice(2); ttl.textContent = ttl.textContent.slice(2) } }
   const projEl = document.getElementById('proj')
   // 项目标签 = 本卡视角:显示【本卡绑定】的目录,点击只切换本卡(不动全局、不影响其它卡)
   function paintProj(name, dir) {
@@ -592,6 +615,20 @@
   function scrollFeed(force) {
     if (force || nearBottom()) { feed.scrollTop = feed.scrollHeight; jumpBtn.hidden = true }
     else jumpBtn.hidden = false   // 离底又来了新内容 → 提示有更新
+  }
+  // feed DOM 回收(治长会话变卡):节点无限涨会拖垮布局/滚动/内存 —— 超 FEED_CAP 个孩子时把最老的收到 FEED_TRIM_TO,
+  // 顶部留一枚收纳占位。内容是【展示层】回收:serve 历史/本地转录都在,重开本卡照样找回 —— 别把 DOM 当存档用。
+  const FEED_CAP = 320, FEED_TRIM_TO = 280
+  let feedArchivedN = 0
+  function maybeCapFeed() {
+    const old = document.getElementById('feedCapNote'); if (old) old.remove()
+    let remove = feed.children.length - FEED_CAP
+    if (remove <= 0) return
+    remove += FEED_CAP - FEED_TRIM_TO
+    while (remove-- > 0 && feed.firstChild) { feed.removeChild(feed.firstChild); feedArchivedN++ }
+    const el = document.createElement('div'); el.id = 'feedCapNote'; el.className = 'note muted'
+    el.textContent = '⋯ 已收纳 ' + feedArchivedN + ' 条早期消息(展示层回收,内容没丢 —— 重新打开本卡可从历史恢复)'
+    feed.insertBefore(el, feed.firstChild)
   }
   const quick = document.getElementById('quick')
 
@@ -762,6 +799,17 @@
     if (autoCompactN >= maxN) { if (!_capNoted) { _capNoted = true; addNote('自动压缩已达上限(' + maxN + ' 次),请点上下文 chip 手动压缩', 'muted') } return }
     autoCompactN++
     compactCore(true)
+  }
+  // 普通对话卡水位主动提醒(wf 卡有自动压缩续航,不需要):≥90% 且轮末空闲 → 提醒一次,别等用户盯 chip
+  let ctxNag = false
+  function maybeCtxNag() {
+    if (wfMode || ctxNag || compacting || !ctxLimitTokens) return
+    try {
+      const pct = ctxPctVal()
+      if (pct < 0.9) return
+      ctxNag = true
+      addNote('上下文已用 ' + Math.round(pct * 100) + '% —— 继续聊质量会下降,建议点上方上下文 chip「压缩续聊」', 'muted')
+    } catch {}
   }
   // 产出兜底(工作流卡,对应规程第7条【默认必须落盘产出 MD】):todo 全勾(快完成)却零落盘产出 →
   // 注入系统提醒补 MD(一次,不循环唠叨;有产出自然不触发;没列 todo 的极简单目标不打扰)
@@ -994,6 +1042,8 @@
     // toolEls/subAgents 也得清:feed 清空后它们攥的全是 detached DOM —— 旧引用既是内存泄漏,
     // 撞上同 partID 时 renderTool 还会去更新一个不在页面上的节点(工具日志"凭空消失")
     toolEls.clear(); subAgents.clear(); if (_saTick) { clearInterval(_saTick); _saTick = null }
+    feedArchivedN = 0; frozenEl = null; tailEl = null; frozenLen = 0   // 收纳计数与流式冻结区一并清(换会话,旧节点全废)
+    pendingPerms.clear(); paintPermSticky()   // 换会话:上一会话的待批准全作废,sticky 一起摘(权限盒随 feed 已清)
     if (sdList && sdPane) { sdList.innerHTML = ''; sdPane.innerHTML = '' }   // 侧边栏一并清(它不在 feed 里,feed.innerHTML='' 清不到)
     sdActiveId = ''; sdPaintBadge()
     try { clearPlanBar() } catch {}   // feed 清空会把计划条带走,倒计时计时器必须一起埋(防闸死后二次注入)
@@ -1005,8 +1055,8 @@
   function addMsg(text, who) {
     const d = document.createElement('div')
     d.className = 'msg ' + (who === 'me' ? 'me' : 'ai')
-    if (who === 'ai') { d.dataset.raw = text || ''; d.innerHTML = renderMarkdown(text); if (text) addCopyBtn(d) } else d.textContent = text
-    feed.appendChild(d); scrollFeed(true)   // 新消息=离散动作,强制到底(流式增量才守卫)
+    if (who === 'ai') { d.dataset.raw = text || ''; d.innerHTML = renderMarkdown(text); foldLongCode(d); if (text) addCopyBtn(d) } else d.textContent = text
+    feed.appendChild(d); maybeCapFeed(); scrollFeed(true)   // 新消息=离散动作,强制到底(流式增量才守卫)
     return d
   }
   let lastSend = null   // 本轮发出的 {text, files}:错误重试/重新回答都免重打
@@ -1030,6 +1080,19 @@
     b.addEventListener('click', (e) => { e.stopPropagation(); if (busy) return; turn(prompt, null, files) })
     el.appendChild(b)
   }
+  // 长代码块折叠:>24 行的 pre 收成 details(默认折叠,摘要"代码 N 行")—— 长答案不再把对话流撑爆
+  function foldLongCode(root) {
+    try {
+      root.querySelectorAll('pre').forEach((pre) => {
+        if (pre.closest && pre.closest('details.foldcode')) return
+        const lines = (pre.textContent.match(/\n/g) || []).length + 1
+        if (lines < 24) return
+        const d = document.createElement('details'); d.className = 'foldcode'
+        const sum = document.createElement('summary'); sum.textContent = '代码 ' + lines + ' 行 —— 点击展开'
+        pre.parentNode.insertBefore(d, pre); d.appendChild(sum); d.appendChild(pre)
+      })
+    } catch {}
+  }
   // AI 回答悬停右上角一键复制(复制原文,不是渲染后的 HTML)
   function addCopyBtn(el) {
     if (el._copied) return; el._copied = true
@@ -1038,19 +1101,38 @@
     b.addEventListener('click', (e) => { e.stopPropagation(); try { navigator.clipboard.writeText(el.dataset.raw || el.textContent || '') } catch {} b.classList.add('ok'); setTimeout(() => b.classList.remove('ok'), 1200) })
     el.appendChild(b)
   }
-  function showPermission(requestId, tool, detail) {
+  function showPermission(requestId, tool, detail, diff) {
     const box = document.createElement('div'); box.className = 'perm'
     const t = document.createElement('span'); t.className = 't'
     t.innerHTML = '请求执行 <span class="pt" style="font-family:var(--mono)"></span>'
     t.querySelector('.pt').textContent = tool
     if (detail) { const d = document.createElement('span'); d.style.cssText = 'display:block;font-family:var(--mono);font-size:11px;color:var(--txt2);margin-top:3px;word-break:break-all;opacity:.92'; d.textContent = detail; t.appendChild(d) }
+    if (diff) {   // edit/write 的迷你 diff 预览:批准前看见要改成什么样(session.js buildPermDiff 拼好,红删绿增)
+      const pre = document.createElement('pre'); pre.className = 'pdiff'
+      pre.innerHTML = String(diff).split('\n').map((l) => l.startsWith('+ ') ? '<span class="add">' + esc(l) + '</span>' : l.startsWith('- ') ? '<span class="del">' + esc(l) + '</span>' : esc(l)).join('\n')
+      t.appendChild(pre)
+    }
     const ok = document.createElement('button'); ok.className = 'ok'; ok.textContent = '允许一次'
     const al = document.createElement('button'); al.className = 'no'; al.textContent = '总是'
     const no = document.createElement('button'); no.className = 'no'; no.textContent = '拒绝'
-    const reply = (d) => { window.BocomHermes.permissionReply(requestId, d); box.remove() }
-    ok.onclick = () => reply('once'); al.onclick = () => reply('always'); no.onclick = () => reply('reject')
+    const reply = (d) => { window.BocomHermes.permissionReply(requestId, d); pendingPerms.delete(requestId); paintPermSticky(); box.remove() }
+    ok.addEventListener('click', () => reply('once')); al.addEventListener('click', () => reply('always')); no.addEventListener('click', () => reply('reject'))
     box.append(t, ok, al, no)
     feed.appendChild(box); scrollFeed(true)   // 权限提示需被看到,强制到底
+    pendingPerms.set(requestId, String(tool || '?')); paintPermSticky()   // 流式刷屏会把盒子顶走 —— 钉一个 sticky 摘要,用户始终知道引擎在等
+  }
+  // 待批准 sticky:批准盒被流式顶出视口后,输入框上方仍有一枚摘要钉;点击滚回批准盒,答完即消
+  const pendingPerms = new Map()
+  let permStickyEl = null   // 直接持有引用(getElementById 在无头桩里会自动创建,不能靠它判存在)
+  function paintPermSticky() {
+    if (!pendingPerms.size) { if (permStickyEl) { permStickyEl.remove(); permStickyEl = null } return }
+    if (!permStickyEl) {
+      permStickyEl = document.createElement('button'); permStickyEl.id = 'permSticky'; permStickyEl.className = 'permsticky nodrag'
+      permStickyEl.addEventListener('click', () => { const b = feed.querySelector('.perm:not(.qbox)') || feed.querySelector('.perm'); if (b && b.scrollIntoView) b.scrollIntoView({ block: 'center' }) })
+      ;(document.querySelector('.card') || document.body).appendChild(permStickyEl)
+    }
+    const first = pendingPerms.values().next().value
+    permStickyEl.textContent = '⏸ 待批准:' + first + (pendingPerms.size > 1 ? '(共 ' + pendingPerms.size + ' 项)' : '') + ' —— 引擎在等你'
   }
   // 自动批准(仅工作流卡,用户显式开启):本卡权限请求自动放行并在流里留痕,fan-out 写 N 个文件不再被打断 N 次。
   // 范围严格限本卡会话(含路由回本卡的子 Agent 请求),关卡即失效;按钮常显着色提示开启中。
@@ -1063,13 +1145,13 @@
       addNote(autoAllow ? '已开启【自动批准】:本工作流的写文件/执行命令等权限请求将自动放行(工具日志留痕,再点一次关闭)' : '已关闭【自动批准】:恢复逐个人工确认', 'muted')
     })
   }
-  window.BocomHermes.onPermission(({ requestId, tool, detail }) => {
+  window.BocomHermes.onPermission(({ requestId, tool, detail, diff }) => {
     if (wfMode && autoAllow) {
       try { window.BocomHermes.permissionReply(requestId, 'once') } catch {}
       addNote('🤝 自动批准:' + tool + (detail ? ' · ' + String(detail).slice(0, 120) : ''), 'muted')
       return
     }
-    showPermission(requestId, tool, detail)
+    showPermission(requestId, tool, detail, diff)
   })
 
   // ── 交互提问卡(question 工具的应答通道):问题+选项弹在对话流里,点选即答(serve /question/:id/reply)。
@@ -1306,8 +1388,8 @@
       + (data.title ? '<span class="tt">' + esc(String(data.title).slice(0, 200)) + '</span>' : '')
       + (sum ? '<span class="tsum">' + esc(sum) + '</span>' : '')
       + '<span class="ts2">· ' + stt + '</span></summary>'
-      + (inStr ? '<div class="tsec"><span class="tsl">入参</span><pre>' + esc(inStr.slice(0, 4000)) + '</pre></div>' : '')
-      + (outStr ? '<div class="tsec' + (data.error ? ' e' : '') + '"><span class="tsl">' + (data.error ? '错误' : '结果') + '</span><pre>' + esc(outStr.slice(0, 20000)) + '</pre></div>' : '')
+      + (inStr ? '<div class="tsec"><span class="tsl">入参</span><pre>' + esc(inStr.slice(0, 4000)) + (inStr.length > 4000 ? '\n<span class="ttrunc">… 已截断:共 ' + inStr.length + ' 字,仅显示前 4000 字</span>' : '') + '</pre></div>' : '')
+      + (outStr ? '<div class="tsec' + (data.error ? ' e' : '') + '"><span class="tsl">' + (data.error ? '错误' : '结果') + '</span><pre>' + esc(outStr.slice(0, 20000)) + (outStr.length > 20000 ? '\n<span class="ttrunc">… 已截断:共 ' + outStr.length + ' 字,仅显示前 20000 字</span>' : '') + '</pre></div>' : '')
     try { if (!opts.sub && (done || err) && partID && !countedToolParts.has(partID)) { countedToolParts.add(partID); bumpCtx(inStr.length + outStr.length) } } catch {}   // 工具入参+结果进上下文,按 partID 只记一次
     // 状态行登记:运行中登记(带子agent名),完成/出错注销
     const slName = String(name) + (data.title ? '(' + String(data.title).slice(0, 40) + ')' : '') + (opts.sub && opts.agentName ? ' @' + opts.agentName : '')
@@ -1339,12 +1421,41 @@
     r.body.scrollTop = r.body.scrollHeight
   }
   let _flushQueued = false, _needAnswer = false, _needReason = false
+  // 流式增量渲染(治 O(n²) 与文本选择被整棵替换):累计文本按"已闭合块"切开 —— 闭合部分只渲一次(真冻结,
+  // 增量 append 不触碰已有节点,用户选择不炸),只有尾巴在每帧重渲。万字长答后期不再每帧重解析整篇。
+  // 切点 = 最后的空行(\n\n)且不在 ``` 围栏内(围栏里的空行切块会把围栏劈开;未闭合围栏 → 回退整棵重渲)
+  let frozenEl = null, tailEl = null, frozenLen = 0
+  function splitStable(s) {
+    let fence = false, last = -1
+    for (let i = 0; i < s.length - 1; i++) {
+      if (s[i] === '`' && s[i + 1] === '`' && s[i + 2] === '`') { fence = !fence; i += 2; continue }
+      if (!fence && s[i] === '\n' && s[i + 1] === '\n') last = i + 2
+    }
+    return fence ? -1 : last
+  }
+  function paintAnswerIncremental(el, text) {
+    const cut = splitStable(text)
+    if (cut <= 0) { el.innerHTML = renderMarkdown(text); frozenEl = null; tailEl = null; frozenLen = 0; return }   // 还没有稳定块:等价老行为
+    if (!frozenEl || !frozenEl.parentNode) {   // 首次出现稳定块:建冻结区+尾巴区
+      el.innerHTML = ''
+      frozenEl = document.createElement('span'); tailEl = document.createElement('span')
+      el.appendChild(frozenEl); el.appendChild(tailEl)
+      frozenLen = 0
+    }
+    if (cut > frozenLen) {   // 新增稳定块包成独立 span 再 append:已有节点零触碰(真冻结,选择不炸)
+      const seg = document.createElement('span'); seg.className = 'frozen-seg'
+      seg.innerHTML = renderMarkdown(text.slice(frozenLen, cut))
+      frozenEl.appendChild(seg)
+      frozenLen = cut
+    }
+    tailEl.innerHTML = renderMarkdown(text.slice(cut))   // 只有尾巴在每帧重渲
+  }
   function flushStream() {
     _flushQueued = false
     const st = splitThink(answerParts ? joinParts(answerParts) : '')
     if (_needReason || st.think) { paintReason(st.think); _needReason = false }
     if (_needAnswer && curAnswer) {
-      if (st.rest) curAnswer.innerHTML = renderMarkdown(st.rest)   // 纯思考阶段(rest 还空着)不清占位符,气泡不闪空白
+      if (st.rest) paintAnswerIncremental(curAnswer, st.rest)   // 纯思考阶段(rest 还空着)不清占位符,气泡不闪空白
       _needAnswer = false
     }
     scrollFeed()
@@ -1503,7 +1614,18 @@
   }
   if (blive) blive.addEventListener('click', () => lvToggle())
 
+  // 主回合静默挂死提示(看门狗最后一块:子 Agent 挂死有壳层看门狗,绕圈有进展看门狗,主回合【纯静默】没人管):
+  // 任何流事件都打点;忙碌期间 15s 一拍 —— 90s 无输出提示(长考或网关挂死),5min 升级(大概率挂死,建议 Esc 重试)
+  let lastStreamAt = 0, hangNag90 = false, hangNag300 = false
+  setInterval(() => {
+    if (!busy || !lastStreamAt) return
+    const sil = Date.now() - lastStreamAt
+    if (sil >= 300000 && !hangNag300) { hangNag300 = true; addNote('⚠ 已 5 分钟没有任何输出 —— 大概率是网关挂死(不是慢)。建议按 Esc 中断后点「重试本轮」', 'muted') }
+    else if (sil >= 90000 && !hangNag90) { hangNag90 = true; addNote('模型已 90 秒没有输出 —— 可能在长考,也可能是网关挂死。可继续等,或按 Esc 中断', 'muted') }
+  }, 15000)
+
   window.BocomHermes.onStream(({ kind, text, partID, status, input, output, title, error, sub, agentId, agentName, taskChild, taskDesc }) => {
+    lastStreamAt = Date.now()   // 静默挂死探针:有事件就不算挂死
     if (sub) {                                            // 子agent活动 → 进侧边栏它自己的窗格(思考/工具/产出),不占主 feed
       const s = subAgent(agentId || '_', agentName)
       if (kind === 'tool') {
@@ -1572,10 +1694,12 @@
     try { bumpCtx((text || '').length) } catch {}
     try { saSnapshot(turnN - 1) } catch {}   // 跨轮回看:清场前把上一轮的子 Agent 活动拍成快照(turnN 已自增,上一轮=turnN-1)
     curAnswer = ai; curReason = null; answerParts = new Map(); reasonParts = new Map(); subAgents.clear(); toolEls.clear(); if (_saTick) { clearInterval(_saTick); _saTick = null }   // toolEls 跨轮清:上一轮的工具块已定格在 feed 里,Map 只清引用防无限涨
+    frozenEl = null; tailEl = null; frozenLen = 0   // 流式冻结区跨轮清:新一轮新气泡,旧引用全是 detached 节点
     // 侧边栏随新回合重置:上一轮子 Agent 的结论已沉淀进 task 结果/最终答案,实时窗格不留跨轮(历史轮次走顶部下拉看快照);手动关抽屉的记录也复位
     if (sdList && sdPane) { sdList.innerHTML = ''; sdPane.innerHTML = '<div class="sd-empty">主 Agent 用 task 派子 Agent 并行干活时,这里会列出它们;点任意一个看它的思考 / 工具 / 产出全程</div>' }
     if (sdRoundSel) sdRoundSel.value = 'cur'
-    sdActiveId = ''; sdClosedThisTurn = false; sdPaintBadge(); setBusy(true)
+    sdActiveId = ''; sdClosedThisTurn = false; sdPaintBadge(); setBusy(true); unmarkDone()   // 新一轮开跑:摘掉上一轮的 ✓
+    lastStreamAt = Date.now(); hangNag90 = hangNag300 = false   // 静默挂死探针复位(新一轮重新计)
     let ok = true
     try {
       const reply = await window.BocomHermes.cardSend(text, files, activeSkill && activeSkill.id)
@@ -1587,9 +1711,9 @@
       const st = splitThink(raw)
       if (st.think) paintReason(st.think)
       const finalText = st.rest
-      if (finalText) ai.innerHTML = renderMarkdown(finalText)
+      if (finalText) { ai.innerHTML = renderMarkdown(finalText); foldLongCode(ai) }
       else if (st.think) ai.textContent = '（本轮只有思考过程，见上方思考块）'
-      else if (!ai.textContent.trim() || ai.textContent === PH) ai.textContent = '（无文本输出）'
+      else if (!ai.textContent.trim() || ai.textContent === PH) { ai.textContent = '（无文本输出）'; if (!target) addRetryNote('没拿到文本输出(网关静默/模型空答)—— 可直接重试，同一条消息不用重打') }   // 空回复不该是死胡同
       if (!target && finalText) { lastFinalText = finalText; try { paintArtFinal() } catch {} }   // 成果抽屉「最终结论」= 本卡最近一轮正文(target 轮是工具块里的命令重跑,不算)
       try { bumpCtx(finalText.length + (st.think ? st.think.length : 0)) } catch {}
       if (!target && finalText) { ai.dataset.raw = finalText; addCopyBtn(ai); if ((text || '').length <= 8000) addRegenBtn(ai, text, files) }   // 答完挂复制/重新回答(流式中不挂,免被逐帧重渲染冲掉)
@@ -1601,7 +1725,8 @@
       const pst = splitThink(answerParts ? joinParts(answerParts) : '')
       if (pst.think) paintReason(pst.think)
       if (pst.rest) {
-        ai.innerHTML = renderMarkdown(pst.rest)
+        ai.innerHTML = renderMarkdown(pst.rest); foldLongCode(ai)
+        ai.classList.add('aborted')   // 「已中断」角标:半截气泡和正常完成要能一眼区分(以前只有提示行,气泡长得一样)
         if (!target) { ai.dataset.raw = pst.rest; addCopyBtn(ai); lastFinalText = pst.rest; try { paintArtFinal() } catch {} }   // 半截答案也是本卡最近的产出,抽屉照收
         addRetryNote('回合中断：' + (e.message || e) + '（以上是中断前已收到的部分回答）')
       } else {
@@ -1613,7 +1738,9 @@
       for (const [id, s] of subAgents) if (!s.done) subAgentDone(id, 'done')
       curAnswer = null; curReason = null; setBusy(false); scrollFeed()
       try { wdFinalizeRound(); wdCheck() } catch {}   // 进展型看门狗:结算本轮读文件集合并判绕圈(可能注入提醒/挂横幅)
-      maybeDrain(); maybeShowPlanBar(); maybeWfProduceNag()   // 轮末:补计划批准条 → 产出兜底(快完成零落盘产出 → 提醒补 MD)
+      maybeDrain(); maybeShowPlanBar(); maybeWfProduceNag(); maybeCtxNag()   // 轮末:补批准条 → 产出兜底(工作流) → 水位提醒(普通卡)
+      if (ok && !target) markDone()   // 本轮成功结束:标题加 ✓(多卡扫一眼就知道谁跑完了)
+      maybeCapFeed()   // 轮末回收一次 feed DOM(长会话节点不无限涨)
       // 轮末:先补计划批准条(规划先行),再查自动压缩续航(工作流卡)。
       // 自动压缩前先拉一次 serve 真实用量(cardUsage 通道缺席则静默立即回落,阈值继续吃字符估算)
       pollRealUsage().catch(() => {}).finally(() => { try { maybeAutoCompact() } catch {} })
@@ -1868,6 +1995,7 @@
       paintProj(r.project, r.dir)          // 本卡真实绑定目录
       paintModelChip(r.model)              // 本卡实际生效模型(override || 全局默认),含 boot 期间预选的
       draftKey = DRAFT_PREFIX + (r.sessionId || '')   // 草稿按会话存:续接/误关重开都能找回
+      applyCardTint(r.sessionId)                      // 按 session 给本卡染色(多卡并行一眼区分)
       if (sid || embedded) draftRestore()             // 续接/调试卡恢复草稿;新卡自动发首条消息,不恢复
       boot.remove()
       cardReady = true

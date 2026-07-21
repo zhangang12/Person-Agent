@@ -202,7 +202,36 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     if (!si.wc || si.wc.isDestroyed()) { oc.replyPermission(si.serve, sessionId, requestId, 'reject'); return }
     S.pendingPerm.set(requestId, sessionId)
     S.pendingPerm.set(requestId + ':meta', { tool, detail: detail || '' })   // 供审计留痕(批准/拒绝了什么)
-    si.wc.send('permission-request', { requestId, tool, detail: detail || '' })   // detail=要改的文件/要跑的命令，便于知情审批
+    // edit/write 类:尽力带 diff 预览(批准前看见"要改成什么样");取不到不挡路,照样弹
+    ;(async () => {
+      let diff = ''
+      try { diff = await buildPermDiff(si, sessionId, tool, detail) } catch {}
+      if (!si.wc.isDestroyed()) si.wc.send('permission-request', { requestId, tool, detail: detail || '', diff })
+    })()
+  }
+  // 权限 diff 预览:找会话里最后一个未终态的 edit/write 工具 part,用 oldString/newString(或 write 的 content)拼迷你 diff。
+  // 路径与 detail 对不上就放弃(防串台);write 新文件没有 oldString → 全绿;取不到返回 ''(卡片不渲预览)。
+  async function buildPermDiff(si, sessionId, tool, detail) {
+    if (!/^(edit|write)(_[a-z]+)*$/i.test(String(tool || ''))) return ''
+    const msgs = await oc.getRawMessages(si.serve, sessionId)
+    const TERM = /complet|success|done|error|fail|cancel|abort/i
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const parts = (msgs[i] && msgs[i].parts) || []
+      for (const p of parts) {
+        if (!p || p.type !== 'tool' || !/^(edit|write)/i.test(String(p.tool || ''))) continue
+        const st = String((p.state && p.state.status) || '')
+        if (TERM.test(st)) continue
+        const inp = (p.state && p.state.input) || {}
+        if (detail && inp.filePath && String(inp.filePath).length >= 8 && !String(detail).includes(String(inp.filePath))) continue
+        const oldS = String(inp.oldString || ''), newS = String(inp.newString != null ? inp.newString : (inp.content != null ? inp.content : ''))
+        if (!oldS && !newS) return ''
+        const L = []
+        if (oldS) { for (const l of oldS.split('\n').slice(0, 12)) L.push('- ' + l); if (oldS.split('\n').length > 12) L.push('…') }
+        if (newS) { for (const l of newS.split('\n').slice(0, 20)) L.push('+ ' + l); if (newS.split('\n').length > 20) L.push('…') }
+        return L.join('\n').slice(0, 4000)
+      }
+    }
+    return ''
   }
   // 交互提问路由:serve 的 question 工具需要用户点选回答 —— 弹到对话卡(交互提问卡),应答经 question-reply IPC 回 serve。
   // 只路由到对话卡:管线/监控窗口(sessionInfo 带 tag.scope)没有提问 UI,会话无主/卡已毁同理 ——

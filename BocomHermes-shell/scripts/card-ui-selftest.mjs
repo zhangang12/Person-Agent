@@ -30,8 +30,9 @@ function fakeEl(tag) {
       if (k in t) return t[k]
       if (k === 'appendChild' || k === 'append') return (...cs) => { cs.forEach((c) => { t.children.push(c); if (c && typeof c === 'object') try { c.parentNode = el } catch {} }); return cs[0] }
       if (k === 'insertBefore') return (c) => { t.children.push(c); if (c && typeof c === 'object') try { c.parentNode = el } catch {} return c }
+      if (k === 'firstChild') return t.children[0] || null   // DOM 回收/冻结区 append 都要真 firstChild
       if (k === 'remove') return () => { t.parentNode = null }   // 对齐真 DOM:remove 后按 parentNode 判"还挂在树上"即为否
-      if (k === 'removeChild') return () => {}
+      if (k === 'removeChild') return (c) => { const i = t.children.indexOf(c); if (i >= 0) t.children.splice(i, 1); if (c) try { c.parentNode = null } catch {}; return c }   // 对齐真 DOM:真从 children 摘出去
       if (k === 'querySelector') return (sel) => { t._q = t._q || new Map(); if (!t._q.has(sel)) t._q.set(sel, fakeEl('div')); return t._q.get(sel) }   // 真浏览器能查到 innerHTML 写入的节点,桩按 selector 惰性造一个稳定 fake
       if (k === 'closest') return () => null
       if (k === 'querySelectorAll') return () => []
@@ -796,6 +797,103 @@ console.log('用例18:子 Agent 跨轮回看 —— 轮末拍快照 / 下拉切�
   }
   const snaps2 = exported._saSnaps()
   ok('快照内存上限 20 轮(超出丢最老)', snaps2.length === 20, snaps2.length)
+}
+
+console.log('用例19:体验包 —— 截断提示 / sticky待批准 / 水位提醒 / DOM回收 / 流式增量渲染')
+{
+  // #6 超长工具输出带截断提示(以前静默砍断)
+  cbs.onStream({ kind: 'tool', text: 'read', partID: 'big1:tool', status: 'completed', input: { filePath: 'big.js' }, output: 'x'.repeat(25000) })
+  const tb = exported.toolEls.get('big1:tool')
+  ok('超长工具输出带截断提示(共 N 字)', tb && /已截断:共 25000 字/.test(tb.innerHTML), tb && tb.innerHTML.slice(-120))
+  // #13 权限请求 → 钉 sticky 待批准;批准后消失
+  cbs.onPermission({ requestId: 'permX', tool: 'edit', detail: 'a.js' })
+  const sticky = created.find((c) => /permsticky/.test(c.el.className || ''))
+  ok('权限请求 → sticky 待批准钉出现(引擎在等你)', !!sticky && /引擎在等你/.test(sticky.el.textContent), sticky && sticky.el.textContent)
+  created.filter((c) => c.el.className === 'ok').map((c) => c.el).pop()._fire('click')
+  ok('批准后 sticky 消失', sticky.el.parentNode === null)
+  // #10 普通卡 ≥90% 轮末主动提醒压缩续聊(一次)
+  exported._setCtx(Math.round(128000 * 1.6 * 0.92))
+  await exported.turnFn('x')
+  ok('≥90% 轮末提醒压缩续聊', created.some((c) => c.el.className === 'note muted' && /压缩续聊/.test(c.el.textContent || '')))
+  // #12 feed DOM 回收:超 320 收到 ≤280 + 顶部收纳占位
+  const feedEl = byId.get('feed')
+  while (feedEl.children.length < 330) feedEl.appendChild(fakeEl('div'))
+  await exported.turnFn('y')
+  ok('feed 超 320 触发回收(≤281 含占位)', feedEl.children.length <= 281, 'children=' + feedEl.children.length)
+  const capNote = created.filter((c) => c.el.id === 'feedCapNote').pop()
+  ok('收纳占位带条数(已收纳 N 条)', !!capNote && /已收纳 \d+ 条早期消息/.test(capNote.el.textContent || ''), capNote && capNote.el.textContent)
+  // #11 流式增量渲染:冻结区只 append 不重渲,尾巴区跟最新
+  const p1 = exported.turnFn('讲个长回答')
+  await new Promise((r) => setTimeout(r, 10))
+  cbs.onStream({ kind: 'text', partID: 'a1', text: '块一\n\n' })
+  await new Promise((r) => setTimeout(r, 5))
+  cbs.onStream({ kind: 'text', partID: 'a1', text: '块一\n\n块二\n\n' })
+  await new Promise((r) => setTimeout(r, 5))
+  const aiBub = feedEl.children.filter((c) => String(c.className || '').includes('msg ai') && !String(c.className || '').includes('err')).pop()
+  ok('出现 冻结区+尾巴区 结构', aiBub && aiBub.children.length === 2, aiBub && aiBub.children.length)
+  const frozenN = aiBub.children[0].children.length
+  cbs.onStream({ kind: 'text', partID: 'a1', text: '块一\n\n块二\n\n块三\n\n尾巴' })
+  await new Promise((r) => setTimeout(r, 5))
+  ok('新稳定块只 append(冻结区只增)', aiBub.children[0].children.length > frozenN, frozenN + '→' + aiBub.children[0].children.length)
+  ok('尾巴区是当前未完成块', /尾巴/.test(aiBub.children[1].innerHTML), aiBub.children[1].innerHTML.slice(0, 40))
+  await p1
+}
+
+console.log('用例20:Esc 中断角标 + 空回复给重试(可变回复模式)')
+{
+  const byId6 = new Map(), created6 = [], cbs6 = {}
+  let mode6 = 'reject'   // reject=发流后抛错(模拟 Esc 中断);empty=返回空串(模拟空回复)
+  const doc6 = {
+    getElementById: (id) => {
+      if (id === 'planBar' || id === 'memPop') { const hit = created6.find((c) => c.el.id === id && c.el.parentNode); return hit ? hit.el : null }
+      if (!byId6.has(id)) byId6.set(id, fakeEl('div')); return byId6.get(id)
+    },
+    createElement: (t) => { const e = fakeEl(t); created6.push({ tag: String(t), el: e }); return e },
+    addEventListener: () => {}, removeEventListener: () => {},
+    querySelector: () => fakeEl('div'), querySelectorAll: () => [],
+    documentElement: fakeEl('html'), body: fakeEl('body'), title: '',
+  }
+  const bocom6 = new Proxy({}, {
+    get: (t, k) => {
+      const key = String(k)
+      if (/^on[A-Z]/.test(key)) return (f) => { cbs6[key] = f }
+      if (key === 'getTheme') return () => 'light'
+      if (key === 'getSettings') return () => ({})
+      if (key === 'getDropPath') return () => ''
+      if (key === 'cardInit') return async () => ({ sessionId: 'x6', project: 'demo', dir: 'C:/demo', model: null, reattached: false })
+      if (key === 'cardSend') return async () => {
+        if (mode6 === 'reject') { cbs6.onStream && cbs6.onStream({ kind: 'text', partID: 'p9', text: '半截回答' }); throw new Error('aborted') }
+        return ''   // empty:空回复
+      }
+      if (key === 'listModels') return async () => []
+      return async () => null
+    },
+  })
+  const win6 = new Proxy({ BocomHermes: bocom6, Rich: { renderMarkdown: (s) => String(s == null ? '' : s), wireActions: () => {} }, innerWidth: 800, innerHeight: 600 }, { get: (t, k) => (k in t ? t[k] : undefined), set: (t, k, v) => { t[k] = v; return true } })
+  let exp6 = null
+  const base6 = {
+    console, setTimeout, setInterval, clearTimeout, clearInterval, Promise, JSON, Math, Date, Array, Object, String, Number, Boolean,
+    Map, Set, URLSearchParams, RegExp, Error, Symbol, Proxy, Reflect,
+    requestAnimationFrame: (f) => { try { f() } catch {} },
+    document: doc6, window: win6, BocomHermes: bocom6,
+    location: { search: '?title=' + encodeURIComponent('中断测试') + '&msg=hi' },
+    localStorage: lsStore(),
+    navigator: { clipboard: { writeText: async () => {} } },
+    __export: (o) => { exp6 = o },
+  }
+  const sb6 = new Proxy(base6, { has: () => true, get: (t, k) => (k in t ? t[k] : undefined) })
+  const tail6 = '\n;__export({ turnFn: turn })'
+  let err6 = null
+  try { vm.runInNewContext(main + tail6, sb6, { timeout: 8000 }) } catch (e) { err6 = e }
+  ok('启动不抛(用例20)', !err6, err6 && err6.message)
+  await new Promise((r) => setTimeout(r, 140))   // boot 首轮(reject 模式)→ 中断路径
+  const aiBub6 = created6.filter((c) => String(c.el.className || '').includes('msg ai')).map((c) => c.el).pop()
+  ok('半截气泡带「已中断」角标(aborted 类)', aiBub6 && aiBub6.classList.contains('aborted'), aiBub6 && aiBub6.className)
+  ok('半截文本没被错误覆盖', aiBub6 && /半截回答/.test(aiBub6.innerHTML), aiBub6 && aiBub6.innerHTML.slice(0, 40))
+  mode6 = 'empty'
+  await exp6.turnFn('再来')
+  ok('空回复给重试提示(不重打成死胡同)', created6.some((c) => c.el.className === 'note muted' && /没拿到文本输出/.test(c.el.textContent || '')), '(addRetryNote 文案)')
+  ok('重试提示带「重试本轮」按钮', created6.some((c) => c.el.textContent === '重试本轮'), '(按钮)')
 }
 
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)
