@@ -17,6 +17,7 @@
     "compact:test": "node scripts/recorder-compact-selftest.mjs",
     "card:ui:test": "node scripts/card-ui-selftest.mjs",
     "knowledge:test": "node scripts/knowledge-selftest.mjs",
+    "session:test": "node scripts/session-selftest.mjs",
     "modelroute": "node scripts/model-route-probe.mjs",
     "mcp:browser": "node mcp/browser-mcp.mjs",
     "mcp:browser:test": "node mcp/selftest.mjs",

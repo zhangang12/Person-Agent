@@ -2,7 +2,9 @@
 const { exec } = require('child_process')
 const knowledge = require('./knowledge')
 
-module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, recordHistory, touchHistory }) {
+// deps 可选项:replaceHistoryId(oldId, newId) —— stale 重开时把旧历史条目原地换 id(保留 created/title/model);
+// 没给就退化为现状(recordHistory 新增条目)。由 window.js 装配层接线。
+module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, recordHistory, touchHistory, replaceHistoryId }) {
   // ── 个人记忆库 ──────────────────────────────────────────────────────────────
   const memoryFile = path.join(require('electron').app.getPath('userData'), 'memory.md')
   function loadMemory() {
@@ -104,9 +106,9 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
       },
     }
   }
-  // target = 两级索引的"当前目标文本":卡片标题(普通卡=首条消息前 24 字,工作流卡=goal 前 20 字)或压缩续聊的接力摘要。
-  // 注意:首条消息全文要到 card-send 才可见,而注入前缀在 card-init 构建,故只能用标题/摘要片段做确定性命中;
-  // 工作流完整 goal 需 window.js 透传(本波不动 window.js),或后续波次改为 card-send 时懒构建知识注入。target 为空 → 退化为纯新→旧。
+  // target = 两级索引的"当前目标文本"。C2 懒构建(本波):card-init 不再现场注入,只在 ctx 里留 KNOWLEDGE_SLOT 占位;
+  // 首次 card-send 时用【完整首条用户消息】(重开/压缩续聊再叠加接力摘要 seed)做 target 现场命中拼进 ctx ——
+  // 比开卡时的标题片段(前 24 字)命中准得多。target 为空 → 退化为纯新→旧(injectText 内部处理)。
   function loadKnowledge(dir, target) {
     if (!dir) return ''
     try {
@@ -178,10 +180,15 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
   // 会话没了(关卡/工作流收尾/会话被杀)→ 把它名下【弹了框但没人答】的审批记录一起清掉。
   // pendingPerm 以前唯一的删除点是 permission-reply,于是"弹了审批框但没点就关卡"的记录永远留在 Map 里(无上限,长跑必涨)。
   // 挂在 S 上:window.js(关卡)与 orch.js(工作流收尾)都要用,而 pendingPerm 的所有权在这一层。
-  S.dropPendingPerm = (sessionId) => {
-    if (!sessionId) return
-    for (const [k, v] of S.pendingPerm) {
-      if (v === sessionId) { S.pendingPerm.delete(k); S.pendingPerm.delete(k + ':meta') }   // k=requestId → v=sessionId;:meta 是同 requestId 的伴生键
+  // 提问版同因清理(R6 提问挂死):会话没了而它的交互提问【弹了卡但没人答】,serve 的 question 工具会一直等应答,
+  // 回合挂死(实测 88s 等用户 Esc)。逐个 reject 再删,仿 dropPendingPerm;挂在 S 上供 window.js 关卡清理链调用。
+  // pendingQuestion: requestId → { sessionId, v2, serve }(rejectQuestion 内部吞错打日志,fire-and-forget 即可)。
+  S.dropPendingQuestion = (sessionId) => {
+    if (!sessionId || !S.pendingQuestion) return
+    for (const [k, v] of S.pendingQuestion) {
+      if (!v || v.sessionId !== sessionId) continue
+      S.pendingQuestion.delete(k)
+      try { oc.rejectQuestion(v.serve, sessionId, k, v.v2) } catch {}
     }
   }
 
@@ -252,6 +259,34 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
           if (fp) S.wfFiles(si.wc.id, path.isAbsolute(String(fp)) ? String(fp) : path.resolve((si.serve && si.serve.dir) || '.', String(fp)))
         } catch {}
       }
+      // T5 编排产物轨道:write/edit 走 wfFiles(上面,现状不动);skill_run 下载文件 / mail_send 发信 / doc_read 读文档
+      // 这三类进 S.wfAction(window.js 提供的产物动作轨,没提供就跳过)。MCP 工具名可能带服务前缀,按结尾匹配。
+      // 只收成功完成的(mail_send 是真发信,半截状态绝不能上报);write/edit 不在这里,各管各的。
+      if (typeof S.wfAction === 'function' && !toolError && /complet|success|done/i.test(String(status || ''))) {
+        const tname = String(text || '')
+        const inp = (() => { try { return typeof toolInput === 'string' ? JSON.parse(toolInput) : (toolInput || {}) } catch { return {} } })()
+        try {
+          // skill_run:报告里的「导出/下载文件」行(· 路径)或 downloads 数组 → 每个文件一条产物动作
+          if (/(^|[._-])skill_run$/i.test(tname)) {
+            const dls = []
+            const out = typeof toolOutput === 'string' ? toolOutput : (toolOutput == null ? '' : (() => { try { return JSON.stringify(toolOutput) } catch { return '' } })())
+            try { const j = JSON.parse(out); if (j && Array.isArray(j.downloads)) for (const d of j.downloads) dls.push(String(d)) } catch {}
+            if (!dls.length && out) {
+              const seg = out.split(/导出\/下载文件|下载文件|downloads/i)[1] || ''
+              for (const l of seg.split('\n')) { const m = l.match(/^\s*[·\-*]\s*(\S.+?)\s*$/); if (m) dls.push(m[1]) }
+            }
+            for (const d of dls.slice(0, 20)) S.wfAction(si.wc.id, { kind: 'skill', label: '技能下载：' + path.basename(String(d)), detail: String(d) })
+          // mail_send:收件人 + 主题(to 是逗号分隔串,见 mail-mcp 入参)
+          } else if (/(^|[._-])mail_send$/i.test(tname)) {
+            const to = String(inp.to || '').slice(0, 200), subj = String(inp.subject || '').slice(0, 120)
+            if (to || subj) S.wfAction(si.wc.id, { kind: 'mail', label: '发信：' + (subj || '(无主题)'), detail: '收件人 ' + (to || '?') })
+          // doc_read:读了哪个文档(路径)
+          } else if (/(^|[._-])doc_read$/i.test(tname)) {
+            const fp = String(inp.path || inp.file || inp.filePath || '')
+            if (fp) S.wfAction(si.wc.id, { kind: 'doc', label: '读文档：' + path.basename(fp), detail: fp })
+          }
+        } catch {}
+      }
       si.wc.send('card-stream', { kind: 'tool', text, partID, status: status || '', input: toolInput, output: toolOutput, title: toolTitle, error: toolError, sub: !!subagent, agentId: agentId || '', agentName: agentName || '', taskChild: taskChild || '', taskDesc: taskDesc || '', readN, sessionId, tag }); return
     }
     if (!subagent && !role && kind !== 'reasoning' && text === S.sentPrompt.get(sessionId)) return   // "回显自己prompt"过滤只对父会话
@@ -263,6 +298,33 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     si.wc.send('card-stream', { kind: kind || 'text', text: full, partID, sub: !!subagent, agentId: agentId || '', agentName: agentName || '', sessionId, tag })
   }
   S.handlers = { onPermission, onText, onQuestion }
+
+  // P1:onRawMessages 回调拿到的原始消息列表 → 与 opencode.js pollTurnParts 同构的 part 映射(喂同一个 onText)。
+  // partID 必须同构(工具 = (callID||id)+':tool'),否则同一工具调用会被渲染两行,卡片按 partID 幂等去重就失效。
+  // 用量摘取(noteUsage)在 oc 侧拉取时已顺手做,这里只管映射。只取最后一个 user 之后的 assistant(当前回合)。
+  function mapRawTurnParts(list) {
+    const arr = Array.isArray(list) ? list : (list && list.data) || []
+    let lastU = -1
+    arr.forEach((m, i) => { const r = (m && m.info && m.info.role) || (m && m.role); if (r === 'user') lastU = i })
+    const out = []
+    for (const m of arr.slice(lastU + 1)) {
+      const role = (m && m.info && m.info.role) || (m && m.role)
+      if (role !== 'assistant') continue
+      const parts = (m && (m.parts || (m.data && m.data.parts) || (m.info && m.info.parts))) || []
+      for (const p of Array.isArray(parts) ? parts : []) {
+        if (!p || !p.id) continue
+        if (p.type === 'text' || p.type === 'reasoning' || p.type === 'thinking') {
+          const t = (typeof p.text === 'string' && p.text) || (typeof p.reasoning === 'string' && p.reasoning) || (typeof p.content === 'string' && p.content) || ''
+          if (t) out.push({ partID: p.id, kind: p.type === 'text' ? 'text' : 'reasoning', text: t })
+        } else if (p.type === 'tool') {
+          const st = p.state || {}
+          const cid = String(p.callID || p.id || p.partID || p.tool || '')
+          out.push({ partID: cid + ':tool', kind: 'tool', text: p.tool || 'tool', status: st.status || '', input: st.input, output: st.output, title: st.title, error: st.error })
+        }
+      }
+    }
+    return out
+  }
 
   // ── 卡死子 Agent 看门狗(判死不判慢,与卡内"绕圈看门狗"互补:那条治主 Agent 反复读同批文件,这条治子 Agent 写结论挂死)──
   // 实测病灶(2026-07-20,两次):子 Agent 探查全做完、写最终结论的 LLM 调用无声挂死(文本空、消息不收尾、serve 无请求级超时),
@@ -285,7 +347,14 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
             const upd = (c.time && c.time.updated) || 0
             if (!upd || Date.now() - upd < SUB_STALL_MS) continue   // 有动静就不判死
             let stalled = false
-            try { stalled = oc.generationStalled(await oc.getRawMessages(serve, c.id)) } catch {}
+            // P4 降载:判挂只需最后一条消息。先带 {limit:1} 试拉 —— opencode.js/serve 支持 limit 就省掉全量;
+            // 不支持(老版本忽略第三参/返回形状不对)回退现状全量,防御写法,两种都对(generationStalled 只看末尾)。
+            try {
+              let msgs = null
+              try { const r = await oc.getRawMessages(serve, c.id, { limit: 1 }); if (Array.isArray(r)) msgs = r } catch {}
+              if (!msgs) { try { msgs = await oc.getRawMessages(serve, c.id) } catch {} }
+              stalled = oc.generationStalled(msgs || [])
+            } catch {}
             if (!stalled) continue
             log('watchdog: 子会话 ' + c.id + ' (' + (c.title || '') + ') 静默 >5min 且生成挂死 → 自动中止(父卡可重派)')
             try { await oc.abort(serve, c.id) } catch {}
@@ -383,12 +452,67 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     exec(cmd, (err) => { if (err) shell.openPath(file).catch(() => {}) })
   }
 
+  // ── 本地转录(C4)────────────────────────────────────────────────────────────
+  // 每轮结束把该轮【增量】消息 append 到 userData/transcripts/<sid>.jsonl,每行
+  // {role,text,reasoning?,tools?,files?,at}(reasoning 截 500 字;tools/files 是 normalizeMessages 新形状,透传)。
+  // 用途:重连时 serve 历史拉不到/为空 → 回退读本地 transcript 拼回放,对话不白丢。
+  // 单文件超 2MB 轮转截头(保尾部,截到整行边界不留半行 JSON)。增量游标按消息条数记,与文件行数解耦(轮转不影响游标)。
+  const TX_MAX = 2 * 1024 * 1024
+  const txDir = () => path.join(require('electron').app.getPath('userData'), 'transcripts')
+  const txFile = (sid) => path.join(txDir(), String(sid).replace(/[^\w-]/g, '_') + '.jsonl')
+  const txCount = new Map()   // sid → 已落盘的消息条数(增量游标)
+  function appendTranscript(sid, msgs) {
+    if (!sid || !Array.isArray(msgs) || !msgs.length) return
+    try {
+      let n0 = txCount.get(sid) || 0
+      if (msgs.length < n0) n0 = 0   // serve 侧历史变短(异常重置)→ 游标归零重记,重复行可接受,卡死不接受
+      if (msgs.length <= n0) return
+      const lines = []
+      for (const m of msgs.slice(n0)) {
+        if (!m || (m.role !== 'user' && m.role !== 'assistant')) continue
+        const e = { role: m.role, text: String(m.text || ''), at: Date.now() }
+        if (m.reasoning) e.reasoning = String(m.reasoning).slice(0, 500)
+        if (Array.isArray(m.tools) && m.tools.length) e.tools = m.tools
+        if (Array.isArray(m.files) && m.files.length) e.files = m.files
+        lines.push(JSON.stringify(e))
+      }
+      if (!lines.length) { txCount.set(sid, msgs.length); return }
+      fs.mkdirSync(txDir(), { recursive: true })
+      const f = txFile(sid)
+      fs.appendFileSync(f, lines.join('\n') + '\n', 'utf8')
+      txCount.set(sid, msgs.length)
+      const st = fs.statSync(f)
+      if (st.size > TX_MAX) {   // 轮转截头:保尾部 ~2MB,从第一个换行后切开(别留半行)
+        const buf = fs.readFileSync(f, 'utf8')
+        const keep = buf.slice(Math.max(0, buf.length - TX_MAX + 65536))
+        const nl = keep.indexOf('\n')
+        fs.writeFileSync(f, keep.slice(nl >= 0 ? nl + 1 : 0), 'utf8')
+        log('transcript rotated (head trimmed): ' + path.basename(f))
+      }
+    } catch {}
+  }
+  function readTranscript(sid) {   // 重连回放兜底:解析本地转录,只放行 user/assistant 行
+    const out = []
+    try {
+      for (const l of fs.readFileSync(txFile(sid), 'utf8').split('\n')) {
+        if (!l.trim()) continue
+        try { const e = JSON.parse(l); if (e && (e.role === 'user' || e.role === 'assistant') && (e.text || e.reasoning)) out.push(e) } catch {}
+      }
+    } catch {}
+    return out
+  }
+
   // ── IPC ─────────────────────────────────────────────────────────────────────
   // per-card 状态(按 webContents 存,比 sessionInfo 长寿 —— 跨 init/reinit 存活):
   //   S.cardDir:  wcId → 本卡绑定的项目目录(不动全局 projectDir)
   //   S.modelByWc: wcId → 本卡选的模型({providerID,modelID,name} | null=serve默认)
   if (!S.cardDir) S.cardDir = new Map()
   if (!S.modelByWc) S.modelByWc = new Map()
+  // C2 知识懒构建:card-init/card-reinit 只在注入前缀里留 KNOWLEDGE_SLOT 占位,首次 card-send 才用完整首条消息
+  // 做 target 现场命中替进去(见 card-send)。knowledgeSeed: sid → 接力摘要原文(压缩续聊场景 target = 摘要+首条消息)。
+  const KNOWLEDGE_SLOT = '<!--KNOWLEDGE_SLOT-->'
+  const knowledgeSeed = new Map()
+  const turnBusy = new Set()   // 进行中的回合 sid:card-init/reattach 回包带 running,卡片重载后知道"还在跑"
   // 会话就绪/重建时把 per-card 模型回放进 sessionInfo;返回给 UI 的是"实际生效"的模型
   function replayModel(wcId, sid) {
     const si = S.sessionInfo.get(sid); if (!si) return null
@@ -413,7 +537,13 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
         S.pushServeHealth && S.pushServeHealth(e.sender, serve)
         touchHistory(sid)
         let messages = []; try { messages = await oc.getMessages(serve, sid) } catch {}
-        return { sessionId: sid, project: proj, dir, model, reattached: true, messages }
+        // C4:serve 历史拉不到/为空 → 回退本地转录拼回放(转录条目本就来自 getMessages 归一化,已剥注入前缀)
+        if (!messages || !messages.length) {
+          const tx = readTranscript(sid)
+          if (tx.length) { messages = tx; log('reattach: serve history unavailable, replay local transcript (' + tx.length + ' entries) for ' + sid) }
+        }
+        txCount.set(sid, (messages || []).length)   // 对齐转录游标:下轮只 append 新增量(防进程重启后整段重记)
+        return { sessionId: sid, project: proj, dir, model, reattached: true, messages, running: turnBusy.has(sid) }
       }
       const ns = await oc.createSession(serve, wantTitle || (h && h.title) || 'BocomHermes 对话', dir)  // 已不在 → 新开一段(带项目目录)
       if (!ns) throw new Error('create session failed')
@@ -421,9 +551,12 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
       S.sessionInfo.set(ns, { wc: e.sender, serve })
       const model1 = replayModel(e.sender.id, ns)
       S.pushServeHealth && S.pushServeHealth(e.sender, serve)
-      const ctx1 = loadMemory() + loadProjectContext(dir) + loadKnowledge(dir, wantTitle || (h && h.title) || ''); if (ctx1) S.firstMsgCtx.set(ns, ctx1)
-      recordHistory(ns, wantTitle || (h && h.title), dir)
-      return { sessionId: ns, project: proj, dir, model: model1, reattached: false, stale: true }
+      // C2:知识不在开卡时注入(标题片段命中差),留 KNOWLEDGE_SLOT 占位,首条发送时用完整消息现场命中(见 card-send)
+      const ctx1 = loadMemory() + loadProjectContext(dir) + KNOWLEDGE_SLOT; S.firstMsgCtx.set(ns, ctx1)
+      // R8 stale 历史:旧条目原地换 id(保留 created/title/model);装配层没给 replaceHistoryId 就退化为新增条目
+      if (typeof replaceHistoryId === 'function') { try { replaceHistoryId(sid, ns) } catch { recordHistory(ns, wantTitle || (h && h.title), dir) } }
+      else recordHistory(ns, wantTitle || (h && h.title), dir)
+      return { sessionId: ns, project: proj, dir, model: model1, reattached: false, stale: true, running: false }
     }
     const dir = S.cardDir.get(e.sender.id) || S.settings.projectDir || ''
     const serve = await oc.ensureServe(dir, S.handlers, log)
@@ -433,9 +566,9 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     S.sessionInfo.set(sessionId, { wc: e.sender, serve })
     const model0 = replayModel(e.sender.id, sessionId)
     S.pushServeHealth && S.pushServeHealth(e.sender, serve)
-    const ctx0 = loadMemory() + loadProjectContext(dir) + loadKnowledge(dir, wantTitle); if (ctx0) S.firstMsgCtx.set(sessionId, ctx0)
+    const ctx0 = loadMemory() + loadProjectContext(dir) + KNOWLEDGE_SLOT; S.firstMsgCtx.set(sessionId, ctx0)   // C2:知识留占位,发送时懒构建
     recordHistory(sessionId, wantTitle, dir)
-    return { sessionId, project: dir ? path.basename(dir) : '未选目录', dir, model: model0, reattached: false }
+    return { sessionId, project: dir ? path.basename(dir) : '未选目录', dir, model: model0, reattached: false, running: false }
   })
 
   // 切项目目录后即时重绑本卡:opencode 一个 serve 只认一个 cwd,换项目 = 换 serve + 换会话。
@@ -447,6 +580,8 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
       const si = S.sessionInfo.get(old)
       if (si) { oldServe = si.serve; try { oc.abort(si.serve, old) } catch {} }
       S.sessionInfo.delete(old); S.streamBuf.delete(old); S.sentPrompt.delete(old); S.firstMsgCtx.delete(old)
+      knowledgeSeed.delete(old); turnBusy.delete(old)
+      S.dropPendingQuestion(old)   // 旧会话已中止:它名下没答的提问逐个 reject,别让 question 工具空等挂死(R6)
     }
     S.sessionByWc.delete(e.sender.id)
     if (opts && opts.dir) S.cardDir.set(e.sender.id, String(opts.dir))
@@ -459,8 +594,11 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     const model = replayModel(e.sender.id, sessionId)
     S.pushServeHealth && S.pushServeHealth(e.sender, serve)
     // carryCtx=压缩续聊的接力摘要:上一段对话的要点随首条消息带进新会话(用户气泡不显示,回放展示层会剥)
-    const carry = opts && typeof opts.carryCtx === 'string' && opts.carryCtx.trim() ? '<上轮对话接力摘要>\n' + opts.carryCtx.trim().slice(0, 20000) + '\n</上轮对话接力摘要>\n\n' : ''
-    const ctx = loadMemory() + loadProjectContext(dir) + loadKnowledge(dir, (opts && opts.carryCtx) || '') + carry; if (ctx) S.firstMsgCtx.set(sessionId, ctx)
+    const carryRaw = opts && typeof opts.carryCtx === 'string' ? opts.carryCtx.trim().slice(0, 20000) : ''
+    const carry = carryRaw ? '<上轮对话接力摘要>\n' + carryRaw + '\n</上轮对话接力摘要>\n\n' : ''
+    // C2:知识留占位发送时懒构建;续聊场景 target = 接力摘要 + 首条消息(seed 存原文,card-send 拼)
+    const ctx = loadMemory() + loadProjectContext(dir) + KNOWLEDGE_SLOT + carry; S.firstMsgCtx.set(sessionId, ctx)
+    if (carryRaw) knowledgeSeed.set(sessionId, carryRaw)
     recordHistory(sessionId, 'BocomHermes 对话', dir)
     // 旧 serve 若已无任何会话引用且是自起的 → 退休,不留孤儿进程
     if (oldServe && oldServe !== serve) {
@@ -468,19 +606,36 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
       try { if (oc.retireIfOrphan(oldServe, inUseBases)) log('card-reinit: 旧 serve ' + oldServe.base + ' 已退休(无会话引用)') } catch {}
     }
     log('card-reinit → [' + (dir || '(home)') + '] session ' + sessionId)
-    return { sessionId, project: dir ? path.basename(dir) : '未选目录', dir, model }
+    return { sessionId, project: dir ? path.basename(dir) : '未选目录', dir, model, running: false }
   })
 
   ipcMain.handle('card-send', async (e, arg) => {
     const { text, files, skill } = (typeof arg === 'string') ? { text: arg } : (arg || {})   // 兼容老调用(纯字符串)与新 {text, files, skill}
     const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
     if (!si) throw new Error('session not ready')
+    turnBusy.add(sessionId)
     // 首条消息：静默注入项目上下文前缀（用户看到原文，Serve 收到"背景+原文"）
-    const ctxPrefix = S.firstMsgCtx.get(sessionId) || ''
+    // C2 知识懒构建:ctx 里的 KNOWLEDGE_SLOT 此刻才替换成知识段 —— target 用【完整首条用户消息】
+    // (压缩续聊/重开再叠加接力摘要 seed),比开卡时的标题片段命中准;target 全空 → injectText 退化为新→旧。
+    let ctxPrefix = S.firstMsgCtx.get(sessionId) || ''
     if (ctxPrefix) {
-      S.firstMsgCtx.delete(sessionId); log('inject project context (' + ctxPrefix.length + ' chars) for ' + sessionId)
-      // 后台动作可视化:注入了什么背景要让用户在对话里看得见(一行灰字),不能只躺在日志里
-      try { if (!e.sender.isDestroyed()) e.sender.send('card-note', { text: '已随首条消息注入背景：个人记忆 + 项目上下文 + 项目知识（' + ctxPrefix.length + ' 字）', tone: 'muted' }) } catch {}
+      if (ctxPrefix.includes(KNOWLEDGE_SLOT)) {
+        const kdir = (si.serve && si.serve.dir) || S.cardDir.get(e.sender.id) || S.settings.projectDir || ''
+        const seed = knowledgeSeed.get(sessionId) || ''
+        let k = ''; try { k = loadKnowledge(kdir, (seed ? seed + '\n' : '') + String(text || '')) } catch {}
+        ctxPrefix = ctxPrefix.replace(KNOWLEDGE_SLOT, k)
+      }
+      S.firstMsgCtx.delete(sessionId); knowledgeSeed.delete(sessionId)
+    }
+    if (ctxPrefix) {
+      log('inject project context (' + ctxPrefix.length + ' chars) for ' + sessionId)
+      // 后台动作可视化:注入了什么背景要让用户在对话里看得见(一行灰字),不能只躺在日志里。按实际注入的成分拼文案,不虚报。
+      const seg = []
+      if (ctxPrefix.includes('<个人记忆>')) seg.push('个人记忆')
+      if (ctxPrefix.includes('<项目背景>')) seg.push('项目背景')
+      if (ctxPrefix.includes('<项目知识(')) seg.push(ctxPrefix.includes('场景命中') ? '项目知识（按首条消息命中）' : '项目知识')
+      if (ctxPrefix.includes('<上轮对话接力摘要>')) seg.push('接力摘要')
+      try { if (!e.sender.isDestroyed()) e.sender.send('card-note', { text: '已随首条消息注入背景：' + (seg.join(' + ') || '项目背景') + '（' + ctxPrefix.length + ' 字）', tone: 'muted' }) } catch {}
     }
     // 作答技能：选中的技能把方法论指令静默预置到用户原文前（用户气泡仍显示原文）
     let skillPrefix = ''
@@ -491,9 +646,9 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     let model = si.model || S.settings.model || null
     const fileArr = Array.isArray(files) ? files : []
     const hasImage = fileArr.some((f) => f && /^image\//.test(f.mime || ''))
-    if (hasImage) {                                   // 有图 → 确保用支持图像的模型(动态切多模态)
+    if (hasImage) {                                   // 有图 → 确保用支持图像的模型(动态切多模态);C1:走 oc 缓存版,不为检查单拉全量
       try {
-        const models = await oc.listModels(si.serve)
+        const models = await oc.listModels(si.serve, {})
         const cur = model && models.find((m) => m.providerID === model.providerID && m.modelID === model.modelID)
         if (!cur || !cur.image) {
           const v = models.find((m) => m.image)
@@ -505,53 +660,80 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     // 轮询补渲染:这台 serve 的 /event 常不推 message 流式事件(工具/子Agent/思考全静默 → 卡片只能等 POST 返回一次性贴,
     // 看着像"单Agent一口气出结果")。发消息期间另挂一个轻量轮询:每 1.2s 拉 message parts 喂给【同一个 onText handler】,
     // 卡片按 partID 幂等渲染 —— 不依赖事件流。与事件流路径重复也只是原地更新(onText/card 按 partID 去重),不重复。
-    let poll = null
+    // P1:给 sendMessage 传 onRawMessages hook(opencode.js 新版:拉到原始消息列表直接回调,不用再轮询全量)——
+    // 回调里跑与 pollTurnParts 同构的 part 映射(mapRawTurnParts);hook 生效期间自己的轮询降到 5s 兜底,hook 缺席维持 1.2s。
+    const feedParts = (parts) => {
+      for (const p of parts || []) {
+        if (p.kind === 'tool') onText({ sessionId, role: 'assistant', kind: 'tool', text: p.text, partID: p.partID, status: p.status, toolInput: p.input, toolOutput: p.output, toolTitle: p.title, toolError: p.error })
+        else onText({ sessionId, role: 'assistant', kind: p.kind, text: p.text, partID: p.partID })
+      }
+    }
+    let poll = null, hookLive = false
     const startPoll = () => { if (poll) return; poll = setInterval(async () => {
       try {
         const si2 = S.sessionInfo.get(sessionId); if (!si2 || !si2.wc || si2.wc.isDestroyed()) return
         const parts = await oc.pollTurnParts(si2.serve, sessionId); if (!parts) return
-        for (const p of parts) {
-          if (p.kind === 'tool') onText({ sessionId, role: 'assistant', kind: 'tool', text: p.text, partID: p.partID, status: p.status, toolInput: p.input, toolOutput: p.output, toolTitle: p.title, toolError: p.error })
-          else onText({ sessionId, role: 'assistant', kind: p.kind, text: p.text, partID: p.partID })
-        }
+        feedParts(parts)
       } catch {}
-    }, 1200) }
+    }, hookLive ? 5000 : 1200) }
     const stopPoll = () => { if (poll) { clearInterval(poll); poll = null } }
+    const onRaw = (list) => {   // oc 新版 hook:原始消息列表直达 → 同构映射喂 onText;首火后轮询降 5s
+      try {
+        if (!hookLive) { hookLive = true; if (poll) { stopPoll(); startPoll() } }
+        feedParts(mapRawTurnParts(list))
+      } catch {}
+    }
     startPoll()
     try {
-      const out = await oc.sendMessage(si.serve, sessionId, msg, model, fileArr, onNote)
+      const out = await oc.sendMessage(si.serve, sessionId, msg, model, fileArr, onNote, { onRawMessages: onRaw })
+      // 手动停止标记(opencode.js consumeAbortFlag,按形状防御调用):本轮被用户中止 → 卡内留一行灰字交代截断原因
+      try { if (typeof oc.consumeAbortFlag === 'function' && oc.consumeAbortFlag(sessionId)) onNote('已手动停止（本轮输出被中止）') } catch {}
+      // 每轮结束拉一次完整消息:本地转录(C4)与工作流终答(wfTurnDone)共用这一次拉取,不多打请求
+      let msgs = null
+      try { msgs = await oc.getMessages(si.serve, sessionId) } catch {}
+      if (msgs) appendTranscript(sessionId, msgs)
       // 工作流卡:每轮终答进成果注册表+存档(升格方 workflow_result 取的就是它)。
       // POST 返回可能只带本轮【最后一条】消息(实测:多波 fan-out 轮的 12k 字结论在中段 text part,返回只剩 317 字收尾)——
       // 改从消息端点取"最后一个 user 之后的全部 assistant 文本"当本轮完整终答,谁长用谁。
       try {
         if (S.wfTurnDone && S.wfCardByWc && S.wfCardByWc.has(e.sender.id)) {
           let full = String(out || '')
-          try {
-            const msgs = await oc.getMessages(si.serve, sessionId)
-            let lastU = -1; (msgs || []).forEach((m, i) => { if (m && m.role === 'user') lastU = i })
-            const t = (msgs || []).slice(lastU + 1).filter((m) => m && m.role === 'assistant' && m.text).map((m) => m.text).join('\n').trim()
+          if (msgs) {
+            let lastU = -1; msgs.forEach((m, i) => { if (m && m.role === 'user') lastU = i })
+            const t = msgs.slice(lastU + 1).filter((m) => m && m.role === 'assistant' && m.text).map((m) => m.text).join('\n').trim()
             if (t.length > full.length) full = t
-          } catch {}
+          }
           S.wfTurnDone(e.sender.id, full)
         }
       } catch {}
       return out
     }
     catch (err) {
+      // R7:发送失败把已消费的首条背景塞回 —— 下次重发(同一条消息)仍能完整注入,不丢项目背景/知识
+      if (ctxPrefix) { try { S.firstMsgCtx.set(sessionId, ctxPrefix) } catch {} }
       const m = String((err && err.message) || err)
+      // 错误码人话化(api 错误形如 "POST /session/... -> 429: ..."):先具体码,再超时,最后连接中断(原文案保留)
+      if (/->\s*429\b|rate\s*limit|too many requests/i.test(m))
+        throw new Error('内网模型限流（HTTP 429），等 30 秒再重试。')
+      if (/->\s*401\b|unauthorized/i.test(m))
+        throw new Error('模型网关鉴权过期（HTTP 401），请联系管理员。')
+      if (/ETIMEDOUT|ESOCKETTIMEDOUT|timed?\s*out|->\s*(408|504)\b/i.test(m))
+        throw new Error('模型响应超时，可重试。')
       if (/ECONNREFUSED|ECONNRESET|socket hang up|ENOTFOUND|EPIPE|fetch failed/i.test(m))
         throw new Error('引擎连接中断（serve 可能已退出）。关掉这张卡重开即可（已自动准备重启 serve）。')
       throw err
-    } finally { stopPoll() }
+    } finally { stopPoll(); turnBusy.delete(sessionId) }
   })
 
   // 模型选择:列出可用模型 + 设置本卡模型(每个模块各自选)
-  ipcMain.handle('list-models', async (e) => {
-    const tryServe = async (serve) => { if (!serve || !serve.base) return []; try { return await oc.listModels(serve) } catch { return [] } }
+  // C1:走 oc 缓存版(listModels 第二参 {force};老版本忽略第二参=现状直拉,防御兼容)。force 只在用户显式刷新时用。
+  // 本卡无 serve → 不再 ensureServe 白起一个引擎(仅为列模型拉起 serve 纯属浪费),回 { models: [], note } ——
+  // 渲染层按 .length 判空,对象形状与空数组同样落空,UI 安然显示"没拿到模型列表"。
+  ipcMain.handle('list-models', async (e, opts) => {
     const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
-    let out = await tryServe(si && si.serve)                                        // 先用本卡的 serve
-    if (!out.length) { try { out = await tryServe(await oc.ensureServe(S.settings.projectDir || '', S.handlers, log)) } catch {} }   // 拿不到 → 退到项目 serve(对话坞/嵌入卡也能列)
-    return out
+    const serve = si && si.serve
+    if (!serve || !serve.base) return { models: [], note: '引擎未启动' }
+    try { return await oc.listModels(serve, { force: !!(opts && opts.force) }) } catch { return [] }
   })
   ipcMain.handle('card-set-model', (e, model) => {
     const m = (model && model.modelID) ? { providerID: model.providerID, modelID: model.modelID, name: model.name } : null
