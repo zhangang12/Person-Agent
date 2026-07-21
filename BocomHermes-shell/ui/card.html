@@ -622,10 +622,13 @@
   let feedArchivedN = 0
   function maybeCapFeed() {
     const old = document.getElementById('feedCapNote'); if (old) old.remove()
-    let remove = feed.children.length - FEED_CAP
-    if (remove <= 0) return
-    remove += FEED_CAP - FEED_TRIM_TO
-    while (remove-- > 0 && feed.firstChild) { feed.removeChild(feed.firstChild); feedArchivedN++ }
+    const remove = feed.children.length - FEED_CAP
+    if (remove > 0) {
+      let n = remove + (FEED_CAP - FEED_TRIM_TO)
+      while (n-- > 0 && feed.firstChild) { feed.removeChild(feed.firstChild); feedArchivedN++ }
+    }
+    if (!feedArchivedN) return
+    // 占位幂等重挂:摘了重建 —— 未超线的轮次提示也得在(以前摘了就丢,收纳提示凭空闪没)
     const el = document.createElement('div'); el.id = 'feedCapNote'; el.className = 'note muted'
     el.textContent = '⋯ 已收纳 ' + feedArchivedN + ' 条早期消息(展示层回收,内容没丢 —— 重新打开本卡可从历史恢复)'
     feed.insertBefore(el, feed.firstChild)
@@ -756,6 +759,7 @@
         resetConversation()
         paintProj(r.project, r.dir); paintModelChip(r.model); curDir = r.dir || curDir
         ctxUsedChars = summary.length; ctxRealTokens = null; countedToolParts.clear(); paintCtxChip(); refreshCtxLimit()
+        ctxNag = false   // 水位提醒复位:上下文已回起点,下次涨回 90% 要允许再提醒(以前一响定终身)
         const d = document.createElement('details'); d.className = 'reason'
         d.innerHTML = '<summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>接力摘要（已随新会话注入）</summary><div class="body"></div>'
         d.querySelector('.body').textContent = summary
@@ -1043,6 +1047,7 @@
     // 撞上同 partID 时 renderTool 还会去更新一个不在页面上的节点(工具日志"凭空消失")
     toolEls.clear(); subAgents.clear(); if (_saTick) { clearInterval(_saTick); _saTick = null }
     feedArchivedN = 0; frozenEl = null; tailEl = null; frozenLen = 0   // 收纳计数与流式冻结区一并清(换会话,旧节点全废)
+    ctxNag = false   // 换会话:水位提醒复位(新会话上下文回起点)
     pendingPerms.clear(); paintPermSticky()   // 换会话:上一会话的待批准全作废,sticky 一起摘(权限盒随 feed 已清)
     if (sdList && sdPane) { sdList.innerHTML = ''; sdPane.innerHTML = '' }   // 侧边栏一并清(它不在 feed 里,feed.innerHTML='' 清不到)
     sdActiveId = ''; sdPaintBadge()
@@ -1448,7 +1453,7 @@
       frozenEl.appendChild(seg)
       frozenLen = cut
     }
-    tailEl.innerHTML = renderMarkdown(text.slice(cut))   // 只有尾巴在每帧重渲
+    tailEl.innerHTML = renderMarkdown(text.slice(Math.max(cut, frozenLen)))   // 只有尾巴在每帧重渲;起点不落后于冻结线(防文本回缩时与冻结区重影)
   }
   function flushStream() {
     _flushQueued = false
