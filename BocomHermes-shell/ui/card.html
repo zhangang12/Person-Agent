@@ -1764,6 +1764,15 @@
     if (shardRoot) {
       let sm = shardStreams.get(shardRoot); if (!sm) { sm = new Map(); shardStreams.set(shardRoot, sm) }
       sm.set(partID || (kind + '_' + sm.size), { kind, text, status, input, output, title, error, sub, agentName, taskDesc })
+      // 分片产出进成果抽屉:镜像的 write/edit 落盘(分片及其子 Agent 都算)→ 主控卡「产出文件」清单,
+      // 不然 8 个分片文档+索引 wiki 全在磁盘上,preview 却显示"还没有落盘记录"(用户实测)
+      try {
+        if (kind === 'tool' && /complet|success|done/i.test(String(status || '')) && !error && /^(write|edit)(_[a-z]+)*$/i.test(String(text || ''))) {
+          const inp = asObj(input)
+          const fp = inp && (inp.filePath || inp.path || inp.filename)
+          if (fp) artAddFile(artAbs(String(fp)))
+        }
+      } catch {}
       if (shardViewId === shardRoot) shardRenderView()
       return
     }
