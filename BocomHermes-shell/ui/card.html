@@ -449,7 +449,7 @@
         </div>
         <div class="ad-body">
           <div id="sd-list" class="sd-list"></div>
-          <div id="sd-pane" class="sd-pane"><div class="sd-empty">主 Agent 或分片派子 Agent 干活时,这里会按 Agent 列出它们;点任意一个看它的思考 / 工具 / 产出全程</div></div>
+          <div id="sd-pane" class="sd-pane"><div class="sd-empty">主 Agent 用 task 派子 Agent 并行干活时,这里会列出它们;点任意一个看它的思考 / 工具 / 产出全程</div></div>
         </div>
       </div>
     </div>
@@ -562,7 +562,6 @@
   const shardClean = (g) => String(g || '分片').replace(/[*#>`~]/g, '').replace(/\s+/g, ' ').trim()
   // ── 分片视图:分片是隐藏卡不开窗,它的会话经镜像(session.js)回流到本卡 —— 点进度卡,主区域就地渲染该分片的会话 ──
   const shardStreams = new Map()   // shardId → Map(partID → 镜像事件)
-  const shardGoalById = new Map()   // shardId → 分片目标(侧边栏分片标签用,onShardProgress 喂)
   let shardViewId = null
   const shardView = document.createElement('div')
   shardView.id = 'shardView'
@@ -641,7 +640,6 @@
     shardHead.textContent = '分片进度 ' + doneN + '/' + shards.length + ' ' + (shardBody.style.display === 'none' ? '▸' : '▾')
     shardBody.innerHTML = ''
     for (const s of shards) {
-      if (s.id && s.goal) shardGoalById.set(s.id, s.goal)   // 分片标签 → 侧边栏窗格名「分片目标」
       const st = SHARD_ST[s.status] || SHARD_ST.running
       const card = document.createElement('div')
       card.style.cssText = 'border:.5px solid var(--composer-border);border-radius:10px;padding:8px 10px;background:var(--composer-bg);cursor:' + (s.id ? 'pointer' : 'default') + ';display:flex;flex-direction:column;gap:4px;'
@@ -1647,7 +1645,7 @@
     if (v === 'cur') {
       sdList.innerHTML = ''; sdPane.innerHTML = ''
       for (const [, s] of subAgents) { sdList.appendChild(s.item); sdPane.appendChild(s.pane) }
-      if (!subAgents.size) sdPane.innerHTML = '<div class="sd-empty">主 Agent 或分片派子 Agent 干活时,这里会按 Agent 列出它们;点任意一个看它的思考 / 工具 / 产出全程</div>'
+      if (!subAgents.size) sdPane.innerHTML = '<div class="sd-empty">主 Agent 用 task 派子 Agent 并行干活时,这里会列出它们;点任意一个看它的思考 / 工具 / 产出全程</div>'
       return
     }
     const sn = saSnaps.find((x) => String(x.round) === String(v))
@@ -1762,8 +1760,8 @@
   }, 15000)
 
   window.BocomHermes.onStream(({ kind, text, partID, status, input, output, title, error, sub, agentId, agentName, taskChild, taskDesc, shardRoot }) => {
-    let effAgentId = agentId, effAgentName = agentName
-    // 多层派发:分片会话的回流镜像(session.js 转发)—— ① 存分片缓冲供分片视图 ② 分片的异步子 Agent 也进侧边栏
+    // 多层派发:分片会话的回流镜像(session.js 转发)—— 只进该分片自己的视图(点进度卡细看),不进主控的侧边栏/对话流:
+    // 主控自己没派 task,侧边栏不该堆满各分片的子 Agent(用户指正:那些输出属各分片,不是主控的)
     if (shardRoot) {
       let sm = shardStreams.get(shardRoot); if (!sm) { sm = new Map(); shardStreams.set(shardRoot, sm) }
       sm.set(partID || (kind + '_' + sm.size), { kind, text, status, input, output, title, error, sub, agentName, taskDesc })
@@ -1777,24 +1775,15 @@
         }
       } catch {}
       if (shardViewId === shardRoot) shardRenderView()
-      // 分片的异步子 Agent → 侧边栏(主控卡只派分片不派 task,侧边栏原来全空):id 按分片命名空间隔离,名字带分片标签
-      if (sub) {
-        const label = String(shardGoalById.get(shardRoot) || shardRoot)
-        effAgentId = shardRoot + '|' + (agentId || '_')
-        effAgentName = '「' + label.slice(0, 12) + '」' + (agentName || '子agent')
-      } else if (kind === 'tool' && String(text) === 'task') {   // 分片派子 Agent 的起/收:勾掉侧边栏对应窗格(名字带分片标签)
-        const gid = shardRoot + '|' + (taskChild || '')
-        if (subAgents.has(gid) && /complet|success|done|finish|error|fail|deny|reject/i.test(String(status || ''))) subAgentDone(gid, status || '', taskDesc || '')
-        return
-      } else return   // 分片主 Agent 自己的事件:只进分片视图,不进侧边栏/主对话流
+      return
     }
     lastStreamAt = Date.now()   // 静默挂死探针:有事件就不算挂死
-    if (sub) {                                            // 子agent活动 → 进侧边栏它自己的窗格(思考/工具/产出),不占主 feed
-      const s = subAgent(effAgentId || '_', effAgentName)
+    if (sub) {                                            // 本卡自己的 task 子agent活动 → 进侧边栏它自己的窗格(思考/工具/产出),不占主 feed
+      const s = subAgent(agentId || '_', agentName)
       if (kind === 'tool') {
         if (partID && !s.toolIds.has(partID)) { s.toolIds.add(partID); s.count++; if (READ_TOOL.test(String(text || ''))) s.reads = (s.reads || 0) + 1 }   // count=工具计数(徽标);reads=读文件数(跨轮快照用)
         s.meta.textContent = saMeta(s)
-        renderTool(partID || '_', text, status || '', { input, output, title, error }, { container: s.tools, sub: true, agentName: effAgentName })   // 复用主 Agent 富工具块:入参+结果,默认折叠;agentName 给状态行标注"谁在跑"
+        renderTool(partID || '_', text, status || '', { input, output, title, error }, { container: s.tools, sub: true, agentName })   // 复用主 Agent 富工具块:入参+结果,默认折叠;agentName 给状态行标注"谁在跑"
       } else if (kind === 'reasoning') {                  // 子agent思考(过去被丢弃)→ 进思考区
         s.reason.hidden = false; s.reasonParts.set(partID || '_', text)
         s.reason.textContent = joinParts(s.reasonParts); s.reason.scrollTop = s.reason.scrollHeight
@@ -1859,7 +1848,7 @@
     curAnswer = ai; curReason = null; answerParts = new Map(); reasonParts = new Map(); subAgents.clear(); toolEls.clear(); if (_saTick) { clearInterval(_saTick); _saTick = null }   // toolEls 跨轮清:上一轮的工具块已定格在 feed 里,Map 只清引用防无限涨
     frozenEl = null; tailEl = null; frozenLen = 0   // 流式冻结区跨轮清:新一轮新气泡,旧引用全是 detached 节点
     // 侧边栏随新回合重置:上一轮子 Agent 的结论已沉淀进 task 结果/最终答案,实时窗格不留跨轮(历史轮次走顶部下拉看快照);手动关抽屉的记录也复位
-    if (sdList && sdPane) { sdList.innerHTML = ''; sdPane.innerHTML = '<div class="sd-empty">主 Agent 或分片派子 Agent 干活时,这里会按 Agent 列出它们;点任意一个看它的思考 / 工具 / 产出全程</div>' }
+    if (sdList && sdPane) { sdList.innerHTML = ''; sdPane.innerHTML = '<div class="sd-empty">主 Agent 用 task 派子 Agent 并行干活时,这里会列出它们;点任意一个看它的思考 / 工具 / 产出全程</div>' }
     if (sdRoundSel) sdRoundSel.value = 'cur'
     sdActiveId = ''; sdClosedThisTurn = false; sdPaintBadge(); setBusy(true); unmarkDone()   // 新一轮开跑:摘掉上一轮的 ✓
     lastStreamAt = Date.now(); hangNag90 = hangNag300 = false   // 静默挂死探针复位(新一轮重新计)
@@ -1898,7 +1887,7 @@
         if (!target) addRetryNote('内网网关抖动是常态，可直接重试（同一条消息，不用重打）')
       }
     } finally {
-      for (const [id, s] of subAgents) if (!s.done && !id.includes('|')) subAgentDone(id, 'done')   // 带分片标签(|)的窗格属分片时间线,不由本卡回合勾掉(它们的 task 起收事件自己勾)
+      for (const [id, s] of subAgents) if (!s.done) subAgentDone(id, 'done')
       curAnswer = null; curReason = null; setBusy(false); scrollFeed()
       try { wdFinalizeRound(); wdCheck() } catch {}   // 进展型看门狗:结算本轮读文件集合并判绕圈(可能注入提醒/挂横幅)
       maybeDrain(); maybeShowPlanBar(); maybeWfProduceNag(); maybeCtxNag()   // 轮末:补批准条 → 产出兜底(工作流) → 水位提醒(普通卡)
