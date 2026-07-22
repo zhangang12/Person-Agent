@@ -303,9 +303,13 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     return Number.isFinite(n) && n >= 1 ? n : 2
   }
   function wfRunningCount() {
-    // 并发闸分口径(T8):只占【动态工作流】的并发位 —— 任务编排(pipeline)顺序链是业务执行体,不占位、不被排队;
-    // 主控(orch)多层派发的调度卡只装分片清单+状态、等待期闲置,也不占位 —— 否则它占 1 位,N 个分片被迫串行
-    return S.wfRegistry ? [...S.wfRegistry.values()].filter((r) => r.status === 'running' && r.kind !== 'pipeline' && r.kind !== 'orch').length : 0
+    // 并发闸分口径(T8):只占【动态工作流】的并发位 —— pipeline/orch 不占位。
+    // 且只数【正在干活】的:注册表 status=running 只是"没完结" —— 被中止/卡死但卡还开着的会永远占着位,
+    // 把分片憋成串行(实测踩中:中止的旧卡 squat 一个位,4 片只剩 1 位)。真正占资源的是"有回合在跑"(isCardBusy);
+    // 空闲等批准/等插话的卡不占位。刚起卡给 15s 启动宽限(会话还没上转,别误判空位导致超发)。
+    const now = Date.now()
+    return S.wfRegistry ? [...S.wfRegistry.values()].filter((r) => r.status === 'running' && r.kind !== 'pipeline' && r.kind !== 'orch'
+      && ((S.isCardBusy && S.isCardBusy(r.wcId)) || now - (r.at || 0) < 15000)).length : 0
   }
   function spawnWorkflow(goal) {
     const raw = String(goal || '').trim() || '未命名工作流'
@@ -1745,6 +1749,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       busyCards.add(wcId)
     } else {
       busyCards.delete(wcId)
+      try { wfDequeue() } catch {}   // 卡一空闲(回合结束/被中止)就尝试补位 —— 并发闸按"正在干活"计数,空闲立即放行排队分片
       if (wasBusy) {
         const win = BrowserWindow.fromWebContents(e.sender)
         if (win && !win.isDestroyed() && !win.isFocused()) {
