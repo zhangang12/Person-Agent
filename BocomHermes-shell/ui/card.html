@@ -541,6 +541,93 @@
   const initMsg = params.get('msg') || title    // msg 在场时发送内容不同于标题（fan-out）
   const dispMsg = params.get('disp') || initMsg // disp 在场时用户气泡展示它（发送仍是 initMsg，如 AI 分析含大段 DOM）
   const wfMode = params.get('wf') === '1'       // 工作流卡:规划先行 + 自动压缩续航 + 可选自动批准(spawnWorkflow 起卡时带上)
+  const shardMode = params.get('shard') === '1' // 分片卡(多层派发,隐藏):自动过规划闸——拆分方案用户在主控卡已批,分片不再二次等人
+  const orchMode = params.get('orch') === '1'   // 主控卡(多层派发):空答自动重试——长跑无人值守,网关静默不能卡死整条链
+  // ── 多层派发:分片进度(主控卡)── 分片是静默卡不弹窗,进度聚合在此(可折叠);点卡片 → 把那张大隐藏分片卡拉到台前细看
+  const shardWrap = document.createElement('div')
+  shardWrap.id = 'shardWrap'; shardWrap.hidden = true
+  shardWrap.style.cssText = 'margin:6px 10px 0;border:1px solid var(--composer-border);border-radius:12px;background:var(--glass-bg);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);overflow:hidden;'
+  const shardHead = document.createElement('button')
+  shardHead.style.cssText = 'width:100%;display:flex;align-items:center;gap:8px;padding:8px 12px;border:none;background:transparent;cursor:pointer;color:var(--txt);font-size:12px;font-weight:600;text-align:left;'
+  const shardBody = document.createElement('div')
+  shardBody.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;padding:0 12px 10px;'
+  shardHead.addEventListener('click', () => { shardBody.style.display = shardBody.style.display === 'none' ? 'grid' : 'none'; shardHead.textContent = shardHead.textContent.replace(/[▾▸]$/, shardBody.style.display === 'none' ? '▸' : '▾') })
+  shardWrap.append(shardHead, shardBody)
+  const feedElForShard = document.getElementById('feed') || document.body
+  ;(feedElForShard.parentNode || feedElForShard).insertBefore(shardWrap, feedElForShard)
+  const SHARD_ST = { running: ['⏳', '运行中'], done: ['✅', '已完成'], interrupted: ['⛔', '已中断'], queued: ['🕐', '排队中'] }
+  const shardClean = (g) => String(g || '分片').replace(/[*#>`~]/g, '').replace(/\s+/g, ' ').trim()
+  // ── 分片视图:分片是隐藏卡不开窗,它的会话经镜像(session.js)回流到本卡 —— 点进度卡,主区域就地渲染该分片的会话 ──
+  const shardStreams = new Map()   // shardId → Map(partID → 镜像事件)
+  let shardViewId = null
+  const shardView = document.createElement('div')
+  shardView.id = 'shardView'
+  shardView.style.cssText = 'display:none;flex:1;flex-direction:column;min-height:0;'   // 不用 hidden 属性:cssText 的 display 会盖掉它,显隐全靠 style.display 切换
+  const svHead = document.createElement('div')
+  svHead.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--composer-border);'
+  const svBack = document.createElement('button'); svBack.textContent = '← 主控'
+  svBack.style.cssText = 'flex:none;font-size:11px;padding:3px 10px;border-radius:12px;border:.5px solid var(--composer-border);background:var(--composer-bg);color:var(--txt2);cursor:pointer;'
+  const svTitle = document.createElement('span'); svTitle.style.cssText = 'font-size:12px;font-weight:600;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+  svBack.addEventListener('click', shardHideView)
+  svHead.append(svBack, svTitle)
+  const svBody = document.createElement('div')
+  svBody.style.cssText = 'flex:1;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:8px;'
+  shardView.append(svHead, svBody)
+  ;(feedElForShard.parentNode || feedElForShard).insertBefore(shardView, feedElForShard)
+  function shardShowView(id, goal) {
+    shardViewId = id
+    feedElForShard.style.display = 'none'
+    shardView.style.display = 'flex'
+    svTitle.textContent = '分片 · ' + shardClean(goal).slice(0, 50)
+    shardRenderView()
+  }
+  function shardHideView() { shardViewId = null; shardView.style.display = 'none'; feedElForShard.style.display = '' }
+  function shardRenderView() {
+    const sm = shardStreams.get(shardViewId) || new Map()
+    svBody.innerHTML = ''
+    for (const p of sm.values()) {
+      if (p.kind === 'tool') {
+        const d = document.createElement('details'); d.className = 'toolbox'
+        const smy = document.createElement('summary')
+        smy.textContent = (p.sub ? '🔍 ' + (p.agentName || '子agent') + ' · ' : '') + (p.text || 'tool') + (p.title ? ' · ' + p.title : '') + (p.status ? ' · ' + p.status : '')
+        d.appendChild(smy)
+        let inStr = ''; try { inStr = p.input == null ? '' : (typeof p.input === 'string' ? p.input : JSON.stringify(p.input, null, 2)) } catch {}
+        const outStr = p.error ? String(p.error) : (p.output != null ? String(p.output) : '')
+        if (inStr) { const s = document.createElement('pre'); s.textContent = '入参\n' + inStr.slice(0, 2000); d.appendChild(s) }
+        if (outStr) { const s = document.createElement('pre'); s.textContent = '结果\n' + outStr.slice(0, 2000); d.appendChild(s) }
+        svBody.appendChild(d)
+      } else if (p.kind === 'reasoning') {
+        const d = document.createElement('details'); d.className = 'reason'
+        const smy = document.createElement('summary'); smy.textContent = '思考过程' + (p.sub && p.agentName ? ' · ' + p.agentName : '')
+        const b = document.createElement('div'); b.className = 'body'; b.textContent = p.text || ''
+        d.append(smy, b); svBody.appendChild(d)
+      } else if (p.text) {
+        const m = document.createElement('div'); m.className = 'msg ai'
+        m.textContent = (p.sub && p.agentName ? '【' + p.agentName + '】' : '') + p.text
+        svBody.appendChild(m)
+      }
+    }
+    svBody.scrollTop = svBody.scrollHeight
+  }
+  window.BocomHermes.onShardProgress && window.BocomHermes.onShardProgress(({ shards }) => {
+    if (!Array.isArray(shards) || !shards.length) { shardWrap.hidden = true; return }
+    shardWrap.hidden = false
+    const doneN = shards.filter((s) => s.status === 'done' || s.status === 'interrupted').length
+    shardHead.textContent = '分片进度 ' + doneN + '/' + shards.length + ' ' + (shardBody.style.display === 'none' ? '▸' : '▾')
+    shardBody.innerHTML = ''
+    for (const s of shards) {
+      const st = SHARD_ST[s.status] || SHARD_ST.running
+      const card = document.createElement('div')
+      card.style.cssText = 'border:.5px solid var(--composer-border);border-radius:10px;padding:8px 10px;background:var(--composer-bg);cursor:' + (s.id ? 'pointer' : 'default') + ';display:flex;flex-direction:column;gap:4px;'
+      const t = document.createElement('div'); t.style.cssText = 'font-size:12px;color:var(--txt);line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;'
+      t.textContent = st[0] + ' ' + shardClean(s.goal).slice(0, 40)
+      const m = document.createElement('div'); m.style.cssText = 'font-size:10.5px;color:var(--txt3);'
+      m.textContent = st[1] + (s.status === 'running' && s.round ? ' · 第 ' + s.round + ' 轮' : '') + (s.id ? ' · 点击查看会话' : '')
+      card.append(t, m)
+      if (s.id) { card.title = shardClean(s.goal); card.addEventListener('click', () => shardShowView(s.id, s.goal)) }
+      shardBody.appendChild(card)
+    }
+  })
   const ttl = document.getElementById('ttl'); ttl.textContent = title; ttl.title = title
   document.title = title + ' · BocomHermes'   // 任务栏/Alt+Tab 区分各卡
   // 多卡辨识度:按 sessionId 给标题图标染色(几十张玻璃卡不再一模一样);本轮成功结束标题加 ✓,开新一轮摘掉
@@ -568,7 +655,7 @@
     cardReady = false; setBusy(true); resetConversation()
     const boot = addMsg('', 'ai'); boot.textContent = '正在切换到新项目，重建会话…'
     try {
-      const rr = await window.BocomHermes.cardReinit({ dir: r.dir })
+      const rr = await window.BocomHermes.cardReinit({ dir: r.dir, shard: shardMode })
       boot.remove()
       paintProj(rr.project, rr.dir)
       paintModelChip(rr.model)   // reinit 后后端以回包为准,chip 不再骗人
@@ -706,9 +793,12 @@
       if (!modelsCache || !modelsCache.length) { modelsCache = await window.BocomHermes.listModels(); if (modelsCache && modelsCache.length) modelsCacheAt = Date.now() }
       const m = curModelKey && (modelsCache || []).find((x) => x.providerID + '/' + x.modelID === curModelKey)
       ctxLimitTokens = (m && m.ctx) || ctxFallbackFor(curModelKey) || 128000
-    } catch { ctxLimitTokens = ctxLimitTokens || 128000 }
+      ctxLimitTokens = ctxCap(ctxLimitTokens)
+    } catch { ctxLimitTokens = ctxCap(ctxLimitTokens || 128000) }
     paintCtxChip()
   }
+  // 128k 口径硬顶(knobs.ctxLimitMax,默认 128000):serve 报 192k 也按 128k 收口 —— 否则 80% 自动压缩线算到真实上限之外,安全网永不触发
+  function ctxCap(n) { const c = knobNum('ctxLimitMax', 128000); return (c > 0 && n > c) ? c : n }
   // 水位百分比:实测优先,估算兜底 —— chip 与 80% 自动压缩阈值都吃这一个口径
   function ctxPctVal() { return ctxRealTokens != null ? ctxRealTokens / ctxLimitTokens : (ctxUsedChars / 1.6) / ctxLimitTokens }
   // 拉 serve 真实用量:IPC 通道 cardUsage 由装配层提供(本波可能还没接)—— 通道缺席/无数据都静默保持估算态,绝不抛
@@ -718,7 +808,7 @@
       const u = await window.BocomHermes.cardUsage()
       if (u && +u.tokens > 0) {
         ctxRealTokens = +u.tokens
-        if (+u.limit > 0) ctxLimitTokens = +u.limit
+        if (+u.limit > 0) ctxLimitTokens = ctxCap(+u.limit)
         paintCtxChip()
       }
     } catch {}
@@ -748,14 +838,14 @@
     if (compacting) return false
     compacting = true
     try {
-      addNote(auto ? '上下文接近上限,自动压缩续聊(第 ' + autoCompactN + '/' + autoCompactMax() + ' 次):正在让模型写接力摘要…' : '压缩续聊:正在让模型总结本段对话…', 'muted')
+      addNote(auto ? '到达主动交棒水位,接力给下一棒主 Agent(第 ' + autoCompactN + '/' + autoCompactMax() + ' 棒):正在写交接单…' : '压缩续聊:正在让模型总结本段对话…', 'muted')
       const ok = await turn(wfMode ? SUM_PROMPT_WF : SUM_PROMPT_CHAT)
       const ais = feed.querySelectorAll('.msg.ai')
       const summary = ok && ais.length ? String(ais[ais.length - 1].dataset.raw || '') : ''
       if (!summary.trim()) { addNote('压缩失败：没拿到摘要，继续用原会话（可稍后重试）', 'muted'); return false }
       try {
         setBusy(true)
-        const r = await window.BocomHermes.cardReinit({ dir: curDir, carryCtx: summary })
+        const r = await window.BocomHermes.cardReinit({ dir: curDir, carryCtx: summary, shard: shardMode })
         resetConversation()
         paintProj(r.project, r.dir); paintModelChip(r.model); curDir = r.dir || curDir
         ctxUsedChars = summary.length; ctxRealTokens = null; countedToolParts.clear(); paintCtxChip(); refreshCtxLimit()
@@ -766,7 +856,7 @@
         feed.appendChild(d)
         cardReady = true; setBusy(false)
         if (auto) {
-          addNote('已自动压缩续聊:上下文回到起点,继续执行未完成步骤', 'muted')
+          addNote('已交棒:下一棒主 Agent 带着交接单上阵(全新 128k),继续执行未完成步骤', 'muted')
           await turn('接力摘要已随本消息注入（见上方摘要块）。请先用 todowrite 恢复摘要里的计划清单，然后按未完成事项继续执行，直至总目标完成。')
         } else { addNote('已压缩续聊：新会话就绪，摘要已注入，直接继续提问即可。', 'muted'); maybeDrain() }
         return true
@@ -792,19 +882,20 @@
     ;(document.querySelector('.card') || document.body).appendChild(pop)
   }
   ctxChip.addEventListener('click', runCompact)
-  // 工作流卡自动续航:每轮结束(turn finally)检查,水位达标(默认 ≥80%,knobs.ctxCompactPct 可调)且空闲即自动压缩+续跑(对齐 Claude Code 自动 compact)
+  // 工作流卡【主动交棒】:每轮结束(turn finally)检查,水位 ≥knobs.ctxHandoffPct(默认 0.55)且空闲即写交接单换下一棒主 Agent
+  // (全新 128k)—— 模型在清醒时交接,永不涨到被动压缩区。普通对话卡不自动压缩(会清可见对话,越权),90% 提醒由用户点 chip 决定。
   // 阈值口径与 chip 一致(ctxPctVal):serve 实测 tokens 优先,字符估算兜底
   function maybeAutoCompact() {
     if (!wfMode || compacting || busy || !cardReady || pendingInjects.length) return
     if (!ctxLimitTokens) return
     const pct = ctxPctVal()
-    if (pct < knobNum('ctxCompactPct', 0.8)) return   // 水位阈值旋钮:模型变强后可调高
+    if (pct < knobNum('ctxHandoffPct', 0.55)) return   // 交棒水位旋钮:模型变强后可调高
     const maxN = autoCompactMax()
     if (autoCompactN >= maxN) { if (!_capNoted) { _capNoted = true; addNote('自动压缩已达上限(' + maxN + ' 次),请点上下文 chip 手动压缩', 'muted') } return }
     autoCompactN++
     compactCore(true)
   }
-  // 普通对话卡水位主动提醒(wf 卡有自动压缩续航,不需要):≥90% 且轮末空闲 → 提醒一次,别等用户盯 chip
+  // 普通对话卡水位主动提醒(普通卡不自动压缩 —— 会清可见对话,越权;wf 卡有主动交棒):≥90% 且轮末空闲 → 提醒一次,别等用户盯 chip
   let ctxNag = false
   function maybeCtxNag() {
     if (wfMode || ctxNag || compacting || !ctxLimitTokens) return
@@ -862,10 +953,11 @@
     if (!planPending) return   // 闸已不在(撤闸/已批)→ 拒二次注入
     planPending = false
     clearPlanBar()
-    injectMessage(APPROVE_MSG, auto ? '✅ 倒计时到期,自动批准开跑' : '✅ 已批准,开始执行')
+    injectMessage(APPROVE_MSG, shardMode ? '✅ 分片自动批准开跑(拆分方案主控已批)' : auto ? '✅ 倒计时到期,自动批准开跑' : '✅ 已批准,开始执行')
   }
   function maybeShowPlanBar() {
     if (!planPending || busy || !cardReady || compacting) return
+    if (shardMode) { approvePlan(true); return }   // 分片卡:拆分方案主控卡已批,自动开跑(静默卡没人点按钮)
     if (wfExecSeen) {   // 模型已经实质执行(没守"首轮只规划")→ 闸没意义了:撤闸并一次性说明,别让用户批一个已完成的计划
       planPending = false
       clearPlanBar()   // 上一轮的条可能还挂着(带倒计时),必须连计时器一起埋了
@@ -1065,8 +1157,22 @@
     return d
   }
   let lastSend = null   // 本轮发出的 {text, files}:错误重试/重新回答都免重打
+  let shardAutoRetryN = 0   // 分片卡(无人值守)空答自动重试计数:上限 2 次,防网关持续静默时死循环
   // 出错后的可行动提示:错误信息 + 「重试本轮」按钮(同一条消息原样重发,内网网关抖动场景的刚需)
   function addRetryNote(msg) {
+    // 分片卡/主控卡(无人值守):空答/失败自动重试,至多 2 次 —— 否则卡死,整条多层链永远等不到(实测病灶)
+    if ((shardMode || orchMode) && lastSend && shardAutoRetryN < 2) {
+      shardAutoRetryN++
+      // 先清失败残迹:上一发的"(无文本输出)"气泡别留着和重试成功后的新内容堆一起(看着像连环翻车)
+      try {
+        const ais = feed.querySelectorAll('.msg.ai')
+        const lastAi = ais.length ? ais[ais.length - 1] : null
+        if (lastAi && /无文本输出/.test(lastAi.textContent || '')) lastAi.remove()
+      } catch {}
+      addNote((shardMode ? '分片' : '主控') + '自动重试(' + shardAutoRetryN + '/2):网关静默/模型空答', 'muted')
+      turn(lastSend.text, null, lastSend.files)
+      return
+    }
     const d = document.createElement('div'); d.className = 'note muted'
     d.textContent = msg
     if (lastSend) {
@@ -1243,8 +1349,8 @@
   const toolEls = new Map()
   const TOOL_LABEL = { run_workflow: '升格 → 动态工作流', task: '子Agent' }
   const fmtInput = (v) => { if (v == null) return ''; if (typeof v === 'string') return v; try { return JSON.stringify(v, null, 2) } catch { return String(v) } }
-  // 过程详情开关(Claude Code 的 verbose):开=每个工具自动展开入参/结果(默认 —— 用户要看工具在干什么);关=紧凑一行摘要,点击可展开。记住偏好。
-  let verbose = true; try { const v = localStorage.getItem('cardVerbose'); if (v != null) verbose = v === '1' } catch {}
+  // 过程详情开关(Claude Code 的 verbose):开=每个工具自动展开入参/结果;关=紧凑一行摘要,点击可展开(默认 —— 明细默认收起,主流只留一行)。记住偏好。
+  let verbose = false; try { const v = localStorage.getItem('cardVerbose'); if (v != null) verbose = v === '1' } catch {}
   const verboseBtn = document.getElementById('bverbose')
   function paintVerbose() { verboseBtn.classList.toggle('on', verbose) }
   verboseBtn.addEventListener('click', () => {
@@ -1629,7 +1735,14 @@
     else if (sil >= 90000 && !hangNag90) { hangNag90 = true; addNote('模型已 90 秒没有输出 —— 可能在长考,也可能是网关挂死。可继续等,或按 Esc 中断', 'muted') }
   }, 15000)
 
-  window.BocomHermes.onStream(({ kind, text, partID, status, input, output, title, error, sub, agentId, agentName, taskChild, taskDesc }) => {
+  window.BocomHermes.onStream(({ kind, text, partID, status, input, output, title, error, sub, agentId, agentName, taskChild, taskDesc, shardRoot }) => {
+    // 多层派发:分片会话的回流镜像(session.js 转发)—— 不进主控自己的对话流,存进分片专属缓冲;正在看哪片就实时重渲哪片
+    if (shardRoot) {
+      let sm = shardStreams.get(shardRoot); if (!sm) { sm = new Map(); shardStreams.set(shardRoot, sm) }
+      sm.set(partID || (kind + '_' + sm.size), { kind, text, status, input, output, title, error, sub, agentName, taskDesc })
+      if (shardViewId === shardRoot) shardRenderView()
+      return
+    }
     lastStreamAt = Date.now()   // 静默挂死探针:有事件就不算挂死
     if (sub) {                                            // 子agent活动 → 进侧边栏它自己的窗格(思考/工具/产出),不占主 feed
       const s = subAgent(agentId || '_', agentName)
@@ -1648,11 +1761,11 @@
     if (kind === 'tool') {
       // 批准闸的实质执行探针:派了执行子Agent / 写了文件 → 撤闸(maybeShowPlanBar 据此跳过)。
       // write/edit 的同款正则 renderTool 里也有(收进成果抽屉),两边信号各管各的:一个管撤闸,一个管清单。
-      if (text === 'task' || /^(write|edit)(_[a-z]+)*$/i.test(String(text || ''))) wfExecSeen = true
+      if (/^(task|delegate_task)$/i.test(String(text || '')) || /^(write|edit)(_[a-z]+)*$/i.test(String(text || ''))) wfExecSeen = true
       if (text === 'todowrite') {                         // 主 Agent 更新了 todo:记轮次+是否还有未完项(工作流提醒兜底据此判断)
         try { const inp = typeof input === 'string' ? JSON.parse(input) : input; const ts = inp && Array.isArray(inp.todos) ? inp.todos : null
           if (ts) { wfTodoLastTurn = turnN; wfTodoOpen = ts.some((t) => !/complet|cancel/i.test(String(t && t.status || '')))
-            if (ts.some((t) => /complet/i.test(String(t && t.status || '')))) { wfExecSeen = true; wfTodoDoneTurn = turnN } } } catch {}   // todo 出现完成项 = 已在执行(看门狗判进展也用这个)
+            if (ts.some((t) => /complet/i.test(String(t && t.status || '')))) { if (!orchMode) wfExecSeen = true; wfTodoDoneTurn = turnN } } } catch {}   // todo 出现完成项 = 已在执行(看门狗判进展也用这个);主控卡除外——它第一轮本来就要完成"预检"步,打勾≠越权执行
       }
       if (READ_TOOL.test(String(text || ''))) {           // 看门狗记账:主 Agent 读文件类工具的目标集合(绕圈判据的原料)
         try {
@@ -1661,7 +1774,7 @@
           if (tgt) wdCurFiles.add(String(text).toLowerCase() + ':' + String(tgt).toLowerCase())
         } catch {}
       }
-      if (text === 'task') {                              // 父会话的 task 工具 = 起/收一个子agent
+      if (/^(task|delegate_task)$/i.test(String(text || ''))) {   // 父会话的委派工具(内建 task / oh-my-openagent delegate_task)= 起/收一个子agent
         const gid = taskChild || ''
         const fin = /complet|success|done|finish|error|fail|deny|reject/i.test(status || '')
         // 主 feed 只留这一行紧凑的 task 调用(它是主 Agent 自己的事件):能看到"派了谁、跑完没、结论是啥";
@@ -1996,7 +2109,7 @@
     if (!sid && !embedded) addMsg(dispMsg, 'me')      // 全新卡：先显示任务（disp 在场时只展示摘要，不展示大段上下文）
     const boot = addMsg('', 'ai'); boot.textContent = sid ? '正在续接对话…' : embedded ? '正在连接调试助手…' : '正在启动引擎…（首次较慢，请稍候）'
     try {
-      const r = await window.BocomHermes.cardInit(sid ? { sid, title } : { title })
+      const r = await window.BocomHermes.cardInit(sid ? { sid, title, shard: shardMode } : { title, shard: shardMode })
       paintProj(r.project, r.dir)          // 本卡真实绑定目录
       paintModelChip(r.model)              // 本卡实际生效模型(override || 全局默认),含 boot 期间预选的
       draftKey = DRAFT_PREFIX + (r.sessionId || '')   // 草稿按会话存:续接/误关重开都能找回

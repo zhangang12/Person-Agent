@@ -31,10 +31,13 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     watchdogOverlap: 0.7,         // 看门狗绕圈重合度
     watchdogEscalateRounds: 2,    // 看门狗升级轮数
     ctxCompactPct: 0.8,           // 自动压缩水位阈值
-    autoCompactMax: 5,            // 自动压缩次数上限
+    ctxHandoffPct: 0.55,          // 工作流卡主动交棒水位:≤55% 就交接给下一棒主 Agent(全新 128k),永不触发被动压缩
+    autoCompactMax: 20,           // 交棒次数上限:文档接力下棒数不该卡死(每棒都在推 todo);仅兜底病态循环
     todoNudgeRounds: 3,           // todo 停滞提醒轮数
     knowledgeChurnMax: 300,       // 知识 C4 churn 阈值(行)
     wfConcurrency: 2,             // 工作流并发上限(超限排队)
+    taskPromptMax: 20000,         // 委派指令(task/delegate_task)硬上限(字符,128k 口径):只拦"贴原文"级病态指令,精确拦停该子会话
+    ctxLimitMax: 128000,          // 水位上限硬顶(128k 口径):serve 报再大的 limit.context 也按此收口,防自动压缩阈值算到真实上限之外
   }
   const mergeKnobs = (k) => ({ ...DEFAULT_KNOBS, ...((k && typeof k === 'object') ? k : {}) })
   function loadSettings() {
@@ -47,7 +50,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // ── 邮件子系统 ──────────────────────────────────────────────────────────────
   // 收发/发件箱安全闸门/IMAP IDLE/本地中继/mail-cache/待办-邮件闭环/DB 只读中继,整块搬进 ./mail 的
   // initMail(ctx) 工厂。ctx 注入外部模块 + 后定义但已提升的 function;回传 3 个外部调用点用到的函数。
-  const mail = initMail({ S, app, path, fs, shell, ipcMain, log, oc, Notification, email, attachments, mailCache, emailSummarySeen, db, initOutbox, openOutbox, sendOrbState, createMailCenter, openMailView, spawnCard, spawnWorkflow, maybeSuggestMeeting, skillList, skillRun, skillRunBatch, skillPageRead, skillPageAct, skillTakeoverDone })
+  const mail = initMail({ S, app, path, fs, shell, ipcMain, log, oc, Notification, email, attachments, mailCache, emailSummarySeen, db, initOutbox, openOutbox, sendOrbState, createMailCenter, openMailView, spawnCard, spawnWorkflow, spawnOrchestrator, maybeSuggestMeeting, skillList, skillRun, skillRunBatch, skillPageRead, skillPageAct, skillTakeoverDone })
 
   const projName = () => S.settings.projectDir ? path.basename(S.settings.projectDir) : '未选目录'
 
@@ -189,27 +192,40 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const id = ++S.cardSeq
     const col = (id - 1) % 4, row = Math.floor((id - 1) / 4) % 4
     const wx = 160 + col * 56, wy = 90 + row * 50 + col * 18
+    // opts.hidden:隐藏卡(多层派发分片/索引棒)——不开窗,会话回流到主控卡主区域看;权限自动放行,进度聚合到主控卡
+    // opts.inactive:不抢焦卡 —— showInactive 亮相,可见但不夺焦
+    const hidden = !!(opts && opts.hidden)
+    const inactive = !!(opts && opts.inactive)
     const win = new BrowserWindow(baseOpts({
       width: 680, height: 860, minWidth: 480, minHeight: 460, resizable: true,
-      alwaysOnTop: false, skipTaskbar: false, x: wx, y: wy,
+      alwaysOnTop: false, skipTaskbar: hidden ? true : false, x: wx, y: wy, show: !hidden && !inactive,
     }))
     const wcId = win.webContents.id
     const query = { title: title || '未命名任务', id: String(id), ...orbAnchorFor(wx, wy, 680, 860) }
     if (sid) query.sid = sid
     if (msg) query.msg = msg
     if (disp) query.disp = disp
-    // 工作流卡/任务编排卡:登记进成果注册表(id=卡id,与 orch-mcp run_workflow 返回给 Agent 的一致),每轮终答由
+    if (opts && opts.shard) {
+      query.shard = '1'   // 分片卡(多层派发):渲染端据此自动过规划闸(拆分方案用户在主控卡已批,分片不再二次等人)
+      S.shardWc = S.shardWc || new Set(); S.shardWc.add(wcId)   // 无人值守权限自动放行(session.js onPermission);关卡清理
+    }
+    if (opts && opts.orch) query.orch = '1'   // 主控卡:渲染端据此空答自动重试(长跑无人值守,网关静默不能卡死整条链)
+    // 工作流卡/任务编排卡/主控卡:登记进成果注册表(id=卡id,与 orch-mcp run_workflow 返回给 Agent 的一致),每轮终答由
     // S.wfTurnDone 更新+存档 —— 升格方/用户才取得回成果(以前只有 legacy 引擎写注册表,新路径断链)。
-    // kind=workflow 走 wf=1(规划闸/自动批准/自动压缩);kind=pipeline 只登记(编排按描述顺序执行,不要规划闸)。
-    const wfKind = opts && opts.wf ? 'workflow' : (opts && opts.pipeline) ? 'pipeline' : ''
+    // kind=workflow 走 wf=1(规划闸/自动批准/主动交棒);kind=pipeline 只登记(编排按描述顺序执行,不要规划闸);
+    // kind=orch 多层派发主控卡:同样走 wf=1(规划闸批准拆分方案),但不占并发位(等待期闲置)。
+    const wfKind = opts && opts.orch ? 'orch' : opts && opts.wf ? 'workflow' : (opts && opts.pipeline) ? 'pipeline' : ''
     if (wfKind) {
-      if (opts.wf) query.wf = '1'
+      if (opts.wf || opts.orch) query.wf = '1'
       S.wfRegistry = S.wfRegistry || new Map(); S.wfCardByWc = S.wfCardByWc || new Map()
       const reg = { id: String(id), wcId, kind: wfKind, goal: disp || title || '', status: 'running', round: 0, rounds: 0, at: Date.now(), archive: null, final: '', todos: null, files: [], actions: [], dir: S.settings.projectDir || '', elapsedMs: 0 }
       S.wfRegistry.set(reg.id, reg); S.wfCardByWc.set(wcId, reg)
       if (S.wfRegistry.size > 50) { const k = S.wfRegistry.keys().next().value; S.wfRegistry.delete(k) }
     }
     win.loadFile(path.join(__dirname, '..', 'ui', 'card.html'), { query })
+    if (inactive) {   // 不抢焦:加载完 showInactive 亮相(可见但不夺焦点、不闪屏)
+      win.webContents.once('did-finish-load', () => { try { if (!win.isDestroyed()) win.showInactive() } catch {} })
+    }
     // opts.flash:加载完后闪一下任务栏 + 短暂置顶 + 抢焦点 → 用户一眼能找到新弹的卡
     if (opts && opts.flash) {
       win.webContents.once('did-finish-load', () => {
@@ -226,6 +242,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       let oldServe = null
       if (s) { const si = S.sessionInfo.get(s); if (si) { oldServe = si.serve; oc.abort(si.serve, s) } S.sessionInfo.delete(s); S.streamBuf.delete(s); S.sentPrompt.delete(s); S.firstMsgCtx.delete(s); S.dropPendingPerm && S.dropPendingPerm(s); if (typeof S.dropPendingQuestion === 'function') S.dropPendingQuestion(s) }   // 未答的审批/提问记录随卡清,别在 pendingPerm/pendingQuestion 里留孤儿
       S.sessionByWc.delete(wcId)
+      if (S.shardWc) S.shardWc.delete(wcId)   // 分片权限自动放行随卡失效
       if (S.cardDir) S.cardDir.delete(wcId)       // per-card 目录/模型状态随卡销毁
       if (S.modelByWc) S.modelByWc.delete(wcId)
       // 本卡独占的自起 serve(切过项目的卡)没别的会话引用就退休,不留孤儿进程
@@ -257,14 +274,16 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       '1. 【先看清目标的形状,再定打法】产出随形状走,但【任何形状都必须有落盘交付物】(默认 = MD 文档,见第7条):',
       '   · 研究 / 答疑 → 有据可查的结论报告;· 实现 / 改造 → 可运行的代码改动 + 改动说明;· 排查 → 定位到根因的诊断报告 + 修复;· 探索成文 → 开发手册 / 业务文档。',
       '2. 【定计划并让它可见】非琐碎目标先用 todowrite 列出步骤清单,开工把当前步标 in_progress、做完立刻标 completed(一次只推进一步)—— 既是你自己的进度锚,也让用户看见你在干什么。琐碎目标可略。',
-      '3. 【轻量勘察,绝不通读】自己只用 grep/glob + 读几个入口 / 清单摸清"分成哪几块、边界在哪"。你的 128k 很宝贵,【绝不】自己通读整个模块几十上百个文件 —— 那会撑爆你、让综合时变笨。',
-      '4. 【重活并行下放子 Agent】一块工作满足【彼此独立 + 需深读很多文件 + 能同时干】三条时,用 task 工具【一条消息里一次派多个子 Agent 并行跑】,别一个个串。每个子 Agent 的指令要边界清晰:',
-      '   · 只干这一块、深读到位(带 file:行号 证据),不是扫一眼;',
-      '   · 只回你【精炼结论】:关键发现 + file:行号 + 至多几行关键代码,【严禁】把大段原文 / 整块文档贴回你的上下文;',
-      '   · 若这一块产出本身就长(如一份分册文档),让子 Agent【直接写成文件】(见第7条),只回你【一句话 + 文件路径】。',
-      '   这样 N 个子 Agent 各读几百个文件,回到你这只有 N 条精炼结论 ≈ 几千字,离 128k 还远。',
+      '3. 【轻量勘察,绝不通读】自己只用 grep/glob + 读几个入口 / 清单摸清"分成哪几块、边界在哪"——单次 read 必须带 offset/limit(每次 ≤400 行),grep 先收窄路径与文件类型,确认"够定位"就停手。你的 128k 很宝贵,【绝不】自己通读整个模块几十上百个文件 —— 那会撑爆你、让综合时变笨。',
+      '4. 【重活并行下放子 Agent】一块工作满足【彼此独立 + 需深读很多文件 + 能同时干】三条时,用 task 工具【一条消息里一次派多个子 Agent 并行跑】,别一个个串。子 Agent 指令按 128k 口径执行硬纪律:',
+      '   · 【指令只写四样:目标、文件路径清单(≤10 个)、边界(只干哪一块)、回报格式】塞原文超 2 万字壳层直接拦停 —— 不是限字数,是禁止把文档内容搬进指令(那是子 Agent 撑爆的第一死因)。',
+      '   · 委派工具首选内建 task;环境里有 oh-my-openagent 时可用 delegate_task(能按 category 选 deep/quick 等专家)—— 它必须显式传 load_skills,不需要技能就传 [],漏传会直接报错废掉这一轮。',
+      '   · 【严禁把文件原文 / 大段代码贴进指令】—— 子 Agent 有自己独立的 128k,需要读的内容给它路径让它自己读;贴原文既浪费你的上下文,也是子 Agent 撑爆上下文、触发压缩卡死的第一死因。',
+      '   · 【一个子 Agent 只干一块可独立交付的事】预计要读 >15 个文件、或单块产出 >1500 字 → 再拆,别塞成一个巨型任务。',
+      '   · 结论与细节【一律落盘成文档】,回报只回【一句话 + 文件路径 + file:行号】:字数没有限制,内容住文档里,谁要用谁去读;【严禁】把大段原文 / 整块文档贴回你的上下文;',
+      '   这样 N 个子 Agent 各读几百个文件,回到你这只有 N 行索引 ≈ 几百字,离 128k 还远。',
       '5. 【别过度拆解】fan-out 有开销:简单目标、或你自己两三次读就能搞定的,【直接自己做】,别硬拆 N 块派 N 个子 Agent。满足第 4 条那三个"且"才派。',
-      '6. 【自己综合成产出】子 Agent 结论回到你的连续上下文,由【你】整合成最终产出,形状随第 1 条(该给代码给可运行改动、该给诊断给根因 + 修复、该给结论给有据结论、该成文写文档)。综合是你的活,不另开 reducer。',
+      '6. 【自己综合成产出】子 Agent 结论回到你的连续上下文,由【你】整合成最终产出,形状随第 1 条(该给代码给可运行改动、该给诊断给根因 + 修复、该给结论给有据结论、该成文写文档)。综合是你的活,不另开 reducer —— 但中间结论多到你也装不下时,把综合也拆出去:派子 Agent 分块读落盘文档、各自归纳成文,你只吃索引(文档接力,可层层套)。',
       '7. 【默认必须落盘产出 MD】工作流【不允许】空手交付 —— 最终成果默认写成 docs/ 下的 MD 文档,回答里只给摘要 + 文件路径 + 关键结论:',
       '   · 报告 / 手册 / 清单类 → 默认 ' + (dir ? dir + '/docs/' : '<模块>/docs/') + '<主题>.md;手册类长文档拆分册到 docs/handbook/<块名>.md,最后你亲自写索引 README(定位 + 闭环 + 各块一段话链接 + 分歧点);',
       '   · 代码改动 → 改动的文件本身就是产出,另写改动说明(改了什么 / 为什么 / 怎么验证;规模小可并入 MD 报告);',
@@ -284,19 +303,86 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     return Number.isFinite(n) && n >= 1 ? n : 2
   }
   function wfRunningCount() {
-    // 并发闸分口径(T8):只占【动态工作流】的并发位 —— 任务编排(pipeline)顺序链是业务执行体,不占位、不被排队
-    return S.wfRegistry ? [...S.wfRegistry.values()].filter((r) => r.status === 'running' && r.kind !== 'pipeline').length : 0
+    // 并发闸分口径(T8):只占【动态工作流】的并发位 —— 任务编排(pipeline)顺序链是业务执行体,不占位、不被排队;
+    // 主控(orch)多层派发的调度卡只装分片清单+状态、等待期闲置,也不占位 —— 否则它占 1 位,N 个分片被迫串行
+    return S.wfRegistry ? [...S.wfRegistry.values()].filter((r) => r.status === 'running' && r.kind !== 'pipeline' && r.kind !== 'orch').length : 0
   }
   function spawnWorkflow(goal) {
-    const g = String(goal || '').trim() || '未命名工作流'
+    const raw = String(goal || '').trim() || '未命名工作流'
+    // 多层派发:主控卡派出的分片 goal 带 [orch:TAG] 前缀 → 登记父子关联(wfTurnDone 据此唤醒主控),展示与注入都剥掉标记;
+    // 排队时保留原始 goal(含标记),出队重走本函数再解析,标记不丢
+    let g = raw, parentOrch = ''
+    const om = raw.match(/^\s*\[orch:([A-Za-z0-9-]+)\]\s*/)
+    if (om) { parentOrch = om[1]; g = raw.slice(om[0].length) || raw }
     if (wfRunningCount() >= wfConcurrency()) {
-      S.wfQueue.push({ goal: g, at: Date.now() })
+      S.wfQueue.push({ goal: raw, at: Date.now() })
       log('workflow queued (running ' + wfRunningCount() + '/' + wfConcurrency() + ', position ' + S.wfQueue.length + '): ' + g.slice(0, 60))
+      if (parentOrch) pushShardProgress(parentOrch)   // 分片进排队:主控卡进度条先亮"排队中"
       return { queued: true, position: S.wfQueue.length }
     }
     const dir = S.settings.projectDir || ''
     // msg=系统规程+目标(发给 serve);disp=目标(用户气泡只显示目标,规程不露)。返回卡 id,与旧签名兼容。
-    return spawnCard('工作流 · ' + g.slice(0, 20), null, workflowSystemPrompt(dir, S.settings.backendDir || '') + '\n\n【总目标】\n' + g, g, { flash: true, wf: true })
+    // 主控的分片/索引棒 → 隐藏卡:不开窗,会话经 session.js 镜像回流到主控卡主区域(shard 视图);
+    // 自动过规划闸 + 权限自动放行(无人值守);进度经 pushShardProgress 聚合进主控卡
+    const id = spawnCard('工作流 · ' + g.slice(0, 20), null, workflowSystemPrompt(dir, S.settings.backendDir || '') + '\n\n【总目标】\n' + g, g, parentOrch ? { wf: true, shard: true, hidden: true } : { flash: true, wf: true })
+    if (parentOrch) { try { const reg = S.wfRegistry && S.wfRegistry.get(String(id)); if (reg) reg.parentOrch = parentOrch; pushShardProgress(parentOrch) } catch {} }
+    return id
+  }
+  // ── 多层派发(主控卡):主 Agent 层面就把目标拆成 N 个【互相独立+各自可交付】的分片,每个分片是一张全新工作流卡
+  // (全新 128k,内部可再 task 扇出 + 55% 主动交棒),全部完成后派【索引棒】把各分片结论关联成两级索引 README。
+  // 不新造引擎:派发=run_workflow、收口=workflow_result、索引棒=最后一次 run_workflow;主控卡极薄(只装清单+状态)。
+  // 关联机制:主控规程要求分片 goal 带 [orch:TAG] 前缀(spawnWorkflow 解析登记 reg.parentOrch),
+  // wfTurnDone 判分片收官后给主控卡注入进度消息(N/M)把它唤醒 —— 事件驱动,不轮询。
+  // 分片进度聚合推送:分片是静默卡不弹窗,进度以卡片形式聚合进主控卡 —— 分片登记/排队/收官都推一次全量状态
+  function pushShardProgress(tag) {
+    try {
+      const oref = S.orchByTag && S.orchByTag.get(tag); if (!oref) return
+      const oreg = S.wfRegistry && S.wfRegistry.get(String(oref.id)); if (!oreg) return
+      const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === oreg.wcId)
+      if (!win) return
+      const shards = [...S.wfRegistry.values()].filter((r) => r.parentOrch === tag)
+        .map((r) => ({ id: r.id, goal: String(r.goal || '').slice(0, 60), status: r.status, round: r.rounds || 0 }))
+      for (const q of (S.wfQueue || [])) {   // 排队中的分片(goal 带 [orch:tag] 前缀,还在等并发位)
+        const m = String(q.goal || '').match(/^\s*\[orch:([A-Za-z0-9-]+)\]\s*/)
+        if (m && m[1] === tag) shards.push({ id: '', goal: String(q.goal).slice(m[0].length, m[0].length + 60), status: 'queued', round: 0 })
+      }
+      win.webContents.send('shard-progress', { shards })
+    } catch {}
+  }
+  function spawnOrchestrator(goal) {
+    const g = String(goal || '').trim() || '未命名主控'
+    const tag = 'OC-' + Math.random().toString(36).slice(2, 6)
+    S.orchByTag = S.orchByTag || new Map()
+    const dir = S.settings.projectDir || ''
+    const id = spawnCard('主控 · ' + g.slice(0, 20), null, orchestratorSystemPrompt(dir, S.settings.backendDir || '', tag) + '\n\n【总目标】\n' + g, g, { flash: true, wf: true, orch: true })
+    S.orchByTag.set(tag, { id: String(id), at: Date.now() })
+    if (S.orchByTag.size > 20) { const k = S.orchByTag.keys().next().value; S.orchByTag.delete(k) }
+    log('orchestrator spawned (tag ' + tag + ', card ' + JSON.stringify(id) + '): ' + g.slice(0, 60))
+    return { id, tag }
+  }
+  function orchestratorSystemPrompt(dir, backendDir, orchTag) {
+    return [
+      '<多层派发主控规程>',
+      '你是【主控】,复杂目标的统一入口。你的第一件事永远是【预检路由】:估出这个目标的上下文量级 —— 单卡装得下的派给一张工作流卡,装不下的在主 Agent 层面拆成多个分片并行干,最后派索引 Agent 把结论关联成整体。你不是执行者 —— 【严禁】自己深读代码/文档,【严禁】自己执行分片内容:你的上下文只装"分片清单 + 状态"。',
+      '',
+      '【落盘哲学 —— 本流程总规矩】一切中间成果(勘察清单、分片产出、阶段结论)一律写成文档落盘,上下文里只过【路径 + 一句话索引】。字数没有限制:内容住在文档里,谁要用谁去读。任何一块发现"它本身也太大",就再拆一层(分片自己也能调 run_orchestration 再细分)—— 拆分可以无限递归,全靠文档接力。',
+      '',
+      '1. 【预检路由,先估再派】估的是【目标相关的那一撮文件】,绝不是工作目录的全部 —— 目录再大也不直接统计,按漏斗收窄:',
+      '   ① 看结构:目录树(两层)+ README/manifest,判断目标落在哪几个模块/子目录;',
+      '   ② 抓候选:从目标里提取 2-3 个关键词,在那些模块里 grep,得到候选文件集(连同它们的直接入口);',
+      '   ③ 只统计【候选集】的文件数 N 与总大小(glob/grep/wc 扫清单,【禁止】读内容;【禁止】派 task 子 Agent —— 第一轮派子 Agent 会被卡片判定为"已实质执行",你的批准闸会被自动跳过,整个流程卡死在等批准)。',
+      '   判定线:N ≤20 且总量 ≤150KB → 单卡 128k 装得下:直接调 run_workflow 把整个目标派出去,你的使命到此结束(别画蛇添足再拆);超线 → 走下面的多层拆分。',
+      '   估的是"单卡深读这一撮要多少";拿不准一律按偏大估 —— 错进多层只是多花一点,错进单卡会撑爆。',
+      '2. 【能不能拆,先判】只有能拆出 ≥3 个【互相独立 + 各自可交付】的分片才走多层。分片间有强依赖(B 要拿 A 的结论才能干)→ 多层会退化成串行,【改用单工作流】把整个目标派出去,结束。',
+      '3. 【第一轮只出方案,等批准】用 todowrite 列出:预检结论(N 与总量)、每个分片的一句话目标、边界(干什么不干什么)、产出落盘路径(docs/<主题>/<分片名>.md)、索引棒打算。然后结束这轮等用户点【开始执行】—— 批准前【不派任何分片】。',
+      '4. 【派发】批准后,每个分片调一次 run_workflow。goal 第一行必须是标记 [orch:' + orchTag + '] —— 壳层靠它把分片完成消息回传给你,漏了你就变成聋子;标记之后写:一句话目标 + 边界 + 产出路径 + 回报要求(结论与细节全部落盘成文档,回报只给一句话 + 路径 + 分歧点)。',
+      '5. 【等待】派完就结束回合。每完成一个分片,壳层会给你注入一条进度消息(N/M);对照 todo 清单还没齐,就结束本轮继续等 —— 别轮询、别空转。',
+      '6. 【索引棒收口】分片全部完成后,调 workflow_result 逐个取回成果(只取一句话结论与路径,别拉全文),再调 run_workflow 派【索引 Agent】(goal 同样以 [orch:' + orchTag + '] 开头):总目标 + 每个分片一句话结论 + 产出路径清单 + 分歧点,要求它写出两级索引 ' + (dir ? dir + '/docs/' : 'docs/') + '<主题>/README.md(定位 + 闭环 + 各分片一段话链接 + 分歧点仲裁)。【只给路径与一句话,严禁把分片全文贴进 goal】—— 细节让索引 Agent 自己按路径去读;它读不过来,就让它再派子 Agent 分块读文档整理,还是文档接力。',
+      '7. 【交付】索引棒完成后,你的最终回答 = 总目标一段话总结 + 索引 README 路径 + 各分片产出路径清单。然后用 memory_add 蒸馏系统级事实(一句话 + anchors 挂 file:行号 + scene,没够格的就跳过,宁缺勿滥)。',
+      '8. 【128k 纪律】你的每轮输入都该是小的:预检只看数字、进度只看条数、成果只取索引。发现自己在大段读文件 = 立刻停手,那是分片的活。',
+      dir ? ('工作目录(主仓):' + dir + ' —— 分片与索引产出都落这里。' + (backendDir ? '副仓(只读,跨仓探查允许):' + backendDir + ' —— 可探查,【严禁】写/改/删。' : '')) : '',
+      '</多层派发主控规程>',
+    ].filter(Boolean).join('\n')
   }
   // 出队补位:队列非空且有空位 → shift 开下一张并桌面通知。guard 防重入(判 done/关卡/删记录可能同拍连发)。
   let wfDequeuing = false
@@ -309,7 +395,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       if (!next) return
       const id = spawnWorkflow(next.goal)
       log('workflow dequeued → card ' + JSON.stringify(id) + ': ' + String(next.goal).slice(0, 60))
-      try { new Notification({ title: 'BocomHermes · 工作流', body: '排队的工作流已开跑：' + String(next.goal).slice(0, 60) }).show() } catch {}
+      if (!/^\s*\[orch:/.test(String(next.goal))) {   // 分片出队不桌面通知(静默卡,进度在主控卡里看)
+        try { new Notification({ title: 'BocomHermes · 工作流', body: '排队的工作流已开跑：' + String(next.goal).slice(0, 60) }).show() } catch {}
+      }
     } finally { wfDequeuing = false }
   }
   // ── 工作流成果注册表(新路径):session.js 每轮回调,orch-mcp workflow_result / 卡坞据此取成果 ──
@@ -344,10 +432,26 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         else { reg.status = 'running'; try { strictSendNext(reg) } catch (e) { log('strict step send err: ' + e.message) } }   // 步骤未发完强制 running,防提前判 done/误通知
       }
     }
-    if (!wasDone && reg.status === 'done') {   // 首次全勾:桌面通知一声(长跑工作流用户多半不在跟前);标题按 kind 区分(T1)
+    if (!wasDone && reg.status === 'done' && !reg.parentOrch) {   // 首次全勾:桌面通知一声(长跑工作流用户多半不在跟前);分片不通知(进度聚合在主控卡,弹 N 次通知是骚扰)
       try { new Notification({ title: reg.kind === 'pipeline' ? '任务编排完成' : '工作流完成', body: String(reg.goal).slice(0, 80) }).show() } catch {}
     }
     try { S.wfArchive(reg) } catch (e) { log('wf archive err: ' + e.message) }
+    // 多层派发唤醒钩:带 parentOrch 的分片收官(完成/中断,一次)→ 给主控卡注入进度消息(N/M)把它唤醒。
+    // 主控只装清单,收到后自己对照 todo:齐了按规程派索引棒,没齐结束本轮继续等 —— 事件驱动,不轮询。
+    if (reg.parentOrch && (reg.status === 'done' || reg.status === 'interrupted') && !reg.orchNotified) {
+      reg.orchNotified = true
+      pushShardProgress(reg.parentOrch)   // 先刷进度条,再注入唤醒消息(主控卡看到 N/M 变化)
+      try {
+        const oref = S.orchByTag && S.orchByTag.get(reg.parentOrch)
+        const oreg = oref && S.wfRegistry && S.wfRegistry.get(String(oref.id))
+        const win = oreg && BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === oreg.wcId)
+        if (win) {
+          const sibs = [...S.wfRegistry.values()].filter((r) => r.parentOrch === reg.parentOrch)
+          const doneN = sibs.filter((r) => r.status === 'done' || r.status === 'interrupted').length
+          win.webContents.send('card-inject', { text: '<主控进度>分片「' + String(reg.goal).slice(0, 60) + '」已' + (reg.status === 'done' ? '完成' : '中断') + ' (' + doneN + '/' + sibs.length + ')。调 workflow_result(id="' + reg.id + '") 取回它的成果;对照你的 todo 清单 —— 全部 ' + sibs.length + ' 个分片齐了,就按规程第 6 条派【索引棒】收口;还没齐,结束本轮继续等。</主控进度>', disp: '分片 ' + doneN + '/' + sibs.length + ' 已' + (reg.status === 'done' ? '完成' : '中断') + ':' + String(reg.goal).slice(0, 40) })
+        }
+      } catch (e) { log('orch wake err: ' + e.message) }
+    }
     if (reg.status === 'done') wfDequeue()   // 判 done → 腾出并发位,排队工作流补位(出队触发点①)
   }
   S.wfTodos = (wcId, todos) => { const reg = S.wfCardByWc && S.wfCardByWc.get(wcId); if (reg && Array.isArray(todos)) reg.todos = todos }
@@ -1334,7 +1438,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   const STRICT_PREFIX = '<任务编排·严格模式>\n本次编排按【固定步骤链】逐步下发:每轮只执行当前下发的这一步并汇报结果,不要提前做后续步骤、不要追问后续步骤,做完等下一步自动下发。若某步失败,明说「失败」及原因(会停止下发后续步骤)。\n</任务编排·严格模式>\n'
   ipcMain.handle('start-conversation', (_e, payload) => {
     const { title, msg, disp, files, mode } = payload || {}
-    if (mode === 'wf') return { id: spawnWorkflow(msg || title || '') }   // 动态工作流:起单主 Agent fan-out 卡(见 spawnWorkflow);图片暂不支持
+    if (mode === 'wf' || mode === 'orch') { const r = spawnOrchestrator(msg || title || ''); return { id: r && r.id } }   // 动态工作流=多层派发:主控预检路由(单卡装得下单卡、装不下拆多层+索引收口);图片暂不支持
     if (mode === 'pipeline') {
       const body = msg || title || ''
       // 扩展:{steps, strict, files} —— strict=true 且 steps 非空进【严格模式】:开卡只发 steps[0]+严格规程前缀,
@@ -1356,6 +1460,13 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     const f = m.get(String(id)); if (f) m.delete(String(id)); return f || []
   })
   ipcMain.handle('spawn-workflow', (_e, goal) => spawnWorkflow(goal))
+  // 主控卡进度条点分片 → 把那张大隐藏分片卡拉到台前细看(看完可手动关,会话不受影响)
+  ipcMain.handle('shard-focus', (_e, id) => {
+    const reg = S.wfRegistry && S.wfRegistry.get(String(id)); if (!reg) return false
+    const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === reg.wcId)
+    if (!win) return false
+    try { if (win.isMinimized()) win.restore(); win.show(); win.focus(); return true } catch { return false }
+  })
   // 工作流模板(对话坞模板入口;常量清单,goalPrefix 预置到目标前,引导主 Agent 按对应形状干活)
   const WF_TEMPLATES = [
     { id: 'explore-doc', name: '探索成文', hint: '大规模探索后蒸馏成文档', goalPrefix: '【探索成文】系统性地探索以下主题，fan-out 子代理分头摸底，最后蒸馏成结构化文档落盘：' },

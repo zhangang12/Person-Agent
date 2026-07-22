@@ -47,12 +47,27 @@ const TOOLS = [
       ' · 需要大范围深读代码/资料(几十上百个文件),该由多个子 Agent 用各自独立的上下文分头深读;\n' +
       ' · 需要并行探查多个相对独立的来源(如 代码 + 数据库 + 文档),分头更快;\n' +
       ' · 需要多个独立视角互相校验(如 实现方 + 专挑刺的评审方)。\n' +
+      '【规模拿不准】别自己估 —— 调 run_orchestration:主控会先预检再路由,装不下才拆多层。\n' +
       '【何时不要调】简单查询、解释、小改动、闲聊 —— 直接自己答,别升格(更慢更贵)。\n' +
       '【拿不准】倾向先自己做;真觉得划算再升格。',
     inputSchema: {
       type: 'object',
       properties: {
         goal: { type: 'string', description: '总目标,一句话讲清要达成什么(把你已掌握的关键上下文也写进去,工作流主 Agent 看不到本对话)' },
+      },
+      required: ['goal'],
+    },
+  },
+  {
+    name: 'run_orchestration',
+    description:
+      '【复杂目标的默认升格入口】把目标交给【主控卡】:它先预检估量(只扫清单不读内容),单卡 128k 装得下就自动改用单工作流,装不下才在主 Agent 层面拆成 N 个互相独立的分片主 Agent 并行干,全部完成后自动派索引 Agent 把各分片结论关联成两级索引 README。中间成果全部落盘成文档,上下文只过路径,拆分可无限递归。\n' +
+      '【何时调】任何复杂目标都可以 —— 预检路由会自动选单层还是多层,你不用判断规模。\n' +
+      '【何时不要调】简单查询、解释、小改动、闲聊 —— 直接自己答,别升格(更慢更贵)。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        goal: { type: 'string', description: '总目标,一句话讲清要达成什么(把你已掌握的关键上下文也写进去,主控看不到本对话)' },
       },
       required: ['goal'],
     },
@@ -90,6 +105,14 @@ async function callTool(name, a) {
     return '已拉起动态工作流,id=' + (r.id != null ? r.id : '?') + '(卡片已打开:主 Agent 自拆 + 并行派子 Agent 深挖 + 自综合,过程可视、用户可插话)。'
       + '注意:它的第一份计划要用户在卡片里点【开始执行】批准 —— 若用户不知道,提醒他去批准,批准后它自动开跑。'
       + '之后调 workflow_result(id="' + (r.id != null ? r.id : '') + '") 取回成果继续用(进行中也能取到最新阶段成果);现在可以先和用户讨论别的。'
+  }
+  if (name === 'run_orchestration') {
+    const goal = String(a.goal || '').trim()
+    if (!goal) return '需要 goal(交给主控的总目标)'
+    const r = await relayPost('/orch/run-orch', { goal })
+    return '已拉起多层派发主控,id=' + (r.id != null ? r.id : '?') + '(主控卡已打开:它先预检估量——单卡装得下会自动改用单工作流;装不下才出拆分方案等批准,批准后派 N 个分片工作流并行/排队执行,全部完成自动派索引 Agent 写两级索引)。'
+      + '注意:拆分方案要用户在主控卡里点【开始执行】批准 —— 若用户不知道,提醒他去批准。'
+      + '之后主控会自己等分片、自己收口;你只管用 workflow_result(id="' + (r.id != null ? r.id : '') + '") 取最终成果。'
   }
   if (name === 'workflow_result') {
     const body = {}

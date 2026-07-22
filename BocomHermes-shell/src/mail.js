@@ -5,7 +5,7 @@
 'use strict'
 const knowledge = require('./knowledge')
 module.exports = function initMail(ctx) {
-  const { S, app, path, fs, shell, ipcMain, log, oc, Notification, email, attachments, mailCache, emailSummarySeen, db, initOutbox, openOutbox, sendOrbState, createMailCenter, openMailView, spawnCard, spawnWorkflow, maybeSuggestMeeting, skillList, skillRun, skillRunBatch, skillPageRead, skillPageAct, skillTakeoverDone } = ctx
+  const { S, app, path, fs, shell, ipcMain, log, oc, Notification, email, attachments, mailCache, emailSummarySeen, db, initOutbox, openOutbox, sendOrbState, createMailCenter, openMailView, spawnCard, spawnWorkflow, spawnOrchestrator, maybeSuggestMeeting, skillList, skillRun, skillRunBatch, skillPageRead, skillPageAct, skillTakeoverDone } = ctx
   // 解析"有效的" SMTP 配置:sameAsImap=true 时用户名/密码从 IMAP 取(host/port/secure 仍从 SMTP 取)
   function effectiveSmtp(S) {
     const sm = S.settings.smtp || {}
@@ -291,6 +291,13 @@ module.exports = function initMail(ctx) {
             const goal = String(a.goal || '').trim()
             if (!goal) return reply({ error: '缺少 goal' })
             try { const id = spawnWorkflow(goal); return reply({ ok: true, id }) }
+            catch (e) { return reply({ error: e.message }) }
+          }
+          // ── 多层派发:对话卡 Agent 判断目标大到单工作流装不下 → 调 run_orchestration → 拉起主控卡(拆 N 分片 + 索引棒收口)──
+          if (req.url === '/orch/run-orch') {
+            const goal = String(a.goal || '').trim()
+            if (!goal) return reply({ error: '缺少 goal' })
+            try { const r = spawnOrchestrator(goal); return reply({ ok: true, id: r && r.id != null ? r.id : r }) }
             catch (e) { return reply({ error: e.message }) }
           }
           // 工作流成果回取:不再一次性 —— Agent 拿 id 查状态/取成果全文(注册表 + 存档),继续在对话里用

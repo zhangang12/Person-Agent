@@ -64,8 +64,13 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
     const anchor = `当前项目工作目录（主仓,唯一可写真相源）：${dir}\n`
       + (backend ? `副仓（只读,跨仓探查允许）：${backend}\n写与改只落主仓;副仓可以 grep/glob/read 读,但【严禁】写、改、删它;其它路径仍不许访问。\n`
                  : `分析、探索、读写代码时一律在此目录内进行;不要访问或分析其它路径下的项目/目录。\n`)
+    // 128k 上下文纪律(所有 Agent 同规,随首条背景注入每一张卡):与 workflowSystemPrompt 第 4 条、session.js 硬闸同口径,改数值要三处同步。
+    const discipline = '<上下文纪律(128k)>你的上下文窗口约 128k tokens,省着用：'
+      + '① 按需精读,不通读整个模块——单次 read ≤400 行(带 offset/limit),grep 先收窄路径与类型;深读大片文件用 task 派子 Agent(它有独立 128k)。'
+      + '② task / delegate_task 指令只写目标+文件路径+边界+回报格式,【严禁】贴文件原文/大段代码——不是限字数,是禁止把文档内容搬进上下文(塞原文超 2 万字壳层直接拦停该子 Agent);用 delegate_task 必须显式传 load_skills,不需要技能就传 []。'
+      + '③ 子 Agent 结论一律落盘成文档,回报只给一句话+路径(字数不限,内容住文档里,谁要用谁去读);要整理结论也派子 Agent 读文档接力归纳,别自己全读。</上下文纪律>\n'
     const body = parts.length ? ('\n以下是本项目的说明文档,供参考:\n\n' + parts.join('\n\n---\n\n')) : ''
-    return `<项目背景>\n${anchor}${body}</项目背景>\n\n`
+    return `<项目背景>\n${anchor}${discipline}${body}</项目背景>\n\n`
   }
 
   // 项目级知识库(任务尾蒸馏的落点,src/knowledge.js):按工作目录匹配,新卡首条消息随背景注入。
@@ -199,6 +204,9 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     // 天枢技能工具族(skill_*):回放接管/断点解析的 MCP 工具,引擎侧已有门禁(如 page_act 仅接管期可执行),
     // 不再叠人工审批 —— 否则 Agent 接管每一步都弹批准框,混合执行没法用。MCP 工具名可能带服务前缀,按含 skill_ 匹配。
     if (/(^|[._-])skill_/.test(String(tool || ''))) { oc.replyPermission(si.serve, sessionId, requestId, 'once'); return }
+    // 多层派发分片卡:无人值守(按主控已批准的方案跑),权限请求自动放行 —— 否则 task 子 Agent/写文档都卡在看不见的批准框上,
+    // 子 Agent 永远起不来(实测病灶)。范围限本卡会话,关卡即失效;全程工具日志留痕。
+    if (S.shardWc && si.wc && S.shardWc.has(si.wc.id)) { oc.replyPermission(si.serve, sessionId, requestId, 'once'); return }
     if (!si.wc || si.wc.isDestroyed()) { oc.replyPermission(si.serve, sessionId, requestId, 'reject'); return }
     S.pendingPerm.set(requestId, sessionId)
     S.pendingPerm.set(requestId + ':meta', { tool, detail: detail || '' })   // 供审计留痕(批准/拒绝了什么)
@@ -245,7 +253,30 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     S.pendingQuestion.set(requestId, { sessionId, v2: !!v2, serve: si.serve || serve })
     si.wc.send('question-request', { requestId, questions: questions || [] })
   }
-  function onText({ sessionId, text, role, partID, kind, status, delta, toolInput, toolOutput, toolTitle, toolError, subagent, agentId, agentName, taskChild, taskDesc }) {
+  // ── 128k 口径硬闸:委派指令(task/delegate_task)塞原文(超 knobs.taskPromptMax,默认 20000 字)的拦停 ──
+  // 病灶:主 Agent 把文件原文/大段代码贴进委派指令 → 子 Agent 128k 迅速撑满 → serve 侧静默压缩 → 变笨/写结论挂死。
+  // 【精确狙杀,不株连】:只 abort 能解析出子会话ID(taskChild,opencode.js extractChildSessionId)的那个超限调用;
+  // 并行 fan-out 的兄弟子 Agent 绝不受牵连。解析不到 ID(老 serve 运行期不带 sessionID)就降级为只警告,
+  // 真挂死交给 5min 看门狗 —— 宁可放过,不可错杀(教训:会话级 flag+补扫曾把一整波并行子 Agent 团灭)。
+  const condemnedTasks = new Map()   // partID → { chars, max, aborted }(同一 part 多次状态推送只拦一次)
+  // 多层派发会话回流:分片(隐藏卡,不开窗)的对话流镜像一份给主控卡(shardRoot=分片注册id),
+  // 主控卡把镜像存进分片专属缓冲,点分片进度卡即在主区域渲染该分片的会话 —— 一窗看全部,不另开空间。
+  function mirrorToOrch(si, payload) {
+    try {
+      const mreg = S.wfCardByWc && si.wc && S.wfCardByWc.get(si.wc.id)
+      if (!mreg || !mreg.parentOrch || !S.orchByTag) return
+      const oref = S.orchByTag.get(mreg.parentOrch)
+      const oreg = oref && S.wfRegistry && S.wfRegistry.get(String(oref.id))
+      if (!oreg) return
+      for (const [, si2] of S.sessionInfo) {
+        if (si2.wc && !si2.wc.isDestroyed() && si2.wc.id === oreg.wcId) {
+          si2.wc.send('card-stream', Object.assign({}, payload, { shardRoot: mreg.id }))
+          return
+        }
+      }
+    } catch {}
+  }
+  function onText({ sessionId, text, role, partID, kind, status, delta, toolInput, toolOutput, toolTitle, toolError, subagent, agentId, agentName, taskChild, taskDesc, taskChars }) {
     const si = S.sessionInfo.get(sessionId); if (!si || !si.wc || si.wc.isDestroyed()) return
     if (role && role !== 'assistant') return
     const tag = si.tag || null   // 登记方自定义的任务身份(scope/kind/id…)：随 card-stream 下发,窗口可按并发任务分组
@@ -278,6 +309,31 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
       // 工作流卡:主 Agent 的 todowrite 清单进成果注册表(存档里能看到任务清单与勾选状态)
       if (!subagent && /^todowrite$/i.test(String(text || '')) && toolInput && S.wfTodos) {
         try { const inp = typeof toolInput === 'string' ? JSON.parse(toolInput) : toolInput; if (inp && Array.isArray(inp.todos)) S.wfTodos(si.wc.id, inp.todos) } catch {}
+      }
+      // 128k 口径硬闸:委派指令(task 或 oh-my-openagent delegate_task)超 knobs.taskPromptMax(默认 20000 字,塞原文级别)→
+      // 精确狙杀该调用的子会话(taskChild 已知即杀;未知先登记,后续状态推送带来 taskChild 再杀)。不碰任何兄弟子 Agent。
+      if (/^(task|delegate_task)$/i.test(String(text || ''))) {
+        try {
+          const inp = typeof toolInput === 'string' ? JSON.parse(toolInput) : (toolInput || {})
+          const chars = taskChars || (String(inp.description || '').length + String(inp.prompt || '').length)
+          const max = Math.floor(+(S.settings && S.settings.knobs && S.settings.knobs.taskPromptMax)) || 20000
+          if (chars > max && partID) {
+            let cd = condemnedTasks.get(partID)
+            if (!cd) {
+              cd = { chars, max, aborted: false }
+              condemnedTasks.set(partID, cd)
+              if (condemnedTasks.size > 200) condemnedTasks.clear()
+              log('⚠ 128k硬闸:委派指令 ' + chars + ' 字超上限 ' + max + '(sid=' + sessionId + ') —— ' + (taskChild ? '精确拦停' : '等待子会话ID'))
+              si.wc.send('card-note', { text: '⚠ 委派指令 ' + chars + ' 字超 128k 口径上限 ' + max + '(疑似贴了大段原文) —— ' + (taskChild ? '已拦停该子 Agent' : '将在子会话创建后拦停') + ';主 Agent 应拆小重派(指令≤2000字、只给路径不给原文)', tone: 'muted' })
+            }
+            if (!cd.aborted && taskChild) {
+              cd.aborted = true
+              log('128k硬闸:精确拦停超限子会话 ' + taskChild + '(指令 ' + cd.chars + ' 字)')
+              ;(async () => { try { await oc.abort(si.serve, taskChild) } catch {} })()
+              si.wc.send('card-note', { text: '⛔ 超限子 Agent「' + String(taskDesc || taskChild).slice(0, 40) + '」(指令 ' + cd.chars + ' 字)已被拦停 —— 主 Agent 会收到取消回报,按规程拆小重派', tone: 'muted' })
+            }
+          }
+        } catch {}
       }
       // write/edit 落盘(主 Agent 与子 Agent 都收,只收成功完成的)→ 注册表产出文件清单,进存档与 workflow_result;
       // 升格方拿到路径就能自己读产物,不用问用户。与渲染层成果抽屉同一份信号,各管各的:那边管展示,这边管外传。
@@ -316,7 +372,8 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
           }
         } catch {}
       }
-      si.wc.send('card-stream', { kind: 'tool', text, partID, status: status || '', input: toolInput, output: toolOutput, title: toolTitle, error: toolError, sub: !!subagent, agentId: agentId || '', agentName: agentName || '', taskChild: taskChild || '', taskDesc: taskDesc || '', readN, sessionId, tag }); return
+      const toolPayload = { kind: 'tool', text, partID, status: status || '', input: toolInput, output: toolOutput, title: toolTitle, error: toolError, sub: !!subagent, agentId: agentId || '', agentName: agentName || '', taskChild: taskChild || '', taskDesc: taskDesc || '', readN, sessionId, tag }
+      si.wc.send('card-stream', toolPayload); mirrorToOrch(si, toolPayload); return
     }
     if (!subagent && !role && kind !== 'reasoning' && text === S.sentPrompt.get(sessionId)) return   // "回显自己prompt"过滤只对父会话
     let buf = S.streamBuf.get(sessionId); if (!buf) { buf = {}; S.streamBuf.set(sessionId, buf) }
@@ -324,7 +381,8 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     // delta=true（message.part.delta）始终追加；快照按"是否累积前缀"判断累积/增量
     const full = delta ? (prev + text) : (prev && !text.startsWith(prev) ? prev + text : text)
     buf[partID] = full
-    si.wc.send('card-stream', { kind: kind || 'text', text: full, partID, sub: !!subagent, agentId: agentId || '', agentName: agentName || '', sessionId, tag })
+    const textPayload = { kind: kind || 'text', text: full, partID, sub: !!subagent, agentId: agentId || '', agentName: agentName || '', sessionId, tag }
+    si.wc.send('card-stream', textPayload); mirrorToOrch(si, textPayload)
   }
   S.handlers = { onPermission, onText, onQuestion }
 
@@ -360,6 +418,8 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
   // 父卡 task 永 running 拖住整波。判据:父卡在忙 + 子会话静默 > 5min + generationStalled(最后 assistant 未收尾且无工具在跑)
   // → 只中止这个子会话(task 报"Task cancelled",主 Agent 重派或带其余结果综合,实测恢复路径)。有工具在跑/已收尾一律放过:慢≠死。
   const SUB_STALL_MS = 5 * 60 * 1000   // 旋钮候选:生成挂起容忍(网关掉链子常见,但 5min 无字基本是真死)
+  const SUB_CTX_WARN = Math.round(128000 * 0.8)   // 子 Agent 上下文预警线(128k 口径):隔离上下文不进卡片水位,这里直接看它的真实用量
+  const subCtxWarned = new Set()   // 每个子会话只预警一次
   setInterval(async () => {
     try {
       const busy = new Map()   // serve.base → { serve, roots: Map<根会话sid → wc> } —— 只盯有卡在忙的 serve,空闲零开销
@@ -373,6 +433,15 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
         for (const [rootSid, wc] of roots) {
           for (const c of all) {
             if (!c || !c.id || c.parentID !== rootSid) continue
+            // 128k 口径预警:子 Agent 用量 ≥80% 提醒主 Agent 让它收尾落盘(任务偏大的早期信号,不拦只提醒)
+            try {
+              const u = oc.getSessionUsage(serve, c.id)
+              if (u && u.prompt >= SUB_CTX_WARN && !subCtxWarned.has(c.id)) {
+                subCtxWarned.add(c.id)
+                if (subCtxWarned.size > 500) subCtxWarned.clear()
+                if (!wc.isDestroyed()) wc.send('card-note', { text: '⚠ 子 Agent「' + String(c.title || c.id).slice(0, 40) + '」上下文已用 ' + Math.round(u.prompt / 1000) + 'k/128k —— 任务偏大,宜让它尽快收尾落盘;下次拆小(指令≤2000字)', tone: 'muted' })
+              }
+            } catch {}
             const upd = (c.time && c.time.updated) || 0
             if (!upd || Date.now() - upd < SUB_STALL_MS) continue   // 有动静就不判死
             let stalled = false
@@ -387,7 +456,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
             if (!stalled) continue
             log('watchdog: 子会话 ' + c.id + ' (' + (c.title || '') + ') 静默 >5min 且生成挂死 → 自动中止(父卡可重派)')
             try { await oc.abort(serve, c.id) } catch {}
-            try { if (!wc.isDestroyed()) wc.send('card-note', { text: '⚠ 子 Agent「' + String(c.title || c.id).slice(0, 40) + '」写结论时挂死(5 分钟无进展),已自动中止 —— 主 Agent 会重派或带其余结果继续', tone: 'muted' }) } catch {}
+            try { if (!wc.isDestroyed()) wc.send('card-note', { text: '⚠ 子 Agent「' + String(c.title || c.id).slice(0, 40) + '」写结论时挂死(5 分钟无进展),已自动中止 —— 主 Agent 会重派或带其余结果继续;若反复发生多半是任务过大触发压缩循环,重派请拆小(指令≤2000字、只给路径)', tone: 'muted' }) } catch {}
           }
         }
       }
@@ -596,7 +665,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     const model0 = replayModel(e.sender.id, sessionId)
     S.pushServeHealth && S.pushServeHealth(e.sender, serve)
     const ctx0 = loadMemory() + loadProjectContext(dir) + KNOWLEDGE_SLOT; S.firstMsgCtx.set(sessionId, ctx0)   // C2:知识留占位,发送时懒构建
-    recordHistory(sessionId, wantTitle, dir)
+    if (!(opts && opts.shard)) recordHistory(sessionId, wantTitle, dir)   // 分片/索引棒是内部工人,不进历史(对用户只是一条工作流)
     return { sessionId, project: dir ? path.basename(dir) : '未选目录', dir, model: model0, reattached: false, running: false }
   })
 
@@ -628,7 +697,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     // C2:知识留占位发送时懒构建;续聊场景 target = 接力摘要 + 首条消息(seed 存原文,card-send 拼)
     const ctx = loadMemory() + loadProjectContext(dir) + KNOWLEDGE_SLOT + carry; S.firstMsgCtx.set(sessionId, ctx)
     if (carryRaw) knowledgeSeed.set(sessionId, carryRaw)
-    recordHistory(sessionId, 'BocomHermes 对话', dir)
+    if (!(opts && opts.shard)) recordHistory(sessionId, 'BocomHermes 对话', dir)   // 分片/索引棒是内部工人,不进历史(对用户只是一条工作流)
     // 旧 serve 若已无任何会话引用且是自起的 → 退休,不留孤儿进程
     if (oldServe && oldServe !== serve) {
       const inUseBases = new Set([...S.sessionInfo.values()].map((si) => si.serve && si.serve.base).filter(Boolean))
@@ -760,7 +829,8 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
   // 渲染层按 .length 判空,对象形状与空数组同样落空,UI 安然显示"没拿到模型列表"。
   ipcMain.handle('list-models', async (e, opts) => {
     const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
-    const serve = si && si.serve
+    // 本卡无会话(对话坞/输入框)→ 借任一在跑的健康 serve 列模型(只读 /config/providers,不为它白起引擎)
+    const serve = (si && si.serve) || (oc.anyHealthyServe && oc.anyHealthyServe())
     if (!serve || !serve.base) return { models: [], note: '引擎未启动' }
     try { return await oc.listModels(serve, { force: !!(opts && opts.force) }) } catch { return [] }
   })

@@ -130,12 +130,13 @@ ok('running 事件不抛', !evErr, evErr && evErr.message)
 const tb = exported.toolEls.get('p1')
 ok('工具块已建且 innerHTML 渲出内容(非空白框)', tb && /read/.test(tb.innerHTML) && /运行中/.test(tb.innerHTML), tb && tb.innerHTML.slice(0, 80))
 ok('esc 全程走词法定义,没查过全局(0 次)', escGlobalHits === 0, escGlobalHits)
-ok('默认展开:工具块默认展开入参/结果(用户要看工具在干什么)', tb && tb.open === true, tb && tb.open)
+ok('默认收起:工具明细项默认折叠(主流只留一行摘要,点击单个可展开)', tb && tb.open === false, tb && tb.open)
 let verboseFireErr = null
-try { byId.get('bverbose')._fire('click') } catch (e) { verboseFireErr = e }   // 用户可切回紧凑:只对之后新渲的工具块生效(所见即所得路径 querySelectorAll 被桩置空)
+try { byId.get('bverbose')._fire('click') } catch (e) { verboseFireErr = e }   // 用户可切回自动展开:只对之后新渲的工具块生效(所见即所得路径 querySelectorAll 被桩置空)
 try { cbs.onStream({ kind: 'tool', text: 'read', partID: 'p1b', status: 'running', input: { filePath: 'b.js' }, title: 'b.js' }) } catch (e) { verboseFireErr = e }
 const tb2 = exported.toolEls.get('p1b')
-ok('切紧凑后新工具块折叠为一行摘要', !verboseFireErr && tb2 && tb2.open === false, (verboseFireErr && verboseFireErr.message) || (tb2 && tb2.open))
+ok('开过程详情后新工具块自动展开入参/结果', !verboseFireErr && tb2 && tb2.open === true, (verboseFireErr && verboseFireErr.message) || (tb2 && tb2.open))
+try { byId.get('bverbose')._fire('click') } catch (e) {}   // 切回默认紧凑,别污染后续用例
 evErr = null   // 上面是本用例自己的探针,别污染后续用例共用的 evErr
 try { cbs.onStream({ kind: 'tool', text: 'read', partID: 'p1', status: 'completed', input: { filePath: 'a.js' }, title: 'a.js', output: 'x'.repeat(1500) }) } catch (e) { evErr = e }
 ok('completed 摘要行带输出量(⎿ N 字)', tb && /⎿ 1\.5k 字/.test(tb.innerHTML), tb && tb.innerHTML.slice(0, 200))

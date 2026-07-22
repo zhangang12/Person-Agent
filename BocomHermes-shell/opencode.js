@@ -155,7 +155,7 @@ async function refreshSessionTree(base, force) {
 
 // 用 Node http 而非 fetch：智能体一轮可能跑几分钟，POST /message 在结束前一直挂着，
 // 而 fetch(undici) 默认 5 分钟 headersTimeout 会把它判超时抛 "fetch failed"。http 无此超时。
-function api(base, method, path, body) {
+function api(base, method, path, body, timeoutMs) {
   return new Promise((resolve, reject) => {
     let u
     try { u = new URL(base + path) } catch (e) { return reject(e) }
@@ -173,12 +173,13 @@ function api(base, method, path, body) {
       })
     })
     req.on('error', reject)
-    req.setTimeout(0)            // 不超时：长任务期间连接保持
+    req.setTimeout(timeoutMs > 0 ? timeoutMs : 0, () => { req.destroy(new Error(`${method} ${path} -> 超时(${timeoutMs}ms),对端无响应`)) })   // 默认 0=不超时:长任务期间连接保持;探活类调用必须传超时,否则对端挂起=永远傻等
     if (data) req.write(data)
     req.end()
   })
 }
-async function healthAt(base) { try { await api(base, 'GET', '/global/health'); return true } catch { return false } }
+// 探活专用 3s 超时:serve 挂起(接受连接但不应答)时快速判负,waitHealthy 才能重试/到时如实报错,而不是无声卡死
+async function healthAt(base) { try { await api(base, 'GET', '/global/health', undefined, 3000); return true } catch { return false } }
 // 扫端口找已经在跑的 serve:用户手动 `bocomcode serve` 起的、或自启没记进 pool 的,都能复用
 // 不再无脑 freePort+spawn → 不再有"用户 4096 + 我们 4097 两个 serve 互相打架"
 async function findExistingServe(startPort = 4096, endPort = 4110, log = null) {
@@ -248,7 +249,7 @@ async function waitHealthy(base, getExit, log) {
 async function detectPerm(base) {
   const real = async (p) => {
     try {
-      const r = await fetch(base + p, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reply: 'reject' }) })
+      const r = await fetch(base + p, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reply: 'reject' }), signal: AbortSignal.timeout(5000) })   // 探针必须带超时:serve 挂起时 5s 判负,别让 ensureServe 无声卡死
       return !(await r.text()).includes('<!doctype html>')
     } catch { return false }
   }
@@ -795,7 +796,7 @@ function getStreamState(info) {
 // 事件循环每次重连都读 info.base —— 心跳重启把 serve 换到新端口后,本循环会自动接上新 base,无需重启循环。
 // info.dead = true(外部 serve 被清出 pool)时退出。
 async function runEventLoop(info, handlers, log) {
-  const { onPermission, onText, onQuestion } = handlers || {}
+  const { onPermission, onText, onQuestion, onChildSession } = handlers || {}
   let dropped = false   // 经历过断线(含对端正常收尾):重连成功后做 R5 补偿
   for (;;) {
     if (info.dead) { info.streamUp = false; log('event loop stopped (' + (info.dir || '(home)') + ')'); return }
@@ -835,7 +836,7 @@ async function runEventLoop(info, handlers, log) {
           // 见到没分类过的会话 → 懒加载会话树建 子→父 映射(保证子agent事件能路由回父卡片)
           { const evp = ev && ev.properties; const evSid = evp && (evp.sessionID || evp.sessionId || (evp.info && (evp.info.sessionID || evp.info.id)))
             if (evSid && !classifiedSessions.has(evSid) && !childToParent.has(evSid)) refreshSessionTree(info.base) }
-          dispatch(ev, onPermission, onText, info, onQuestion)
+          dispatch(ev, onPermission, onText, info, onQuestion, onChildSession)
         }
       }
       } finally { clearInterval(wd) }   // 内层读循环结束(正常断/看门狗掐)都摘定时器,不漏
@@ -843,7 +844,7 @@ async function runEventLoop(info, handlers, log) {
     } catch (e) { info.streamUp = false; if (info.dead) return; dropped = true; log('event stream dropped, reconnect 2s: ' + e.message); await sleep(2000) }
   }
 }
-function dispatch(ev, onPermission, onText, info, onQuestion) {
+function dispatch(ev, onPermission, onText, info, onQuestion, onChildSession) {
   const type = ev?.type ?? ''
   const p = ev.properties ?? ev.data ?? ev
   // 学习 子会话→父会话 映射:带 parentID 的【会话】事件(task 子agent 创建的子会话)。据此把子agent事件路由回父卡片。
@@ -852,6 +853,8 @@ function dispatch(ev, onPermission, onText, info, onQuestion) {
   if (sinfo && sinfo.parentID && sinfo.id && sinfo.id !== sinfo.parentID
       && String(sinfo.id).startsWith('ses_') && String(sinfo.parentID).startsWith('ses_')) {
     noteChild(sinfo.id, sinfo.parentID, sinfo.title, info && info.base)
+    // 子会话诞生瞬间通知装配层:session.js 据此拦停"指令超限的 task 子 Agent"(128k 口径硬闸)。
+    if (onChildSession) { try { onChildSession({ parentId: sinfo.parentID, childId: sinfo.id, title: sinfo.title, info }) } catch {} }
   }
   // 原始 sessionId → 根(卡片)会话 + 是否子agent + 子agent名。子会话事件据此重定向到父卡片。
   const route = (sid) => {
@@ -944,13 +947,18 @@ function dispatch(ev, onPermission, onText, info, onQuestion) {
       const toolTitle = (typeof st.title === 'string' && st.title) || (typeof part.title === 'string' && part.title) || ''
       const toolError = (typeof st.error === 'string' && st.error) || (st.error && typeof st.error.message === 'string' && st.error.message) || ''
       // task 子agent:从结果里刨出子会话ID,登记 子→父 映射(session事件缺失时兜底,让子agent后续事件也能路由回父卡片)
-      if (tnm === 'task' && rawSid) {
+      // 委派工具两族同待:内建 task 与 oh-my-openagent 的 delegate_task(带 load_skills 必填参,子会话机制相同)
+      const isDelegate = /^(task|delegate_task)$/i.test(tnm)
+      if (isDelegate && rawSid) {
         const childId = extractChildSessionId(st)
         if (childId && childId !== rawSid) noteChild(childId, rawSid, toolTitle, info && info.base)
       }
       const r = route(rawSid)
-      const taskChild = (tnm === 'task') ? extractChildSessionId(st) : ''   // 父会话的 task 工具:关联到哪个子会话(收尾时标该子agent组完成)
-      if (r.sessionId && tnm) onText({ sessionId: r.sessionId, text: tnm, role: 'assistant', partID: cid + ':tool', kind: 'tool', status: String(status || ''), toolInput, toolOutput, toolTitle, toolError, subagent: r.subagent, agentId: r.agentId, agentName: r.agentName, taskChild, taskDesc: (toolInput && typeof toolInput === 'object' && (toolInput.description || toolInput.prompt)) ? String(toolInput.description || '').slice(0, 80) : '' })
+      const taskChild = isDelegate ? extractChildSessionId(st) : ''   // 父会话的委派工具:关联到哪个子会话(收尾时标该子agent组完成)
+      // 委派指令大小(字符数,description+prompt):128k 口径硬闸用 —— 指令过大是子 Agent 撑爆上下文/压缩卡死的第一死因。
+      const taskChars = (isDelegate && toolInput && typeof toolInput === 'object')
+        ? String(toolInput.description || '').length + String(toolInput.prompt || '').length : 0
+      if (r.sessionId && tnm) onText({ sessionId: r.sessionId, text: tnm, role: 'assistant', partID: cid + ':tool', kind: 'tool', status: String(status || ''), toolInput, toolOutput, toolTitle, toolError, subagent: r.subagent, agentId: r.agentId, agentName: r.agentName, taskChild, taskChars, taskDesc: (toolInput && typeof toolInput === 'object' && (toolInput.description || toolInput.prompt)) ? String(toolInput.description || '').slice(0, 80) : '' })
     }
   }
 }
@@ -1072,7 +1080,15 @@ function retireIfOrphan(info, inUseBases) {
   return true
 }
 
-module.exports = { ensureServe, createSession, sendMessage, listModels, checkMcp, abort, replyPermission, replyQuestion, rejectQuestion, sessionExists, listSessions, getMessages, getRawMessages, generationStalled, pollTurnParts, getSessionUsage, getStreamState, consumeAbortFlag, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, AUTO_ALLOW,
+// 任一已注册的健康 serve(不新起):对话坞/输入框这类"非对话卡"窗口列模型用 —— 它们没有自己的卡会话,
+// 但列模型只是读 /config/providers,随便借一个在跑的 serve 即可,仅为列模型白起一个引擎才是浪费。
+function anyHealthyServe() {
+  for (const info of new Set(baseToEntry.values())) { if (info && info.base && info.healthy !== false) return info }
+  for (const info of pool.values()) { if (info && info.base) return info }
+  return null
+}
+
+module.exports = { ensureServe, createSession, sendMessage, listModels, checkMcp, abort, replyPermission, replyQuestion, rejectQuestion, sessionExists, listSessions, getMessages, getRawMessages, generationStalled, pollTurnParts, getSessionUsage, getStreamState, consumeAbortFlag, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, anyHealthyServe, AUTO_ALLOW,
   __test: { dispatch, waitAssistantText, extractText, pickTurnText, abortedSince, abortedSids, normalizeMessages, stripInjected, splitThink,
     normDirKey, sameDir, inflight, noteChild, noteModelBlacklist, modelBlacklist, refreshSessionTree, runEventLoop, turnTextCache, stoppedSids, lastUserMatches, noteUsage,
     maps: { pool, baseToEntry, childToParent, childTitle, classifiedSessions, sidBase },

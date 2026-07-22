@@ -56,6 +56,8 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   cardInit: (opts) => ipcRenderer.invoke('card-init', opts || {}),
   onCardInject: (cb) => ipcRenderer.on('card-inject', (_e, p) => cb(p)),
   onCardNote: (cb) => ipcRenderer.on('card-note', (_e, p) => cb(p)),
+  onShardProgress: (cb) => ipcRenderer.on('shard-progress', (_e, p) => cb(p)),   // 多层派发:主控卡收分片进度(静默分片卡的聚合状态)
+  shardFocus: (id) => ipcRenderer.invoke('shard-focus', id),                     // 点分片进度块 → 把那张大隐藏卡拉到台前细看
   cardSend: (text, files, skill) => ipcRenderer.invoke('card-send', { text, files: files || [], skill: skill || null }),
   skillsList: () => ipcRenderer.invoke('skills-list'),
   skillsOpenDir: () => ipcRenderer.invoke('skills-open-dir'),

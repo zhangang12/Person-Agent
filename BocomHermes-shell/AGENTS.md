@@ -58,7 +58,11 @@ BocomHermes-shell/
 
 **主进程架构约定**：`main.js` 创建共享可变状态对象 `S`（settings/history/窗口引用/会话映射等），各模块导出 `initX(S, deps)` 工厂函数，通过同一个 `S` 引用和显式注入的 deps 协作（依赖注入，无全局单例 import）。`preload.js` 是唯一渲染进程入口 API，渲染进程一律经 `window.BocomHermes.*` 调主进程。
 
+**多层派发（主控卡，window.js `spawnOrchestrator`）**：复杂目标的统一入口，**卡坞「动态工作流」模式即走此路**（`start-conversation` mode=`wf`/`orch` → 主控；MCP `run_orchestration` → relay `/orch/run-orch`）——L0 主控卡（kind `orch`，不占并发位）先【预检路由】（只扫清单不读内容：相关文件 ≤20 且 ≤150KB 就改用单工作流，超线才拆）→ 出拆分方案（规划闸批准）→ 用 `run_workflow` 派 N 个分片工作流卡（各自全新 128k + task 扇出 + 55% 交棒）→ 分片 goal 带 `[orch:TAG]` 前缀登记 `reg.parentOrch`——**分片是隐藏卡**（不开窗、不占任务栏、自动过规划闸、权限自动放行——无人值守，否则 task 子 Agent/写文档卡死在看不见的批准框上）；**会话经 `session.js mirrorToOrch` 镜像回流主控卡**：主控卡顶部「分片进度」面板（`pushShardProgress`）点一片即在主区域就地渲染该分片的会话（shard 视图，不另开空间）；`wfTurnDone` 判收官后给主控卡注入进度消息（N/M）事件唤醒 → 主控派【索引棒】把各分片结论关联成两级索引 README。**落盘哲学**：一切中间成果写成文档落盘，上下文只过路径+一句话索引，不限字数、不限棒数（`autoCompactMax` 默认 20 仅兜底病态循环）；任何一块太大就再拆一层，拆分可无限递归。红线：主控严禁自己深读/执行；分片有强依赖就别多层。
+
 **serve 池架构**（`opencode.js`）：一个项目目录 = 一个独立 serve 进程（端口从 4096 起自动找空闲），因为此版 opencode 的 `POST /session` 不支持会话级目录。同项目多卡复用同一 serve 的并发会话；每个 serve 一条 `/event` SSE。只读工具(read/grep/glob/list/ls/find/tree)自动放行，写/执行转卡片内联确认（允许一次/总是/拒绝）。逐 token 流式靠 SSE `message.part`，POST 结果作权威兜底。
+
+**128k 上下文口径（所有 Agent 同规，MiniMax M2.5）**：subAgent 由 serve 内置 `task` 工具（或 oh-my-openagent 插件的 `delegate_task`，带必填参 `load_skills`）创建、隔离上下文，不进卡片水位；两族委派工具壳层同待（计量/硬闸/子agent窗格）。四道防线——①纪律注入：`session.js` 项目背景锚携带 `<上下文纪律(128k)>`（所有卡），`window.js workflowSystemPrompt` 第4条是工作流卡的加强版（指令≤2000字、只给路径不贴原文、回报≤400字、delegate_task 必传 load_skills，不需要就 []）；②硬闸：`knobs.taskPromptMax`（默认 20000 字，只拦"贴原文"级病态指令），`session.js onText` 检出超限 task/delegate_task → 精确 abort 该调用的子会话（taskChild 可解析才杀，绝不株连并行兄弟；解析不到降级为只警告，挂死交看门狗），主 Agent 收 cancelled 后拆小重派；③看门狗（`session.js`）：子会话用量 ≥80%×128k 预警一次，静默 5min 且生成挂死自动中止；④工作流卡【主动交棒】（`card.html maybeAutoCompact`）：水位 ≥`knobs.ctxHandoffPct`（默认 0.55）就写交接单换下一棒主 Agent（全新会话新 128k），模型清醒时交接，永不触发被动压缩；普通对话卡不自动压缩（会清可见对话），≥90% 提醒用户点 chip 手动压缩；水位上限以 `knobs.ctxLimitMax`（默认 128000）收口——serve 报 192k 也按 128k 算，否则阈值线会算到真实上限之外。改这几处时保持数值口径一致。
 
 ## 常用命令
 

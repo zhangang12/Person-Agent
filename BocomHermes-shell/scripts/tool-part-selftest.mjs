@@ -347,5 +347,48 @@ await (async () => {
   ok('空消息列表 → false', generationStalled([]) === false)
 })()
 
+// 用例19:128k 口径硬闸埋点 —— task 工具 part 带 taskChars(description+prompt 字符数);非 task 工具恒 0
+;(() => {
+  console.log('用例19:task 工具 taskChars 计量(128k 硬闸)')
+  const { onText, calls } = collect()
+  dispatch({
+    type: 'message.part.updated',
+    properties: { sessionID: 'ses_t1', part: {
+      id: 'prt_t', type: 'tool', callID: 'call_t', tool: 'task',
+      state: { status: 'running', input: { description: '探索认证模块', prompt: '读 src/auth/ 下的文件并总结' } },
+    } },
+  }, null, onText)
+  const t = calls.find((c) => c.kind === 'tool' && c.text === 'task')
+  const expect = '探索认证模块'.length + '读 src/auth/ 下的文件并总结'.length
+  ok('task 事件带 taskChars = description+prompt 字符数', t && t.taskChars === expect, t && t.taskChars)
+  ok('非 task 工具 taskChars = 0', (() => {
+    const { onText: ot2, calls: c2 } = collect()
+    dispatch({ type: 'message.part.updated', properties: { sessionID: 'ses_t2', part: { id: 'prt_r', type: 'tool', callID: 'call_r', tool: 'read', state: { status: 'running', input: { filePath: 'a.js' } } } } }, null, ot2)
+    const r = c2.find((c) => c.kind === 'tool')
+    return r && r.taskChars === 0
+  })())
+  ok('delegate_task(oh-my-openagent)同样计量 taskChars', (() => {
+    const { onText: ot3, calls: c3 } = collect()
+    dispatch({ type: 'message.part.updated', properties: { sessionID: 'ses_t3', part: { id: 'prt_d', type: 'tool', callID: 'call_d', tool: 'delegate_task', state: { status: 'running', input: { description: '深读认证', prompt: '读 src/auth', load_skills: [] } } } } }, null, ot3)
+    const d = c3.find((c) => c.kind === 'tool' && c.text === 'delegate_task')
+    return d && d.taskChars === ('深读认证'.length + '读 src/auth'.length)
+  })())
+})()
+
+// 用例20:onChildSession —— 带 parentID 的会话事件触发回调(128k 硬闸拦停子会话的介入点)
+;(() => {
+  console.log('用例20:onChildSession 回调(子会话诞生瞬间)')
+  const born = []
+  const onChildSession = (a) => born.push(a)
+  const info = { base: 'http://127.0.0.1:1' }
+  dispatch({ type: 'session.updated', properties: { info: { id: 'ses_kid1', parentID: 'ses_root1', title: 'Explore' } } }, null, () => {}, info, null, onChildSession)
+  ok('子会话事件 → onChildSession(parentId/childId/title/info)', born.length === 1 && born[0].parentId === 'ses_root1' && born[0].childId === 'ses_kid1' && born[0].title === 'Explore' && born[0].info === info, born)
+  ok('无 parentID 的会话事件不触发', (() => {
+    const n0 = born.length
+    dispatch({ type: 'session.updated', properties: { info: { id: 'ses_root2' } } }, null, () => {}, info, null, onChildSession)
+    return born.length === n0
+  })())
+})()
+
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

@@ -43,6 +43,12 @@ body{padding:0;height:56px}
 .proj-chip:hover{color:var(--txt);border-color:var(--accent)}
 .proj-chip.empty{color:var(--accent);border-color:var(--accent);background:rgba(74,168,255,.08)}
 .proj-chip svg{width:11px;height:11px;flex:none;opacity:.8}
+.model-menu{position:fixed;z-index:100;min-width:210px;max-width:300px;max-height:360px;overflow-y:auto;background:var(--glass-bg);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border:1px solid var(--composer-border);border-radius:12px;padding:5px;box-shadow:0 10px 34px rgba(0,0,0,.28)}
+.model-menu .mi{padding:7px 10px;border-radius:8px;cursor:pointer;display:flex;flex-direction:column;gap:1px}
+.model-menu .mi:hover,.model-menu .mi.on{background:var(--composer-bg)}
+.model-menu .mi .mn{font-size:13px;color:var(--txt)}
+.model-menu .mi .mp{font-size:10.5px;color:var(--txt3)}
+.model-menu .mhint{padding:8px 10px;font-size:12px;color:var(--txt3)}
 </style>
 </head>
 <body>
@@ -53,6 +59,11 @@ body{padding:0;height:56px}
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
     <span id="projn">未选目录</span>
   </button>
+  <button id="modelChip" class="proj-chip" title="选择模型（全局默认；卡片可单独覆盖）">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>
+    <span id="modelName">默认模型</span>
+  </button>
+  <div id="modelMenu" class="model-menu" hidden></div>
   <input id="q" placeholder="问 BocomHermes…" autofocus autocomplete="off" spellcheck="false">
   <button class="send-btn nodrag" id="send" title="发送">
     <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
@@ -107,6 +118,36 @@ projBtn.addEventListener('click', async () => {
   picking = false; setTimeout(() => q.focus(), 30)
 })
 H.onProject && H.onProject(p => paintProj(p))
+
+// 模型选择(与对话坞同一全局默认;新开的卡生效,已开的卡不受影响——卡内 chip 可单独覆盖)
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+const modelChip = document.getElementById('modelChip'), modelNameEl = document.getElementById('modelName'), modelMenu = document.getElementById('modelMenu')
+let modelsCache = null, curModelKey = ''
+function paintModel() {
+  let m = null; try { m = (H.getSettings && H.getSettings().model) || null } catch (e) {}
+  curModelKey = m ? (m.providerID + '/' + m.modelID) : ''
+  modelNameEl.textContent = m ? (m.name || m.modelID) : '默认模型'
+  modelChip.title = '当前模型：' + (m ? (m.name || m.modelID) : 'serve 默认') + '（全局默认；卡片可覆盖，点击切换）'
+}
+paintModel()
+async function openModelMenu() {
+  const r = modelChip.getBoundingClientRect()
+  modelMenu.style.top = (r.bottom + 6) + 'px'; modelMenu.style.left = r.left + 'px'; modelMenu.style.right = 'auto'
+  modelMenu.hidden = false; modelMenu.innerHTML = '<div class="mhint">加载模型…</div>'
+  if (!modelsCache || !modelsCache.length) { try { modelsCache = await H.listModels() } catch (e) { modelsCache = [] } }   // 空不缓存,下次重试
+  if (!modelsCache || !modelsCache.length) { modelMenu.innerHTML = '<div class="mhint">没拿到模型列表（serve 未就绪，稍后再点）</div>'; return }
+  modelMenu.innerHTML = ''
+  const mk = (name, sub, on, fn) => { const d = document.createElement('div'); d.className = 'mi' + (on ? ' on' : ''); d.innerHTML = '<span class="mn">' + esc(name) + '</span><span class="mp">' + esc(sub) + '</span>'; d.addEventListener('click', fn); modelMenu.appendChild(d) }
+  mk('serve 默认', '不指定，用 serve 配置的默认模型', !curModelKey, () => pickModel(null))
+  for (const m of modelsCache) mk(m.name, m.provider || m.providerID, curModelKey === m.providerID + '/' + m.modelID, () => pickModel(m))
+}
+async function pickModel(m) {
+  try { await H.setSettings({ model: m ? { providerID: m.providerID, modelID: m.modelID, name: m.name } : null }) } catch (e) {}
+  paintModel(); modelMenu.hidden = true; setTimeout(() => q.focus(), 30)
+}
+modelChip.addEventListener('mousedown', e => e.preventDefault())  // 不抢焦点,避免触发 blur 关框
+modelChip.addEventListener('click', (e) => { e.stopPropagation(); if (modelMenu.hidden) openModelMenu(); else modelMenu.hidden = true })
+document.addEventListener('click', (e) => { if (!modelMenu.hidden && !modelMenu.contains(e.target) && !modelChip.contains(e.target)) modelMenu.hidden = true })
 
 window.addEventListener('blur', () => { if (!picking) H.closeOrbInput() })
 setTimeout(() => q.focus(), 40)

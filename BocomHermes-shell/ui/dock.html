@@ -160,7 +160,7 @@
         <span id="modelName">默认模型</span>
       </button>
       <span class="sp"></span>
-      <div class="seg" title="自动：Agent 自判 ｜ 任务编排：单 Agent 按描述顺序走业务链(跑技能/读文件/发邮件) ｜ 动态工作流：单主 Agent 自己拆解、并行派子 Agent 深挖、自己综合(Claude Code 式)">
+      <div class="seg" title="自动：Agent 自判 ｜ 任务编排：单 Agent 按描述顺序走业务链(跑技能/读文件/发邮件) ｜ 动态工作流：主控先预检估量——单卡装得下就单主 Agent 拆解+并行派子 Agent,装不下自动拆成多个分片主 Agent 并行干、索引 Agent 收口">
         <button id="mAuto" class="on">自动</button>
         <button id="mPipe">任务编排</button>
         <button id="mWf">动态工作流</button>
@@ -638,7 +638,7 @@
   document.addEventListener('drop', async (e) => { e.preventDefault(); dropHint.classList.remove('show'); const fs = Array.from((e.dataTransfer && e.dataTransfer.files) || []); for (const f of fs) await addFile(f) })
   document.addEventListener('paste', async (e) => { const items = (e.clipboardData && e.clipboardData.items) || []; for (const it of items) { if (it.kind === 'file' && /^image\//.test(it.type)) { const f = it.getAsFile(); if (f) { e.preventDefault(); await addFile(f) } } } })
 
-  // 开新会话:自动=开对话卡(卡里 Agent 可自主升格);动态工作流=开一张会 fan-out 的主 Agent 卡;附件随首条消息带过去
+  // 开新会话:自动=开对话卡(卡里 Agent 可自主升格);动态工作流=主控卡预检路由(单卡装得下单卡、装不下拆多层+索引收口);附件随首条消息带过去
   const goalEl = $('goal')
 
   // T9 提交前体检:任务编排缺关键工具(skill_list/skill_run/doc_read/mail_send)就面板内红字拦下不开卡;通道缺席跳过检查
