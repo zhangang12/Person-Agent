@@ -585,8 +585,31 @@
   function shardRenderView() {
     const sm = shardStreams.get(shardViewId) || new Map()
     svBody.innerHTML = ''
+    // 按 (同 Agent 连续片段) 归并:镜像按 part 存,子 Agent 一段思考拆几十个 part,逐 part 渲块 = 几十条"思考过程"堆着闪
+    // (用户实测)。思考/文本的同 Agent 连续 run 并成一条;工具仍一调用一块(实时更新会原地刷内容,块数不胀)。
+    const groups = []
+    let acc = null, accKey = ''
+    const flush = () => { if (acc) { groups.push(acc); acc = null; accKey = '' } }
     for (const p of sm.values()) {
-      if (p.kind === 'tool') {
+      if (p.kind === 'reasoning') {
+        const key = 'r:' + (p.agentName || '')
+        if (key !== accKey) { flush(); acc = { type: 'reasoning', agent: p.agentName || '', sub: !!p.sub, text: '' }; accKey = key }
+        acc.text += (acc.text ? '\n' : '') + (p.text || '')
+        continue
+      }
+      if (p.kind === 'tool') { flush(); groups.push({ type: 'tool', p }); continue }
+      if (p.text) {
+        const key = 'x:' + (p.agentName || '')
+        if (key !== accKey) { flush(); acc = { type: 'text', agent: p.agentName || '', sub: !!p.sub, text: '' }; accKey = key }
+        acc.text += (acc.text ? '\n' : '') + p.text
+        continue
+      }
+      flush()
+    }
+    flush()
+    for (const g of groups) {
+      if (g.type === 'tool') {
+        const p = g.p
         const d = document.createElement('details'); d.className = 'toolbox'
         const smy = document.createElement('summary')
         smy.textContent = (p.sub ? '🔍 ' + (p.agentName || '子agent') + ' · ' : '') + (p.text || 'tool') + (p.title ? ' · ' + p.title : '') + (p.status ? ' · ' + p.status : '')
@@ -596,14 +619,14 @@
         if (inStr) { const s = document.createElement('pre'); s.textContent = '入参\n' + inStr.slice(0, 2000); d.appendChild(s) }
         if (outStr) { const s = document.createElement('pre'); s.textContent = '结果\n' + outStr.slice(0, 2000); d.appendChild(s) }
         svBody.appendChild(d)
-      } else if (p.kind === 'reasoning') {
+      } else if (g.type === 'reasoning') {
         const d = document.createElement('details'); d.className = 'reason'
-        const smy = document.createElement('summary'); smy.textContent = '思考过程' + (p.sub && p.agentName ? ' · ' + p.agentName : '')
-        const b = document.createElement('div'); b.className = 'body'; b.textContent = p.text || ''
+        const smy = document.createElement('summary'); smy.textContent = '思考过程' + (g.sub && g.agent ? ' · ' + g.agent : '')
+        const b = document.createElement('div'); b.className = 'body'; b.textContent = g.text
         d.append(smy, b); svBody.appendChild(d)
-      } else if (p.text) {
+      } else {
         const m = document.createElement('div'); m.className = 'msg ai'
-        m.textContent = (p.sub && p.agentName ? '【' + p.agentName + '】' : '') + p.text
+        m.textContent = (g.sub && g.agent ? '【' + g.agent + '】' : '') + g.text
         svBody.appendChild(m)
       }
     }
