@@ -106,6 +106,9 @@
   .sd-pane .sa-reason { font-size: 12px; color: var(--txt2); white-space: pre-wrap; line-height: 1.55; max-height: 200px; overflow-y: auto; border-left: 2px solid var(--c-think); padding: 2px 9px; opacity: .92; }
   .sd-pane .sa-reason::-webkit-scrollbar { width: 5px; } .sd-pane .sa-reason::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
   .sd-pane .sa-out { font-size: 13px; color: var(--txt); line-height: 1.5; overflow-wrap: anywhere; margin-top: 3px; padding-top: 4px; border-top: .5px dashed var(--composer-border); }
+  /* 分片视图的 Agent 分区(与异步子Agent组件同款视觉):并行子Agent交错到达也不乱,一个 Agent 一节 */
+  .shsec { border-left: 2px solid var(--c-think); padding: 2px 0 2px 10px; margin: 2px 0 10px; display: flex; flex-direction: column; gap: 6px; }
+  .shsec-hd { font-size: 12px; font-weight: 700; color: var(--c-think); letter-spacing: .02em; }
   /* 活视图(监控态):本卡动态结构(目标/todo计划/子Agent fan-out/产出)的实时树图,与对话流全幅切换 */
   .midwrap[hidden] { display: none; }   /* author display:flex 会盖掉 UA 的 [hidden] 规则,必须显式补 */
   .liveview { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 14px 14px; display: flex; flex-direction: column; gap: 12px; }
@@ -585,50 +588,48 @@
   function shardRenderView() {
     const sm = shardStreams.get(shardViewId) || new Map()
     svBody.innerHTML = ''
-    // 按 (同 Agent 连续片段) 归并:镜像按 part 存,子 Agent 一段思考拆几十个 part,逐 part 渲块 = 几十条"思考过程"堆着闪
-    // (用户实测)。思考/文本的同 Agent 连续 run 并成一条;工具仍一调用一块(实时更新会原地刷内容,块数不胀)。
-    const groups = []
-    let acc = null, accKey = ''
-    const flush = () => { if (acc) { groups.push(acc); acc = null; accKey = '' } }
+    // 按 Agent 分区(复用异步子Agent组件的分区模式):并行子 Agent 的镜像事件【交错到达】,按到达顺序渲就是
+    // sales/orders/leads 来回横跳的闪屏(用户两连截图)。每个 Agent 一节 —— 思考/工具/产出都归自己节,
+    // 并行 N 个也是整齐的 N 节;分片主 Agent(无 agentName 的事件)归首节。
+    const MAIN = '分片主 Agent'
+    const sections = new Map()   // agent → { reason: [], tools: [], texts: [], sub }
+    const order = []
     for (const p of sm.values()) {
-      if (p.kind === 'reasoning') {
-        const key = 'r:' + (p.agentName || '')
-        if (key !== accKey) { flush(); acc = { type: 'reasoning', agent: p.agentName || '', sub: !!p.sub, text: '' }; accKey = key }
-        acc.text += (acc.text ? '\n' : '') + (p.text || '')
-        continue
-      }
-      if (p.kind === 'tool') { flush(); groups.push({ type: 'tool', p }); continue }
-      if (p.text) {
-        const key = 'x:' + (p.agentName || '')
-        if (key !== accKey) { flush(); acc = { type: 'text', agent: p.agentName || '', sub: !!p.sub, text: '' }; accKey = key }
-        acc.text += (acc.text ? '\n' : '') + p.text
-        continue
-      }
-      flush()
+      const agent = (p.sub && p.agentName) ? p.agentName : MAIN
+      if (!sections.has(agent)) { sections.set(agent, { reason: [], tools: [], texts: [], sub: !!p.sub }); order.push(agent) }
+      const s = sections.get(agent)
+      if (p.kind === 'reasoning') s.reason.push(p.text || '')
+      else if (p.kind === 'tool') s.tools.push(p)
+      else if (p.text) s.texts.push(p.text)
     }
-    flush()
-    for (const g of groups) {
-      if (g.type === 'tool') {
-        const p = g.p
+    for (const agent of order) {
+      const s = sections.get(agent)
+      const sec = document.createElement('div'); sec.className = 'shsec'
+      const hd = document.createElement('div'); hd.className = 'shsec-hd'
+      hd.textContent = (s.sub ? '⏺ ' : '◆ ') + agent
+      sec.appendChild(hd)
+      if (s.reason.length) {
+        const d = document.createElement('details'); d.className = 'reason'
+        const smy = document.createElement('summary'); smy.textContent = '思考过程'
+        const b = document.createElement('div'); b.className = 'body'; b.textContent = s.reason.join('\n')
+        d.append(smy, b); sec.appendChild(d)
+      }
+      for (const p of s.tools) {
         const d = document.createElement('details'); d.className = 'toolbox'
         const smy = document.createElement('summary')
-        smy.textContent = (p.sub ? '🔍 ' + (p.agentName || '子agent') + ' · ' : '') + (p.text || 'tool') + (p.title ? ' · ' + p.title : '') + (p.status ? ' · ' + p.status : '')
+        smy.textContent = (p.text || 'tool') + (p.title ? ' · ' + p.title : '') + (p.status ? ' · ' + p.status : '')
         d.appendChild(smy)
         let inStr = ''; try { inStr = p.input == null ? '' : (typeof p.input === 'string' ? p.input : JSON.stringify(p.input, null, 2)) } catch {}
         const outStr = p.error ? String(p.error) : (p.output != null ? String(p.output) : '')
-        if (inStr) { const s = document.createElement('pre'); s.textContent = '入参\n' + inStr.slice(0, 2000); d.appendChild(s) }
-        if (outStr) { const s = document.createElement('pre'); s.textContent = '结果\n' + outStr.slice(0, 2000); d.appendChild(s) }
-        svBody.appendChild(d)
-      } else if (g.type === 'reasoning') {
-        const d = document.createElement('details'); d.className = 'reason'
-        const smy = document.createElement('summary'); smy.textContent = '思考过程' + (g.sub && g.agent ? ' · ' + g.agent : '')
-        const b = document.createElement('div'); b.className = 'body'; b.textContent = g.text
-        d.append(smy, b); svBody.appendChild(d)
-      } else {
-        const m = document.createElement('div'); m.className = 'msg ai'
-        m.textContent = (g.sub && g.agent ? '【' + g.agent + '】' : '') + g.text
-        svBody.appendChild(m)
+        if (inStr) { const pre = document.createElement('pre'); pre.textContent = '入参\n' + inStr.slice(0, 2000); d.appendChild(pre) }
+        if (outStr) { const pre = document.createElement('pre'); pre.textContent = '结果\n' + outStr.slice(0, 2000); d.appendChild(pre) }
+        sec.appendChild(d)
       }
+      for (const t of s.texts) {
+        const m = document.createElement('div'); m.className = 'msg ai'; m.textContent = t
+        sec.appendChild(m)
+      }
+      svBody.appendChild(sec)
     }
     svBody.scrollTop = svBody.scrollHeight
   }
