@@ -474,6 +474,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   }
   S.wfArchive = (reg) => {
     if (!reg || !reg.final) return
+    if (reg.parentOrch) return   // 分片卡是主控的内部机器:不落磁盘存档(产出在 docs/ 与主控存档里),不污染存档目录与面板列表
     const dirW = path.join(app.getPath('userData'), 'workflows'); fs.mkdirSync(dirW, { recursive: true })
     if (!reg.archive) {
       const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')
@@ -1642,13 +1643,18 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('wf-list', () => {
     const out = []
     const regs = S.wfRegistry ? [...S.wfRegistry.values()] : []
+    const orchTagById = new Map()   // 主控 id → orchTag(统计它名下分片数用)
+    try { if (S.orchByTag) for (const [tag, o] of S.orchByTag) orchTagById.set(String(o && o.id), tag) } catch {}
     for (const r of regs) {
+      if (r.parentOrch) continue   // 分片卡是主控的内部机器,不列进面板 —— 面板只展示主控/独立工作流/编排(用户:最近使用只看主控)
       const todos = Array.isArray(r.todos) ? r.todos : []
       const doneN = todos.filter((x) => /complet|cancel/i.test(String(x && x.status || ''))).length
       const cur = todos.find((x) => /progress|doing/i.test(String(x && x.status || '')))   // 进行中步(in_progress)→ 卡坞"当前在干哪步"
+      const tag = orchTagById.get(String(r.id))
+      const shardN = tag ? regs.filter((x) => x.parentOrch === tag).length : 0   // 主控条目带分片数(面板好认"这是一次多层派发")
       out.push({
         id: r.id, goal: r.goal, status: r.status, kind: r.kind || 'workflow', rounds: r.rounds, elapsedMs: r.elapsedMs,
-        files: (r.files || []).length, at: r.at, archive: r.archive || '',
+        files: (r.files || []).length, at: r.at, archive: r.archive || '', shards: shardN || undefined,
         live: !!(S.wfCardByWc && S.wfCardByWc.has(r.wcId)), busy: !!(S.isCardBusy && S.isCardBusy(r.wcId)),
         todoDone: doneN, todoTotal: todos.length, current: cur ? String((cur && (cur.content || cur.text || cur.title)) || '') : '',
         actions: (Array.isArray(r.actions) ? r.actions : []).map((a) => ({ kind: a.kind, label: a.label, detail: a.detail })),
