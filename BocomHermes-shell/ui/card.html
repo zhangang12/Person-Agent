@@ -109,6 +109,7 @@
   /* 分片视图的 Agent 分区(与异步子Agent组件同款视觉):并行子Agent交错到达也不乱,一个 Agent 一节 */
   .shsec { border-left: 2px solid var(--c-think); padding: 2px 0 2px 10px; margin: 2px 0 10px; display: flex; flex-direction: column; gap: 6px; }
   .shsec-hd { font-size: 12px; font-weight: 700; color: var(--c-think); letter-spacing: .02em; }
+  .shsec.focus { border-left-color: var(--accent); background: var(--hover); border-radius: 0 8px 8px 0; }   /* 侧边栏点条目 → 分片视图对应分区高亮定位 */
   /* 活视图(监控态):本卡动态结构(目标/todo计划/子Agent fan-out/产出)的实时树图,与对话流全幅切换 */
   .midwrap[hidden] { display: none; }   /* author display:flex 会盖掉 UA 的 [hidden] 规则,必须显式补 */
   .liveview { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 14px 14px; display: flex; flex-direction: column; gap: 12px; }
@@ -583,8 +584,67 @@
     shardView.style.display = 'flex'
     svTitle.textContent = '分片 · ' + shardClean(goal).slice(0, 50)
     shardRenderView()
+    shardSideShow(id)   // 侧边栏跟着分片走:列这个分片开的子 Agent(操作记录索引)
   }
-  function shardHideView() { shardViewId = null; shardView.style.display = 'none'; feedElForShard.style.display = '' }
+  function shardHideView() {
+    shardViewId = null; shardView.style.display = 'none'; feedElForShard.style.display = ''
+    // 退出分片视图:侧边栏还给本卡(分片模式 stash 的本卡窗格放回去)
+    sideMode = 'main'
+    sdList.innerHTML = ''
+    for (const ch of sideStash) sdList.appendChild(ch)
+    sideStash.length = 0
+    sdPaintBadge()
+  }
+  // ── 侧边栏的分片模式:侧边栏是为分片 Agent 设计的 —— 看哪片,就列哪片开的子 Agent(操作记录索引)──
+  // 数据源 = 该分片的镜像缓冲(shardStreams),条目=按 Agent 聚合(调用计数 + 完成态),点条目 → 分片视图滚到那个 Agent 的分区
+  let sideMode = 'main'
+  const sideStash = []
+  function shardSideShow(id) {
+    sideMode = 'shard'
+    for (const ch of [...sdList.children]) sideStash.push(ch)   // 本卡窗格先摘下(看完分片再放回)
+    shardSideRender(id)
+  }
+  function shardSideRender(id) {
+    if (sideMode !== 'shard') return
+    const sm = shardStreams.get(id) || new Map()
+    const agents = new Map()   // agentName → { count, done, keys:Set }
+    for (const p of sm.values()) {
+      if (!p.sub || !p.agentName) continue
+      let a = agents.get(p.agentName); if (!a) { a = { count: 0, done: false, keys: new Set() }; agents.set(p.agentName, a) }
+      if (p.kind === 'tool' && p.partID && !a.keys.has(p.partID)) { a.keys.add(p.partID); a.count++ }
+    }
+    for (const p of sm.values()) {   // 分片的 task 起/收镜像(sub=false):按 taskDesc 勾完成
+      if (p.sub || p.kind !== 'tool' || String(p.text) !== 'task') continue
+      const name = p.taskDesc || p.title || ''
+      if (name && agents.has(name) && /complet|success|done|finish|error|fail|deny|reject/i.test(String(p.status || ''))) agents.get(name).done = true
+    }
+    sdList.innerHTML = ''
+    let runN = 0
+    for (const [name, a] of agents) {
+      if (!a.done) runN++
+      const b = document.createElement('button'); b.className = 'sd-item' + (a.done ? ' done' : '')
+      b.innerHTML = '<span class="si-name"></span><span class="si-meta"></span>'
+      b.querySelector('.si-name').textContent = name
+      b.querySelector('.si-meta').textContent = (a.count ? a.count + ' 次调用 · ' : '') + (a.done ? '完成' : '运行中')
+      b.addEventListener('click', () => shardScrollToAgent(name))
+      sdList.appendChild(b)
+    }
+    if (!agents.size) sdList.innerHTML = '<div class="sd-empty">这个分片还没派子 Agent</div>'
+    // 徽标跟分片走(看分片时显示该分片在跑的子 Agent 数);回主视图由 sdPaintBadge 还原
+    if (bsub) bsub.hidden = false
+    if (bsubBadge) { bsubBadge.hidden = runN === 0; bsubBadge.textContent = String(runN) }
+    if (agents.size && subDraw && subDraw.hidden) sdOpen()
+  }
+  function shardScrollToAgent(name) {
+    for (const sec of svBody.querySelectorAll('.shsec')) {
+      const hd = sec.querySelector('.shsec-hd')
+      if (hd && hd.textContent.includes(name)) {
+        sec.scrollIntoView({ block: 'start' })
+        sec.classList.add('focus'); setTimeout(() => sec.classList.remove('focus'), 1200)
+        return
+      }
+    }
+  }
   function shardRenderView() {
     const sm = shardStreams.get(shardViewId) || new Map()
     svBody.innerHTML = ''
@@ -1764,7 +1824,7 @@
     // 主控自己没派 task,侧边栏不该堆满各分片的子 Agent(用户指正:那些输出属各分片,不是主控的)
     if (shardRoot) {
       let sm = shardStreams.get(shardRoot); if (!sm) { sm = new Map(); shardStreams.set(shardRoot, sm) }
-      sm.set(partID || (kind + '_' + sm.size), { kind, text, status, input, output, title, error, sub, agentName, taskDesc })
+      sm.set(partID || (kind + '_' + sm.size), { partID, kind, text, status, input, output, title, error, sub, agentName, taskDesc })
       // 分片产出进成果抽屉:镜像的 write/edit 落盘(分片及其子 Agent 都算)→ 主控卡「产出文件」清单,
       // 不然 8 个分片文档+索引 wiki 全在磁盘上,preview 却显示"还没有落盘记录"(用户实测)
       try {
@@ -1774,7 +1834,7 @@
           if (fp) artAddFile(artAbs(String(fp)))
         }
       } catch {}
-      if (shardViewId === shardRoot) shardRenderView()
+      if (shardViewId === shardRoot) { shardRenderView(); shardSideRender(shardRoot) }   // 正在看这片:分区视图与侧边栏索引同步刷
       return
     }
     lastStreamAt = Date.now()   // 静默挂死探针:有事件就不算挂死
