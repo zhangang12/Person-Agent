@@ -35,7 +35,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     autoCompactMax: 20,           // 交棒次数上限:文档接力下棒数不该卡死(每棒都在推 todo);仅兜底病态循环
     todoNudgeRounds: 3,           // todo 停滞提醒轮数
     knowledgeChurnMax: 300,       // 知识 C4 churn 阈值(行)
-    wfConcurrency: 2,             // 工作流并发上限(超限排队)
+    wfConcurrency: 4,             // 工作流并发上限(超限排队)
     taskPromptMax: 20000,         // 委派指令(task/delegate_task)硬上限(字符,128k 口径):只拦"贴原文"级病态指令,精确拦停该子会话
     ctxLimitMax: 128000,          // 水位上限硬顶(128k 口径):serve 报再大的 limit.context 也按此收口,防自动压缩阈值算到真实上限之外
   }
@@ -255,6 +255,18 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       const wreg = S.wfCardByWc && S.wfCardByWc.get(wcId)
       if (wreg) { wreg.status = wreg.status === 'done' ? 'done' : 'interrupted'; wreg.elapsedMs = Date.now() - wreg.at; S.wfCardByWc.delete(wcId); try { S.wfArchive && S.wfArchive(wreg) } catch (e2) { log('wf archive err: ' + e2.message) } }
       if (wreg) { try { wfDequeue() } catch {} }   // 关卡腾出并发位 → 排队工作流补位(出队触发点②)
+      // 主控关卡 → 它的分片卡(隐藏工人)一并关掉:主控没了分片就是烧 token 的孤儿,不会再有人看它的窗口
+      if (wreg && wreg.kind === 'orch' && S.orchByTag && S.wfRegistry) {
+        try {
+          for (const [tag, oref] of S.orchByTag) {
+            if (String(oref.id) !== String(wreg.id)) continue
+            for (const r of [...S.wfRegistry.values()].filter((x) => x.parentOrch === tag)) {
+              const w2 = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === r.wcId)
+              if (w2) { try { w2.close() } catch {} }
+            }
+          }
+        } catch {}
+      }
       forgetBusy(wcId)   // 关卡即清"忙"，避免球卡在思考态
     })
     return id
@@ -298,9 +310,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // 工作流并发闸:running 数 ≥ knobs.wfConcurrency 时不直接开卡,进内存队列(S.wfQueue,重启即清);
   // 出队触发点 = ① wfTurnDone 判 done ② 工作流卡关闭(spawnCard closed 回调) ③ wf-delete 删记录。
   S.wfQueue = S.wfQueue || []
-  function wfConcurrency() {   // 并发上限旋钮:非正整数/缺失回退 2
+  function wfConcurrency() {   // 并发上限旋钮:非正整数/缺失回退 4
     const n = Math.floor(+(S.settings.knobs && S.settings.knobs.wfConcurrency))
-    return Number.isFinite(n) && n >= 1 ? n : 2
+    return Number.isFinite(n) && n >= 1 ? n : 4
   }
   function wfRunningCount() {
     // 并发闸分口径(T8):只占【动态工作流】的并发位 —— pipeline/orch 不占位。
@@ -422,6 +434,50 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const text = '<任务编排·严格模式>\n【第 ' + (n + 1) + '/' + reg.strictSteps.length + ' 步】只执行这一步并汇报结果;做完等下一步自动下发,不要提前做后续步骤。若本步失败,明说「失败」及原因。\n</任务编排·严格模式>\n' + step
     try { win.webContents.send('card-inject', { text, disp: '【第 ' + (n + 1) + '/' + reg.strictSteps.length + ' 步】' + step.slice(0, 120) }); reg.strictIdx++; return true } catch { return false }
   }
+  // 多层派发唤醒钩:带 parentOrch 的分片收官(完成/中断,一次)→ 给主控卡注入进度消息(N/M)把它唤醒。
+  // 主控只装清单,收到后自己对照 todo:齐了按规程派索引棒,没齐结束本轮继续等 —— 事件驱动,不轮询。
+  function shardSettled(reg) {
+    if (!reg.parentOrch || reg.orchNotified) return
+    if (reg.status !== 'done' && reg.status !== 'interrupted') return
+    reg.orchNotified = true
+    pushShardProgress(reg.parentOrch)   // 先刷进度条,再注入唤醒消息(主控卡看到 N/M 变化)
+    try {
+      const oref = S.orchByTag && S.orchByTag.get(reg.parentOrch)
+      const oreg = oref && S.wfRegistry && S.wfRegistry.get(String(oref.id))
+      const win = oreg && BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === oreg.wcId)
+      if (win) {
+        const sibs = [...S.wfRegistry.values()].filter((r) => r.parentOrch === reg.parentOrch)
+        const doneN = sibs.filter((r) => r.status === 'done' || r.status === 'interrupted').length
+        win.webContents.send('card-inject', { text: '<主控进度>分片「' + String(reg.goal).slice(0, 60) + '」已' + (reg.status === 'done' ? '完成' : '中断') + ' (' + doneN + '/' + sibs.length + ')。调 workflow_result(id="' + reg.id + '") 取回它的成果;对照你的 todo 清单 —— 全部 ' + sibs.length + ' 个分片齐了,就按规程第 6 条派【索引棒】收口;还没齐,结束本轮继续等。</主控进度>', disp: '分片 ' + doneN + '/' + sibs.length + ' 已' + (reg.status === 'done' ? '完成' : '中断') + ':' + String(reg.goal).slice(0, 40) })
+        if (doneN === sibs.length) {   // 全部收官:还活着的分片窗口(绕圈没被杀掉的)一律关掉 —— 隐藏工人不停下就一直烧 token
+          for (const r of sibs) {
+            const w2 = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === r.wcId)
+            if (w2) { try { w2.close() } catch {} }
+          }
+        }
+      }
+    } catch (e) { log('orch wake err: ' + e.message) }
+  }
+  // 分片落定计时器(收官兜底,见 wfTurnDone 末尾):轮末/回合报错后 45s 没开新回合 → 补判收官。
+  // S.wfTurnStart 由 session.js 每次 card-send 回调(新回合开始=还活着,解除计时);
+  // S.wfTurnError 由 session.js 回合抛错回调(报错路径到不了 wfTurnDone,也得兜底,否则 serve 中断一次就永远卡 running)。
+  const shardSettleTimers = new Map()   // wcId → timer
+  function armShardSettle(reg, wcId, verdict) {
+    clearTimeout(shardSettleTimers.get(wcId))
+    shardSettleTimers.set(wcId, setTimeout(() => {
+      shardSettleTimers.delete(wcId)
+      if (reg.orchNotified) return
+      reg.status = verdict   // done=正常轮末落定;interrupted=回合报错后落定
+      log('shard settle → ' + verdict + ' (card ' + reg.id + '): ' + String(reg.goal).slice(0, 50))
+      shardSettled(reg)
+      if (reg.status === 'done') wfDequeue()
+    }, 45000))
+  }
+  S.wfTurnStart = (wcId) => { const t = shardSettleTimers.get(wcId); if (t) { clearTimeout(t); shardSettleTimers.delete(wcId) } }
+  S.wfTurnError = (wcId) => {
+    const reg = S.wfCardByWc && S.wfCardByWc.get(wcId)
+    if (reg && reg.parentOrch && !reg.orchNotified && reg.status === 'running') armShardSettle(reg, wcId, 'interrupted')
+  }
   S.wfTurnDone = (wcId, finalText, snap) => {
     const reg = S.wfCardByWc && S.wfCardByWc.get(wcId); if (!reg) return
     reg.rounds++; reg.round = reg.rounds
@@ -443,22 +499,13 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       try { new Notification({ title: reg.kind === 'pipeline' ? '任务编排完成' : '工作流完成', body: String(reg.goal).slice(0, 80) }).show() } catch {}
     }
     try { S.wfArchive(reg) } catch (e) { log('wf archive err: ' + e.message) }
-    // 多层派发唤醒钩:带 parentOrch 的分片收官(完成/中断,一次)→ 给主控卡注入进度消息(N/M)把它唤醒。
-    // 主控只装清单,收到后自己对照 todo:齐了按规程派索引棒,没齐结束本轮继续等 —— 事件驱动,不轮询。
-    if (reg.parentOrch && (reg.status === 'done' || reg.status === 'interrupted') && !reg.orchNotified) {
-      reg.orchNotified = true
-      pushShardProgress(reg.parentOrch)   // 先刷进度条,再注入唤醒消息(主控卡看到 N/M 变化)
-      try {
-        const oref = S.orchByTag && S.orchByTag.get(reg.parentOrch)
-        const oreg = oref && S.wfRegistry && S.wfRegistry.get(String(oref.id))
-        const win = oreg && BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === oreg.wcId)
-        if (win) {
-          const sibs = [...S.wfRegistry.values()].filter((r) => r.parentOrch === reg.parentOrch)
-          const doneN = sibs.filter((r) => r.status === 'done' || r.status === 'interrupted').length
-          win.webContents.send('card-inject', { text: '<主控进度>分片「' + String(reg.goal).slice(0, 60) + '」已' + (reg.status === 'done' ? '完成' : '中断') + ' (' + doneN + '/' + sibs.length + ')。调 workflow_result(id="' + reg.id + '") 取回它的成果;对照你的 todo 清单 —— 全部 ' + sibs.length + ' 个分片齐了,就按规程第 6 条派【索引棒】收口;还没齐,结束本轮继续等。</主控进度>', disp: '分片 ' + doneN + '/' + sibs.length + ' 已' + (reg.status === 'done' ? '完成' : '中断') + ':' + String(reg.goal).slice(0, 40) })
-        }
-      } catch (e) { log('orch wake err: ' + e.message) }
-    }
+    if (reg.parentOrch) pushShardProgress(reg.parentOrch)   // 分片每轮末都刷一次进度面板(轮次/状态即时可见;渲染端已 150ms 合帧)
+    shardSettled(reg)   // 多层派发唤醒钩(完成/中断,一次):刷进度 + 给主控卡注入进度消息(N/M)唤醒
+    // 分片收官兜底:分片无人值守,done 判定靠"todo 全勾",但内网模型常不调用/不收尾 todowrite → 永远卡 running(实测),
+    // 主控等不到唤醒整条链卡死。分片没有"用户继续聊"一说,轮末=它停下了:轮末仍 running 就起 45s 落定计时,
+    // 期间交棒/自动重试开新回合会经 S.wfTurnStart 解除;真停下才补判,走同一个 shardSettled 通道收官。
+    // 曾被中止(reg.aborted,含看门狗对分片的自动中止)→ 判 interrupted 而不是 done:被掐断 ≠ 干完,主控总结时不能把中断当成功。
+    if (reg.parentOrch && reg.status === 'running') armShardSettle(reg, wcId, reg.aborted ? 'interrupted' : 'done')
     if (reg.status === 'done') wfDequeue()   // 判 done → 腾出并发位,排队工作流补位(出队触发点①)
   }
   S.wfTodos = (wcId, todos) => { const reg = S.wfCardByWc && S.wfCardByWc.get(wcId); if (reg && Array.isArray(todos)) reg.todos = todos }

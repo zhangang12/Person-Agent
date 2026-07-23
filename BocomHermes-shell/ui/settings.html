@@ -322,7 +322,7 @@
   })
 
   // ── 智能体旋钮(settings.knobs.*):读不到/输坏一律回默认,绝不写脏值 ──────────
-  const KNOB_DEFAULTS = { approvalTimeoutMin: 0, watchdogRounds: 3, watchdogOverlap: 0.7, watchdogEscalateRounds: 2, ctxCompactPct: 0.8, autoCompactMax: 5, todoNudgeRounds: 3, knowledgeChurnMax: 300, wfConcurrency: 2 }
+  const KNOB_DEFAULTS = { approvalTimeoutMin: 0, watchdogRounds: 3, watchdogOverlap: 0.7, watchdogEscalateRounds: 2, ctxCompactPct: 0.8, autoCompactMax: 5, todoNudgeRounds: 3, knowledgeChurnMax: 300, wfConcurrency: 4 }
   const KNOB_DEFS = [
     { k: 'approvalTimeoutMin', name: '批准闸超时', step: 1, min: 0, hint: '工作流计划批准闸超过该分钟数自动开跑；0 = 永不自动批准（保守默认）' },
     { k: 'watchdogRounds', name: '看门狗判绕圈轮数', step: 1, min: 2, hint: '连续这么多轮读同一批文件且 todo 无进展，判定在绕圈并注入提醒' },

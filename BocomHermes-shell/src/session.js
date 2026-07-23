@@ -712,6 +712,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
     if (!si) throw new Error('session not ready')
     turnBusy.add(sessionId)
+    try { if (S.wfTurnStart) S.wfTurnStart(e.sender.id) } catch {}   // 分片收官兜底(window.js):新回合开始=还活着,解除 45s 落定计时
     // 首条消息：静默注入项目上下文前缀（用户看到原文，Serve 收到"背景+原文"）
     // C2 知识懒构建:ctx 里的 KNOWLEDGE_SLOT 此刻才替换成知识段 —— target 用【完整首条用户消息】
     // (压缩续聊/重开再叠加接力摘要 seed),比开卡时的标题片段命中准;target 全空 → injectText 退化为新→旧。
@@ -784,8 +785,10 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     startPoll()
     try {
       const out = await oc.sendMessage(si.serve, sessionId, msg, model, fileArr, onNote, { onRawMessages: onRaw })
-      // 手动停止标记(opencode.js consumeAbortFlag,按形状防御调用):本轮被用户中止 → 卡内留一行灰字交代截断原因
-      try { if (typeof oc.consumeAbortFlag === 'function' && oc.consumeAbortFlag(sessionId)) onNote('已手动停止（本轮输出被中止）') } catch {}
+      // 手动停止标记(opencode.js consumeAbortFlag,按形状防御调用):本轮被用户中止 → 卡内留一行灰字交代截断原因。
+      // 标记同时透传给 wfTurnDone(snap.aborted):分片收官兜底据此判 interrupted 而不是 done(曾被中止≠干完)。
+      let abortedFlag = false
+      try { if (typeof oc.consumeAbortFlag === 'function') { abortedFlag = !!oc.consumeAbortFlag(sessionId); if (abortedFlag) onNote('已手动停止（本轮输出被中止）') } } catch {}
       // 每轮结束拉一次完整消息:本地转录(C4)与工作流终答(wfTurnDone)共用这一次拉取,不多打请求
       let msgs = null
       try { msgs = await oc.getMessages(si.serve, sessionId) } catch {}
@@ -801,7 +804,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
             const t = msgs.slice(lastU + 1).filter((m) => m && m.role === 'assistant' && m.text).map((m) => m.text).join('\n').trim()
             if (t.length > full.length) full = t
           }
-          S.wfTurnDone(e.sender.id, full)
+          S.wfTurnDone(e.sender.id, full, { aborted: abortedFlag })
         }
       } catch {}
       return out
@@ -810,6 +813,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
       // R7:发送失败把已消费的首条背景塞回 —— 下次重发(同一条消息)仍能完整注入,不丢项目背景/知识
       if (ctxPrefix) { try { S.firstMsgCtx.set(sessionId, ctxPrefix) } catch {} }
       const m = String((err && err.message) || err)
+      try { if (S.wfTurnError && S.wfCardByWc && S.wfCardByWc.has(e.sender.id)) S.wfTurnError(e.sender.id) } catch {}   // 分片回合报错:wfTurnDone 到不了,也要起收官兜底(window.js),否则 serve 中断一次就永远卡 running
       // 错误码人话化(api 错误形如 "POST /session/... -> 429: ..."):先具体码,再超时,最后连接中断(原文案保留)
       if (/->\s*429\b|rate\s*limit|too many requests/i.test(m))
         throw new Error('内网模型限流（HTTP 429），等 30 秒再重试。')
