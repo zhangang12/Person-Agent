@@ -15,6 +15,7 @@ const initMail = require('./mail')
 const initMcpConfig = require('./mcp-config')
 const initBrowser = require('./browser')
 const knowledge = require('./knowledge')   // 项目知识库治理 IPC 用(纯逻辑,落盘/审计在本文件)
+const writescope = require('./writescope')   // 分片写归属(编码模式):goal 解析 + 范围匹配,session.js 的权限硬闸用
 
 module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }) {
   // 纯文件 IO 函数搬进 recorder-core 的 initStore 工厂,这里注入依赖后解构使用
@@ -341,7 +342,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     // 主控的分片/索引棒 → 隐藏卡:不开窗,会话经 session.js 镜像回流到主控卡主区域(shard 视图);
     // 自动过规划闸 + 权限自动放行(无人值守);进度经 pushShardProgress 聚合进主控卡
     const id = spawnCard('工作流 · ' + g.slice(0, 20), null, workflowSystemPrompt(dir, S.settings.backendDir || '') + '\n\n【总目标】\n' + g, g, parentOrch ? { wf: true, shard: true, hidden: true } : { flash: true, wf: true })
-    if (parentOrch) { try { const reg = S.wfRegistry && S.wfRegistry.get(String(id)); if (reg) reg.parentOrch = parentOrch; pushShardProgress(parentOrch) } catch {} }
+    if (parentOrch) { try { const reg = S.wfRegistry && S.wfRegistry.get(String(id)); if (reg) { reg.parentOrch = parentOrch; reg.writeScope = writescope.parseWriteScope(g); if (reg.writeScope.length) log('shard ' + reg.id + ' 写归属: ' + reg.writeScope.join(', ')); pushShardProgress(parentOrch) } } catch {} }
     return id
   }
   // ── 多层派发(主控卡):主 Agent 层面就把目标拆成 N 个【互相独立+各自可交付】的分片,每个分片是一张全新工作流卡
@@ -388,6 +389,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       '   ② 抓候选:从目标里提取 2-3 个关键词,在那些模块里 grep,得到候选文件集(连同它们的直接入口);',
       '   ③ 只统计【候选集】的文件数 N 与总大小(glob/grep/wc 扫清单,【禁止】读内容;【禁止】派 task 子 Agent —— 第一轮派子 Agent 会被卡片判定为"已实质执行",你的批准闸会被自动跳过,整个流程卡死在等批准)。',
       '   判定线:N ≤20 且总量 ≤150KB → 单卡 128k 装得下:直接调 run_workflow 把整个目标派出去,你的使命到此结束(别画蛇添足再拆);超线 → 走下面的多层拆分。',
+      '   【先判形状】目标是写代码(改造/实现/修复/加功能/重构)→ 走文末【编码模式】的流程(契约先行 → 按归属并行 → 集成验证);其余(分析/整理/审查/探查)走上面的探查流程。',
       '   估的是"单卡深读这一撮要多少";拿不准一律按偏大估 —— 错进多层只是多花一点,错进单卡会撑爆。',
       '   【分片预算 = 单卡同口径】多层拆分时,每片 ≤20 文件 且 ≤150KB(宁可偏小,别贪大)。片数必须按预算算出来,不是拍脑袋:',
       '   M = max(⌈N/20⌉, ⌈总量/150KB⌉)。归组按【依赖耦合】,不只按主题就近:相互 import / 调用密切 / 同业务域的文件优先同片;不得不拆开的跨片依赖,记进该片的"联动"备注(索引棒据此写联动章)。例:N=34、总量 1MB → M=max(2,7)=7 片起步 —— 拆 4 片 = 每片 250KB,超预算 1.7 倍,属错拆。',
@@ -399,6 +401,12 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       '6. 【收口:先校验,再索引】分片全部完成(或只剩失败缺口)后,先派 1~2 个【校验子 Agent】(goal 同样以 [orch:' + orchTag + '] 开头):拿各分片文档里最关键的硬事实(权限/状态机/核心公式/接口契约),按 file:行号 回代码核对,返回"不一致清单"。然后调 workflow_result 逐个取回成果(只取一句话结论与路径,别拉全文),再调 run_workflow 派【索引 Agent】:总目标 + 每个分片一句话结论 + 产出路径清单 + 分歧点 + 校验不一致清单,要求它产出【联合 LLM-wiki 开发文档】' + (dir ? dir + '/docs/' : 'docs/') + '<主题>/README.md:总览与业务闭环 + 每分片一章(核心结论/关键规则/数据流/重要 file:行号,本章即够用)+ 跨片联动章(按联动备注)+ 章末链到分片详文档 + 分歧点仲裁;【校验不一致处标 [待复核]】。读者只看 README 就能掌握全局。分片全文【严禁】贴进 goal(只给路径与一句话);它读不过来,就让它派子 Agent 分片读、自己综合。',
       '7. 【交付】索引棒完成后,你的最终回答 = 总目标一段话总结 + 索引 README 路径 + 各分片产出路径清单【+ 如实汇报:哪些分片失败/缺口、哪些结论待复核】。然后用 memory_add 蒸馏系统级事实(一句话 + anchors 挂 file:行号 + scene,没够格的就跳过,宁缺勿滥)。',
       '8. 【128k 纪律】你的每轮输入都该是小的:预检只看数字、进度只看条数、成果只取索引。发现自己在大段读文件 = 立刻停手,那是分片的活。',
+      '',
+      '【编码模式 —— 目标是写代码时,用这套替代探查流程的 2-6 步】',
+      'A. 【契约先行】预检后,先派一个勘察子 Agent 提炼【契约文档】' + (dir ? dir + '/docs/' : 'docs/') + '<主题>/CONTRACT.md:各分片将共享的接口/类型/API 签名/关键数据表字段(压在一页内)。所有分片指令必须带契约路径,严格按契约实现,不许自由改签名。',
+      'B. 【写归属清单(硬约束)】每个分片的 goal 必须含一行「写归属: <相对路径1>, <相对路径2>」—— 这片【只能】写这些文件(壳层硬闸:写归属外的 write/edit 直接拒绝)。归属两两不交:两片不许共享可写文件;共用的文件归一片独占,另一片只读引用。代码改动一律走 write/edit 工具(bash 写文件视为越权)。',
+      'C. 【集成验证 fix-loop】分片全部完成后,派【集成验证分片】:按仓库文档(CLAUDE.md/交接文档)的命令跑全量构建/测试;失败按归属回派 —— 哪个文件的错就重派那片去修(同标记 [orch:' + orchTag + '],至多 2 轮)。全绿才进索引。',
+      'D. 【联合改动报告】索引棒产出 ' + (dir ? dir + '/docs/' : 'docs/') + '<主题>/CHANGES.md:总览 + 每分片一章(改了什么/为什么/验证结果/关键 diff 位置)+ 契约偏差记录 + 失败修复流水 —— 是可审阅的改动报告,不是分析 wiki。',
       '9. 【续接恢复】若你是被重启/续接的主控:先按磁盘上的分片产出文档重新核对进度(哪些片已有产出、索引是否已写),从未完成处继续 —— 别从头重派,别重复劳动。',
       dir ? ('工作目录(主仓):' + dir + ' —— 分片与索引产出都落这里。' + (backendDir ? '副仓(只读,跨仓探查允许):' + backendDir + ' —— 可探查,【严禁】写/改/删。' : '')) : '',
       '</多层派发主控规程>',

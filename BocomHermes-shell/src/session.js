@@ -1,6 +1,7 @@
 'use strict'
 const { exec } = require('child_process')
 const knowledge = require('./knowledge')
+const writescope = require('./writescope')   // 分片写归属硬闸(编码模式):write/edit 越界拒
 
 // deps 可选项:replaceHistoryId(oldId, newId) —— stale 重开时把旧历史条目原地换 id(保留 created/title/model);
 // 没给就退化为现状(recordHistory 新增条目)。由 window.js 装配层接线。
@@ -206,7 +207,22 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     if (/(^|[._-])skill_/.test(String(tool || ''))) { oc.replyPermission(si.serve, sessionId, requestId, 'once'); return }
     // 多层派发分片卡:无人值守(按主控已批准的方案跑),权限请求自动放行 —— 否则 task 子 Agent/写文档都卡在看不见的批准框上,
     // 子 Agent 永远起不来(实测病灶)。范围限本卡会话,关卡即失效;全程工具日志留痕。
-    if (S.shardWc && si.wc && S.shardWc.has(si.wc.id)) { oc.replyPermission(si.serve, sessionId, requestId, 'once'); return }
+    if (S.shardWc && si.wc && S.shardWc.has(si.wc.id)) {
+      // 写归属硬闸(编码模式):分片登记了 writeScope 时,write/edit 的目标文件必须在归属清单内 ——
+      // 并行分片写冲突的头号死因就是越界写别的片的文件(探查类分片无归属 → 不设闸)。
+      try {
+        const mreg = S.wfCardByWc && S.wfCardByWc.get(si.wc.id)
+        const scope = mreg && Array.isArray(mreg.writeScope) ? mreg.writeScope : null
+        if (scope && scope.length && /^(write|edit)(_[a-z]+)*$/i.test(String(tool || ''))
+            && !writescope.matchScope(scope, (si.serve && si.serve.dir) || '.', String(detail || ''))) {
+          log('write-scope 拦截:分片 ' + mreg.id + ' 越界写 ' + String(detail || '').slice(0, 80) + ' (归属: ' + scope.join(', ') + ')')
+          try { S.audit && S.audit('workflow', '写归属越界拦截', { shard: mreg.id, path: String(detail || '').slice(0, 200), scope: scope.join(', ') }) } catch {}
+          oc.replyPermission(si.serve, sessionId, requestId, 'reject')
+          return
+        }
+      } catch {}
+      oc.replyPermission(si.serve, sessionId, requestId, 'once'); return
+    }
     if (!si.wc || si.wc.isDestroyed()) { oc.replyPermission(si.serve, sessionId, requestId, 'reject'); return }
     S.pendingPerm.set(requestId, sessionId)
     S.pendingPerm.set(requestId + ':meta', { tool, detail: detail || '' })   // 供审计留痕(批准/拒绝了什么)
