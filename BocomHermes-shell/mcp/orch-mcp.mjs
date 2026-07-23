@@ -102,6 +102,7 @@ async function callTool(name, a) {
     const goal = String(a.goal || '').trim()
     if (!goal) return '需要 goal(交给小队的总目标)'
     const r = await relayPost('/orch/run', { goal })
+    if (r.queued) return '工作流并发位已满,已进队列(第 ' + (r.position || '?') + ' 位)—— 前面跑完自动开跑,不用你重派。之后调 workflow_result 取成果。'
     return '已拉起动态工作流,id=' + (r.id != null ? r.id : '?') + '(卡片已打开:主 Agent 自拆 + 并行派子 Agent 深挖 + 自综合,过程可视、用户可插话)。'
       + '注意:它的第一份计划要用户在卡片里点【开始执行】批准 —— 若用户不知道,提醒他去批准,批准后它自动开跑。'
       + '之后调 workflow_result(id="' + (r.id != null ? r.id : '') + '") 取回成果继续用(进行中也能取到最新阶段成果);现在可以先和用户讨论别的。'

@@ -290,7 +290,12 @@ module.exports = function initMail(ctx) {
           if (req.url === '/orch/run') {
             const goal = String(a.goal || '').trim()
             if (!goal) return reply({ error: '缺少 goal' })
-            try { const id = spawnWorkflow(goal); return reply({ ok: true, id }) }
+            try {
+              const id = spawnWorkflow(goal)
+              // 并发满时 spawnWorkflow 返回 { queued, position } —— 必须拍平,否则 MCP 文本打出 id=[object Object](主控对着它瞎猜,实测)
+              if (id && typeof id === 'object') return reply({ ok: true, queued: true, position: id.position || 0, id: id.id })
+              return reply({ ok: true, id })
+            }
             catch (e) { return reply({ error: e.message }) }
           }
           // ── 多层派发:对话卡 Agent 判断目标大到单工作流装不下 → 调 run_orchestration → 拉起主控卡(拆 N 分片 + 索引棒收口)──
