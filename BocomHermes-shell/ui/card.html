@@ -607,26 +607,31 @@
   function shardSideRender(id) {
     if (sideMode !== 'shard') return
     const sm = shardStreams.get(id) || new Map()
-    const agents = new Map()   // agentName → { count, done, keys:Set }
+    const agents = new Map()   // agentId(拿不到则 agentName) → { name, count, done, keys:Set }
     for (const p of sm.values()) {
-      if (!p.sub || !p.agentName) continue
-      let a = agents.get(p.agentName); if (!a) { a = { count: 0, done: false, keys: new Set() }; agents.set(p.agentName, a) }
+      if (!p.sub || !(p.agentId || p.agentName)) continue
+      const k = p.agentId || p.agentName
+      let a = agents.get(k); if (!a) { a = { name: p.agentName || '子agent', count: 0, done: false, keys: new Set() }; agents.set(k, a) }
+      if (p.agentName) a.name = p.agentName
       if (p.kind === 'tool' && p.partID && !a.keys.has(p.partID)) { a.keys.add(p.partID); a.count++ }
     }
-    for (const p of sm.values()) {   // 分片的 task 起/收镜像(sub=false):按 taskDesc 勾完成
-      if (p.sub || p.kind !== 'tool' || String(p.text) !== 'task') continue
+    for (const p of sm.values()) {   // 分片的 task 起/收镜像(sub=false):完成匹配优先按 taskChild=子会话ID(与主侧边栏同口径),
+      if (p.sub || p.kind !== 'tool' || !/^(task|delegate_task)$/i.test(String(p.text || ''))) continue   // 名字对不上曾把子 Agent 卡成永远"运行中";名字匹配仅作老 serve 无 ID 时的兜底
+      if (!/complet|success|done|finish|error|fail|deny|reject/i.test(String(p.status || ''))) continue
+      const byId = p.taskChild && agents.get(p.taskChild)
+      if (byId) { byId.done = true; continue }
       const name = p.taskDesc || p.title || ''
-      if (name && agents.has(name) && /complet|success|done|finish|error|fail|deny|reject/i.test(String(p.status || ''))) agents.get(name).done = true
+      if (name) for (const a of agents.values()) if (a.name === name) a.done = true
     }
     sdList.innerHTML = ''
     let runN = 0
-    for (const [name, a] of agents) {
+    for (const [, a] of agents) {
       if (!a.done) runN++
       const b = document.createElement('button'); b.className = 'sd-item' + (a.done ? ' done' : '')
       b.innerHTML = '<span class="si-name"></span><span class="si-meta"></span>'
-      b.querySelector('.si-name').textContent = name
+      b.querySelector('.si-name').textContent = a.name
       b.querySelector('.si-meta').textContent = (a.count ? a.count + ' 次调用 · ' : '') + (a.done ? '完成' : '运行中')
-      b.addEventListener('click', () => shardScrollToAgent(name))
+      b.addEventListener('click', () => shardScrollToAgent(a.name))
       sdList.appendChild(b)
     }
     if (!agents.size) sdList.innerHTML = '<div class="sd-empty">这个分片还没派子 Agent</div>'
@@ -647,6 +652,12 @@
   }
   function shardRenderView() {
     const sm = shardStreams.get(shardViewId) || new Map()
+    // 智能滚动+展开状态保留(逐 token 全量重渲的配套):用户贴底才跟底,上翻阅读保持原位不拽回;
+    // 打开的 <details> 按 key 收集,重建后还原 —— 展开的工具块/思考区不再被刷塌
+    const stickBottom = svBody.scrollHeight - svBody.scrollTop - svBody.clientHeight < 60
+    const prevTop = svBody.scrollTop
+    const openKeys = new Set()
+    svBody.querySelectorAll('details[open]').forEach((d) => { if (d.dataset.k) openKeys.add(d.dataset.k) })
     svBody.innerHTML = ''
     // 按 Agent 分区(复用异步子Agent组件的分区模式):并行子 Agent 的镜像事件【交错到达】,按到达顺序渲就是
     // sales/orders/leads 来回横跳的闪屏(用户两连截图)。每个 Agent 一节 —— 思考/工具/产出都归自己节,
@@ -670,12 +681,14 @@
       sec.appendChild(hd)
       if (s.reason.length) {
         const d = document.createElement('details'); d.className = 'reason'
+        d.dataset.k = agent + '#reason'; if (openKeys.has(d.dataset.k)) d.open = true
         const smy = document.createElement('summary'); smy.textContent = '思考过程'
         const b = document.createElement('div'); b.className = 'body'; b.textContent = s.reason.join('\n')
         d.append(smy, b); sec.appendChild(d)
       }
-      for (const p of s.tools) {
+      s.tools.forEach((p, ti) => {
         const d = document.createElement('details'); d.className = 'toolbox'
+        d.dataset.k = agent + '#tool#' + (p.partID || ti); if (openKeys.has(d.dataset.k)) d.open = true
         const smy = document.createElement('summary')
         smy.textContent = (p.text || 'tool') + (p.title ? ' · ' + p.title : '') + (p.status ? ' · ' + p.status : '')
         d.appendChild(smy)
@@ -684,16 +697,37 @@
         if (inStr) { const pre = document.createElement('pre'); pre.textContent = '入参\n' + inStr.slice(0, 2000); d.appendChild(pre) }
         if (outStr) { const pre = document.createElement('pre'); pre.textContent = '结果\n' + outStr.slice(0, 2000); d.appendChild(pre) }
         sec.appendChild(d)
-      }
+      })
       for (const t of s.texts) {
         const m = document.createElement('div'); m.className = 'msg ai'; m.textContent = t
         sec.appendChild(m)
       }
       svBody.appendChild(sec)
     }
-    svBody.scrollTop = svBody.scrollHeight
+    svBody.scrollTop = stickBottom ? svBody.scrollHeight : prevTop   // 贴底才跟底,上翻保持原位
   }
+  // 渲染节流:镜像事件逐 token 到达(并行分片时几十次/秒),只写缓冲+置脏标记,150ms 合帧渲染一次 ——
+  // 全量重建频率降到 ~6 次/秒,这是消除闪屏的核心。侧边栏索引挂同一调度,不再每事件独立全清重建
+  let shardDirty = false, shardRenderTimer = 0
+  function shardScheduleRender() {
+    if (!shardViewId) return
+    shardDirty = true
+    if (shardRenderTimer) return
+    shardRenderTimer = setTimeout(() => {
+      shardRenderTimer = 0
+      if (!shardDirty || !shardViewId) { shardDirty = false; return }
+      shardDirty = false
+      shardRenderView()
+      shardSideRender(shardViewId)
+    }, 150)
+  }
+  let shardProgTimer = 0, shardProgPending = null   // 进度卡面板防抖(低频推送,顺手与分片视图同款节流)
   window.BocomHermes.onShardProgress && window.BocomHermes.onShardProgress(({ shards }) => {
+    shardProgPending = shards
+    if (shardProgTimer) return
+    shardProgTimer = setTimeout(() => { shardProgTimer = 0; shardProgPaint(shardProgPending) }, 150)
+  })
+  function shardProgPaint(shards) {
     if (!Array.isArray(shards) || !shards.length) { shardWrap.hidden = true; return }
     shardWrap.hidden = false
     const doneN = shards.filter((s) => s.status === 'done' || s.status === 'interrupted').length
@@ -711,7 +745,7 @@
       if (s.id) { card.title = shardClean(s.goal); card.addEventListener('click', () => shardShowView(s.id, s.goal)) }
       shardBody.appendChild(card)
     }
-  })
+  }
   const ttl = document.getElementById('ttl'); ttl.textContent = title; ttl.title = title
   document.title = title + ' · BocomHermes'   // 任务栏/Alt+Tab 区分各卡
   // 多卡辨识度:按 sessionId 给标题图标染色(几十张玻璃卡不再一模一样);本轮成功结束标题加 ✓,开新一轮摘掉
@@ -1128,7 +1162,13 @@
     if (!last || last.turn !== turnN) return   // 本轮没读文件:不算绕也不算纠偏,状态保持
     const same = [...last.files].filter((f) => wdWarnSet && wdWarnSet.has(f)).length
     if (last.files.size > 0 && same / last.files.size >= ov) {   // 本轮大部分还在读那批 → 仍在绕,计数升级
-      if (++wdEscLoops >= M) wdShowBanner()
+      if (++wdEscLoops >= M) {
+        if (shardMode) {   // 分片是隐藏卡:横幅没人点,"判死权给人"在无人值守场景 = 永远不死 —— 自动中止本轮
+          addNote('看门狗：绕圈提醒后仍未纠偏，分片无人值守 → 自动中止本轮（壳层按 aborted 判 interrupted 收官）', 'muted')   // (session.js snap.aborted → window.js 落定兜底)
+          try { window.BocomHermes.cardAbort() } catch {}
+          wdWarned = false; wdEscLoops = 0; wdWarnSet = null
+        } else wdShowBanner()
+      }
     } else { wdWarned = false; wdEscLoops = 0; wdWarnSet = null }   // 读了不同的文件 = 换策略了,复位
   }
 
@@ -1228,7 +1268,7 @@
     if (sdList && sdPane) { sdList.innerHTML = ''; sdPane.innerHTML = '' }   // 侧边栏一并清(它不在 feed 里,feed.innerHTML='' 清不到)
     sdActiveId = ''; sdPaintBadge()
     try { clearPlanBar() } catch {}   // feed 清空会把计划条带走,倒计时计时器必须一起埋(防闸死后二次注入)
-    try { wdReset() } catch {}   // 会话换了(切项目/压缩续聊)→ 看门狗账本清零,绕圈 streak 不跨会话
+    if (!shardMode) { try { wdReset() } catch {} }   // 会话换了(切项目/压缩续聊)→ 看门狗账本清零,绕圈 streak 不跨会话;分片卡不清:跨棒绕圈正是分片死循环的典型形态,账本跨棒连续才抓得到
     try { saSnaps.length = 0; sdPaintRoundSel() } catch {}   // 跨轮快照同样不跨会话
     try { ctxUsedChars = 0; ctxRealTokens = null; countedToolParts.clear(); paintCtxChip() } catch {}
   }
@@ -1824,7 +1864,7 @@
     // 主控自己没派 task,侧边栏不该堆满各分片的子 Agent(用户指正:那些输出属各分片,不是主控的)
     if (shardRoot) {
       let sm = shardStreams.get(shardRoot); if (!sm) { sm = new Map(); shardStreams.set(shardRoot, sm) }
-      sm.set(partID || (kind + '_' + sm.size), { partID, kind, text, status, input, output, title, error, sub, agentName, taskDesc })
+      sm.set(partID || (kind + '_' + sm.size), { partID, kind, text, status, input, output, title, error, sub, agentId, agentName, taskChild, taskDesc })
       // 分片产出进成果抽屉:镜像的 write/edit 落盘(分片及其子 Agent 都算)→ 主控卡「产出文件」清单,
       // 不然 8 个分片文档+索引 wiki 全在磁盘上,preview 却显示"还没有落盘记录"(用户实测)
       try {
@@ -1834,7 +1874,7 @@
           if (fp) artAddFile(artAbs(String(fp)))
         }
       } catch {}
-      if (shardViewId === shardRoot) { shardRenderView(); shardSideRender(shardRoot) }   // 正在看这片:分区视图与侧边栏索引同步刷
+      if (shardViewId === shardRoot) shardScheduleRender()   // 正在看这片:置脏合帧渲染(逐 token 直接全量重建=闪屏根因)
       return
     }
     lastStreamAt = Date.now()   // 静默挂死探针:有事件就不算挂死
