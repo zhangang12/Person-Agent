@@ -221,22 +221,42 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
           return
         }
       } catch {}
+      // 编辑预检:edit 的 oldString 与文件实际内容对不上 → 不放行白撞,直接拒并回【实际区域】
+      // (弱模型凭记忆写 oldString 是 edit 失败的第一死因;拒一次带真内容,下一轮就对了 —— 比放行后失败空转强得多)
+      if (/^edit(_[a-z]+)*$/i.test(String(tool || ''))) {
+        ;(async () => {
+          try {
+            const peek = await buildPermPeek(si, sessionId, tool, detail)
+            if (peek && peek.miss) {
+              log('edit 预检拦截:oldString 未命中 ' + peek.miss.filePath + ' → 拒并回实际区域')
+              try { S.audit && S.audit('workflow', '编辑预检拦截(oldString 未命中)', { file: peek.miss.filePath }) } catch {}
+              oc.replyPermission(si.serve, sessionId, requestId, 'reject')
+              return
+            }
+          } catch {}
+          oc.replyPermission(si.serve, sessionId, requestId, 'once')
+        })()
+        return
+      }
       oc.replyPermission(si.serve, sessionId, requestId, 'once'); return
     }
     if (!si.wc || si.wc.isDestroyed()) { oc.replyPermission(si.serve, sessionId, requestId, 'reject'); return }
     S.pendingPerm.set(requestId, sessionId)
     S.pendingPerm.set(requestId + ':meta', { tool, detail: detail || '' })   // 供审计留痕(批准/拒绝了什么)
-    // edit/write 类:尽力带 diff 预览(批准前看见"要改成什么样");取不到不挡路,照样弹
+    // edit/write 类:尽力带 diff 预览 + 编辑预检(批准前看见"要改成什么样";oldString 未命中还要亮黄牌);取不到不挡路,照样弹
     ;(async () => {
-      let diff = ''
-      try { diff = await buildPermDiff(si, sessionId, tool, detail) } catch {}
-      if (!si.wc.isDestroyed()) si.wc.send('permission-request', { requestId, tool, detail: detail || '', diff })
+      let peek = { diff: '', miss: null }
+      try { peek = await buildPermPeek(si, sessionId, tool, detail) } catch {}
+      if (!si.wc.isDestroyed()) si.wc.send('permission-request', { requestId, tool, detail: detail || '', diff: peek.diff, miss: peek.miss })
     })()
   }
-  // 权限 diff 预览:找会话里最后一个未终态的 edit/write 工具 part,用 oldString/newString(或 write 的 content)拼迷你 diff。
-  // 路径与 detail 对不上就放弃(防串台);write 新文件没有 oldString → 全绿;取不到返回 ''(卡片不渲预览)。
-  async function buildPermDiff(si, sessionId, tool, detail) {
-    if (!/^(edit|write)(_[a-z]+)*$/i.test(String(tool || ''))) return ''
+  // 权限 diff 预览 + 编辑预检:找会话里最后一个未终态的 edit/write 工具 part,
+  // ① 用 oldString/newString(或 write 的 content)拼迷你 diff ② 【编码预检】edit 的 oldString 真去文件里对一遍 ——
+  // 未命中就给出实际区域(弱模型经常凭记忆写 oldString,放行也是白撞,这是编码成功率的第一环)。
+  // 路径与 detail 对不上就放弃(防串台);write 新文件没有 oldString → 不检;读不了文件 → 不检(不挡路)。
+  async function buildPermPeek(si, sessionId, tool, detail) {
+    const out = { diff: '', miss: null }
+    if (!/^(edit|write)(_[a-z]+)*$/i.test(String(tool || ''))) return out
     const msgs = await oc.getRawMessages(si.serve, sessionId)
     const TERM = /complet|success|done|error|fail|cancel|abort/i
     for (let i = msgs.length - 1; i >= 0; i--) {
@@ -248,14 +268,37 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
         const inp = (p.state && p.state.input) || {}
         if (detail && inp.filePath && String(inp.filePath).length >= 8 && !String(detail).includes(String(inp.filePath))) continue
         const oldS = String(inp.oldString || ''), newS = String(inp.newString != null ? inp.newString : (inp.content != null ? inp.content : ''))
-        if (!oldS && !newS) return ''
+        if (!oldS && !newS) return out
         const L = []
         if (oldS) { for (const l of oldS.split('\n').slice(0, 12)) L.push('- ' + l); if (oldS.split('\n').length > 12) L.push('…') }
         if (newS) { for (const l of newS.split('\n').slice(0, 20)) L.push('+ ' + l); if (newS.split('\n').length > 20) L.push('…') }
-        return L.join('\n').slice(0, 4000)
+        out.diff = L.join('\n').slice(0, 4000)
+        // 编辑预检:oldString 对不上文件 → 给实际区域(行号标注),让模型拿着真内容重写,别白撞
+        if (oldS && inp.filePath) {
+          try {
+            const base = path.resolve((si.serve && si.serve.dir) || '.')
+            const abs = path.resolve(base, String(inp.filePath))
+            const rel = path.relative(base, abs)
+            if (!rel.startsWith('..') && !path.isAbsolute(rel)) {   // 围栏:只读本仓(防止借预检读任意文件)
+              const content = fs.readFileSync(abs, 'utf8')
+              if (!content.includes(oldS)) {
+                const lines = content.split('\n')
+                const probe = oldS.split('\n').map((x) => x.trim()).filter(Boolean)[0] || oldS.slice(0, 24)
+                const idx = probe ? lines.findIndex((l) => l.includes(probe)) : -1
+                let region = ''
+                if (idx >= 0) {
+                  const from = Math.max(0, idx - 3), to = Math.min(lines.length, idx + 5)
+                  region = lines.slice(from, to).map((l, j) => (from + j + 1) + '  ' + l).join('\n')
+                }
+                out.miss = { filePath: String(inp.filePath), probe: probe.slice(0, 60), region }
+              }
+            }
+          } catch {}
+        }
+        return out
       }
     }
-    return ''
+    return out
   }
   // 交互提问路由:serve 的 question 工具需要用户点选回答 —— 弹到对话卡(交互提问卡),应答经 question-reply IPC 回 serve。
   // 只路由到对话卡:管线/监控窗口(sessionInfo 带 tag.scope)没有提问 UI,会话无主/卡已毁同理 ——
@@ -400,7 +443,14 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     const textPayload = { kind: kind || 'text', text: full, partID, sub: !!subagent, agentId: agentId || '', agentName: agentName || '', sessionId, tag }
     si.wc.send('card-stream', textPayload); mirrorToOrch(si, textPayload)
   }
-  S.handlers = { onPermission, onText, onQuestion }
+  S.handlers = { onPermission, onText, onQuestion, onDiffStat: (d) => {
+    // session.diff(serve 权威改动账本)→ 写进该会话所属卡片的注册表 entry:改动报告/面板用真增删行,不靠 git diff 估算
+    try {
+      const si = d && d.sessionId && S.sessionInfo.get(d.sessionId)
+      const reg = si && si.wc && S.wfCardByWc && S.wfCardByWc.get(si.wc.id)
+      if (reg) reg.diff = { files: d.files || 0, additions: d.additions || 0, deletions: d.deletions || 0, at: Date.now() }
+    } catch {}
+  } }
 
   // P1:onRawMessages 回调拿到的原始消息列表 → 与 opencode.js pollTurnParts 同构的 part 映射(喂同一个 onText)。
   // partID 必须同构(工具 = (callID||id)+':tool'),否则同一工具调用会被渲染两行,卡片按 partID 幂等去重就失效。

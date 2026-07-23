@@ -541,7 +541,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const fileLines = (reg.files || []).map((f) => '- ' + f).join('\n')
     // 执行动作流水(时间+label+detail;wf-list 卡坞同源展示)
     const actLines = (reg.actions || []).map((a) => { const d = new Date(a.at || 0); const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ':' + String(d.getSeconds()).padStart(2, '0'); return '- [' + hm + '] ' + (a.kind ? a.kind + ' · ' : '') + a.label + (a.detail ? ' — ' + a.detail : '') }).join('\n')
-    fs.writeFileSync(reg.archive, '# ' + (reg.kind === 'pipeline' ? '任务编排' : '工作流') + ':' + reg.goal + '\n\n- id:' + reg.id + ' · 轮次:' + reg.rounds + ' · 用时:' + Math.round((reg.elapsedMs || 0) / 1000) + 's · 状态:' + reg.status + (reg.aborted ? ' · 曾被中止' : '') + '\n\n## 任务清单\n' + (todoLines || '(无)') + '\n\n## 产出文件\n' + (fileLines || '(无)') + '\n\n## 执行动作\n' + (actLines || '(无)') + '\n\n## 最终成果(最近一轮回答)\n\n' + reg.final)
+    fs.writeFileSync(reg.archive, '# ' + (reg.kind === 'pipeline' ? '任务编排' : '工作流') + ':' + reg.goal + '\n\n- id:' + reg.id + ' · 轮次:' + reg.rounds + ' · 用时:' + Math.round((reg.elapsedMs || 0) / 1000) + 's · 状态:' + reg.status + (reg.aborted ? ' · 曾被中止' : '') + (reg.diff ? ' · 改动:+' + reg.diff.additions + '/-' + reg.diff.deletions + ' (' + reg.diff.files + ' 文件)' : '') + '\n\n## 任务清单\n' + (todoLines || '(无)') + '\n\n## 产出文件\n' + (fileLines || '(无)') + '\n\n## 执行动作\n' + (actLines || '(无)') + '\n\n## 最终成果(最近一轮回答)\n\n' + reg.final)
   }
 
   // 规则法识别邮件里的会议 → 产出"建议待办"(pending 态,人工确认后才进正式待办);
@@ -1711,6 +1711,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       out.push({
         id: r.id, goal: r.goal, status: r.status, kind: r.kind || 'workflow', rounds: r.rounds, elapsedMs: r.elapsedMs,
         files: (r.files || []).length, at: r.at, archive: r.archive || '', shards: shardN || undefined,
+        diff: r.diff || null,   // session.diff 权威账本:增删行/文件数(编码模式的改动证据)
         live: !!(S.wfCardByWc && S.wfCardByWc.has(r.wcId)), busy: !!(S.isCardBusy && S.isCardBusy(r.wcId)),
         todoDone: doneN, todoTotal: todos.length, current: cur ? String((cur && (cur.content || cur.text || cur.title)) || '') : '',
         actions: (Array.isArray(r.actions) ? r.actions : []).map((a) => ({ kind: a.kind, label: a.label, detail: a.detail })),

@@ -285,7 +285,7 @@
       // T2 todo 迷你进度:running 且 todoTotal>0 才显示「3/5 · 正在:〈current 截 20 字〉」
       const todoBit = (w.status === 'running' && (w.todoTotal | 0) > 0)
         ? ((w.todoDone | 0) + '/' + w.todoTotal + (w.current ? ' · 正在：' + String(w.current).slice(0, 20) : '')) : ''
-      const meta = [w.rounds ? w.rounds + ' 轮' : '', w.elapsedMs ? Math.round(w.elapsedMs / 1000) + 's' : '', w.shards ? w.shards + ' 分片' : '', w.files ? '产出 ' + w.files : '', rel(w.at || Date.now())].filter(Boolean).join(' · ')
+      const meta = [w.rounds ? w.rounds + ' 轮' : '', w.elapsedMs ? Math.round(w.elapsedMs / 1000) + 's' : '', w.shards ? w.shards + ' 分片' : '', (w.diff && (w.diff.additions || w.diff.deletions)) ? '+' + w.diff.additions + '/-' + w.diff.deletions : '', w.files ? '产出 ' + w.files : '', rel(w.at || Date.now())].filter(Boolean).join(' · ')
       const el = document.createElement('div'); el.className = 'item wfitem'
       el.innerHTML = '<span class="t"><span class="wfst ' + esc(w.status) + '">' + stName + '</span>' + esc(w.goal || '工作流') + '</span>'
         + (todoBit ? '<span class="meta wftodo">' + esc(todoBit) + '</span>' : '')

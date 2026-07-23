@@ -300,6 +300,10 @@
   .perm .pdiff { flex-basis: 100%; margin-top: 5px; font-family: var(--mono); font-size: 11px; line-height: 1.5; max-height: 150px; overflow: auto; background: var(--composer-bg); border-radius: 8px; padding: 6px 9px; white-space: pre; }
   .perm .pdiff .add { color: #2bb673; }
   .perm .pdiff .del { color: var(--diff-del); }
+  /* 编辑预检黄牌:oldString 未命中时的警告区(建议拒绝让模型拿真内容重写) */
+  .perm .pmiss { flex-basis: 100%; margin-top: 5px; background: var(--warn-bg); border: .5px solid var(--warn-border); border-radius: 8px; padding: 6px 9px; }
+  .perm .pmiss-t { font-size: 11.5px; color: var(--warn-txt); line-height: 1.5; }
+  .perm .pmiss-r { margin-top: 4px; font-family: var(--mono); font-size: 10.5px; line-height: 1.5; max-height: 110px; overflow: auto; color: var(--txt2); white-space: pre; }
   /* 待批准 sticky:批准盒被流式顶走后,输入框上方仍钉一枚摘要(点击滚回批准盒) */
   .permsticky { position: absolute; right: 12px; bottom: 64px; z-index: 9; display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; color: var(--warn-txt); background: var(--warn-bg); border: .5px solid var(--warn-border); border-radius: 999px; padding: 5px 12px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.2); }
   .permsticky:hover { border-color: var(--warn-txt); }
@@ -1336,13 +1340,19 @@
     b.addEventListener('click', (e) => { e.stopPropagation(); try { navigator.clipboard.writeText(el.dataset.raw || el.textContent || '') } catch {} b.classList.add('ok'); setTimeout(() => b.classList.remove('ok'), 1200) })
     el.appendChild(b)
   }
-  function showPermission(requestId, tool, detail, diff) {
+  function showPermission(requestId, tool, detail, diff, miss) {
     const box = document.createElement('div'); box.className = 'perm'
     const t = document.createElement('span'); t.className = 't'
     t.innerHTML = '请求执行 <span class="pt" style="font-family:var(--mono)"></span>'
     t.querySelector('.pt').textContent = tool
     if (detail) { const d = document.createElement('span'); d.style.cssText = 'display:block;font-family:var(--mono);font-size:11px;color:var(--txt2);margin-top:3px;word-break:break-all;opacity:.92'; d.textContent = detail; t.appendChild(d) }
-    if (diff) {   // edit/write 的迷你 diff 预览:批准前看见要改成什么样(session.js buildPermDiff 拼好,红删绿增)
+    if (miss) {   // 编辑预检黄牌:oldString 与文件实际内容不符 —— 放行了也是白撞,建议拒绝让它拿真内容重写
+      const w = document.createElement('div'); w.className = 'pmiss'
+      w.innerHTML = '<div class="pmiss-t">⚠ 编辑预检：模型给的 oldString 与文件实际内容<b>不符</b>（放行多半白撞 —— 建议拒绝，让它先读文件再改）</div>'
+        + (miss.region ? '<pre class="pmiss-r">' + esc(miss.region) + '</pre>' : '<div class="pmiss-r">（文件里找不到这段内容的线索）</div>')
+      t.appendChild(w)
+    }
+    if (diff) {   // edit/write 的迷你 diff 预览:批准前看见要改成什么样(session.js buildPermPeek 拼好,红删绿增)
       const pre = document.createElement('pre'); pre.className = 'pdiff'
       pre.innerHTML = String(diff).split('\n').map((l) => l.startsWith('+ ') ? '<span class="add">' + esc(l) + '</span>' : l.startsWith('- ') ? '<span class="del">' + esc(l) + '</span>' : esc(l)).join('\n')
       t.appendChild(pre)
@@ -1380,13 +1390,13 @@
       addNote(autoAllow ? '已开启【自动批准】:本工作流的写文件/执行命令等权限请求将自动放行(工具日志留痕,再点一次关闭)' : '已关闭【自动批准】:恢复逐个人工确认', 'muted')
     })
   }
-  window.BocomHermes.onPermission(({ requestId, tool, detail, diff }) => {
+  window.BocomHermes.onPermission(({ requestId, tool, detail, diff, miss }) => {
     if (wfMode && autoAllow) {
       try { window.BocomHermes.permissionReply(requestId, 'once') } catch {}
       addNote('🤝 自动批准:' + tool + (detail ? ' · ' + String(detail).slice(0, 120) : ''), 'muted')
       return
     }
-    showPermission(requestId, tool, detail, diff)
+    showPermission(requestId, tool, detail, diff, miss)
   })
 
   // ── 交互提问卡(question 工具的应答通道):问题+选项弹在对话流里,点选即答(serve /question/:id/reply)。

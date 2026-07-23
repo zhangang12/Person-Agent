@@ -797,7 +797,7 @@ function getStreamState(info) {
 // 事件循环每次重连都读 info.base —— 心跳重启把 serve 换到新端口后,本循环会自动接上新 base,无需重启循环。
 // info.dead = true(外部 serve 被清出 pool)时退出。
 async function runEventLoop(info, handlers, log) {
-  const { onPermission, onText, onQuestion, onChildSession } = handlers || {}
+  const { onPermission, onText, onQuestion, onChildSession, onDiffStat } = handlers || {}
   let dropped = false   // 经历过断线(含对端正常收尾):重连成功后做 R5 补偿
   for (;;) {
     if (info.dead) { info.streamUp = false; log('event loop stopped (' + (info.dir || '(home)') + ')'); return }
@@ -837,7 +837,7 @@ async function runEventLoop(info, handlers, log) {
           // 见到没分类过的会话 → 懒加载会话树建 子→父 映射(保证子agent事件能路由回父卡片)
           { const evp = ev && ev.properties; const evSid = evp && (evp.sessionID || evp.sessionId || (evp.info && (evp.info.sessionID || evp.info.id)))
             if (evSid && !classifiedSessions.has(evSid) && !childToParent.has(evSid)) refreshSessionTree(info.base) }
-          dispatch(ev, onPermission, onText, info, onQuestion, onChildSession)
+          dispatch(ev, onPermission, onText, info, onQuestion, onChildSession, onDiffStat)
         }
       }
       } finally { clearInterval(wd) }   // 内层读循环结束(正常断/看门狗掐)都摘定时器,不漏
@@ -845,7 +845,7 @@ async function runEventLoop(info, handlers, log) {
     } catch (e) { info.streamUp = false; if (info.dead) return; dropped = true; log('event stream dropped, reconnect 2s: ' + e.message); await sleep(2000) }
   }
 }
-function dispatch(ev, onPermission, onText, info, onQuestion, onChildSession) {
+function dispatch(ev, onPermission, onText, info, onQuestion, onChildSession, onDiffStat) {
   const type = ev?.type ?? ''
   const p = ev.properties ?? ev.data ?? ev
   // 学习 子会话→父会话 映射:带 parentID 的【会话】事件(task 子agent 创建的子会话)。据此把子agent事件路由回父卡片。
@@ -862,6 +862,16 @@ function dispatch(ev, onPermission, onText, info, onQuestion, onChildSession) {
     const root = rootSession(sid)
     return (root && root !== sid) ? { sessionId: root, subagent: true, agentId: sid, agentName: childTitle.get(sid) || '子agent' }
                                   : { sessionId: sid, subagent: false, agentId: '', agentName: '' }
+  }
+  // session.diff:serve 权威改动账本(本 session 累计 files/additions/deletions)→ 进注册表,改动报告与面板用真数据
+  // (编码模式的联合改动报告不再靠 git diff 估算;形状两种:d=对象{files,additions,deletions} 或文件数组,防御兼容)
+  if (type === 'session.diff') {
+    if (onDiffStat) {
+      const d = (p && p.diff != null) ? p.diff : p
+      const files = Array.isArray(d) ? d.length : (typeof (d && d.files) === 'number' ? d.files : (Array.isArray(d && d.files) ? d.files.length : 0))
+      onDiffStat({ sessionId: p.sessionID ?? p.sessionId, files: files || 0, additions: (d && d.additions) || 0, deletions: (d && d.deletions) || 0 })
+    }
+    return
   }
   if (type.includes('permission') && !type.includes('replied') && !type.includes('response')) {
     const { sessionId } = route(p.sessionID ?? p.sessionId ?? p.session_id)   // 子agent的审批请求也送到父卡片

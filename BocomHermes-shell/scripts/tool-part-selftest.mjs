@@ -390,5 +390,16 @@ await (async () => {
   })())
 })()
 
+// 用例19:session.diff → onDiffStat 解析(对象形/数组形都要兼容)
+;(() => {
+  console.log('用例19:session.diff 事件 → onDiffStat(权威改动账本进注册表)')
+  const got = []
+  const onDiffStat = (d) => got.push(d)
+  dispatch({ type: 'session.diff', properties: { sessionID: 'ses_d1', diff: { files: 3, additions: 120, deletions: 45 } } }, null, () => {}, null, null, null, onDiffStat)
+  dispatch({ type: 'session.diff', properties: { sessionID: 'ses_d2', diff: [{ file: 'a.py' }, { file: 'b.py' }] } }, null, () => {}, null, null, null, onDiffStat)
+  ok('对象形:files/additions/deletions 全解析', got[0] && got[0].sessionId === 'ses_d1' && got[0].files === 3 && got[0].additions === 120 && got[0].deletions === 45, got[0])
+  ok('数组形:按文件数折算', got[1] && got[1].files === 2 && got[1].additions === 0, got[1])
+})()
+
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)
