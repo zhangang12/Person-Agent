@@ -63,9 +63,29 @@ const ARCH = [
   '· 接口/契约变更必须同步文档与调用方,不许静默漂移。',
 ].join('\n')
 
+// 边界与协作纪律(内化 GitHub Blog「2500 个 agents.md 的教训」三层边界与命令前置 + git 纪律)
+const BOUNDARY = [
+  '· 边界三层:动手先分清 —— ✅ 必做(计划内改动/测试/文档)、⚠️ 先问(schema 变更/加依赖/改 CI 与公共配置/动公共模块)、🚫 禁做(secrets 与密钥/供应商目录(node_modules/vendor)/个人配置/历史存档)。',
+  '· secrets 零接触:密码/token/key 不进代码不进文档;发现疑似写死密钥,立即停手报告。',
+  '· git 纪律:小步可审提交(每次变更独立可验可回滚);不提交构建产物与临时文件;提交信息写"为什么",不只"做了什么"。',
+  '· 先跑通现成命令:动手与收尾前,优先用仓库既有命令(CLAUDE.md/README 里的 build/test/lint)跑一遍,不自己发明跑法。',
+].join('\n')
+
+// 风格对照(好/坏各一段,弱模型照样子学最快 —— 一段真代码胜过十段描述)
+const EXAMPLE = [
+  '✅ 好:入参先校验、错误有格式、名字说意图',
+  '  async function fetchUserById(id: string): Promise<User> {',
+  '    if (!id) throw new Error(\'User ID required\')',
+  '    const { data } = await api.get(`/users/${id}`)',
+  '    return data',
+  '  }',
+  '❌ 坏:any 满天飞、不校验、裸拼字符串',
+  '  async function get(x){ return await api.get(\'/users/\' + x).data }',
+].join('\n')
+
 module.exports = {
-  BACKEND, FRONTEND, UIUX, SQL, ARCH,
-  // 组装注入块:全领域(编码模式全量注入;总长 ~1.6k 字,值这个上下文价)
+  BACKEND, FRONTEND, UIUX, SQL, ARCH, BOUNDARY, EXAMPLE,
+  // 组装注入块:全领域(编码模式全量注入;总长 ~2k 字,值这个上下文价)
   block() {
     return [
       '<编码规范(必须照做,不是参考)>',
@@ -74,6 +94,8 @@ module.exports = {
       '【UI/用户体验】', UIUX,
       '【SQL】', SQL,
       '【架构】', ARCH,
+      '【边界与协作纪律】', BOUNDARY,
+      '【风格对照】', EXAMPLE,
       '</编码规范>',
     ].join('\n')
   },
