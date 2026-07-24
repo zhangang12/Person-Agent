@@ -310,6 +310,12 @@ module.exports = function initMail(ctx) {
           if (req.url === '/orch/run-orch') {
             const goal = String(a.goal || '').trim()
             if (!goal) return reply({ error: '缺少 goal' })
+            // 递归硬禁:goal 带【已有】[orch:TAG] = 分片/主控想再开下级主控 —— 下级分片回报会回流到别的 Tag 名下,
+            // 唤醒错乱、无人值守链黑盒停摆(实测)。拆小的权利只在当前主控手里(它直接 run_workflow 多派几片),
+            // 或分片内部用 task 子 Agent 细分 —— 层级只到"主控→分片→task"为止
+            const ptm = goal.match(/[\[【]\s*orch\s*[:：]\s*([A-Za-z0-9-]+)\s*[\]】]/)
+            if (ptm && S.orchByTag && S.orchByTag.has(ptm[1]))
+              return reply({ error: '禁止递归派发主控 —— 分片太大的正确做法:① 把它拆成更小的多片(≤10 文件/片),由你自己用 run_workflow 一次派够(goal 带你的 [orch:' + ptm[1] + '] 标记);② 或让分片内部用 task 子 Agent 再细分。不许再开下级主控。' })
             try { const r = spawnOrchestrator(goal); return reply({ ok: true, id: r && r.id != null ? r.id : r }) }
             catch (e) { return reply({ error: e.message }) }
           }

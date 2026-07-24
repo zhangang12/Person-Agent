@@ -212,6 +212,14 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (opts && opts.shard) {
       query.shard = '1'   // 分片卡(多层派发):渲染端据此自动过规划闸(拆分方案用户在主控卡已批,分片不再二次等人)
       S.shardWc = S.shardWc || new Set(); S.shardWc.add(wcId)   // 无人值守权限自动放行(session.js onPermission);关卡清理
+      // 用户弹窗查看(shard-pop)后点 X = 收回后台隐藏,不销毁 —— 分片是无人值守工人,误杀=无人值守链断一截;
+      // 壳层销毁(主控全齐/主控关卡级联)走 S.shardForceClose 白名单放行;应用退出走 app.isQuitting 放行
+      if (hidden) {
+        win.on('close', (ev) => {
+          if (app.isQuitting || (S.shardForceClose && S.shardForceClose.has(wcId))) return
+          ev.preventDefault(); win.hide()
+        })
+      }
     }
     if (opts && opts.orch) query.orch = '1'   // 主控卡:渲染端据此空答自动重试(长跑无人值守,网关静默不能卡死整条链)
     // 工作流卡/任务编排卡/主控卡:登记进成果注册表(id=卡id,与 orch-mcp run_workflow 返回给 Agent 的一致),每轮终答由
@@ -248,6 +256,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       if (s) { const si = S.sessionInfo.get(s); if (si) { oldServe = si.serve; oc.abort(si.serve, s) } S.sessionInfo.delete(s); S.streamBuf.delete(s); S.sentPrompt.delete(s); S.firstMsgCtx.delete(s); S.dropPendingPerm && S.dropPendingPerm(s); if (typeof S.dropPendingQuestion === 'function') S.dropPendingQuestion(s) }   // 未答的审批/提问记录随卡清,别在 pendingPerm/pendingQuestion 里留孤儿
       S.sessionByWc.delete(wcId)
       if (S.shardWc) S.shardWc.delete(wcId)   // 分片权限自动放行随卡失效
+      if (S.shardForceClose) S.shardForceClose.delete(wcId)   // 销毁白名单随卡清理(弹窗查看后的 X 转隐藏不进这里)
       if (S.cardDir) S.cardDir.delete(wcId)       // per-card 目录/模型状态随卡销毁
       if (S.modelByWc) S.modelByWc.delete(wcId)
       // 本卡独占的自起 serve(切过项目的卡)没别的会话引用就退休,不留孤儿进程
@@ -268,7 +277,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
             if (String(oref.id) !== String(wreg.id)) continue
             for (const r of [...S.wfRegistry.values()].filter((x) => x.parentOrch === tag)) {
               const w2 = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === r.wcId)
-              if (w2) { try { w2.close() } catch {} }
+              if (w2) { try { (S.shardForceClose = S.shardForceClose || new Set()).add(r.wcId); w2.close() } catch {} }   // 白名单真销毁(否则被 close 拦截转隐藏,杀不掉)
             }
           }
         } catch {}
@@ -372,6 +381,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // 分片进度聚合推送:分片是静默卡不弹窗,进度以卡片形式聚合进主控卡 —— 分片登记/排队/收官都推一次全量状态
   function pushShardProgress(tag) {
     try {
+      if (tag) { S.orchProgressAt = S.orchProgressAt || new Map(); S.orchProgressAt.set(tag, Date.now()) }   // 主控停滞巡检的"还活着"打点
       const oref = S.orchByTag && S.orchByTag.get(tag); if (!oref) return
       const oreg = S.wfRegistry && S.wfRegistry.get(String(oref.id)); if (!oreg) return
       const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === oreg.wcId)
@@ -385,11 +395,40 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       win.webContents.send('shard-progress', { shards })
     } catch {}
   }
+  // ── 主控停滞巡检:主控卡没有"分片式"45s 落定(等分片时它是空闲态,挂死看门狗也不盯闲卡)——
+  // 递归场景实测病灶:下级主控的分片标记被弱模型写成父 tag,唤醒全流去父主控,它名下一片没有 → 彻底停摆无人知。
+  // 判据:已过批准闸(planApproved=true)且(有分片没齐 / 一片都没有但已跑过 ≥2 轮)且 10 分钟无进度(pushShardProgress 打点)
+  // 且当前空闲(没回合在飞)→ 注入一次催办(只催不代派,编排主权仍归主控)。每 10 分钟最多催一次,不唠叨。
+  setInterval(() => {
+    try {
+      if (!S.wfRegistry || !S.orchByTag) return
+      const tagById = new Map()
+      for (const [tag, o] of S.orchByTag) tagById.set(String(o && o.id), tag)
+      const now = Date.now()
+      for (const reg of S.wfRegistry.values()) {
+        if (reg.kind !== 'orch' || reg.planApproved !== true) continue
+        const tag = tagById.get(String(reg.id)); if (!tag) continue
+        if (S.isCardBusy && S.isCardBusy(reg.wcId)) continue
+        const last = (S.orchProgressAt && S.orchProgressAt.get(tag)) || reg.at || 0
+        if (now - last < 600000) continue
+        const sibs = [...S.wfRegistry.values()].filter((r) => r.parentOrch === tag)
+        const unsettled = sibs.some((r) => r.status !== 'done' && r.status !== 'interrupted')
+        const empty = sibs.length === 0 && (reg.rounds || 0) >= 2
+        if (!unsettled && !empty) continue
+        const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === reg.wcId)
+        if (!win) continue
+        S.orchProgressAt = S.orchProgressAt || new Map(); S.orchProgressAt.set(tag, now)   // 催过一次就重置计时,10 分钟后再看
+        win.webContents.send('card-inject', { text: '<主控进度>(壳层停滞巡检)你已过批准闸但 ' + (empty ? '名下一个分片都没有 —— 你的分片很可能把标记写成了别的 tag(唤醒流去了别的主控),检查:调 workflow_result 自取成果直接收口,或按正确标记 [orch:' + tag + '] 重派' : '仍有分片未收官且 10 分钟无进度 —— 对照 todo:该继续等就结束本轮,该派索引棒/校验棒收口就立即派') + '。</主控进度>', disp: '停滞巡检:主控 10 分钟无进度,已催办' })
+        log('[ctx-stall] 主控停滞催办 (tag ' + tag + ', shards=' + sibs.length + ', empty=' + empty + ')')
+      }
+    } catch {}
+  }, 60000)
   function spawnOrchestrator(goal) {
     const g = String(goal || '').trim() || '未命名主控'
     const tag = 'OC-' + Math.random().toString(36).slice(2, 6)
     S.orchByTag = S.orchByTag || new Map()
     const dir = S.settings.projectDir || ''
+    // 递归已硬禁(relay /orch/run-orch 拦:带已有 [orch:TAG] 的 goal 直接拒)—— 层级只到"主控→分片→task 子 Agent"
     const id = spawnCard('主控 · ' + g.slice(0, 20), null, orchestratorSystemPrompt(dir, S.settings.backendDir || '', tag) + '\n\n【总目标】\n' + g, g, { flash: true, wf: true, orch: true })
     S.orchByTag.set(tag, { id: String(id), at: Date.now() })
     if (S.orchByTag.size > 20) { const k = S.orchByTag.keys().next().value; S.orchByTag.delete(k) }
@@ -401,7 +440,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       '<多层派发主控规程>',
       '你是【主控】,复杂目标的统一入口。你的第一件事永远是【预检路由】:估出这个目标的上下文量级 —— 单卡装得下的派给一张工作流卡,装不下的在主 Agent 层面拆成多个分片并行干,最后派索引 Agent 把结论关联成整体。你不是执行者 —— 【严禁】自己深读代码/文档,【严禁】自己执行分片内容:你的上下文只装"分片清单 + 状态"。',
       '',
-      '【落盘哲学 —— 本流程总规矩】一切中间成果(勘察清单、分片产出、阶段结论)一律写成文档落盘,上下文里只过【路径 + 一句话索引】。字数没有限制:内容住在文档里,谁要用谁去读。任何一块发现"它本身也太大",就再拆一层(分片自己也能调 run_orchestration 再细分)—— 拆分可以无限递归,全靠文档接力。',
+      '【落盘哲学 —— 本流程总规矩】一切中间成果(勘察清单、分片产出、阶段结论)一律写成文档落盘,上下文里只过【路径 + 一句话索引】。字数没有限制:内容住在文档里,谁要用谁去读。【禁止递归派主控】任何一块太大,【不许】调 run_orchestration 再开下级主控 —— 下级主控派出的分片会回报到别的 Tag 名下,唤醒回流错乱,整条链黑盒停摆(实测)。正确做法:把分片拆得更小(单片预算再压,≤10 文件),由你直接用 run_workflow 一次派够(带你的 [orch:' + orchTag + '] 标记);分片内部还嫌大,让它自己用 task 子 Agent 再细分 —— 层级只到"主控→分片→task 子 Agent"为止。',
       '',
       '1. 【预检路由,先估再派】估的是【目标相关的那一撮文件】,绝不是工作目录的全部 —— 目录再大也不直接统计,按漏斗收窄:',
       '   ① 看结构:目录树(两层)+ README/manifest,判断目标落在哪几个模块/子目录;',
@@ -521,7 +560,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         for (const r of sibs) {   // 还活着的分片窗口一律关掉(隐藏工人不停下就一直烧 token);忙着的别杀 —— 可能正在交棒/补零产出文档,杀了就毁在半路
           if (S.isCardBusy && S.isCardBusy(r.wcId)) continue
           const w2 = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === r.wcId)
-          if (w2) { try { w2.close() } catch {} }
+          if (w2) { try { (S.shardForceClose = S.shardForceClose || new Set()).add(r.wcId); w2.close() } catch {} }   // 走白名单真销毁(弹窗查看后 X 只转隐藏,见 spawnCard close 拦截)
         }
         // 索引棒壳层兜底:唤醒只是文案提示,主控模型走神/误判不派 = 链静默停摆(实测无兜底)。
         // 5 分钟后仍没有任何带本 tag 的新登记(索引棒 goal 按规程带 [orch:TAG],spawn 即入注册表)→ 催办一次(只催不代派,编排主权仍归主控)
@@ -1821,6 +1860,20 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     }
   })
   ipcMain.on('wf-plan-approved', (e) => { const reg = S.wfCardByWc && S.wfCardByWc.get(e.sender.id); if (reg) reg.planApproved = true })   // 规划闸壳层状态位:批准动作(按钮/倒计时/分片自动)都经 approvePlan 上报,relay /orch/run 据此拦截主控未批派发
+
+  // 分片弹窗查看:分片是隐藏卡(无人值守),点主控卡分片面板的 ⧉ 把它的真实窗口亮出来直接看 ——
+  // 镜像视图(shard view)在渲染端重载后镜像缓冲是空的,弹窗是纯黑盒场景的兜底可见通道
+  ipcMain.handle('shard-pop', (_e, id) => {
+    try {
+      const reg = S.wfRegistry && S.wfRegistry.get(String(id))
+      if (!reg) return { ok: false, err: '分片记录不存在(可能已收官/重启后注册表清空)' }
+      const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === reg.wcId)
+      if (!win) return { ok: false, err: '分片窗口已关闭' }
+      if (win.isMinimized()) win.restore()
+      win.show(); win.focus()
+      return { ok: true }
+    } catch (e) { return { ok: false, err: e.message } }
+  })
 
   ipcMain.handle('wf-open', (_e, it) => {
     try {
