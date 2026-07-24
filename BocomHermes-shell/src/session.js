@@ -711,6 +711,16 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     else { const h = S.history.find((x) => x.id === sid); if (h && h.model) si.model = h.model }   // 卡坞续接:恢复当初那张卡选的模型
     return si.model || S.settings.model || null
   }
+  // 卡片↔会话登记(每次建/换会话都过这里):
+  // ①工作流卡把最新会话 id 记进注册表(reg.sid)—— 存档头带会话,关卡后仍能重开【完整会话】而不是只甩一个 md;
+  // ②分片会话 id 进 S.shardSids —— recordHistory 硬闸的第二道防线(光靠各调用点传 shard 旗标,漏一个就污染最近会话)
+  function trackWcSession(wcId, sessionId) {
+    try {
+      const wreg = S.wfCardByWc && S.wfCardByWc.get(wcId)
+      if (wreg) wreg.sid = sessionId
+      if (S.shardWc && S.shardWc.has(wcId)) { S.shardSids = S.shardSids || new Set(); S.shardSids.add(sessionId) }
+    } catch {}
+  }
   ipcMain.handle('card-init', async (e, opts) => {
     const sid = opts && opts.sid
     const wantTitle = (opts && opts.title) || ''
@@ -723,6 +733,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
       if (await oc.sessionExists(serve, sid)) {   // 会话还在 → 重连 + 回放（已有历史，不注入上下文）
         S.sessionByWc.set(e.sender.id, sid)
         S.sessionInfo.set(sid, { wc: e.sender, serve })
+        trackWcSession(e.sender.id, sid)
         const model = replayModel(e.sender.id, sid)
         S.pushServeHealth && S.pushServeHealth(e.sender, serve)
         touchHistory(sid)
@@ -739,6 +750,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
       if (!ns) throw new Error('create session failed')
       S.sessionByWc.set(e.sender.id, ns)
       S.sessionInfo.set(ns, { wc: e.sender, serve })
+      trackWcSession(e.sender.id, ns)
       const model1 = replayModel(e.sender.id, ns)
       S.pushServeHealth && S.pushServeHealth(e.sender, serve)
       // C2:知识不在开卡时注入(标题片段命中差),留 KNOWLEDGE_SLOT 占位,首条发送时用完整消息现场命中(见 card-send)
@@ -746,7 +758,9 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
       // R8 stale 历史:旧条目原地换 id(保留 created/title/model);装配层没给 replaceHistoryId 就退化为新增条目
       if (typeof replaceHistoryId === 'function') { try { replaceHistoryId(sid, ns) } catch { recordHistory(ns, wantTitle || (h && h.title), dir) } }
       else recordHistory(ns, wantTitle || (h && h.title), dir)
-      return { sessionId: ns, project: proj, dir, model: model1, reattached: false, stale: true, running: false }
+      // C4 同款回退:serve 已没有这段会话(进程重启等)→ 本地转录回放旧对话(只读回看,新消息写进新会话)
+      let txMsgs = []; try { txMsgs = readTranscript(sid); if (txMsgs.length) log('stale reattach: replay local transcript (' + txMsgs.length + ' entries) for ' + sid) } catch {}
+      return { sessionId: ns, project: proj, dir, model: model1, reattached: false, stale: true, running: false, messages: txMsgs }
     }
     const dir = S.cardDir.get(e.sender.id) || S.settings.projectDir || ''
     const serve = await oc.ensureServe(dir, S.handlers, log)
@@ -754,6 +768,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     if (!sessionId) throw new Error('create session failed')
     S.sessionByWc.set(e.sender.id, sessionId)
     S.sessionInfo.set(sessionId, { wc: e.sender, serve })
+    trackWcSession(e.sender.id, sessionId)
     const model0 = replayModel(e.sender.id, sessionId)
     S.pushServeHealth && S.pushServeHealth(e.sender, serve)
     const ctx0 = loadMemory() + loadProjectContext(dir) + KNOWLEDGE_SLOT; S.firstMsgCtx.set(sessionId, ctx0)   // C2:知识留占位,发送时懒构建
@@ -781,6 +796,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     if (!sessionId) throw new Error('create session failed')
     S.sessionByWc.set(e.sender.id, sessionId)
     S.sessionInfo.set(sessionId, { wc: e.sender, serve })
+    trackWcSession(e.sender.id, sessionId)
     const model = replayModel(e.sender.id, sessionId)
     S.pushServeHealth && S.pushServeHealth(e.sender, serve)
     // carryCtx=压缩续聊的接力摘要:上一段对话的要点随首条消息带进新会话(用户气泡不显示,回放展示层会剥)

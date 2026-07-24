@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh">
+<html lang="zh" data-resizable="1">
 <head>
 <meta charset="utf-8" />
 <title>BocomHermes</title>
@@ -2262,21 +2262,25 @@
       boot.remove()
       cardReady = true
       if (sid) {
+        // 历史回放(续接与转录两路共用):历史思考链随消息一起回放(normalizeMessages 带回 reasoning),每一轮的思考都在。
+        // 历史块默认折叠(几十轮全展开会淹没对话),点标题即展开 —— "能看到"是底线,展不展开由人定
+        const replayMsgs = (list) => list.forEach((m) => {
+          if (m.role === 'assistant' && m.reasoning) {
+            const d = document.createElement('details'); d.className = 'reason'
+            d.innerHTML = '<summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>思考过程</summary><div class="body"></div>'
+            d.querySelector('.body').textContent = m.reasoning
+            feed.appendChild(d)
+          }
+          if (m.text) addMsg(m.text, m.role === 'user' ? 'me' : 'ai')
+        })
         if (r.reattached) {
-          if (r.messages && r.messages.length) r.messages.forEach((m) => {
-            // 历史思考链随消息一起回放(normalizeMessages 带回 reasoning):每一轮的思考都在,不是只有最后一轮。
-            // 历史块默认折叠(几十轮全展开会淹没对话),点标题即展开 —— "能看到"是底线,展不展开由人定
-            if (m.role === 'assistant' && m.reasoning) {
-              const d = document.createElement('details'); d.className = 'reason'
-              d.innerHTML = '<summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>思考过程</summary><div class="body"></div>'
-              d.querySelector('.body').textContent = m.reasoning
-              feed.appendChild(d)
-            }
-            if (m.text) addMsg(m.text, m.role === 'user' ? 'me' : 'ai')
-          })
+          if (r.messages && r.messages.length) replayMsgs(r.messages)
           else addMsg('（历史消息未能载入，可直接继续这段对话）', 'ai')
         } else {
-          addMsg('（原对话已不在引擎中，已为你新开一段，标题：' + title + '）', 'ai')
+          if (r.messages && r.messages.length) {   // 原会话已不在引擎(进程重启等):本地转录回放旧对话,继续对话写进新的一段
+            replayMsgs(r.messages)
+            addNote('（原会话已不在引擎：以上是本地存档回放，继续对话将写入新的一段）', 'muted')
+          } else addMsg('（原对话已不在引擎中，已为你新开一段，标题：' + title + '）', 'ai')
         }
         setBusy(false); scrollFeed()
       } else if (embedded) {

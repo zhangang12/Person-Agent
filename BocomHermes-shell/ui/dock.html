@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh">
+<html lang="zh" data-resizable="1">
 <head>
 <meta charset="utf-8" />
 <title>对话 · BocomHermes</title>
@@ -215,7 +215,7 @@
       </div>
     </div>
 
-    <div class="seclbl" id="wfLbl" hidden>工作流 / 编排 · 点一条聚焦卡片 / 看存档<span class="sp"></span><button id="wfRefresh" class="clr nodrag">刷新</button></div>
+    <div class="seclbl" id="wfLbl" hidden>工作流 / 编排 · 点一条聚焦卡片 / 重开会话<span class="sp"></span><button id="wfRefresh" class="clr nodrag">刷新</button></div>
     <div id="wfList" class="wflist nodrag" hidden></div>
 
     <div class="seclbl">最近会话 · 点一条续接 <span class="sp"></span><button id="clear" class="clr nodrag">清空</button></div>
@@ -290,8 +290,8 @@
       el.innerHTML = '<span class="t"><span class="wfst ' + esc(w.status) + '">' + stName + '</span>' + esc(w.goal || '工作流') + '</span>'
         + (todoBit ? '<span class="meta wftodo">' + esc(todoBit) + '</span>' : '')
         + '<span class="meta">' + esc(meta) + '</span>'
-      el.title = (w.live ? (w.busy ? '运行中 — 点击聚焦卡片' : '空闲中(可能在等你批准计划) — 点击聚焦卡片') : '卡片已关 — 点击打开存档') + (w.status === 'interrupted' ? '\n已中断 — 可点「↻ 续跑」从失败步接着跑' : '') + (w.archive ? '\n' + w.archive : '')
-      el.addEventListener('click', async () => { try { await H.wfOpen({ id: w.id, archive: w.archive }) } catch (e) {} })
+      el.title = (w.live ? (w.busy ? '运行中 — 点击聚焦卡片' : '空闲中(可能在等你批准计划) — 点击聚焦卡片') : (w.sid ? '卡片已关 — 点击重开完整会话' : '卡片已关 — 点击打开存档')) + (w.status === 'interrupted' ? '\n已中断 — 可点「↻ 续跑」从失败步接着跑' : '') + (w.archive ? '\n' + w.archive : '')
+      el.addEventListener('click', async () => { try { await H.wfOpen({ id: w.id, archive: w.archive, sid: w.sid }) } catch (e) {} })
       // T4 从失败步续跑:running/interrupted 的编排项亮「↻ 续跑」小钮;pipelineRetry 通道缺席不亮
       if ((w.status === 'running' || w.status === 'interrupted') && w.kind === 'pipeline' && typeof H.pipelineRetry === 'function') {
         el.classList.add('hasretry')

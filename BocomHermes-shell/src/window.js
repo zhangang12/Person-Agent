@@ -68,6 +68,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   function saveHistory() { try { fs.writeFileSync(S.historyFile, JSON.stringify(S.history.slice(0, 50))) } catch {} }
   function loadHistory() { try { const a = JSON.parse(fs.readFileSync(S.historyFile, 'utf8')); if (Array.isArray(a)) S.history = a } catch {} }
   function recordHistory(id, title, dir) {
+    if (S.shardSids && S.shardSids.has(id)) return   // 分片会话硬闸:内部工人绝不进最近会话(调用点 shard 旗标之外的第二道防线,session.js trackWcSession 登记)
     const t = (title || '对话').replace(/\s+/g, ' ').trim().slice(0, 80)
     S.history = [{ id, title: t, dir: dir || '', project: dir ? path.basename(dir) : '未选目录', ts: Date.now(), created: Date.now() }, ...S.history.filter((h) => h.id !== id)].slice(0, 50)
     saveHistory()
@@ -580,7 +581,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const fileLines = (reg.files || []).map((f) => '- ' + f).join('\n')
     // 执行动作流水(时间+label+detail;wf-list 卡坞同源展示)
     const actLines = (reg.actions || []).map((a) => { const d = new Date(a.at || 0); const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ':' + String(d.getSeconds()).padStart(2, '0'); return '- [' + hm + '] ' + (a.kind ? a.kind + ' · ' : '') + a.label + (a.detail ? ' — ' + a.detail : '') }).join('\n')
-    fs.writeFileSync(reg.archive, '# ' + (reg.kind === 'pipeline' ? '任务编排' : '工作流') + ':' + reg.goal + '\n\n- id:' + reg.id + ' · 轮次:' + reg.rounds + ' · 用时:' + Math.round((reg.elapsedMs || 0) / 1000) + 's · 状态:' + reg.status + (reg.aborted ? ' · 曾被中止' : '') + (reg.diff ? ' · 改动:+' + reg.diff.additions + '/-' + reg.diff.deletions + ' (' + reg.diff.files + ' 文件)' : '') + '\n\n## 任务清单\n' + (todoLines || '(无)') + '\n\n## 产出文件\n' + (fileLines || '(无)') + '\n\n## 执行动作\n' + (actLines || '(无)') + '\n\n## 最终成果(最近一轮回答)\n\n' + reg.final)
+    fs.writeFileSync(reg.archive, '# ' + (reg.kind === 'pipeline' ? '任务编排' : '工作流') + ':' + reg.goal + '\n\n- id:' + reg.id + ' · 会话:' + (reg.sid || '-') + ' · 轮次:' + reg.rounds + ' · 用时:' + Math.round((reg.elapsedMs || 0) / 1000) + 's · 状态:' + reg.status + (reg.aborted ? ' · 曾被中止' : '') + (reg.diff ? ' · 改动:+' + reg.diff.additions + '/-' + reg.diff.deletions + ' (' + reg.diff.files + ' 文件)' : '') + '\n\n## 任务清单\n' + (todoLines || '(无)') + '\n\n## 产出文件\n' + (fileLines || '(无)') + '\n\n## 执行动作\n' + (actLines || '(无)') + '\n\n## 最终成果(最近一轮回答)\n\n' + reg.final)
   }
 
   // 规则法识别邮件里的会议 → 产出"建议待办"(pending 态,人工确认后才进正式待办);
@@ -1749,7 +1750,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       const shardN = tag ? regs.filter((x) => x.parentOrch === tag).length : 0   // 主控条目带分片数(面板好认"这是一次多层派发")
       out.push({
         id: r.id, goal: r.goal, status: r.status, kind: r.kind || 'workflow', rounds: r.rounds, elapsedMs: r.elapsedMs,
-        files: (r.files || []).length, at: r.at, archive: r.archive || '', shards: shardN || undefined,
+        files: (r.files || []).length, at: r.at, archive: r.archive || '', shards: shardN || undefined, sid: r.sid || '',
         diff: r.diff || null,   // session.diff 权威账本:增删行/文件数(编码模式的改动证据)
         live: !!(S.wfCardByWc && S.wfCardByWc.has(r.wcId)), busy: !!(S.isCardBusy && S.isCardBusy(r.wcId)),
         todoDone: doneN, todoTotal: todos.length, current: cur ? String((cur && (cur.content || cur.text || cur.title)) || '') : '',
@@ -1764,15 +1765,17 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
         .sort((a, b) => b.m - a.m).slice(0, 40)
       for (const a of arcs) {
         if (seen.has(a.p)) continue
-        let goal = '', kind = 'workflow'
+        let goal = '', kind = 'workflow', sid = ''
         try {
           const fd = fs.openSync(a.p, 'r'); const buf = Buffer.alloc(2048)
           const n = fs.readSync(fd, buf, 0, 2048, 0); fs.closeSync(fd)
           const head = buf.toString('utf8', 0, n)
           goal = ((head.match(/^# (?:工作流|任务编排):(.*)$/m) || [])[1] || '').trim()
           if (/^# 任务编排:/m.test(head)) kind = 'pipeline'
+          sid = ((head.match(/· 会话:(\S+)/) || [])[1] || '')   // 存档头带会话 id → 关卡后重开完整会话(wf-open),不只甩 md
+          if (sid === '-') sid = ''
         } catch {}
-        out.push({ id: a.f.split('_')[1], goal: goal || a.f, status: 'archived', kind, rounds: 0, elapsedMs: 0, files: 0, at: a.m, archive: a.p, live: false, busy: false, todoDone: 0, todoTotal: 0, current: '', actions: [] })
+        out.push({ id: a.f.split('_')[1], goal: goal || a.f, status: 'archived', kind, rounds: 0, elapsedMs: 0, files: 0, at: a.m, archive: a.p, sid, live: false, busy: false, todoDone: 0, todoTotal: 0, current: '', actions: [] })
       }
     } catch {}
     const rank = { running: 0, interrupted: 1, done: 2, archived: 3 }   // 进行中置顶,被掐断的次之(要人管),其余按时间倒序
@@ -1791,7 +1794,13 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
         const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === r.wcId)
         if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); return { ok: true, kind: 'focus' } }
       }
-      const ap = String((it && it.archive) || (r && r.archive) || '')        // 卡已关 → 打开存档
+      const sid = String((it && it.sid) || (r && r.sid) || '')
+      if (sid) {   // 卡已关但有会话 → 重开【完整会话】(serve 还在就续接;没了回本地转录回放,只读可看)—— 不再只甩一个 md
+        const goal = String((r && r.goal) || (it && it.goal) || '工作流')
+        spawnCard('工作流 · ' + goal.slice(0, 20), sid)
+        return { ok: true, kind: 'session' }
+      }
+      const ap = String((it && it.archive) || (r && r.archive) || '')        // 没有会话可重开(老存档没带 sid)→ 才退到打开存档 md
       if (ap && fs.existsSync(ap)) { shell.openPath(ap); return { ok: true, kind: 'archive' } }
       return { ok: false, err: '卡片已关且没有存档' }
     } catch (e) { return { ok: false, err: e.message } }
@@ -1884,7 +1893,13 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.on('get-self-bounds', (e) => { const w = BrowserWindow.fromWebContents(e.sender); e.returnValue = (w && !w.isDestroyed()) ? w.getBounds() : null })
   ipcMain.on('set-self-bounds', (e, b) => {
     const w = BrowserWindow.fromWebContents(e.sender)
-    if (w && !w.isDestroyed() && b) w.setBounds({ x: Math.round(b.x), y: Math.round(b.y), width: Math.round(b.width), height: Math.round(b.height) })
+    if (!w || w.isDestroyed() || !b) return
+    let x = Math.round(b.x), y = Math.round(b.y), width = Math.round(b.width), height = Math.round(b.height)
+    // 无边框窗自绘边缘缩放(carddrag.js):下钳各窗自己的 minWidth/minHeight;拖左/上缘缩放被钳时要连带修位置(对侧边不动)
+    const [mw, mh] = w.getMinimumSize()
+    if (mw && width < mw) { if (b.edges && String(b.edges).indexOf('l') >= 0) x += width - mw; width = mw }
+    if (mh && height < mh) { if (b.edges && String(b.edges).indexOf('t') >= 0) y += height - mh; height = mh }
+    w.setBounds({ x, y, width, height })
   })
   ipcMain.handle('toggle-pin', (e) => {
     const w = BrowserWindow.fromWebContents(e.sender); if (!w) return false
