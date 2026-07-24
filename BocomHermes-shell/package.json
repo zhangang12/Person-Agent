@@ -18,6 +18,9 @@
     "card:ui:test": "node scripts/card-ui-selftest.mjs",
     "knowledge:test": "node scripts/knowledge-selftest.mjs",
     "scope:test": "node scripts/writescope-selftest.mjs",
+    "lsp:test": "node scripts/lsp-smoke.mjs",
+    "forkcheck": "node scripts/fork-capability-probe.mjs",
+    "readspill:test": "node scripts/read-spill-selftest.mjs",
     "session:test": "node scripts/session-selftest.mjs",
     "modelroute": "node scripts/model-route-probe.mjs",
     "mcp:browser": "node mcp/browser-mcp.mjs",
@@ -32,10 +35,14 @@
     "mcp:config": "node mcp/print-config.mjs"
   },
   "dependencies": {
-    "pdf-parse": "^1.1.1",
+    "@vue/language-server": "^3.3.8",
     "mammoth": "^1.8.0",
-    "xlsx": "^0.18.5",
-    "mysql2": "^3.11.0"
+    "mysql2": "^3.11.0",
+    "pdf-parse": "^1.1.1",
+    "pyright": "^1.1.411",
+    "typescript": "^5.9.3",
+    "typescript-language-server": "^4.4.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "electron": "^34.0.0",
@@ -54,11 +61,28 @@
       "mcp/**/*",
       "package.json"
     ],
-    "asarUnpack": ["mcp/**/*"],
+    "asarUnpack": [
+      "mcp/**/*",
+      "node_modules/typescript-language-server/**/*",
+      "node_modules/typescript/**/*",
+      "node_modules/@vue/language-server/**/*",
+      "node_modules/@volar/**/*",
+      "node_modules/pyright/**/*"
+    ],
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "build/icon.ico",
       "sign": null
@@ -74,8 +98,20 @@
     },
     "mac": {
       "target": [
-        { "target": "dmg", "arch": ["x64", "arm64"] },
-        { "target": "zip", "arch": ["x64", "arm64"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
       ],
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",

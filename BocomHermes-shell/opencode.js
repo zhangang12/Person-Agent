@@ -220,6 +220,7 @@ function spawnServe(cwd, port) {
     CI: '1', NONINTERACTIVE: '1', TERM: 'dumb',
     NO_COLOR: '1', FORCE_COLOR: '0',
     BOCOMCODE_NO_TUI: '1', OPENCODE_NO_TUI: '1', BOCOMCODE_HEADLESS: '1', OPENCODE_HEADLESS: '1',
+    OPENCODE_DISABLE_LSP_DOWNLOAD: 'true',   // 内网无外网:opencode 内置 LSP server 探测不到会尝试联网安装(必失败),恒关;代码智能走壳层随包注册(lsp-config.js)
   }
   const opts = {
     cwd: cwd || undefined,
@@ -643,11 +644,15 @@ function stripInjected(t) {
   return String(t == null ? '' : t)
     .replace(/<个人记忆>[\s\S]*?<\/个人记忆>\s*/g, '')
     .replace(/<项目背景>[\s\S]*?<\/项目背景>\s*/g, '')
+    .replace(/<项目知识\([^)\n]{0,80}\)>[\s\S]*?<\/项目知识>\s*/g, '')     // 首条消息懒构建注入的知识块
     .replace(/<作答技能:[^>\n]{0,120}>[\s\S]*?<\/作答技能>\s*/g, '')
     .replace(/<上轮对话接力摘要>[\s\S]*?<\/上轮对话接力摘要>\s*/g, '')   // 压缩续聊注入的摘要,同样不进用户气泡
     .replace(/<动态工作流规程>[\s\S]*?<\/动态工作流规程>\s*/g, '')          // 动态工作流(Claude Code 式)注入的主 Agent 规程
     .replace(/<多层派发主控规程>[\s\S]*?<\/多层派发主控规程>\s*/g, '')        // 多层派发注入的主控规程(续接回放同样不露)
     .replace(/<任务编排执行规程>[\s\S]*?<\/任务编排执行规程>\s*/g, '')      // 任务编排注入的单 Agent 规程
+    .replace(/<任务编排·严格模式>[\s\S]*?<\/任务编排·严格模式>\s*/g, '')   // 严格模式逐步下发的包装(步骤正文保留)
+    .replace(/<主控进度>[\s\S]*?<\/主控进度>\s*/g, '')                     // 分片收官注入主控的 N/M 进度消息
+    .replace(/\s*\(系统提醒:[\s\S]*?\)\s*$/g, '')                          // 系统提醒尾巴(todoNudge 附在用户消息尾/看门狗与字节计量整条的)
     .trim()
 }
 // 从正文里拆 <think> 段(这个网关的模型思考常以 <think> 混在 text 里,不走标准 reasoning part):
