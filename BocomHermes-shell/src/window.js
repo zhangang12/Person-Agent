@@ -884,7 +884,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (S.consoleWin && !S.consoleWin.isDestroyed()) { S.consoleWin.show(); S.consoleWin.focus(); return }
     const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
     const W = Math.min(1180, sw - 60), Hh = Math.min(820, sh - 60)
-    S.consoleWin = new BrowserWindow(baseOpts({ width: W, height: Hh, x: Math.round((sw - W) / 2), y: Math.round((sh - Hh) / 2), skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 860, minHeight: 560 }))
+    S.consoleWin = new BrowserWindow(baseOpts({ width: W, height: Hh, x: Math.round((sw - W) / 2), y: Math.round((sh - Hh) / 2), skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 860, minHeight: 560,
+      // webviewTag:邮件视图以 <webview> 内嵌完整邮件中心(零移植收进壳);preload 与主窗同一份(白名单不变)
+      webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false, webviewTag: true } }))
     S.consoleWin.on('closed', () => { S.consoleWin = null })
     S.consoleWin.loadFile(path.join(__dirname, '..', 'ui', 'console.html'))
   }

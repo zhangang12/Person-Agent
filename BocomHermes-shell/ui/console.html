@@ -185,7 +185,6 @@
   #bSend:hover { background:var(--acc2); } #bSend:disabled { opacity:.45; cursor:default; }
   #bStop { flex:none; padding:7px 14px; border:1px solid var(--err); border-radius:9px; background:transparent; color:var(--err); font-size:13px; cursor:pointer; }
   #bStop:hover { background:rgba(248,81,73,.12); }
-</style>
   /* ── 工作流视图 ── */
   .flows { padding:16px 20px; }
   .launch { display:flex; gap:9px; margin-bottom:8px; }
@@ -287,10 +286,10 @@
     <div class="logo">❯_</div>
     <button class="nav" :class="{on:view==='chat'}" @click="view='chat'"><span class="ic">💬</span><span class="lb">对话</span></button>
     <button class="nav" :class="{on:view==='flows'}" @click="enterFlows"><span class="ic">🔀</span><span class="lb">工作流</span></button>
+    <button class="nav" :class="{on:view==='mail'}" @click="enterMail"><span class="ic">✉️</span><span class="lb">邮件</span></button>
     <button class="nav" :class="{on:view==='todos'}" @click="enterTodos"><span class="ic">✅</span><span class="lb">待办</span></button>
     <button class="nav" :class="{on:view==='settings'}" @click="enterSettings"><span class="ic">⚙️</span><span class="lb">设置</span></button>
     <div class="sp"></div>
-    <button class="mini" title="邮件中心(独立窗)" @click="BH.openMailCenter()">✉️</button>
     <button class="mini" title="切换深/浅主题" @click="toggleTheme">◐</button>
   </nav>
 
@@ -442,6 +441,18 @@
     </div>
   </section>
 
+  <!-- ═══ 邮件视图:webview 内嵌完整邮件中心(功能零损失;?embed=1 嵌入态)═══ -->
+  <section class="view" v-show="view==='mail'">
+    <div class="titlebar">
+      <span class="tt">邮件</span><span class="sub">收件箱 · 发件箱 · 摘要 · 邮箱设置</span>
+      <span class="sp"></span>
+      <button class="wctl" @click="BH.minimizeSelf()">—</button>
+      <button class="wctl" @click="BH.toggleMaximize()">▢</button>
+      <button class="wctl close" @click="BH.closeSelf()">✕</button>
+    </div>
+    <webview v-if="mailSrc" :src="mailSrc" :preload="preloadUrl" style="flex:1;min-height:0;display:flex;border:none"></webview>
+  </section>
+
   <!-- ═══ 待办视图 ═══ -->
   <section class="view" v-show="view==='todos'">
     <div class="titlebar">
@@ -536,6 +547,8 @@ createApp({
       history: [], feedItems: [], input: '',
       // 工作流
       wfGoal: '', wfItems: [], wfQueued: [], wfTemplates: [],
+      // 邮件(webview 懒加载:第一次进视图才挂 src)
+      mailSrc: '', preloadUrl: '',
       // 待办
       todos: [], sugs: [], newTodo: '', newUrgency: '中',
       // 设置
@@ -829,9 +842,16 @@ createApp({
     },
     async wfDel(w) { try { await BH.wfDelete(w.id) } catch {} ; this.loadWf() },
     async wfRetry(w) { try { await BH.pipelineRetry(w.id) } catch {} ; setTimeout(() => this.loadWf(), 800) },
+    // ── 邮件视图(webview 内嵌 mailcenter;preload 给绝对 file URL;懒加载)─────
+    enterMail() {
+      this.view = 'mail'
+      if (!this.mailSrc) {
+        this.preloadUrl = new URL('../preload.js', location.href).href
+        this.mailSrc = 'mailcenter.html?embed=1'
+      }
+    },
     // ── 待办视图 ────────────────────────────────────────────────────────
-    enterTodos() { this.view = 'todos'; this.loadTodos(); this.loadSugs() },
-    async loadTodos() { try { this.todos = (await BH.todoList()) || [] } catch {} },
+    enterTodos() { this.view = 'todos'; this.loadTodos(); this.loadSugs() },    async loadTodos() { try { this.todos = (await BH.todoList()) || [] } catch {} },
     async loadSugs() { try { this.sugs = ((await BH.todoSuggestList()) || []).filter((s) => s.status === 'pending') } catch {} },
     async addTodo() {
       const t = this.newTodo.trim(); if (!t) return

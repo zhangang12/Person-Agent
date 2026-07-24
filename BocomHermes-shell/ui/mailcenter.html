@@ -220,8 +220,11 @@
   const fromName = (raw) => { const s = String(raw || ''); const m = s.match(/^\s*"?([^"<]+?)"?\s*</); return (m ? m[1] : s).trim() || s }
   function fmtDate(d) { const t = Date.parse(d); if (isNaN(t)) return String(d || '').slice(0, 16); const dt = new Date(t), now = new Date(), pad = (n) => String(n).padStart(2, '0'); return dt.toDateString() === now.toDateString() ? `${pad(dt.getHours())}:${pad(dt.getMinutes())}` : `${dt.getMonth() + 1}/${dt.getDate()} ${pad(dt.getHours())}:${pad(dt.getMinutes())}` }
 
+  // 嵌入态(?embed=1,被控制台以 webview 内嵌):藏关闭钮 + 禁用 Esc 关闭 —— 否则 close-self 关的是整个控制台窗口
+  const EMBED = new URLSearchParams(location.search).has('embed')
+  if (EMBED) { const xb = $('x'); if (xb) xb.style.display = 'none' }
   $('x').addEventListener('click', () => H.closeSelf())
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') H.closeSelf() })
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !EMBED) H.closeSelf() })
 
   // ── Tab ──
   function showTab(which) {
