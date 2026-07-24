@@ -22,7 +22,7 @@
  * 配置(环境变量,读取时机 = 插件初始化;serve 进程环境;均可省):
  *   BOCOMHERMES_READ_SPILL_MAX    阈值(字符),默认 8000;设为 0 或负数 = 关闭插件
  *   BOCOMHERMES_READ_SPILL_HEAD   摘要保留头部行数,默认 40
- *   BOCOMHERMES_READ_SPILL_TOOLS  拦截的工具名(逗号分隔,大小写不敏感),默认 "read,grep"
+ *   BOCOMHERMES_READ_SPILL_TOOLS  拦截的工具名(逗号分隔,大小写不敏感),默认 "read,grep,bash"(bash 同拦:模型会用 cat 绕开 read)
  *   BOCOMHERMES_READ_SPILL_DIR    落盘目录,默认 <系统 temp>/bocomhermes-read-spill
  *   (注意:opencode 是 Windows 原生进程,传 Windows 路径如 C:/...,不要传 Git Bash 的 /c/...)
  *
@@ -73,7 +73,7 @@ function spillIfTooBig(text, cfg) {
 function loadConfig() {
   const maxChars = Number(process.env.BOCOMHERMES_READ_SPILL_MAX ?? 8000)
   const headLines = Number(process.env.BOCOMHERMES_READ_SPILL_HEAD ?? 40)
-  const tools = String(process.env.BOCOMHERMES_READ_SPILL_TOOLS || 'read,grep')
+  const tools = String(process.env.BOCOMHERMES_READ_SPILL_TOOLS || 'read,grep,bash')   // bash 同拦:模型会用 cat 绕开 read(实测),>阈值照样外溢;TUI 快照问题仅影响界面显示(metadata.output 已同步替换)
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
   const spillDir = process.env.BOCOMHERMES_READ_SPILL_DIR
     || path.join(os.tmpdir(), 'bocomhermes-read-spill')

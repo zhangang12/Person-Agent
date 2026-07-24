@@ -6,7 +6,7 @@
  *   ① 小输出不拦(原样放行、不落盘)
  *   ② 超阈值输出:完整内容写临时文件 + 钩子输出被替换为「头部 + 摘要 + 路径」
  *   ③ 落盘临时文件内容完整可读(逐字节等于原始输出)
- *   ④ 非目标工具(如 bash)不拦
+ *   ④ bash 默认同拦(cat 绕 read 的实测补丁) + 自定义清单外工具(write)不拦
  *   ⑤ 阈值环境变量(BOCOMHERMES_READ_SPILL_MAX)生效;0 = 关闭
  *   ⑥ metadata.output 快照同步替换 + spillFile 元数据留痕
  * 怎么跑: node scripts/read-spill-selftest.mjs   (npm run readspill:test)
@@ -91,13 +91,19 @@ function bigText(lines = 500, lineLen = 40) {
   ok('metadata 留痕 spillFile 指向落盘文件', output.metadata.spillFile === path.join(TEST_DIR, file))
 }
 
-// ── ④ 非目标工具不拦 ──
+// ── ④ 目标工具清单:bash 默认同拦(cat 绕 read 的实测补丁);自定义清单外的工具不拦 ──
 {
   const hooks = await loadPluginWithEnv({ BOCOMHERMES_READ_SPILL_DIR: TEST_DIR })
   const original = bigText(500, 40)
   const output = { title: 'bash', output: original, metadata: {} }
   await hooks['tool.execute.after']({ tool: 'bash', sessionID: 'ses_4', callID: 'c4' }, output)
-  ok('非目标工具(bash)大输出不拦', output.output === original)
+  ok('bash 大输出默认也拦(cat 绕 read 的补丁)', output.output !== original && /输出过长已外溢/.test(output.output))
+  ok('自定义清单外的工具(write)大输出不拦', await (async () => {
+    const h2 = await loadPluginWithEnv({ BOCOMHERMES_READ_SPILL_DIR: TEST_DIR, BOCOMHERMES_READ_SPILL_TOOLS: 'read,grep' })
+    const o = { title: 'write', output: original, metadata: {} }
+    await h2['tool.execute.after']({ tool: 'write', sessionID: 'ses_4c', callID: 'c4c' }, o)
+    return o.output === original
+  })())
   ok('grep 在默认拦截清单内', await (async () => {
     const o = { title: 'grep', output: original, metadata: {} }
     await hooks['tool.execute.after']({ tool: 'grep', sessionID: 'ses_4b', callID: 'c4b' }, o)

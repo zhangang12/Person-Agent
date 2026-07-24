@@ -28,6 +28,39 @@ async function api(method, p, body) {
   let json; try { json = text ? JSON.parse(text) : undefined } catch {}
   return { status: res.status, text, json }
 }
+// 权限自动放行(探针无人值守:模型调 write/bash 触发批准框没人点,回合卡死——实测复现)。听 SSE 的 permission 事件,来了就回 once
+function autoApprovePerms(stop, sid) {
+  ;(async () => {
+    try {
+      const res = await fetch(BASE + '/event')
+      const rd = res.body.getReader(); const dec = new TextDecoder(); let buf = ''
+      while (!stop.done) {
+        const { value, done } = await rd.read()
+        if (done) break
+        buf += dec.decode(value, { stream: true })
+        let idx
+        while ((idx = buf.indexOf('\n\n')) >= 0) {
+          const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2)
+          for (const line of chunk.split('\n')) {
+            if (!line.startsWith('data:')) continue
+            try {
+              const evt = JSON.parse(line.slice(5).trim())
+              const type = String((evt && evt.type) || '')
+              if (!type.includes('permission') || type.includes('replied') || type.includes('response')) continue
+              const p = (evt && evt.properties) || {}
+              const rid = p.requestID ?? p.id ?? p.permissionID ?? p.permissionId
+              if (!rid) continue
+              const r1 = await api('POST', '/permission/' + rid + '/reply', { reply: 'once' })
+              if (r1.status >= 400) await api('POST', '/session/' + sid + '/permissions/' + rid, { reply: 'once' })   // 老端点兜底
+              console.log('  (权限放行 ' + String(rid).slice(0, 16) + '…)')
+            } catch {}
+          }
+        }
+      }
+      try { rd.cancel() } catch {}
+    } catch {}
+  })()
+}
 // 长回合用 http.request(实测:electron-as-node 的 undici fetch 在分钟级长响应上会 fetch failed,http 模块稳)
 import http from 'node:http'
 function apiLong(p, body, timeoutMs) {
@@ -94,7 +127,10 @@ async function main() {
     sid = r.json && (r.json.id || (r.json.data && r.json.data.id) || (r.json.info && r.json.info.id))
     if (!sid) { FAIL('POST /session', 'status=' + r.status); return dump() }
     console.log('  (session ' + String(sid).slice(0, 16) + '… 让模型 read ~60KB 文件,等待回合结束,最长 5 分钟)')
-    const send = await apiLong('/session/' + sid + '/message', { parts: [{ type: 'text', text: '用 read 工具读取文件 ' + bigFile + '(直接 read,不要分段),然后只回答:它的总行数。' }] }, 300000)
+    const permStop = { done: false }
+    autoApprovePerms(permStop, sid)   // 权限自动放行:模型触发批准框没人点会卡死回合(实测)
+    const send = await apiLong('/session/' + sid + '/message', { parts: [{ type: 'text', text: '【只允许用 read 工具】(禁止 bash/cat/powershell/任何其它工具)读取文件 ' + bigFile + ',然后只回答:它的总行数。' }] }, 300000)
+    permStop.done = true
     // 有的版本 POST 直接返回回合结果(单条 assistant 消息或消息数组),有的要拉消息列表;三种形状都认
     let msgs = null
     if (Array.isArray(send.json)) msgs = send.json
@@ -103,14 +139,15 @@ async function main() {
     if (!msgs || !msgs.length) { const g = await api('GET', '/session/' + sid + '/message'); msgs = g.json && (Array.isArray(g.json) ? g.json : (g.json.messages || g.json.data)) }
     const readParts = []
     for (const m of msgs || []) for (const p of (m.parts || (m.data && m.data.parts) || [])) {
-      if (p && p.type === 'tool' && /read/i.test(String(p.tool || (p.state && p.state.tool) || p.name || ''))) readParts.push(p)
+      if (p && p.type === 'tool' && /^(read|grep|bash)$/i.test(String(p.tool || (p.state && p.state.tool) || p.name || ''))) readParts.push(p)
     }
-    if (!readParts.length) WARN('模型没调 read', '模型行为差异,不是机制问题 —— 换个更强势的 prompt 重跑本探针')
+    if (!readParts.length) WARN('模型没调 read/grep/bash', '模型行为差异,不是机制问题 —— 换个更强势的 prompt 重跑本探针')
     else {
       const out = String(readParts.map((p) => (p.state && p.state.output) || p.output || '').join('\n'))
-      if (out.includes(SPILL_MARK)) PASS('插件外溢生效', 'read 输出被替换为摘要+落盘路径(tool.execute.after 回写确认)')
-      else if (out.length > 8000) FAIL('插件未生效', 'read 输出原文 ' + out.length + ' 字符直接进了上下文 —— fork 插件机制被砍/目录没扫/没加载 read-spill.js(检查 ~/.config/opencode/plugin/)')
-      else WARN('read 输出小于阈值', out.length + ' 字符 < 8000 —— 无法判定插件是否生效(文件被 fork 侧截断了?这反而是好事,说明 R1 已在引擎里)')
+      const usedBash = readParts.some((p) => /bash/i.test(String(p.tool || (p.state && p.state.tool) || p.name || '')))
+      if (out.includes(SPILL_MARK)) PASS('插件外溢生效', 'read/grep/bash 输出被替换为摘要+落盘路径(tool.execute.after 回写确认' + (usedBash ? ',模型走了 bash 也被拦' : '') + ')')
+      else if (out.length > 8000) FAIL('插件未生效', 'read/grep/bash 输出原文 ' + out.length + ' 字符直接进了上下文 —— fork 插件机制被砍/目录没扫/没加载 read-spill.js(检查 ~/.config/opencode/plugin/ 与 serve 启动时间:插件只在新 serve 启动时加载)')
+      else WARN('read/grep/bash 输出小于阈值', out.length + ' 字符 < 8000 —— 无法判定插件是否生效(文件被 fork 侧截断了?这反而是好事,说明 R1 已在引擎里)')
     }
   } catch (e) { FAIL('T1 执行', e.message) }
   finally { try { if (sid) await api('DELETE', '/session/' + sid) } catch {}; try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch {} }

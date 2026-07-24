@@ -63,6 +63,8 @@
     ],
     "asarUnpack": [
       "mcp/**/*",
+      "scripts/fork-capability-probe.mjs",
+      "scripts/lsp-smoke.mjs",
       "node_modules/typescript-language-server/**/*",
       "node_modules/typescript/**/*",
       "node_modules/@vue/language-server/**/*",
