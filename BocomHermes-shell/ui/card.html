@@ -905,7 +905,7 @@
   //   估算态 = 本会话进过上下文的字符估算(发出的消息 + 回答/思考 + 父会话工具入参/结果)/1.6 —— chip 带 ~ 前缀。
   // 上限=当前模型元数据的 limit.context(serve /config/providers 真实值),serve 没报走小映射表,再兜底 128k。
   const ctxChip = document.getElementById('ctxchip')
-  let ctxUsedChars = 0, ctxLimitTokens = 0, curDir = '', ctxRealTokens = null   // ctxRealTokens=serve 实测值,null=估算态
+  let ctxUsedChars = 0, ctxLimitTokens = 0, curDir = '', ctxRealTokens = null, ctxCacheHit = null   // ctxRealTokens=serve 实测值,null=估算态;ctxCacheHit=KV-cache 命中率(serve 报缓存字段才有)
   const countedToolParts = new Set()
   // serve 不报 limit.context 时的型号兜底表(按 modelID 小写子串匹配,保守取公开标称值;可配置化留给旋钮,先集中在这)
   const CTX_FALLBACK = [['claude', 200000], ['gpt-4', 128000], ['gpt-3.5', 16000], ['deepseek', 64000], ['qwen', 131072], ['glm', 128000], ['kimi', 131072], ['llama', 128000]]
@@ -931,6 +931,7 @@
       if (u && +u.tokens > 0) {
         ctxRealTokens = +u.tokens
         if (+u.limit > 0) ctxLimitTokens = ctxCap(+u.limit)
+        ctxCacheHit = (+u.tokens > 0 && (+u.cacheRead > 0 || +u.cacheWrite > 0)) ? (+u.cacheRead) / (+u.tokens) : null   // KV-cache 命中率(cacheRead/实际进上下文量);serve 不报缓存字段则为 null 不展示
         paintCtxChip()
       }
     } catch {}
@@ -946,6 +947,7 @@
     ctxChip.classList.toggle('ctxwarn', pct >= 0.7 && pct < 0.9)
     ctxChip.classList.toggle('ctxdanger', pct >= 0.9)
     ctxChip.title = (real ? '本会话上下文(serve 实测):' : '本会话上下文估算:约 ') + (est > 999 ? (est / 1000).toFixed(1) + 'k' : est) + ' / ' + Math.round(ctxLimitTokens / 1000) + 'k tokens'
+      + (ctxCacheHit != null ? '\nKV-cache 命中率 ' + Math.round(ctxCacheHit * 100) + '%(前缀越稳越高;低于 ~30% 说明前缀在漂移,查注入动态内容是不是插到头部了)' : '')
       + (pct >= 0.7 ? '\n越接近上限回答质量越差 —— 点击「压缩续聊」:把本段对话总结成接力摘要,开新会话无缝继续' : '\n点击可提前压缩续聊')
   }
   const bumpCtx = (n) => { if (n > 0) { ctxUsedChars += n; paintCtxChip() } }
@@ -954,8 +956,8 @@
   let compacting = false, autoCompactN = 0, _capNoted = false
   const AUTO_COMPACT_MAX = 5   // 自动压缩上限兜底默认(knobs.autoCompactMax 可调):防病态循环(每轮都爆);到顶转人工(chip 仍可点)
   const autoCompactMax = () => Math.max(1, Math.round(knobNum('autoCompactMax', AUTO_COMPACT_MAX)))   // 生效值(knobNum 见下,防御缺省)
-  const SUM_PROMPT_CHAT = '请把我们这段对话压缩成一份「接力摘要」，供新会话继续用。包含：1) 正在做的事与目标 2) 已确认的关键结论/决定（保留文件路径、命令、数据） 3) 未完成事项与下一步 4) 需要沿用的约束与偏好。只输出摘要正文。'
-  const SUM_PROMPT_WF = '请把本工作流到目前为止压缩成一份「接力摘要」，供新会话无缝继续执行。必须包含：1) 总目标 2) todo 计划清单及各项当前状态（原样逐条列出） 3) 已确认的关键结论与产出（保留文件路径、file:行号、命令、数据；子 Agent 已回报的发现逐条保留） 4) 未完成事项与下一步打算 5) 需沿用的约束。只输出摘要正文。'
+  const SUM_PROMPT_CHAT = '请把我们这段对话压缩成一份「接力摘要」，供新会话继续用。包含：1) 正在做的事与目标 2) 已确认的关键结论/决定（保留文件路径、命令、数据） 3) 未完成事项与下一步 4) 已排除的思路与失败尝试（各附一句原因 —— 保错误证据，下一棒不重犯） 5) 需要沿用的约束与偏好。只输出摘要正文。'
+  const SUM_PROMPT_WF = '请把本工作流到目前为止压缩成一份「接力摘要」，供新会话无缝继续执行。必须包含：1) 总目标 2) todo 计划清单及各项当前状态（原样逐条列出） 3) 已确认的关键结论与产出（保留文件路径、file:行号、命令、数据；子 Agent 已回报的发现逐条保留） 4) 未完成事项与下一步打算 5) 已尝试与已排除路径（失败的方法/走过的死胡同/被否决的方案，各附一句原因 —— 保错误证据，下一棒不重犯） 6) 需沿用的约束。只输出摘要正文。'
   async function compactCore(auto) {
     if (compacting) return false
     compacting = true
@@ -970,7 +972,7 @@
         const r = await window.BocomHermes.cardReinit({ dir: curDir, carryCtx: summary, shard: shardMode })
         resetConversation()
         paintProj(r.project, r.dir); paintModelChip(r.model); curDir = r.dir || curDir
-        ctxUsedChars = summary.length; ctxRealTokens = null; countedToolParts.clear(); paintCtxChip(); refreshCtxLimit()
+        ctxUsedChars = summary.length; ctxRealTokens = null; ctxCacheHit = null; countedToolParts.clear(); paintCtxChip(); refreshCtxLimit()
         ctxNag = false   // 水位提醒复位:上下文已回起点,下次涨回 90% 要允许再提醒(以前一响定终身)
         const d = document.createElement('details'); d.className = 'reason'
         d.innerHTML = '<summary><svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>接力摘要（已随新会话注入）</summary><div class="body"></div>'
@@ -1028,6 +1030,44 @@
       addNote('上下文已用 ' + Math.round(pct * 100) + '% —— 继续聊质量会下降,建议点上方上下文 chip「压缩续聊」', 'muted')
     } catch {}
   }
+  // ── 委派驱动(harness):复杂任务主 Agent 一直单干 = 必走歪路(128k 被原文灌爆/串行慢/质量降) ──
+  // 检测:todo ≥3 步(复杂) 且 已实质干活(读过文件/写过文件) 且 ≥2 轮 且 从未派过 task/delegate_task →
+  // wf 卡自动注入"按规程第 4 条派子 Agent 并行"(无人值守必须纠);普通卡给可见建议(用户主导,不硬推)。
+  // 每个任务只催一次;派过子 Agent 或催过就不再管(尊重模型的自主分工判断)。
+  let delegatedSeen = false, delegateNudged = false
+  function maybeDelegateNudge() {
+    if (delegatedSeen || delegateNudged || compacting || planPending) return
+    if (latestTodos.length < 3 || turnN < 2) return   // 不够复杂/还在第一轮,别吵
+    if (!wdRounds.length && !wfExecSeen) return        // 还没实质干活(纯规划期),别催
+    delegateNudged = true
+    if (wfMode) {
+      injectMessage('(系统提醒:这是一个多步骤复杂任务,你已多轮亲自单干 —— 按规程第 4 条:满足【彼此独立 + 需深读很多文件 + 能同时干】的工作块,用 task 一条消息一次派多个子 Agent 并行(各自独立 128k),指令只写目标/文件路径清单/边界/回报格式,贴原文会被壳层拦停。你只保留综合与验收;琐碎块可以自干,大片深读/大改造必须下放。)')
+      addNote('委派驱动:检测到复杂任务在单干,已提醒按规程派子 Agent 并行', 'muted')
+    } else {
+      addNote('这个任务有多步且已读了不少文件 —— 适合对我说「派子 Agent 并行干」或从卡坞开【动态工作流】,比单会话串行啃快且不容易丢上下文', 'muted')
+    }
+  }
+  // ── 长任务防停(harness):模型做一部分就结束回合 ≠ 干完 —— todo 还有未完项就催它继续 ──
+  // wf/orch/shard 卡:自动注入"继续"(无人值守,停下=整链卡死);普通对话卡:出可见「继续执行」按钮(判动权给人,不自动跑)。
+  // 防死循环:连催 3 次且未完项数没降 → 停催转人工;未完项变少=有进展,计数即复位。
+  let contNudgeN = 0, contLastOpen = -1
+  function maybeContinueNudge() {
+    const open = latestTodos.filter((t) => !/complet|cancel/i.test(String(t && t.status || ''))).map((t) => String((t && (t.content || t.text || t.title)) || '')).filter(Boolean)
+    if (!open.length) { contNudgeN = 0; contLastOpen = -1; return }
+    if (contLastOpen >= 0 && open.length < contLastOpen) contNudgeN = 0
+    contLastOpen = open.length
+    if (contNudgeN >= 3) { addNote('任务仍未完成(todo 剩 ' + open.length + ' 项),已连续催 3 次无进展 —— 不再自动催,请人工看看卡在哪', 'muted'); return }
+    contNudgeN++
+    if (wfMode) {   // 工作流/分片/主控:自动催(停下=链死)
+      injectMessage('(系统提醒:任务还没完成 —— todo 还有 ' + open.length + ' 项未完成:「' + open.slice(0, 3).join('、') + (open.length > 3 ? '…' : '') + '」。不要停在这里,立即继续执行下一步;真遇到阻塞,明说卡在哪、需要什么。)')
+    } else {   // 普通对话卡:可见建议 + 一键继续
+      const d = document.createElement('div'); d.className = 'note'
+      d.textContent = '任务清单还有 ' + open.length + ' 项未完成，Agent 提前停下了 —— '
+      const b = document.createElement('button'); b.className = 'rbtn-ghost'; b.textContent = '继续执行'
+      b.addEventListener('click', () => { if (busy) return; d.remove(); turn('继续执行：接着上次停下的地方，把剩余 ' + open.length + ' 项任务继续做完。') })
+      d.appendChild(b); feed.appendChild(d); scrollFeed()
+    }
+  }
   // 产出兜底(工作流卡,对应规程第7条【默认必须落盘产出 MD】):todo 全勾(快完成)却零落盘产出 →
   // 注入系统提醒补 MD(一次,不循环唠叨;有产出自然不触发;没列 todo 的极简单目标不打扰)
   let wfProduceNag = false
@@ -1040,7 +1080,7 @@
   }
   // settings 旋钮读取(防御):装配波会把旋钮写进 settings.json 的 knobs.*;读不到就用默认值,绝不抛。
   // 本波用到的 key:knobs.approvalTimeoutMin / watchdogRounds / watchdogOverlap / watchdogEscalateRounds
-  //               / ctxCompactPct / autoCompactMax / todoNudgeRounds(波2D 接入;knobNum 每次现读,改设置下一条消息即生效)
+  //               / ctxHandoffPct / autoCompactMax / todoNudgeRounds(波2D 接入;knobNum 每次现读,改设置下一条消息即生效)
   function knobNum(key, dflt) {
     try {
       const k = window.BocomHermes.getSettings && window.BocomHermes.getSettings().knobs
@@ -1075,15 +1115,17 @@
     if (!planPending) return   // 闸已不在(撤闸/已批)→ 拒二次注入
     planPending = false
     clearPlanBar()
+    try { window.BocomHermes.wfPlanApproved && window.BocomHermes.wfPlanApproved() } catch {}   // 上报壳层状态位(relay /orch/run 据此拦主控未批派发)
     injectMessage(APPROVE_MSG, shardMode ? '✅ 分片自动批准开跑(拆分方案主控已批)' : auto ? '✅ 倒计时到期,自动批准开跑' : '✅ 已批准,开始执行')
   }
   function maybeShowPlanBar() {
     if (!planPending || busy || !cardReady || compacting) return
     if (shardMode) { approvePlan(true); return }   // 分片卡:拆分方案主控卡已批,自动开跑(静默卡没人点按钮)
-    if (wfExecSeen) {   // 模型已经实质执行(没守"首轮只规划")→ 闸没意义了:撤闸并一次性说明,别让用户批一个已完成的计划
-      planPending = false
+    if (wfExecSeen) {   // 模型已经实质执行(没守"首轮只规划")→ 闸没意义了:撤闸并【注入】继续指令 —— 只埋闸不吭声会让守规矩等批准的模型软死锁(实测),
+      planPending = false   // 它可能只干了一半;已干完的也就多回一句话,代价可接受。note 文案保持中性,别谎称"已执行完毕"
       clearPlanBar()   // 上一轮的条可能还挂着(带倒计时),必须连计时器一起埋了
-      addNote('模型已直接执行完毕 —— 计划批准闸自动跳过', 'muted')
+      addNote('模型已开始实质执行 —— 计划批准闸已自动跳过(已通知它继续,不用等批准)', 'muted')
+      injectMessage('(系统提醒:你已提前开始实质执行,计划批准闸已自动跳过 —— 不用等批准,请继续按当前计划执行直至总目标完成;执行中保持 todo 勾选可见。)')
       return
     }
     if (document.getElementById('planBar')) return
@@ -1157,7 +1199,8 @@
       if (!(union.size > 0 && inter.size / union.size >= ov)) return
       wdWarned = true; wdEscLoops = 0; wdWarnTurn = turnN; wdWarnSet = union
       addNote('看门狗：检测到连续 ' + N + ' 轮反复读同一批文件且无进展，已提醒 Agent 换策略', 'muted')
-      injectMessage('(系统提醒:检测到你可能在绕圈 —— 连续多轮反复读取同一批文件,而计划没有任何进展。请立即停止重复读取:先汇聚已有发现给出结论;信息不够就换策略(不同工具/关键词/换个角度),不要再读相同的文件。)')
+      // 提醒消息带总目标背诵(recitation):弱模型被纠偏后容易漂到别处,把目标重进上下文尾部(近期注意力区)
+      injectMessage('(系统提醒:检测到你可能在绕圈 —— 连续多轮反复读取同一批文件,而计划没有任何进展。重申总目标:「' + String(dispMsg || title).slice(0, 80) + '」。请立即停止重复读取:先汇聚已有发现给出结论;信息不够就换策略(不同工具/关键词/换个角度),不要再读相同的文件。)')
       return
     }
     // 第二级判定(已警告过):只看"是不是还在绕那批文件" —— 提醒应答这种无读文件轮不计数也不复位
@@ -1274,7 +1317,8 @@
     try { clearPlanBar() } catch {}   // feed 清空会把计划条带走,倒计时计时器必须一起埋(防闸死后二次注入)
     if (!shardMode) { try { wdReset() } catch {} }   // 会话换了(切项目/压缩续聊)→ 看门狗账本清零,绕圈 streak 不跨会话;分片卡不清:跨棒绕圈正是分片死循环的典型形态,账本跨棒连续才抓得到
     try { saSnaps.length = 0; sdPaintRoundSel() } catch {}   // 跨轮快照同样不跨会话
-    try { ctxUsedChars = 0; ctxRealTokens = null; countedToolParts.clear(); paintCtxChip() } catch {}
+    delegatedSeen = false; delegateNudged = false   // 委派驱动标记随会话重置:新任务重新评估单干/分工
+    try { ctxUsedChars = 0; ctxRealTokens = null; ctxCacheHit = null; countedToolParts.clear(); paintCtxChip() } catch {}
   }
 
   function addMsg(text, who) {
@@ -1286,6 +1330,8 @@
   }
   let lastSend = null   // 本轮发出的 {text, files}:错误重试/重新回答都免重打
   let shardAutoRetryN = 0   // 分片卡(无人值守)空答自动重试计数:上限 2 次,防网关持续静默时死循环
+  let abortedTurn = false   // 本轮被用户主动中止(轮末据此决定挂不挂批准条:中止挂/出错不挂)
+  let autoRetryPending = false   // 自动重试已排期(等旧回合 finally 走完):期间 busy 不许清 —— 否则旧 finally 把重试中的 busy 踩成 false,批准条/注入会并发起第二个回合(实测)
   // 出错后的可行动提示:错误信息 + 「重试本轮」按钮(同一条消息原样重发,内网网关抖动场景的刚需)
   function addRetryNote(msg) {
     // 分片卡/主控卡(无人值守):空答/失败自动重试,至多 2 次 —— 否则卡死,整条多层链永远等不到(实测病灶)
@@ -1298,7 +1344,9 @@
         if (lastAi && /无文本输出/.test(lastAi.textContent || '')) lastAi.remove()
       } catch {}
       addNote((shardMode ? '分片' : '主控') + '自动重试(' + shardAutoRetryN + '/2):网关静默/模型空答', 'muted')
-      turn(lastSend.text, null, lastSend.files)
+      // 不直接同步调 turn():旧回合的 finally 还没走,setBusy(true) 会被它踩回 false —— 排期到 finally 之后
+      autoRetryPending = true
+      setTimeout(() => { autoRetryPending = false; if (cardReady) turn(lastSend.text, null, lastSend.files) }, 0)
       return
     }
     const d = document.createElement('div'); d.className = 'note muted'
@@ -1903,9 +1951,10 @@
       return
     }
     if (kind === 'tool') {
-      // 批准闸的实质执行探针:派了执行子Agent / 写了文件 → 撤闸(maybeShowPlanBar 据此跳过)。
+      // 批准闸的实质执行探针:派了执行子Agent → 撤闸(maybeShowPlanBar 据此跳过)。
       // write/edit 的同款正则 renderTool 里也有(收进成果抽屉),两边信号各管各的:一个管撤闸,一个管清单。
-      if (/^(task|delegate_task)$/i.test(String(text || '')) || /^(write|edit)(_[a-z]+)*$/i.test(String(text || ''))) wfExecSeen = true
+      // 主控卡豁免 write/edit:落盘哲学要求它写勘察清单/规划文档,这是本职不是越权;它真正的"执行"=派分片(run_workflow,relay 层有 planApproved 闸)
+      if (/^(task|delegate_task)$/i.test(String(text || '')) || (!orchMode && /^(write|edit)(_[a-z]+)*$/i.test(String(text || '')))) wfExecSeen = true
       if (text === 'todowrite') {                         // 主 Agent 更新了 todo:记轮次+是否还有未完项(工作流提醒兜底据此判断)
         try { const inp = typeof input === 'string' ? JSON.parse(input) : input; const ts = inp && Array.isArray(inp.todos) ? inp.todos : null
           if (ts) { wfTodoLastTurn = turnN; wfTodoOpen = ts.some((t) => !/complet|cancel/i.test(String(t && t.status || '')))
@@ -1919,6 +1968,7 @@
         } catch {}
       }
       if (/^(task|delegate_task)$/i.test(String(text || ''))) {   // 父会话的委派工具(内建 task / oh-my-openagent delegate_task)= 起/收一个子agent
+        delegatedSeen = true   // 委派驱动(harness):派过子 Agent 就不再催
         const gid = taskChild || ''
         const fin = /complet|success|done|finish|error|fail|deny|reject/i.test(status || '')
         // 主 feed 只留这一行紧凑的 task 调用(它是主 Agent 自己的事件):能看到"派了谁、跑完没、结论是啥";
@@ -1947,10 +1997,17 @@
     const ai = target || addMsg('', 'ai')
     const PH = target ? '运行中…' : '思考中…'; ai.textContent = PH
     clearPlanBar()   // 新一轮开跑即撤计划条(连倒计时计时器一起清;用户在调整计划,轮末若仍待批会重挂)
+    abortedTurn = false   // 中止标记每轮重置:只影响本轮轮末挂不挂批准条
     turnN++
     if (!target && wfMode && !compacting && !planPending && wfTodoOpen && wfTodoLastTurn >= 0 && turnN - wfTodoLastTurn >= Math.max(1, Math.round(knobNum('todoNudgeRounds', 3)))) {
-      text = String(text || '') + '\n\n(系统提醒:todo 清单已多轮未更新 —— 用 todowrite 把已完成项标 completed、当前项标 in_progress,保持计划对用户可见)'
+      text = String(text || '') + '\n\n(系统提醒:todo 清单已多轮未更新 —— 重申总目标:「' + String(dispMsg || title).slice(0, 80) + '」;用 todowrite 把已完成项标 completed、当前项标 in_progress,保持计划对用户可见)'
       wfTodoLastTurn = turnN   // 提醒过就重置,别每轮唠叨
+    }
+    // 周期目标背诵(Manus recitation,抗 lost-in-middle):wf 卡每 5 轮把总目标+未完事项顶回上下文尾部(近期注意力区)——
+    // 不等问题出现(todoNudge 是停滞才触发),长跑任务目标漂移防在日常。单会话卡不加:用户在场,人就是锚
+    if (!target && wfMode && !compacting && turnN > 0 && turnN % 5 === 0) {
+      const openT = latestTodos.filter((t) => !/complet|cancel/i.test(String(t && t.status || ''))).map((t) => String((t && (t.content || t.text || t.title)) || '')).filter(Boolean).slice(0, 3)
+      text = String(text || '') + '\n\n(系统提醒:周期锚点 —— 重申总目标:「' + String(dispMsg || title).slice(0, 80) + '」' + (openT.length ? ';当前未完事项:' + openT.join('、') : '') + '。对照目标确认当前步没跑偏,再继续。)'
     }
     if (!target) { lastSend = { text, files }; draftClear() }   // 网关抖了能一键重试,不用重打;草稿发送即清
     try { bumpCtx((text || '').length) } catch {}
@@ -1989,6 +2046,7 @@
       if (pst.rest) {
         ai.innerHTML = renderMarkdown(pst.rest); foldLongCode(ai)
         ai.classList.add('aborted')   // 「已中断」角标:半截气泡和正常完成要能一眼区分(以前只有提示行,气泡长得一样)
+        abortedTurn = true   // 用户主动中止:轮末仍挂批准条(闸还在等人批),与出错轮(不挂)区分开
         if (!target) { ai.dataset.raw = pst.rest; addCopyBtn(ai); lastFinalText = pst.rest; try { paintArtFinal() } catch {} }   // 半截答案也是本卡最近的产出,抽屉照收
         addRetryNote('回合中断：' + (e.message || e) + '（以上是中断前已收到的部分回答）')
       } else {
@@ -1998,9 +2056,11 @@
       }
     } finally {
       for (const [id, s] of subAgents) if (!s.done) subAgentDone(id, 'done')
-      curAnswer = null; curReason = null; setBusy(false); scrollFeed()
+      curAnswer = null; curReason = null; if (!autoRetryPending) setBusy(false); scrollFeed()   // 自动重试已排期:busy 必须保住,否则批准条/注入会在重试窗口并发起第二个回合
       try { wdFinalizeRound(); wdCheck() } catch {}   // 进展型看门狗:结算本轮读文件集合并判绕圈(可能注入提醒/挂横幅)
-      maybeDrain(); maybeShowPlanBar(); maybeWfProduceNag(); maybeCtxNag()   // 轮末:补批准条 → 产出兜底(工作流) → 水位提醒(普通卡)
+      maybeDrain(); if (ok || abortedTurn) maybeShowPlanBar(); maybeWfProduceNag(); maybeCtxNag()   // 轮末:补批准条 → 产出兜底(工作流) → 水位提醒(普通卡);出错轮不挂批准条(预检没做完就批=怂恿模型编方案),用户主动中止的除外(闸还要等人批)
+      if (ok) { try { maybeContinueNudge() } catch {} }   // 长任务防停(harness):成功轮末 todo 还有未完项 → wf 卡自动催继续/普通卡出继续按钮;中止/出错不催
+      if (ok) { try { maybeDelegateNudge() } catch {} }   // 委派驱动(harness):复杂任务多轮单干未派子 Agent → wf 卡自动注入按规程派单/普通卡给建议
       if (ok && !target) markDone()   // 本轮成功结束:标题加 ✓(多卡扫一眼就知道谁跑完了)
       maybeCapFeed()   // 轮末回收一次 feed DOM(长会话节点不无限涨)
       // 轮末:先补计划批准条(规划先行),再查自动压缩续航(工作流卡)。

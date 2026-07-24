@@ -15,7 +15,7 @@
 - **运行时**：Electron 34（`package.json` `devDependencies`），主进程是 CommonJS（`.js`，`'use strict'` 开头）；UI 是无框架的原生 HTML/JS/CSS（`ui/*.html`，脚本内联在 HTML 里）。
 - **Node**：开发机 Node v20+ 可跑主仓库；`mcp/` 下的 MCP server（ESM `.mjs`）**要求 Node 22+**（需内置全局 WebSocket，用于 CDP 驱动系统 Edge/Chrome）。
 - **打包**：electron-builder 25（Windows NSIS + portable，macOS dmg + zip），配置全在 `package.json` 的 `build` 字段。
-- **依赖**（仅 4 个运行时依赖）：`pdf-parse`、`mammoth`、`xlsx`（需求文档解析）、`mysql2`（OceanBase MySQL 模式只读连接）。MCP server 与自测脚本**零依赖**（只用 Node 内置模块）。
+- **依赖**（运行时）：`pdf-parse`、`mammoth`、`xlsx`（需求文档解析）、`mysql2`（OceanBase MySQL 模式只读连接）、`typescript-language-server`+`typescript@5.x`+`@vue/language-server`+`pyright`（随包自带 LSP，内网无外网装不了——TS/Vue/Python 代码智能全靠它们，用 Electron 内嵌 Node 跑，必须 asarUnpack）。MCP server 与自测脚本**零依赖**（只用 Node 内置模块）。
 - **AI 引擎**：不内置模型。主进程 spawn 本机的 `opencode serve`（开发）或 `bocomcode serve`（打包后），通过 HTTP + SSE 通信。引擎命令可被环境变量 `BOCOMHERMES_SERVE_BIN` 或 `settings.json` 的 `serveBin` 覆盖。
 
 ## 仓库结构
@@ -51,6 +51,10 @@ BocomHermes-shell/
 │                      #   orch-mcp(动态工作流编排)、mail-mcp、db-mcp、doc-mcp、git-mcp；
 │                      #   print-config.mjs 打印注册块；README.md 有完整工具清单
 ├── scripts/           # 自测与探针脚本(见下"测试")
+├── plugin/            # opencode 插件(装在 serve 侧,不经壳层 IPC)：read-spill.js=read/grep 大输出
+│                      #   外溢落盘(128k 治理)。⚠ 必须是 .js/.ts(opencode 目录扫描 glob 不认 .mjs)、
+│                      #   必须单导出(每个导出都会被当插件调用)。拷到 .opencode/plugin/ 或
+│                      #   ~/.config/opencode/plugin/ 即生效,无需改 opencode.jsonc
 ├── build/             # 图标与 macOS entitlements
 ├── docs/              # 设计文档(中文)；docs/项目记忆/ 是 Claude Code 项目记忆的手动同步镜像
 └── assets/tray.png    # 托盘图标
@@ -58,11 +62,11 @@ BocomHermes-shell/
 
 **主进程架构约定**：`main.js` 创建共享可变状态对象 `S`（settings/history/窗口引用/会话映射等），各模块导出 `initX(S, deps)` 工厂函数，通过同一个 `S` 引用和显式注入的 deps 协作（依赖注入，无全局单例 import）。`preload.js` 是唯一渲染进程入口 API，渲染进程一律经 `window.BocomHermes.*` 调主进程。
 
-**多层派发（主控卡，window.js `spawnOrchestrator`）**：复杂目标的统一入口，**卡坞「动态工作流」模式即走此路**（`start-conversation` mode=`wf`/`orch` → 主控；MCP `run_orchestration` → relay `/orch/run-orch`）——L0 主控卡（kind `orch`，不占并发位）先【预检路由】（只扫清单不读内容：相关文件 ≤20 且 ≤150KB 就改用单工作流，超线才拆）→ 出拆分方案（规划闸批准）→ 用 `run_workflow` 派 N 个分片工作流卡（各自全新 128k + task 扇出 + 55% 交棒）→ 分片 goal 带 `[orch:TAG]` 前缀登记 `reg.parentOrch`——**分片是隐藏卡**（不开窗、不占任务栏、自动过规划闸、权限自动放行——无人值守，否则 task 子 Agent/写文档卡死在看不见的批准框上）；**会话经 `session.js mirrorToOrch` 镜像回流主控卡**：主控卡顶部「分片进度」面板（`pushShardProgress`）点一片即在主区域就地渲染该分片的会话（shard 视图，不另开空间）；`wfTurnDone` 判收官后给主控卡注入进度消息（N/M）事件唤醒 → 主控派【索引棒】把各分片结论关联成两级索引 README（分片收官判定 = todowrite 全勾；兜底 = 轮末/回合报错后 45s 无新回合由 `armShardSettle` 补判 done/interrupted——内网模型常不收尾 todowrite，无兜底会永远卡 running；新回合经 `S.wfTurnStart` 解除计时，报错路径经 `S.wfTurnError` 起兜底）。**落盘哲学**：一切中间成果写成文档落盘，上下文只过路径+一句话索引，不限字数、不限棒数（`autoCompactMax` 默认 20 仅兜底病态循环）；任何一块太大就再拆一层，拆分可无限递归。红线：主控严禁自己深读/执行；分片有强依赖就别多层。
+**多层派发（主控卡，window.js `spawnOrchestrator`）**：复杂目标的统一入口，**卡坞「动态工作流」模式即走此路**（`start-conversation` mode=`wf`/`orch` → 主控；MCP `run_orchestration` → relay `/orch/run-orch`）——L0 主控卡（kind `orch`，不占并发位）先【预检路由】（只扫清单不读内容：相关文件 ≤20 且 ≤150KB 就改用单工作流，超线才拆）→ 出拆分方案（规划闸批准）→ 用 `run_workflow` 派 N 个分片工作流卡（各自全新 128k + task 扇出 + 55% 交棒）→ 分片 goal 带 `[orch:TAG]` 前缀登记 `reg.parentOrch`——**分片是隐藏卡**（不开窗、不占任务栏、自动过规划闸、权限自动放行——无人值守，否则 task 子 Agent/写文档卡死在看不见的批准框上）；**会话经 `session.js mirrorToOrch` 镜像回流主控卡**：主控卡顶部「分片进度」面板（`pushShardProgress`）点一片即在主区域就地渲染该分片的会话（shard 视图，不另开空间）；`wfTurnDone` 判收官后给主控卡注入进度消息（N/M）事件唤醒 → 主控派【索引棒】把各分片结论关联成两级索引 README（分片收官判定 = todowrite 全勾；兜底 = 轮末/回合报错后 45s 无新回合由 `armShardSettle` 补判 done/interrupted——内网模型常不收尾 todowrite，无兜底会永远卡 running；新回合经 `S.wfTurnStart` 解除计时，报错路径经 `S.wfTurnError` 起兜底，card-init/card-reinit 失败同样补回调，reinit 入口先解计时防交棒误杀）。`wfConcurrency` 只数"正在干活"的卡（`isCardBusyLately`：在跑或 3s 内刚闲——分片轮间空窗是假象，曾机制性超发；pipeline/orch 不占位，起卡 15s 宽限）。**健壮性口径（逻辑审查后落地）**：批准升级为壳层状态位（`reg.planApproved`，卡片 approvePlan 经 `wf-plan-approved` 上报，relay `/orch/run` 拦主控未批派发——以前批准只是会话文案，模型不守规程直接派也照单全收）；`[orch:TAG]` 解析统一走 `parseOrchTag`（行首前缀 + 全文二次扫描，全角括号也认）；唤醒目标缺失不置 `orchNotified`（留待重试，不再一次性聋掉）；`session.js` 主回合挂死看门狗（分片/主控 300s 静默自动 abort，45s tick；可见卡不代劳）；分片/主控空答自动重试经 setTimeout 排期 + `autoRetryPending` 保 busy（防旧 finally 踩出并发双回合）；interrupted 收官也出队，"全部收官"分母含排队片；settle 判 done 三判据（最后一轮被中止/全程零产出 → interrupted）；全收官 5min 未派索引棒壳层催办一次（只催不代派）；连带关窗跳过忙卡、关窗即埋 settle 计时；长任务防停（`card.html maybeContinueNudge`）：成功轮末 todo 还有未完项 → wf/orch/shard 卡自动注入"继续执行"（停=链死；连催 3 次未完项没降就停催转人工，防死循环；有进展即复位），普通对话卡出可见「继续执行」按钮（判动权给人）；委派驱动（`maybeDelegateNudge`）：todo ≥3 步且已实质干活且 ≥2 轮未派 task → wf 卡自动注入"按规程第 4 条派子 Agent 并行"，普通卡给可见建议（每任务只催一次，派过/催过不再管）；出错轮不挂批准条（防预检没做完就批）。**落盘哲学**：一切中间成果写成文档落盘，上下文只过路径+一句话索引，不限字数、不限棒数（`autoCompactMax` 默认 20 仅兜底病态循环）；任何一块太大就再拆一层，拆分可无限递归。红线：主控严禁自己深读/执行；分片有强依赖就别多层。
 
 **serve 池架构**（`opencode.js`）：一个项目目录 = 一个独立 serve 进程（端口从 4096 起自动找空闲），因为此版 opencode 的 `POST /session` 不支持会话级目录。同项目多卡复用同一 serve 的并发会话；每个 serve 一条 `/event` SSE。只读工具(read/grep/glob/list/ls/find/tree)自动放行，写/执行转卡片内联确认（允许一次/总是/拒绝）。逐 token 流式靠 SSE `message.part`，POST 结果作权威兜底。
 
-**128k 上下文口径（所有 Agent 同规，MiniMax M2.5）**：subAgent 由 serve 内置 `task` 工具（或 oh-my-openagent 插件的 `delegate_task`，带必填参 `load_skills`）创建、隔离上下文，不进卡片水位；两族委派工具壳层同待（计量/硬闸/子agent窗格）。四道防线——①纪律注入：`session.js` 项目背景锚携带 `<上下文纪律(128k)>`（所有卡），`window.js workflowSystemPrompt` 第4条是工作流卡的加强版（指令≤2000字、只给路径不贴原文、回报≤400字、delegate_task 必传 load_skills，不需要就 []）；②硬闸：`knobs.taskPromptMax`（默认 20000 字，只拦"贴原文"级病态指令），`session.js onText` 检出超限 task/delegate_task → 精确 abort 该调用的子会话（taskChild 可解析才杀，绝不株连并行兄弟；解析不到降级为只警告，挂死交看门狗），主 Agent 收 cancelled 后拆小重派；③看门狗（`session.js`）：子会话用量 ≥80%×128k 预警一次，静默 5min 且生成挂死自动中止；④工作流卡【主动交棒】（`card.html maybeAutoCompact`）：水位 ≥`knobs.ctxHandoffPct`（默认 0.55）就写交接单换下一棒主 Agent（全新会话新 128k），模型清醒时交接，永不触发被动压缩；普通对话卡不自动压缩（会清可见对话），≥90% 提醒用户点 chip 手动压缩；水位上限以 `knobs.ctxLimitMax`（默认 128000）收口——serve 报 192k 也按 128k 算，否则阈值线会算到真实上限之外。改这几处时保持数值口径一致。
+**128k 上下文口径（所有 Agent 同规，MiniMax M2.5）**：subAgent 由 serve 内置 `task` 工具（或 oh-my-openagent 插件的 `delegate_task`，带必填参 `load_skills`）创建、隔离上下文，不进卡片水位；两族委派工具壳层同待（计量/硬闸/子agent窗格）。四道防线——①纪律注入：`session.js` 项目背景锚携带 `<上下文纪律(128k)>`（所有卡），`window.js workflowSystemPrompt` 第4条是工作流卡的加强版（指令≤2000字、只给路径不贴原文、回报≤400字、delegate_task 必传 load_skills，不需要就 []），第3条附【编码/转换/迁移铁律】（源码不进主上下文：逐文件派子 Agent 读原文→写目标文件→只回路径，主 Agent 只验收；琐碎目标禁派单），主控编码模式 A2 同口径（按文件清单分片、片内逐文件派单）；①b 周期目标背诵（Manus recitation 抗 lost-in-middle）：wf/orch/shard 卡每 5 轮把总目标+未完事项附到下一条消息尾部（单会话卡不加——用户在场人就是锚）；①c KV-cache 度量：ctx chip 悬停显示命中率（cacheRead/实际进上下文量，serve 报缓存字段才有），注入顺序铁律=稳定块在前动态内容只追加尾部；②硬闸：`knobs.taskPromptMax`（默认 20000 字，只拦"贴原文"级病态指令），`session.js onText` 检出超限 task/delegate_task → 精确 abort 该调用的子会话（taskChild 可解析才杀，绝不株连并行兄弟；解析不到降级为只警告，挂死交看门狗），主 Agent 收 cancelled 后拆小重派；③看门狗（`session.js`）：子会话用量 ≥80%×128k 预警一次，静默 5min 且生成挂死自动中止；③b 读文件字节计量（`session.js`，内网"几个文件就爆"对症）：单次 read 输出 >12k 字提醒 offset/limit 分段读、会话累计读字节 >60k（≈128k 三成）提醒改派 task 子 Agent，工作流/分片卡走 card-inject、普通卡走 card-note，每档每会话一次；③c read-spill 插件（`plugin/read-spill.js`，serve 插件层硬机制）：挂 opencode `tool.execute.after` 钩子，read/grep 输出 >8000 字符（`BOCOMHERMES_READ_SPILL_MAX` 可调，0=关）自动写临时文件、上下文只留头 40 行+路径+总量，模型按提示用 offset/limit 读落盘文件；`plugin-install.js` 首启拷进 `~/.config/opencode/plugin/`（覆盖式=自更新）；注入侧预算：memory.md 截尾 3000 字（保留最新）、项目背景 ≤5500、知识 ≤6000；④工作流卡【主动交棒】（`card.html maybeAutoCompact`）：水位 ≥`knobs.ctxHandoffPct`（默认 0.55）就写交接单换下一棒主 Agent（全新会话新 128k），模型清醒时交接，永不触发被动压缩；普通对话卡不自动压缩（会清可见对话），≥90% 提醒用户点 chip 手动压缩；水位上限以 `knobs.ctxLimitMax`（默认 128000）收口——serve 报 192k 也按 128k 算，否则阈值线会算到真实上限之外。改这几处时保持数值口径一致。
 
 ## 常用命令
 
@@ -85,6 +89,9 @@ npm run tool:test      # 工具 part 解析 + question 路由 + 生成挂死判�
 npm run compact:test   # 录制事件压缩
 npm run card:ui:test   # card.html 主脚本无头自测：vm + DOM 桩真跑（抓 TDZ/esc 类运行时雷）
 npm run knowledge:test # 项目知识库(knowledge.js)：slug 稳定/追加去重/注入裁剪
+npm run lsp:test       # LSP 冒烟:ELECTRON_RUN_AS_NODE 起 ts/vue/pyright 三个 server 握手
+npm run readspill:test # read-spill 插件:大输出落盘/小输出放行/阈值开关(零依赖,不连真 serve)
+npm run forkcheck      # fork 兼容性一键探针(内网验收:插件钩子回写/LSP 配置面/serve 健康,需真实 serve+模型,真实调一次模型)
 npm run scope:test     # 分片写归属(writescope.js)：goal 解析/范围匹配/越界判定
 npm run mcp:browser:test   # 浏览器 MCP 端到端(需本机 Edge/Chrome)
 npm run mcp:httpcap:test   # 抓包代理端到端
@@ -117,6 +124,7 @@ npm run bars:e2e           # card.html 真 Chromium 渲染 e2e：重放工作流
 - 审计流水 `audit.jsonl` 只 append，敏感字段（密码/token/cookie）由调用方负责不传入。
 - 内网妥协项（有意的，别当 bug 修）：`certificate-error` 全放行自签名证书、NTLM 自动传 Windows 凭据、内嵌浏览器 `webSecurity:false` 解决跨域。
 - `main.js` 会**过滤 `--user-data-dir`** 浏览器启动参数（会搬走应用数据），不要在 `browserArgs` 里支持它。
+- **LSP 集成（内网无外网）**：`lsp-config.js` 首启把随包三个 node 系 LSP（typescript/vue/pyright）注册进 opencode.jsonc 的 `lsp` 段——command[0]=`process.execPath`（Electron 内嵌 Node，`env.ELECTRON_RUN_AS_NODE=1`），三个包在 `build.asarUnpack`；`settings.lspEnabled=false` 整体关闭；serve spawn 恒设 `OPENCODE_DISABLE_LSP_DOWNLOAD=true`（内置 server 探测不到会联网安装，内网必失败）；fork 的 lsp schema 兼容性待内网实测。
 
 ## 配置与用户数据
 

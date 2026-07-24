@@ -290,6 +290,14 @@ module.exports = function initMail(ctx) {
           if (req.url === '/orch/run') {
             const goal = String(a.goal || '').trim()
             if (!goal) return reply({ error: '缺少 goal' })
+            // 规划闸升级壳层状态位:主控派分片(goal 带 [orch:TAG])必须方案已批 —— 批准以前只是会话里的一条文案,
+            // 模型不守规程第一轮直接派 N 片,壳层照单全收(顺序倒置,审查实测)。查无主控/无状态(老会话)放行:宁可漏拦不死锁
+            const tm = goal.match(/^\s*\[orch:([A-Za-z0-9-]+)\]\s*/) || goal.match(/[\[【]\s*orch\s*[:：]\s*([A-Za-z0-9-]+)\s*[\]】]/)
+            if (tm && S.orchByTag) {
+              const oref = S.orchByTag.get(tm[1])
+              const oreg = oref && S.wfRegistry && S.wfRegistry.get(String(oref.id))
+              if (oreg && oreg.planApproved === false) return reply({ error: '主控方案尚未批准 —— 请用户在主控卡点击【开始执行】后再派分片(壳层规划闸,不是文案约定)。' })
+            }
             try {
               const id = spawnWorkflow(goal)
               // 并发满时 spawnWorkflow 返回 { queued, position } —— 必须拍平,否则 MCP 文本打出 id=[object Object](主控对着它瞎猜,实测)

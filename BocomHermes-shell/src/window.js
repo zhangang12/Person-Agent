@@ -13,6 +13,8 @@ const initRecorder = require('./recorder')
 const { cdpConsoleLevel, fmtRO, fmtException, resolveFrame } = require('./cdp-format')
 const initMail = require('./mail')
 const initMcpConfig = require('./mcp-config')
+const initLspConfig = require('./lsp-config')   // 内网无外网:随包自带三个 node 系 LSP server,首启自动注册进 opencode 配置
+const initPluginInstall = require('./plugin-install')   // read-spill 插件(read/grep 大输出外溢落盘)拷进 opencode 全局插件目录
 const initBrowser = require('./browser')
 const knowledge = require('./knowledge')   // 项目知识库治理 IPC 用(纯逻辑,落盘/审计在本文件)
 const writescope = require('./writescope')   // 分片写归属(编码模式):goal 解析 + 范围匹配,session.js 的权限硬闸用
@@ -32,8 +34,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     watchdogRounds: 3,            // 看门狗判定轮数
     watchdogOverlap: 0.7,         // 看门狗绕圈重合度
     watchdogEscalateRounds: 2,    // 看门狗升级轮数
-    ctxCompactPct: 0.8,           // 自动压缩水位阈值
-    ctxHandoffPct: 0.55,          // 工作流卡主动交棒水位:≤55% 就交接给下一棒主 Agent(全新 128k),永不触发被动压缩
+    ctxHandoffPct: 0.55,          // 工作流卡主动交棒水位:≤55% 就交接给下一棒主 Agent(全新 128k),永不触发被动压缩(曾经的 ctxCompactPct 是没人读的死旋钮,已删,勿复活)
     autoCompactMax: 20,           // 交棒次数上限:文档接力下棒数不该卡死(每棒都在推 todo);仅兜底病态循环
     todoNudgeRounds: 3,           // todo 停滞提醒轮数
     knowledgeChurnMax: 300,       // 知识 C4 churn 阈值(行)
@@ -222,6 +223,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       if (opts.wf || opts.orch) query.wf = '1'
       S.wfRegistry = S.wfRegistry || new Map(); S.wfCardByWc = S.wfCardByWc || new Map()
       const reg = { id: String(id), wcId, kind: wfKind, goal: disp || title || '', status: 'running', round: 0, rounds: 0, at: Date.now(), archive: null, final: '', todos: null, files: [], actions: [], dir: S.settings.projectDir || '', elapsedMs: 0 }
+      if (wfKind === 'orch') reg.planApproved = false   // 主控规划闸壳层状态位:用户在卡片点【开始执行】后置 true(wf-plan-approved),relay /orch/run 据此拦未批派发
       S.wfRegistry.set(reg.id, reg); S.wfCardByWc.set(wcId, reg)
       if (S.wfRegistry.size > 50) { const k = S.wfRegistry.keys().next().value; S.wfRegistry.delete(k) }
     }
@@ -257,6 +259,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       // 终态语义:此前已判 done 保持 done;此前还 running 被关卡 = interrupted(列表/重试据此区分"干完了"与"被掐断")。
       const wreg = S.wfCardByWc && S.wfCardByWc.get(wcId)
       if (wreg) { wreg.status = wreg.status === 'done' ? 'done' : 'interrupted'; wreg.elapsedMs = Date.now() - wreg.at; S.wfCardByWc.delete(wcId); try { S.wfArchive && S.wfArchive(wreg) } catch (e2) { log('wf archive err: ' + e2.message) } }
+      clearTimeout(shardSettleTimers.get(wcId)); shardSettleTimers.delete(wcId)   // 关窗即埋落定计时:否则计时器到点把 close 写入的 interrupted 覆写回 done(终态写错)
       if (wreg) { try { wfDequeue() } catch {} }   // 关卡腾出并发位 → 排队工作流补位(出队触发点②)
       // 主控关卡 → 它的分片卡(隐藏工人)一并关掉:主控没了分片就是烧 token 的孤儿,不会再有人看它的窗口
       if (wreg && wreg.kind === 'orch' && S.orchByTag && S.wfRegistry) {
@@ -290,6 +293,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       '   · 研究 / 答疑 → 有据可查的结论报告;· 实现 / 改造 → 可运行的代码改动 + 改动说明;· 排查 → 定位到根因的诊断报告 + 修复;· 探索成文 → 开发手册 / 业务文档。',
       '2. 【定计划并让它可见】非琐碎目标先用 todowrite 列出步骤清单,开工把当前步标 in_progress、做完立刻标 completed(一次只推进一步)—— 既是你自己的进度锚,也让用户看见你在干什么。琐碎目标可略。',
       '3. 【轻量勘察,绝不通读】自己只用 grep/glob + 读几个入口 / 清单摸清"分成哪几块、边界在哪"——单次 read 必须带 offset/limit(每次 ≤400 行),grep 先收窄路径与文件类型,确认"够定位"就停手。你的 128k 很宝贵,【绝不】自己通读整个模块几十上百个文件 —— 那会撑爆你、让综合时变笨。',
+      '   【编码/转换/迁移类目标的铁律 —— 源码不进主上下文】改造/转换/迁移/重写类目标(如 FLEX→React、框架迁移、批量重写):你【绝不】亲自通读源文件 —— 逐文件(或小批 ≤3 个)派子 Agent:它读原文 → 写出目标代码文件 → 只回【路径 + 一句差异/风险说明】。源码全文只许在叶子子 Agent 的 128k 里出现一次(读完即转、转完即写、写完只回路径),你只做计划、验收产物与整合;单文件 >2000 行按组件/函数级再拆派。琐碎目标(单文件小改/改几行)反过来:【别派单】自己直接干完 —— 派单的固定开销比活本身还大。',
       '4. 【重活并行下放子 Agent】一块工作满足【彼此独立 + 需深读很多文件 + 能同时干】三条时,用 task 工具【一条消息里一次派多个子 Agent 并行跑】,别一个个串。子 Agent 指令按 128k 口径执行硬纪律:',
       '   · 【指令只写四样:目标、文件路径清单(≤10 个)、边界(只干哪一块)、回报格式】塞原文超 2 万字壳层直接拦停 —— 不是限字数,是禁止把文档内容搬进指令(那是子 Agent 撑爆的第一死因)。',
       '   · 委派工具首选内建 task;环境里有 oh-my-openagent 时可用 delegate_task(能按 category 选 deep/quick 等专家)—— 它必须显式传 load_skills,不需要技能就传 [],漏传会直接报错废掉这一轮。',
@@ -326,15 +330,26 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     // 空闲等批准/等插话的卡不占位。刚起卡给 15s 启动宽限(会话还没上转,别误判空位导致超发)。
     const now = Date.now()
     return S.wfRegistry ? [...S.wfRegistry.values()].filter((r) => r.status === 'running' && r.kind !== 'pipeline' && r.kind !== 'orch'
-      && ((S.isCardBusy && S.isCardBusy(r.wcId)) || now - (r.at || 0) < 15000)).length : 0
+      && ((S.isCardBusyLately && S.isCardBusyLately(r.wcId)) || now - (r.at || 0) < 15000)).length : 0   // isCardBusyLately=在跑或 3s 内刚闲(轮间空窗假象,防超发)
+  }
+  // [orch:TAG] 解析统一出口(以前 window.js 里两份正则拷贝 + mail.js 一份):先认行首前缀,再全文二次扫描兜底
+  // (弱模型常写歪:不在最前/全角【】/全角冒号);二次扫描要求 tag 真实存在,防误吞用户文本里的同形字符串
+  function parseOrchTag(goal) {
+    const raw = String(goal || '')
+    const m1 = raw.match(/^\s*\[orch:([A-Za-z0-9-]+)\]\s*/)
+    if (m1) return { tag: m1[1], rest: raw.slice(m1[0].length) || raw }
+    const m2 = raw.match(/[\[【]\s*orch\s*[:：]\s*([A-Za-z0-9-]+)\s*[\]】]/)
+    if (m2 && S.orchByTag && S.orchByTag.has(m2[1])) return { tag: m2[1], rest: (raw.slice(0, m2.index) + raw.slice(m2.index + m2[0].length)).trim() || raw, rescued: true }
+    return { tag: '', rest: raw }
   }
   function spawnWorkflow(goal) {
     const raw = String(goal || '').trim() || '未命名工作流'
     // 多层派发:主控卡派出的分片 goal 带 [orch:TAG] 前缀 → 登记父子关联(wfTurnDone 据此唤醒主控),展示与注入都剥掉标记;
     // 排队时保留原始 goal(含标记),出队重走本函数再解析,标记不丢
     let g = raw, parentOrch = ''
-    const om = raw.match(/^\s*\[orch:([A-Za-z0-9-]+)\]\s*/)
-    if (om) { parentOrch = om[1]; g = raw.slice(om[0].length) || raw }
+    const pt = parseOrchTag(raw)
+    if (pt.tag) { parentOrch = pt.tag; g = pt.rest; if (pt.rescued) log('orch tag rescued (not at goal head): ' + parentOrch) }
+    if (parentOrch && !(S.orchByTag && S.orchByTag.has(parentOrch))) log('⚠ shard tag unknown: ' + parentOrch + ' —— 唤醒目标不存在,该片收官无人接收')
     if (wfRunningCount() >= wfConcurrency()) {
       S.wfQueue.push({ goal: raw, at: Date.now() })
       log('workflow queued (running ' + wfRunningCount() + '/' + wfConcurrency() + ', position ' + S.wfQueue.length + '): ' + g.slice(0, 60))
@@ -364,8 +379,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       const shards = [...S.wfRegistry.values()].filter((r) => r.parentOrch === tag)
         .map((r) => ({ id: r.id, goal: String(r.goal || '').slice(0, 60), status: r.status, round: r.rounds || 0 }))
       for (const q of (S.wfQueue || [])) {   // 排队中的分片(goal 带 [orch:tag] 前缀,还在等并发位)
-        const m = String(q.goal || '').match(/^\s*\[orch:([A-Za-z0-9-]+)\]\s*/)
-        if (m && m[1] === tag) shards.push({ id: '', goal: String(q.goal).slice(m[0].length, m[0].length + 60), status: 'queued', round: 0 })
+        const m = parseOrchTag(q.goal)   // 与 spawnWorkflow 同一份解析(行首前缀+全文兜底),不再两份正则各写各的
+        if (m.tag && m.tag === tag) shards.push({ id: '', goal: String(m.rest).slice(0, 60), status: 'queued', round: 0 })
       }
       win.webContents.send('shard-progress', { shards })
     } catch {}
@@ -409,6 +424,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       '【编码模式 —— 目标是写代码时,用这套替代探查流程的 2-6 步】',
       standards.block(),
       'A. 【契约先行】预检后,先派一个勘察子 Agent 提炼【契约文档】' + (dir ? dir + '/docs/' : 'docs/') + '<主题>/CONTRACT.md:各分片将共享的接口/类型/API 签名/关键数据表字段(压在一页内)。所有分片指令必须带契约路径,严格按契约实现,不许自由改签名。',
+      'A2. 【转换/迁移类目标的分片口径】按文件清单均分分片(每片 ≤10 个文件,大文件再拆),分片 goal 附【本片文件清单】;片内执行铁律 —— 逐文件派子 Agent 转换(它读原文 → 写目标文件 → 只回路径+一句差异),分片主 Agent【不亲自通读原文】:源码全文只许进叶子子 Agent 的上下文,出现一次。主 Agent 亲自读原文 = 上下文爆掉 + 任务失败,壳层计量到会立即纠偏。',
       'B. 【写归属清单(硬约束)】每个分片的 goal 必须含一行「写归属: <相对路径1>, <相对路径2>」—— 这片【只能】写这些文件(壳层硬闸:写归属外的 write/edit 直接拒绝,bash 写文件同样过闸)。归属两两不交:两片不许共享可写文件;共用的文件归一片独占,另一片只读引用。代码改动一律走 write/edit 工具(bash 写文件视为越权)。编码分片的 goal 还应含一行「契约: <本片必须交付的关键签名1, 签名2, …>」—— 从 CONTRACT.md 摘本片要实现的函数/类/端点名;壳层收官逐个去归属文件里核对,缺一个都算【契约缺口】报回给你(防"看上去做完了实际差一截")。分片指令开头给它一个角色(如"你是负责 X 模块的资深后端工程师")+ 三层边界(✅ 该片必做 / ⚠️ 超归属先问 / 🚫 禁做)—— 弱模型吃"具体角色+明确边界"这套(2500 个 agents.md 的实证)。',
       'C. 【集成验证 fix-loop】分片全部完成后,派【集成验证分片】:按仓库文档(CLAUDE.md/交接文档)的命令跑全量构建/测试;失败按归属回派 —— 哪个文件的错就重派那片去修(同标记 [orch:' + orchTag + '],至多 2 轮)。全绿才进索引。',
       'D. 【联合改动报告】索引棒产出 ' + (dir ? dir + '/docs/' : 'docs/') + '<主题>/CHANGES.md:总览 + 每分片一章(改了什么/为什么/验证结果/关键 diff 位置)+ 契约偏差记录 + 失败修复流水 —— 是可审阅的改动报告,不是分析 wiki。',
@@ -485,25 +501,39 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   function shardSettled(reg) {
     if (!reg.parentOrch || reg.orchNotified) return
     if (reg.status !== 'done' && reg.status !== 'interrupted') return
-    reg.orchNotified = true
     if (reg.status === 'done') checkContract(reg)   // 中断片不核对:半成品缺签名是常态,报了也是噪音
+    // 先确认主控窗真的在,再置一次性标志 —— 以前是"先置标志再找窗",窗没了(tag 查无/主控已关)静默跳过且永不重试,主控变聋
+    const oref = S.orchByTag && S.orchByTag.get(reg.parentOrch)
+    const oreg = oref && S.wfRegistry && S.wfRegistry.get(String(oref.id))
+    const win = oreg && BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === oreg.wcId)
+    if (!win) { log('⚠ orch wake target missing (tag ' + reg.parentOrch + ', shard card ' + reg.id + ') —— orchNotified 不置位,留待重试'); return }
+    reg.orchNotified = true
     pushShardProgress(reg.parentOrch)   // 先刷进度条,再注入唤醒消息(主控卡看到 N/M 变化)
     try {
-      const oref = S.orchByTag && S.orchByTag.get(reg.parentOrch)
-      const oreg = oref && S.wfRegistry && S.wfRegistry.get(String(oref.id))
-      const win = oreg && BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === oreg.wcId)
-      if (win) {
-        const sibs = [...S.wfRegistry.values()].filter((r) => r.parentOrch === reg.parentOrch)
-        const doneN = sibs.filter((r) => r.status === 'done' || r.status === 'interrupted').length
-        const miss = (reg.contractMiss && reg.contractMiss.length) ? reg.contractMiss : null
-        const gapTxt = miss ? ('【契约缺口:' + miss.slice(0, 10).join('、') + ' —— 该片号称完成但归属文件里找不到这些签名;按缺口对待:重派补缺或索引显著标注,别当完成。】') : ''
-        win.webContents.send('card-inject', { text: '<主控进度>分片「' + String(reg.goal).slice(0, 60) + '」已' + (reg.status === 'done' ? '完成' : '中断') + ' (' + doneN + '/' + sibs.length + ')。' + gapTxt + '调 workflow_result(id="' + reg.id + '") 取回它的成果;对照你的 todo 清单 —— 全部 ' + sibs.length + ' 个分片齐了,就按规程第 6 条派【索引棒】收口;还没齐,结束本轮继续等。</主控进度>', disp: '分片 ' + doneN + '/' + sibs.length + ' 已' + (reg.status === 'done' ? '完成' : '中断') + (miss ? '(契约缺口)' : '') + ':' + String(reg.goal).slice(0, 40) })
-        if (doneN === sibs.length) {   // 全部收官:还活着的分片窗口(绕圈没被杀掉的)一律关掉 —— 隐藏工人不停下就一直烧 token
-          for (const r of sibs) {
-            const w2 = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === r.wcId)
-            if (w2) { try { w2.close() } catch {} }
-          }
+      const sibs = [...S.wfRegistry.values()].filter((r) => r.parentOrch === reg.parentOrch)
+      const queuedN = (S.wfQueue || []).filter((q) => parseOrchTag(q.goal).tag === reg.parentOrch).length
+      const total = sibs.length + queuedN   // 分母含排队片:系统性失败(全 interrupted)时曾出现"4/4 齐了"而第 5 片永远排队
+      const doneN = sibs.filter((r) => r.status === 'done' || r.status === 'interrupted').length
+      const miss = (reg.contractMiss && reg.contractMiss.length) ? reg.contractMiss : null
+      const gapTxt = miss ? ('【契约缺口:' + miss.slice(0, 10).join('、') + ' —— 该片号称完成但归属文件里找不到这些签名;按缺口对待:重派补缺或索引显著标注,别当完成。】') : ''
+      win.webContents.send('card-inject', { text: '<主控进度>分片「' + String(reg.goal).slice(0, 60) + '」已' + (reg.status === 'done' ? '完成' : '中断') + ' (' + doneN + '/' + total + ')。' + gapTxt + '调 workflow_result(id="' + reg.id + '") 取回它的成果;对照你的 todo 清单 —— 全部 ' + total + ' 个分片齐了,就按规程第 6 条派【索引棒】收口;还没齐,结束本轮继续等。</主控进度>', disp: '分片 ' + doneN + '/' + total + ' 已' + (reg.status === 'done' ? '完成' : '中断') + (miss ? '(契约缺口)' : '') + ':' + String(reg.goal).slice(0, 40) })
+      if (!queuedN && doneN === sibs.length) {   // 全部收官(且无排队片)
+        for (const r of sibs) {   // 还活着的分片窗口一律关掉(隐藏工人不停下就一直烧 token);忙着的别杀 —— 可能正在交棒/补零产出文档,杀了就毁在半路
+          if (S.isCardBusy && S.isCardBusy(r.wcId)) continue
+          const w2 = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === r.wcId)
+          if (w2) { try { w2.close() } catch {} }
         }
+        // 索引棒壳层兜底:唤醒只是文案提示,主控模型走神/误判不派 = 链静默停摆(实测无兜底)。
+        // 5 分钟后仍没有任何带本 tag 的新登记(索引棒 goal 按规程带 [orch:TAG],spawn 即入注册表)→ 催办一次(只催不代派,编排主权仍归主控)
+        const settledAt = Date.now(), tag0 = reg.parentOrch
+        setTimeout(() => {
+          try {
+            const spawned = [...S.wfRegistry.values()].some((r) => r.parentOrch === tag0 && (r.at || 0) >= settledAt - 1000)
+            if (spawned) return
+            const w3 = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === oreg.wcId)
+            if (w3) { w3.webContents.send('card-inject', { text: '<主控进度>(壳层兜底)全部分片已收官 5 分钟,仍未看到索引棒派出 —— 请立即按规程第 6 条派【索引棒】收口;若你判断无需索引,直接向用户总结交付即可,别再干等。</主控进度>', disp: '兜底提醒:分片已齐,该派索引棒了' }); log('orch index nudge fired (tag ' + tag0 + ')') }
+          } catch {}
+        }, 300000)
       }
     } catch (e) { log('orch wake err: ' + e.message) }
   }
@@ -517,9 +547,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       shardSettleTimers.delete(wcId)
       if (reg.orchNotified) return
       reg.status = verdict   // done=正常轮末落定;interrupted=回合报错后落定
-      log('shard settle → ' + verdict + ' (card ' + reg.id + '): ' + String(reg.goal).slice(0, 50))
+      log('[ctx-settle] shard settle → ' + verdict + ' (card ' + reg.id + '): ' + String(reg.goal).slice(0, 50))
       shardSettled(reg)
-      if (reg.status === 'done') wfDequeue()
+      if (reg.status === 'done' || reg.status === 'interrupted') wfDequeue()   // 收官即腾位:中断也算(系统性失败全 interrupted 时,不出队=排队片永远卡死)
     }, 45000))
   }
   S.wfTurnStart = (wcId) => { const t = shardSettleTimers.get(wcId); if (t) { clearTimeout(t); shardSettleTimers.delete(wcId) } }
@@ -532,6 +562,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     reg.rounds++; reg.round = reg.rounds
     const t = String(finalText == null ? '' : finalText); if (t.trim()) reg.final = t
     if (snap && snap.aborted) reg.aborted = true   // 本轮被中止(用户点停/中断):注册表+存档留痕
+    reg.lastAborted = !!(snap && snap.aborted)   // 每轮覆写(留痕的 reg.aborted 是粘性的):settle 判 interrupted 看【最后一轮】是否被中止 —— 被掐后恢复干完的,别再用旧中止记录误标
     reg.elapsedMs = Date.now() - reg.at
     const open = (reg.todos || []).some((x) => !/complet|cancel/i.test(String(x && x.status || '')))
     const wasDone = reg.status === 'done'
@@ -553,9 +584,11 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     // 分片收官兜底:分片无人值守,done 判定靠"todo 全勾",但内网模型常不调用/不收尾 todowrite → 永远卡 running(实测),
     // 主控等不到唤醒整条链卡死。分片没有"用户继续聊"一说,轮末=它停下了:轮末仍 running 就起 45s 落定计时,
     // 期间交棒/自动重试开新回合会经 S.wfTurnStart 解除;真停下才补判,走同一个 shardSettled 通道收官。
-    // 曾被中止(reg.aborted,含看门狗对分片的自动中止)→ 判 interrupted 而不是 done:被掐断 ≠ 干完,主控总结时不能把中断当成功。
-    if (reg.parentOrch && reg.status === 'running') armShardSettle(reg, wcId, reg.aborted ? 'interrupted' : 'done')
-    if (reg.status === 'done') wfDequeue()   // 判 done → 腾出并发位,排队工作流补位(出队触发点①)
+    // verdict 三判据:①最后一轮被中止(lastAborted,含看门狗自动中止)→ interrupted;②全程零产出(final 空且无落盘文件,
+    // 网关静默/空答耗尽的典型形态)→ interrupted,零产出不能叫完成;③其余 → done。
+    const settleNoOutput = !String(reg.final || '').trim() && !(reg.files || []).length
+    if (reg.parentOrch && reg.status === 'running') armShardSettle(reg, wcId, (reg.lastAborted || settleNoOutput) ? 'interrupted' : 'done')
+    if (reg.status === 'done' || reg.status === 'interrupted') wfDequeue()   // 判收官(done/interrupted)即腾位补位(出队触发点①);中断也算,系统性失败时不出队=排队片永远卡死
   }
   S.wfTodos = (wcId, todos) => { const reg = S.wfCardByWc && S.wfCardByWc.get(wcId); if (reg && Array.isArray(todos)) reg.todos = todos }
   // write/edit 落盘路径(主 Agent 与子 Agent 都收,session.js 在工具事件里回调)→ 存档+workflow_result 可取出产物位置
@@ -1787,6 +1820,8 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       queued: (S.wfQueue || []).map((q, i) => ({ goal: q.goal, position: i + 1, at: q.at })),
     }
   })
+  ipcMain.on('wf-plan-approved', (e) => { const reg = S.wfCardByWc && S.wfCardByWc.get(e.sender.id); if (reg) reg.planApproved = true })   // 规划闸壳层状态位:批准动作(按钮/倒计时/分片自动)都经 approvePlan 上报,relay /orch/run 据此拦截主控未批派发
+
   ipcMain.handle('wf-open', (_e, it) => {
     try {
       const r = (S.wfRegistry ? [...S.wfRegistry.values()] : []).find((x) => String(x.id) === String(it && it.id))
@@ -1795,7 +1830,9 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
         if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); return { ok: true, kind: 'focus' } }
       }
       const sid = String((it && it.sid) || (r && r.sid) || '')
-      if (sid) {   // 卡已关但有会话 → 重开【完整会话】(serve 还在就续接;没了回本地转录回放,只读可看)—— 不再只甩一个 md
+      if (sid) {   // 卡已关但有会话 → 重开【完整会话】(serve 还在就续接;没了回本地转录回放,只读可看)—— 不再只甩一个 md。
+        // 有意以【普通卡】重开(不带 wf/orch query):重开=回看全程+继续聊,不复活规划闸/看门狗/交棒。
+        // 代价:续跑的长工作流失去 55% 主动交棒安全网 —— 可接受(续跑已是人工接管);要原样复活 wf 特性需重建注册表项,复杂度不值。
         const goal = String((r && r.goal) || (it && it.goal) || '工作流')
         spawnCard('工作流 · ' + goal.slice(0, 20), sid)
         return { ok: true, kind: 'session' }
@@ -1843,7 +1880,9 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
 
   // ── 任务完成通知 ────────────────────────────────────────────────────────────
   const busyCards = new Set()   // 正在运行任务的 webContents id
+  const busyEndAt = new Map()   // wcId → 最近一次转闲的时间戳:出队补位给 3s 宽限 —— 分片轮间空窗(过规划闸/交棒)瞬间"闲"是假象,曾被机制性超发(4 并发跑出 8 张活卡,加剧内网 429)
   S.isCardBusy = (wcId) => busyCards.has(wcId)   // 暴露给 relay:/orch/result 据此区分"干活中"与"空闲(等批准/等插话)"
+  S.isCardBusyLately = (wcId) => busyCards.has(wcId) || (Date.now() - (busyEndAt.get(wcId) || 0) < 3000)
   function sendOrbState(state) {
     if (S.inputWin && !S.inputWin.isDestroyed()) S.inputWin.webContents.send('orb-state', state)
   }
@@ -1860,6 +1899,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       busyCards.add(wcId)
     } else {
       busyCards.delete(wcId)
+      busyEndAt.set(wcId, Date.now())   // 转闲打点:并发闸按 isCardBusyLately 计占位(3s 宽限),轮间空窗不被补位
       try { wfDequeue() } catch {}   // 卡一空闲(回合结束/被中止)就尝试补位 —— 并发闸按"正在干活"计数,空闲立即放行排队分片
       if (wasBusy) {
         const win = BrowserWindow.fromWebContents(e.sender)
@@ -1959,6 +1999,17 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       if (r && r.ok && !r.already) { S.mcpRegChangedAt = Date.now(); log('MCP 自动注册完成 → ' + r.path + '(若已有外部 serve 在跑,需重启 serve 才带上工具)') }
     } catch (e) { log('MCP 自动注册异常: ' + e.message) }
   }, 800)
+
+  // ── LSP 一键注册(内网无外网:opencode 内置 server 探测不到会联网安装必失败,代码智能靠随包自带) ──
+  // 三个 node 系 server(TS/Vue/Pyright)用 Electron 内嵌 Node 跑,首启自动写 opencode.jsonc 的 lsp 段(缺失/路径过期才写)。
+  const lspCfg = initLspConfig({ app, path, fs, log, isEnabled: () => S.settings.lspEnabled !== false })
+  setTimeout(() => {
+    try {
+      const r = lspCfg.autoRegisterIfMissing()
+      if (r && r.ok && !r.already && !r.skipped) log('LSP 自动注册完成 → ' + r.path + '(若已有外部 serve 在跑,需重启 serve 才生效)')
+    } catch (e) { log('LSP 自动注册异常: ' + e.message) }
+    try { initPluginInstall({ app, path, fs, log }).autoInstall() } catch (e) { log('read-spill 自动安装异常: ' + e.message) }
+  }, 900)
 
   // ── Settings: IMAP 字段读写 ───────────────────────────────────────────────
   ipcMain.handle('set-settings', (_e, patch) => {

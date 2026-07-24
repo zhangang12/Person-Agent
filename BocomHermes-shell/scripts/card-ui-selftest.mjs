@@ -650,7 +650,9 @@ console.log('用例14:工作流卡首轮即实质执行 → 批准闸自动跳�
   // 首轮进行中(cardSend 40ms 回包窗口内):todo 已标 completed = 模型在实打实执行,不是只出计划
   cbs3.onStream({ kind: 'tool', text: 'todowrite', partID: 'te1', status: 'completed', input: { todos: [{ content: '读 README', status: 'completed' }, { content: '出分析', status: 'in_progress' }] } })
   await new Promise((r) => setTimeout(r, 180))   // 等首轮(交付轮)走完 → 轮末 maybeShowPlanBar 应跳过
-  ok('首轮发出总目标(用例14)', sends3.length === 1 && /总目标Y/.test(sends3[0]), sends3.length)
+  ok('首轮发出总目标(用例14)', sends3.length >= 1 && /总目标Y/.test(sends3[0]), sends3.length)
+  ok('撤闸注入"继续执行"提醒(防守规矩等批准的模型软死锁)', sends3.length >= 2 && /继续按当前计划执行/.test(sends3[1] || ''), sends3.length)
+  ok('长任务防停:todo 有未完项轮末自动催继续', sends3.slice(2).some((s) => /任务还没完成/.test(s)), sends3.length)
   ok('出现实质执行信号 → 不挂计划批准条', !created3.find((c) => c.el.id === 'planBar' && c.el.parentNode))
   ok('批准闸已永久撤掉(planPending=false)', exp3 && exp3._planPending() === false)
 }
@@ -821,6 +823,7 @@ console.log('用例19:体验包 —— 截断提示 / sticky待批准 / 水位�
   await exported.turnFn('x')
   ok('≥90% 轮末提醒压缩续聊', created.some((c) => c.el.className === 'note muted' && /压缩续聊/.test(c.el.textContent || '')))
   // #12 feed DOM 回收:超 320 收到 ≤280 + 顶部收纳占位
+  cbs.onStream({ kind: 'tool', text: 'todowrite', partID: 'tdclose', status: 'completed', input: { todos: [{ content: '读代码', status: 'completed' }, { content: '写修复', status: 'completed' }, { content: '跑测试', status: 'completed' }] } })   // 先把用例3 留下的未完 todo 勾完——防停提醒(harness 新特性,todo 有未完项轮末出「继续执行」note)会多占 DOM,干扰计数
   const feedEl = byId.get('feed')
   while (feedEl.children.length < 330) feedEl.appendChild(fakeEl('div'))
   await exported.turnFn('y')

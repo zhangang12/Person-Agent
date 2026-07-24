@@ -8,8 +8,15 @@ const writescope = require('./writescope')   // 分片写归属硬闸(编码模�
 module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, recordHistory, touchHistory, replaceHistoryId }) {
   // ── 个人记忆库 ──────────────────────────────────────────────────────────────
   const memoryFile = path.join(require('electron').app.getPath('userData'), 'memory.md')
+  // 注入预算:记忆只增不减,不设上限会把每张卡首条消息的基线越垫越高(128k 口径)。超预算保留【最新】一段(相关性新→旧),截断处明示。
+  const MEMORY_INJECT_MAX = 3000
   function loadMemory() {
-    try { const t = fs.readFileSync(memoryFile, 'utf8').trim(); return t ? `<个人记忆>\n${t}\n</个人记忆>\n\n` : '' } catch { return '' }
+    try {
+      let t = fs.readFileSync(memoryFile, 'utf8').trim()
+      if (!t) return ''
+      if (t.length > MEMORY_INJECT_MAX) t = '…(早期记忆已省略,完整见 userData/memory.md)\n' + t.slice(-MEMORY_INJECT_MAX)
+      return `<个人记忆>\n${t}\n</个人记忆>\n\n`
+    } catch { return '' }
   }
   ipcMain.handle('memory-read', () => { try { return fs.readFileSync(memoryFile, 'utf8') } catch { return '' } })
   ipcMain.handle('memory-write', (_e, text) => { try { fs.writeFileSync(memoryFile, text, 'utf8'); return true } catch { return false } })
@@ -252,7 +259,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
               try { S.audit && S.audit('workflow', '编辑预检拦截(oldString 未命中)', { file: peek.miss.filePath, streak: n }) } catch {}
               oc.replyPermission(si.serve, sessionId, requestId, 'reject')
               if (n >= 3) {   // 连撞熔断:撞 3 次还不对 = 它陷入死循环,掐停本轮交收官兜底/主控重派
-                log('edit 连撞熔断:' + sessionId + ' 连续 ' + n + ' 次未命中 → abort 本轮')
+                log('[harness-editloop] edit 连撞熔断:' + sessionId + ' 连续 ' + n + ' 次未命中 → abort 本轮')
                 try { S.audit && S.audit('workflow', '编辑连撞熔断(abort)', { sessionId, streak: n }) } catch {}
                 try { await oc.abort(si.serve, sessionId) } catch {}
               }
@@ -364,6 +371,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
   function onText({ sessionId, text, role, partID, kind, status, delta, toolInput, toolOutput, toolTitle, toolError, subagent, agentId, agentName, taskChild, taskDesc, taskChars }) {
     const si = S.sessionInfo.get(sessionId); if (!si || !si.wc || si.wc.isDestroyed()) return
     if (role && role !== 'assistant') return
+    si.lastEventAt = Date.now()   // 主回合活动探针:分片挂死看门狗(下方 setInterval)据此判静默
     const tag = si.tag || null   // 登记方自定义的任务身份(scope/kind/id…)：随 card-stream 下发,窗口可按并发任务分组
     // 诊断:分别确认子agent的【工具】和【文本/思考】是否路由到父卡片(排查"工具没进 🔍 组")
     if (subagent) {
@@ -408,7 +416,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
               cd = { chars, max, aborted: false }
               condemnedTasks.set(partID, cd)
               if (condemnedTasks.size > 200) condemnedTasks.clear()
-              log('⚠ 128k硬闸:委派指令 ' + chars + ' 字超上限 ' + max + '(sid=' + sessionId + ') —— ' + (taskChild ? '精确拦停' : '等待子会话ID'))
+              log('[ctx-gate] ⚠ 128k硬闸:委派指令 ' + chars + ' 字超上限 ' + max + '(sid=' + sessionId + ') —— ' + (taskChild ? '精确拦停' : '等待子会话ID'))
               si.wc.send('card-note', { text: '⚠ 委派指令 ' + chars + ' 字超 128k 口径上限 ' + max + '(疑似贴了大段原文) —— ' + (taskChild ? '已拦停该子 Agent' : '将在子会话创建后拦停') + ';主 Agent 应拆小重派(指令≤2000字、只给路径不给原文)', tone: 'muted' })
             }
             if (!cd.aborted && taskChild) {
@@ -457,6 +465,29 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
           }
         } catch {}
       }
+      // 上下文工程·读文件字节计量:readN 只数文件个数,但"没读几个文件上下文就没了"的杀手是【字节】(内网实测反馈)。
+      // 单次 read 输出 >12k 字 → 提醒分段读(纪律①单次 ≤400 行是软约定,弱模型不守,这里即时纠偏);
+      // 会话累计读字节 >60k(≈128k 的三成) → 提醒停止亲自深读、改派 task 子 Agent(回报一句话+路径)。
+      // 工作流/分片卡走 card-inject(真消息进会话,隐藏卡也收得到),普通卡走 card-note(可见灰字)。每档每会话只提醒一次。
+      try {
+        if (/^read$/i.test(String(text || '')) && !subagent && toolOutput && !toolError) {
+          const isWf = S.wfCardByWc && S.wfCardByWc.has(si.wc.id)
+          const n = String(toolOutput).length
+          si.readBytes = (si.readBytes || 0) + n
+          if (n > 12000 && !si._bigReadWarned) {
+            si._bigReadWarned = true
+            const tip = '单次 read 读入 ' + n + ' 字 —— 大文件请用 offset/limit 分段精读（单次 ≤400 行），或派 task 子 Agent 深读'
+            if (isWf) si.wc.send('card-inject', { text: '(系统提醒:' + tip + '。子 Agent 结论落盘成文档,上下文里只留路径+一句话。)', disp: '上下文提醒:' + tip })
+            else si.wc.send('card-note', { text: tip, tone: 'muted' })
+          }
+          if (si.readBytes > 60000 && !si._readBytesWarned) {
+            si._readBytesWarned = true
+            const tip2 = '本会话已累计读入 ' + Math.round(si.readBytes / 1000) + 'k 字文件内容（约占 128k 上下文三成）—— 停止亲自深读：改造/转换/迁移类任务应【逐文件派 task 子 Agent】（它读原文 → 写目标文件 → 只回路径+一句差异），源码全文只许进叶子子 Agent 的上下文'
+            if (isWf) si.wc.send('card-inject', { text: '(系统提醒:' + tip2 + '。)', disp: '上下文提醒:' + tip2 })
+            else si.wc.send('card-note', { text: tip2, tone: 'muted' })
+          }
+        }
+      } catch {}
       const toolPayload = { kind: 'tool', text, partID, status: status || '', input: toolInput, output: toolOutput, title: toolTitle, error: toolError, sub: !!subagent, agentId: agentId || '', agentName: agentName || '', taskChild: taskChild || '', taskDesc: taskDesc || '', readN, sessionId, tag }
       si.wc.send('card-stream', toolPayload); mirrorToOrch(si, toolPayload); return
     }
@@ -477,6 +508,28 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
       if (reg) reg.diff = { files: d.files || 0, additions: d.additions || 0, deletions: d.deletions || 0, at: Date.now() }
     } catch {}
   } }
+
+  // ── 分片主回合挂死看门狗(无人值守兜底;可见卡有人按 Esc,隐藏卡没有)──────────────────
+  // 病灶:回合进行中无任何计时器(45s 落定只在轮末 arm),网关保持连接永不响应 → 分片永远 running+占并发位,
+  // 主控永远等不到这片,整链静默卡死(审查实测)。挂死看门狗(子会话 5min 那只)只盯 task 子会话,不盯卡主回合。
+  // 判据:分片卡(或主控卡)有回合在飞(turnBusy)且 300s 无任何流事件(onText 探针)→ oc.abort,
+  // 中止后走 aborted/报错通道按 interrupted 收官 —— 宁可误杀可重派,不可静默卡死无人知。
+  setInterval(() => {
+    try {
+      const now = Date.now()
+      for (const [sid, si] of S.sessionInfo) {
+        if (!turnBusy.has(sid)) continue
+        if (!si || !si.wc || si.wc.isDestroyed()) continue
+        const unattended = (S.shardWc && S.shardWc.has(si.wc.id)) || (S.wfCardByWc && S.wfCardByWc.get(si.wc.id) && S.wfCardByWc.get(si.wc.id).kind === 'orch')
+        if (!unattended) continue   // 可见工作流卡有人看着(90s/5min 提醒在渲染端),不代劳
+        const last = si.lastEventAt || 0
+        if (now - last < 300000) continue
+        log('[ctx-hang] 挂死看门狗:分片/主控主回合 ' + Math.round((now - last) / 1000) + 's 静默 → 自动中止 (sid=' + sid.slice(0, 18) + ')')
+        si.lastEventAt = now   // 本轮只杀一次;abort 没生效的话下个 tick 再杀
+        try { oc.abort(si.serve, sid) } catch {}
+      }
+    } catch {}
+  }, 45000)
 
   // P1:onRawMessages 回调拿到的原始消息列表 → 与 opencode.js pollTurnParts 同构的 part 映射(喂同一个 onText)。
   // partID 必须同构(工具 = (callID||id)+':tool'),否则同一工具调用会被渲染两行,卡片按 partID 幂等去重就失效。
@@ -722,6 +775,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     } catch {}
   }
   ipcMain.handle('card-init', async (e, opts) => {
+    try {
     const sid = opts && opts.sid
     const wantTitle = (opts && opts.title) || ''
     if (sid) {
@@ -774,11 +828,18 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     const ctx0 = loadMemory() + loadProjectContext(dir) + KNOWLEDGE_SLOT; S.firstMsgCtx.set(sessionId, ctx0)   // C2:知识留占位,发送时懒构建
     if (!(opts && opts.shard)) recordHistory(sessionId, wantTitle, dir)   // 分片/索引棒是内部工人,不进历史(对用户只是一条工作流)
     return { sessionId, project: dir ? path.basename(dir) : '未选目录', dir, model: model0, reattached: false, running: false }
+    } catch (err) {
+      // serve 拉起/建会话失败:分片隐藏卡死在这 = 主控永远等不到这片(静默整链卡死,实测)。
+      // 这类失败不走 card-send,wfTurnError 三路兜底都到不了 —— 在这里补一刀,让分片按 interrupted 收官上报
+      try { if (S.wfTurnError && S.wfCardByWc && S.wfCardByWc.has(e.sender.id)) S.wfTurnError(e.sender.id) } catch {}
+      throw err
+    }
   })
 
   // 切项目目录后即时重绑本卡:opencode 一个 serve 只认一个 cwd,换项目 = 换 serve + 换会话。
   // opts.dir = 本卡要切到的目录(仅影响本卡,不动全局);不传则用本卡已绑目录/全局默认。
   ipcMain.handle('card-reinit', async (e, opts) => {
+    try { if (S.wfTurnStart) S.wfTurnStart(e.sender.id) } catch {}   // 交棒 reinit 可能超 45s(serve 冷启/卡顿):先解除落定计时,别把交棒中的分片误判收官(实测误杀窗口)
     const old = S.sessionByWc.get(e.sender.id)
     let oldServe = null
     if (old) {
@@ -803,6 +864,8 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     const carryRaw = opts && typeof opts.carryCtx === 'string' ? opts.carryCtx.trim().slice(0, 20000) : ''
     const carry = carryRaw ? '<上轮对话接力摘要>\n' + carryRaw + '\n</上轮对话接力摘要>\n\n' : ''
     // C2:知识留占位发送时懒构建;续聊场景 target = 接力摘要 + 首条消息(seed 存原文,card-send 拼)
+    // 注入顺序铁律(KV-cache):稳定块在前(纪律/项目背景/知识/记忆)且字节恒定,动态内容只许追加尾部(接力摘要 carry → 用户消息)——
+    // 前缀逐字节稳定 = 缓存命中(Manus 实测缓存 token 成本≈1/10)。新增任何注入物一律插尾部,不许插队。
     const ctx = loadMemory() + loadProjectContext(dir) + KNOWLEDGE_SLOT + carry; S.firstMsgCtx.set(sessionId, ctx)
     if (carryRaw) knowledgeSeed.set(sessionId, carryRaw)
     if (!(opts && opts.shard)) recordHistory(sessionId, 'BocomHermes 对话', dir)   // 分片/索引棒是内部工人,不进历史(对用户只是一条工作流)
@@ -820,6 +883,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
     if (!si) throw new Error('session not ready')
     turnBusy.add(sessionId)
+    si.lastEventAt = Date.now()   // 挂死看门狗起点:回合刚开始还没流事件,别拿"从未有事件"当静默
     try { if (S.wfTurnStart) S.wfTurnStart(e.sender.id) } catch {}   // 分片收官兜底(window.js):新回合开始=还活着,解除 45s 落定计时
     // 首条消息：静默注入项目上下文前缀（用户看到原文，Serve 收到"背景+原文"）
     // C2 知识懒构建:ctx 里的 KNOWLEDGE_SLOT 此刻才替换成知识段 —— target 用【完整首条用户消息】
@@ -968,7 +1032,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
     if (!si) return null
     const u = oc.getSessionUsage(si.serve, sessionId)
-    return u ? { tokens: u.prompt, total: u.total, limit: null } : null
+    return u ? { tokens: u.prompt, total: u.total, limit: null, cacheRead: u.cacheRead || 0, cacheWrite: u.cacheWrite || 0 } : null   // cacheRead/Write 给 chip 算 KV-cache 命中率(Manus:命中率是生产 Agent 第一指标,前缀稳定性没度量=瞎调)
   })
 
   ipcMain.on('permission-reply', (_e, { requestId, decision }) => {
