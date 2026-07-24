@@ -108,6 +108,9 @@
   .sd-pane .sa-out { font-size: 13px; color: var(--txt); line-height: 1.5; overflow-wrap: anywhere; margin-top: 3px; padding-top: 4px; border-top: .5px dashed var(--composer-border); }
   /* 分片视图的 Agent 分区(与异步子Agent组件同款视觉):并行子Agent交错到达也不乱,一个 Agent 一节 */
   .shsec { border-left: 2px solid var(--c-think); padding: 2px 0 2px 10px; margin: 2px 0 10px; display: flex; flex-direction: column; gap: 6px; }
+  .shsec pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; margin: 0; }   /* 镜像视图裸 pre 不许横溢(只看得见行尾的"乱码"实测) */
+  .shsec .msg, .shsec details { max-width: 100%; }
+  #shardView { overflow-x: hidden; }
   .shsec-hd { font-size: 12px; font-weight: 700; color: var(--c-think); letter-spacing: .02em; }
   .shsec.focus { border-left-color: var(--accent); background: var(--hover); border-radius: 0 8px 8px 0; }   /* 侧边栏点条目 → 分片视图对应分区高亮定位 */
   /* 活视图(监控态):本卡动态结构(目标/todo计划/子Agent fan-out/产出)的实时树图,与对话流全幅切换 */
@@ -575,9 +578,16 @@
   svHead.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--composer-border);'
   const svBack = document.createElement('button'); svBack.textContent = '← 主控'
   svBack.style.cssText = 'flex:none;font-size:11px;padding:3px 10px;border-radius:12px;border:.5px solid var(--composer-border);background:var(--composer-bg);color:var(--txt2);cursor:pointer;'
-  const svTitle = document.createElement('span'); svTitle.style.cssText = 'font-size:12px;font-weight:600;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+  const svTitle = document.createElement('span'); svTitle.style.cssText = 'flex:1;font-size:12px;font-weight:600;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
   svBack.addEventListener('click', shardHideView)
-  svHead.append(svBack, svTitle)
+  const svPop = document.createElement('button'); svPop.textContent = '⧉ 弹窗'
+  svPop.style.cssText = 'flex:none;font-size:11px;padding:3px 10px;border-radius:12px;border:.5px solid var(--composer-border);background:var(--composer-bg);color:var(--txt2);cursor:pointer;'
+  svPop.title = '把该分片的真实隐藏窗亮出来(镜像缓冲是空的也能看;X 收回后台不杀)'
+  svPop.addEventListener('click', async () => {
+    if (!shardViewId) return
+    try { const r = await window.BocomHermes.shardPop(shardViewId); if (r && r.ok === false) addNote('分片弹窗失败:' + (r.err || ''), 'muted') } catch (e) { addNote('分片弹窗失败:' + ((e && e.message) || e), 'muted') }
+  })
+  svHead.append(svBack, svTitle, svPop)
   const svBody = document.createElement('div')
   svBody.style.cssText = 'flex:1;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:8px;'
   shardView.append(svHead, svBody)
@@ -746,7 +756,18 @@
       const m = document.createElement('div'); m.style.cssText = 'font-size:10.5px;color:var(--txt3);'
       m.textContent = st[1] + (s.status === 'running' && s.round ? ' · 第 ' + s.round + ' 轮' : '') + (s.id ? ' · 点击查看会话' : '')
       card.append(t, m)
-      if (s.id) { card.title = shardClean(s.goal); card.addEventListener('click', () => shardShowView(s.id, s.goal)) }
+      if (s.id) {
+        card.title = shardClean(s.goal)
+        card.addEventListener('click', () => shardShowView(s.id, s.goal))
+        // ⧉ 弹窗查看:把分片的真实隐藏窗亮出来(镜像视图在渲染端重载后是空缓冲,纯黑盒场景的兜底可见通道)
+        const pop = document.createElement('button'); pop.textContent = '⧉'; pop.title = '弹出该分片的窗口(直接看它的实时会话;X 收回后台不杀)'
+        pop.style.cssText = 'align-self:flex-end;margin-top:-2px;border:none;background:transparent;color:var(--txt3);font-size:12px;cursor:pointer;padding:0 3px;border-radius:5px;'
+        pop.addEventListener('click', async (ev) => {
+          ev.stopPropagation()
+          try { const r = await window.BocomHermes.shardPop(s.id); if (r && r.ok === false) addNote('分片弹窗失败:' + (r.err || '未知原因'), 'muted') } catch (e) { addNote('分片弹窗失败:' + ((e && e.message) || e), 'muted') }
+        })
+        card.appendChild(pop)
+      }
       shardBody.appendChild(card)
     }
   }
@@ -1037,6 +1058,7 @@
   let delegatedSeen = false, delegateNudged = false
   function maybeDelegateNudge() {
     if (delegatedSeen || delegateNudged || compacting || planPending) return
+    if (handoffDue()) return   // 交棒优先:水位到线的轮末谁也别起新回合(handoffDue 处注释)
     if (latestTodos.length < 3 || turnN < 2) return   // 不够复杂/还在第一轮,别吵
     if (!wdRounds.length && !wfExecSeen) return        // 还没实质干活(纯规划期),别催
     delegateNudged = true
@@ -1047,11 +1069,15 @@
       addNote('这个任务有多步且已读了不少文件 —— 适合对我说「派子 Agent 并行干」或从卡坞开【动态工作流】,比单会话串行啃快且不容易丢上下文', 'muted')
     }
   }
+  // 交棒优先于一切轮末催办:水位到线(≥交棒阈值)的轮末,任何注入(防停/委派/产出兜底)都会立刻起新回合把 busy 置真,
+  // 排在后面的 maybeAutoCompact 看到 busy 直接弃权 —— 催办类注入曾把交棒饿死、水位冲过 100%(实测回归)。
+  const handoffDue = () => wfMode && !!ctxLimitTokens && ctxPctVal() >= knobNum('ctxHandoffPct', 0.55)
   // ── 长任务防停(harness):模型做一部分就结束回合 ≠ 干完 —— todo 还有未完项就催它继续 ──
   // wf/orch/shard 卡:自动注入"继续"(无人值守,停下=整链卡死);普通对话卡:出可见「继续执行」按钮(判动权给人,不自动跑)。
   // 防死循环:连催 3 次且未完项数没降 → 停催转人工;未完项变少=有进展,计数即复位。
   let contNudgeN = 0, contLastOpen = -1
   function maybeContinueNudge() {
+    if (handoffDue()) return   // 交棒优先:水位到线的轮末谁也别起新回合(handoffDue 处注释)
     const open = latestTodos.filter((t) => !/complet|cancel/i.test(String(t && t.status || ''))).map((t) => String((t && (t.content || t.text || t.title)) || '')).filter(Boolean)
     if (!open.length) { contNudgeN = 0; contLastOpen = -1; return }
     if (contLastOpen >= 0 && open.length < contLastOpen) contNudgeN = 0
@@ -1073,6 +1099,7 @@
   let wfProduceNag = false
   function maybeWfProduceNag() {
     if (!wfMode || wfProduceNag || compacting || planPending || !latestTodos.length) return
+    if (handoffDue()) return   // 交棒优先:水位到线的轮末谁也别起新回合(handoffDue 处注释)
     if (latestTodos.some((t) => !/complet|cancel/i.test(String(t && t.status || '')))) return   // 还有未完项,不算"快完成"
     if (artFileList.length) return
     wfProduceNag = true

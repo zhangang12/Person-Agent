@@ -45,6 +45,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   wfOpen: (it) => ipcRenderer.invoke('wf-open', it),
   wfDelete: (id) => ipcRenderer.invoke('wf-delete', id),
   wfPlanApproved: () => ipcRenderer.send('wf-plan-approved'),
+  shardPop: (id) => ipcRenderer.invoke('shard-pop', id),
   // 任务编排(卡坞):断点重试 / 模板(内置+用户) / 定时编排
   pipelineRetry: (id) => ipcRenderer.invoke('pipeline-retry', id),
   pipelineTplList: () => ipcRenderer.invoke('pipeline-tpl-list'),
