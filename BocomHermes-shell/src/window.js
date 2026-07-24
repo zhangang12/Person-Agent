@@ -345,7 +345,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     // 主控的分片/索引棒 → 隐藏卡:不开窗,会话经 session.js 镜像回流到主控卡主区域(shard 视图);
     // 自动过规划闸 + 权限自动放行(无人值守);进度经 pushShardProgress 聚合进主控卡
     const id = spawnCard('工作流 · ' + g.slice(0, 20), null, workflowSystemPrompt(dir, S.settings.backendDir || '') + '\n\n【总目标】\n' + g, g, parentOrch ? { wf: true, shard: true, hidden: true } : { flash: true, wf: true })
-    if (parentOrch) { try { const reg = S.wfRegistry && S.wfRegistry.get(String(id)); if (reg) { reg.parentOrch = parentOrch; reg.writeScope = writescope.parseWriteScope(g); if (reg.writeScope.length) log('shard ' + reg.id + ' 写归属: ' + reg.writeScope.join(', ')); pushShardProgress(parentOrch) } } catch {} }
+    if (parentOrch) { try { const reg = S.wfRegistry && S.wfRegistry.get(String(id)); if (reg) { reg.parentOrch = parentOrch; reg.writeScope = writescope.parseWriteScope(g); reg.contract = writescope.parseContract(g); if (reg.writeScope.length) log('shard ' + reg.id + ' 写归属: ' + reg.writeScope.join(', ')); if (reg.contract.length) log('shard ' + reg.id + ' 契约签名 ' + reg.contract.length + ' 个(收官核对)'); pushShardProgress(parentOrch) } } catch {} }
     return id
   }
   // ── 多层派发(主控卡):主 Agent 层面就把目标拆成 N 个【互相独立+各自可交付】的分片,每个分片是一张全新工作流卡
@@ -408,7 +408,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       '【编码模式 —— 目标是写代码时,用这套替代探查流程的 2-6 步】',
       standards.block(),
       'A. 【契约先行】预检后,先派一个勘察子 Agent 提炼【契约文档】' + (dir ? dir + '/docs/' : 'docs/') + '<主题>/CONTRACT.md:各分片将共享的接口/类型/API 签名/关键数据表字段(压在一页内)。所有分片指令必须带契约路径,严格按契约实现,不许自由改签名。',
-      'B. 【写归属清单(硬约束)】每个分片的 goal 必须含一行「写归属: <相对路径1>, <相对路径2>」—— 这片【只能】写这些文件(壳层硬闸:写归属外的 write/edit 直接拒绝)。归属两两不交:两片不许共享可写文件;共用的文件归一片独占,另一片只读引用。代码改动一律走 write/edit 工具(bash 写文件视为越权)。分片指令开头给它一个角色(如"你是负责 X 模块的资深后端工程师")+ 三层边界(✅ 该片必做 / ⚠️ 超归属先问 / 🚫 禁做)—— 弱模型吃"具体角色+明确边界"这套(2500 个 agents.md 的实证)。',
+      'B. 【写归属清单(硬约束)】每个分片的 goal 必须含一行「写归属: <相对路径1>, <相对路径2>」—— 这片【只能】写这些文件(壳层硬闸:写归属外的 write/edit 直接拒绝,bash 写文件同样过闸)。归属两两不交:两片不许共享可写文件;共用的文件归一片独占,另一片只读引用。代码改动一律走 write/edit 工具(bash 写文件视为越权)。编码分片的 goal 还应含一行「契约: <本片必须交付的关键签名1, 签名2, …>」—— 从 CONTRACT.md 摘本片要实现的函数/类/端点名;壳层收官逐个去归属文件里核对,缺一个都算【契约缺口】报回给你(防"看上去做完了实际差一截")。分片指令开头给它一个角色(如"你是负责 X 模块的资深后端工程师")+ 三层边界(✅ 该片必做 / ⚠️ 超归属先问 / 🚫 禁做)—— 弱模型吃"具体角色+明确边界"这套(2500 个 agents.md 的实证)。',
       'C. 【集成验证 fix-loop】分片全部完成后,派【集成验证分片】:按仓库文档(CLAUDE.md/交接文档)的命令跑全量构建/测试;失败按归属回派 —— 哪个文件的错就重派那片去修(同标记 [orch:' + orchTag + '],至多 2 轮)。全绿才进索引。',
       'D. 【联合改动报告】索引棒产出 ' + (dir ? dir + '/docs/' : 'docs/') + '<主题>/CHANGES.md:总览 + 每分片一章(改了什么/为什么/验证结果/关键 diff 位置)+ 契约偏差记录 + 失败修复流水 —— 是可审阅的改动报告,不是分析 wiki。',
       'E. 【测试纪律 —— 测试是交付的一部分,不是可选项】关键逻辑必须补/改测试;能跑就跑相关测试,把结果(命令+通过数)写进交付。没有测试框架就为关键路径写最小验证脚本并跑通。集成验证不过 = 没做完,不许收口。',
@@ -450,12 +450,42 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const text = '<任务编排·严格模式>\n【第 ' + (n + 1) + '/' + reg.strictSteps.length + ' 步】只执行这一步并汇报结果;做完等下一步自动下发,不要提前做后续步骤。若本步失败,明说「失败」及原因。\n</任务编排·严格模式>\n' + step
     try { win.webContents.send('card-inject', { text, disp: '【第 ' + (n + 1) + '/' + reg.strictSteps.length + ' 步】' + step.slice(0, 120) }); reg.strictIdx++; return true } catch { return false }
   }
+  // 契约缺口核对(编码模式):分片 goal 带「契约: 签名…」行时,收官前拿签名去该片写归属文件里逐个对 ——
+  // 弱模型"看上去做完了实际差一截"是交付质量头号病灶;提示词叮嘱它自检会忘,壳层机械核对不会。
+  // 缺口存 reg.contractMiss 并随唤醒消息报给主控:主控按缺口对待(重派补缺 / 索引显著标注),不把缺斤短两当完成。
+  // 归属是目录就浅递归读(cap:100 文件 / 3MB / 单文件 1MB —— 防巨型归属把收官卡死);读不到的跳过,宁可漏检不挡路。
+  function checkContract(reg) {
+    if (reg.contractChecked) return
+    reg.contractChecked = true
+    reg.contractMiss = []
+    try {
+      if (!Array.isArray(reg.contract) || !reg.contract.length || !Array.isArray(reg.writeScope) || !reg.writeScope.length) return
+      const base = path.resolve(S.settings.projectDir || '.')
+      let text = '', files = 0
+      const eat = (fp) => {
+        if (files >= 100 || text.length >= 3 * 1024 * 1024) return
+        try {
+          const st = fs.statSync(fp)
+          if (st.isDirectory()) { for (const name of fs.readdirSync(fp)) eat(path.join(fp, name)); return }
+          if (st.size > 1024 * 1024) return
+          text += '\n' + fs.readFileSync(fp, 'utf8'); files++
+        } catch {}
+      }
+      for (const s of reg.writeScope) eat(path.resolve(base, s))
+      reg.contractMiss = reg.contract.filter((sig) => sig && !text.includes(sig))
+      if (reg.contractMiss.length) {
+        log('contract gap: shard ' + reg.id + ' 缺 ' + reg.contractMiss.length + ' 个签名: ' + reg.contractMiss.slice(0, 5).join(', '))
+        try { S.audit && S.audit('workflow', '契约缺口', { shard: reg.id, miss: reg.contractMiss.slice(0, 20).join(', ') }) } catch {}
+      }
+    } catch {}
+  }
   // 多层派发唤醒钩:带 parentOrch 的分片收官(完成/中断,一次)→ 给主控卡注入进度消息(N/M)把它唤醒。
   // 主控只装清单,收到后自己对照 todo:齐了按规程派索引棒,没齐结束本轮继续等 —— 事件驱动,不轮询。
   function shardSettled(reg) {
     if (!reg.parentOrch || reg.orchNotified) return
     if (reg.status !== 'done' && reg.status !== 'interrupted') return
     reg.orchNotified = true
+    if (reg.status === 'done') checkContract(reg)   // 中断片不核对:半成品缺签名是常态,报了也是噪音
     pushShardProgress(reg.parentOrch)   // 先刷进度条,再注入唤醒消息(主控卡看到 N/M 变化)
     try {
       const oref = S.orchByTag && S.orchByTag.get(reg.parentOrch)
@@ -464,7 +494,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       if (win) {
         const sibs = [...S.wfRegistry.values()].filter((r) => r.parentOrch === reg.parentOrch)
         const doneN = sibs.filter((r) => r.status === 'done' || r.status === 'interrupted').length
-        win.webContents.send('card-inject', { text: '<主控进度>分片「' + String(reg.goal).slice(0, 60) + '」已' + (reg.status === 'done' ? '完成' : '中断') + ' (' + doneN + '/' + sibs.length + ')。调 workflow_result(id="' + reg.id + '") 取回它的成果;对照你的 todo 清单 —— 全部 ' + sibs.length + ' 个分片齐了,就按规程第 6 条派【索引棒】收口;还没齐,结束本轮继续等。</主控进度>', disp: '分片 ' + doneN + '/' + sibs.length + ' 已' + (reg.status === 'done' ? '完成' : '中断') + ':' + String(reg.goal).slice(0, 40) })
+        const miss = (reg.contractMiss && reg.contractMiss.length) ? reg.contractMiss : null
+        const gapTxt = miss ? ('【契约缺口:' + miss.slice(0, 10).join('、') + ' —— 该片号称完成但归属文件里找不到这些签名;按缺口对待:重派补缺或索引显著标注,别当完成。】') : ''
+        win.webContents.send('card-inject', { text: '<主控进度>分片「' + String(reg.goal).slice(0, 60) + '」已' + (reg.status === 'done' ? '完成' : '中断') + ' (' + doneN + '/' + sibs.length + ')。' + gapTxt + '调 workflow_result(id="' + reg.id + '") 取回它的成果;对照你的 todo 清单 —— 全部 ' + sibs.length + ' 个分片齐了,就按规程第 6 条派【索引棒】收口;还没齐,结束本轮继续等。</主控进度>', disp: '分片 ' + doneN + '/' + sibs.length + ' 已' + (reg.status === 'done' ? '完成' : '中断') + (miss ? '(契约缺口)' : '') + ':' + String(reg.goal).slice(0, 40) })
         if (doneN === sibs.length) {   // 全部收官:还活着的分片窗口(绕圈没被杀掉的)一律关掉 —— 隐藏工人不停下就一直烧 token
           for (const r of sibs) {
             const w2 = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === r.wcId)

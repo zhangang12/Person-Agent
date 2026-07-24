@@ -199,6 +199,11 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
   }
 
   // ── 事件路由（所有 serve 共用，按 sessionId 路由到对应卡）─────────────────
+  // edit 预检连撞计数(sessionId → 连续未命中次数):分片无人值守,弱模型会拿着同一份错 oldString 反复白撞,
+  // 撞一次拒一次它能循环到天荒地老(烧 token 还不出活)—— 连撞 3 次直接熔断本轮(abort),
+  // 交分片收官兜底判 interrupted,主控按规程拆小重派;预检通过一次即清零。
+  // 普通对话卡不设:用户在场看得见黄牌,撞几次他自己会停/会教,别替人掐回合。
+  const editMissStreak = new Map()
   function onPermission({ sessionId, requestId, tool, detail }) {
     const si = S.sessionInfo.get(sessionId); if (!si) return
     if (oc.AUTO_ALLOW.has(tool)) { oc.replyPermission(si.serve, sessionId, requestId, 'once'); return }
@@ -220,6 +225,18 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
           oc.replyPermission(si.serve, sessionId, requestId, 'reject')
           return
         }
+        // bash 写文件同一道闸:弱模型常绕到 cat > f / tee / sed -i 写文件(归属闸只管 write/edit = 形同虚设)。
+        // 提取命令里的写目标逐个过归属;解析不出的(含 $/`/~ 或 detail 被 200 字截断)宁可放过 —— 提示词层还有"bash 写文件视为越权"的规矩兜底。
+        if (scope && scope.length && /^bash(_[a-z]+)*$/i.test(String(tool || ''))) {
+          const dir = (si.serve && si.serve.dir) || '.'
+          const bad = writescope.bashWriteTargets(String(detail || '')).filter((t) => !writescope.matchScope(scope, dir, t))
+          if (bad.length) {
+            log('write-scope 拦截:分片 ' + mreg.id + ' bash 越界写 ' + bad[0] + ' (归属: ' + scope.join(', ') + ')')
+            try { S.audit && S.audit('workflow', '写归属越界拦截(bash)', { shard: mreg.id, path: String(bad[0]).slice(0, 200), scope: scope.join(', ') }) } catch {}
+            oc.replyPermission(si.serve, sessionId, requestId, 'reject')
+            return
+          }
+        }
       } catch {}
       // 编辑预检:edit 的 oldString 与文件实际内容对不上 → 不放行白撞,直接拒并回【实际区域】
       // (弱模型凭记忆写 oldString 是 edit 失败的第一死因;拒一次带真内容,下一轮就对了 —— 比放行后失败空转强得多)
@@ -228,12 +245,21 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
           try {
             const peek = await buildPermPeek(si, sessionId, tool, detail)
             if (peek && peek.miss) {
-              log('edit 预检拦截:oldString 未命中 ' + peek.miss.filePath + ' → 拒并回实际区域')
-              try { S.audit && S.audit('workflow', '编辑预检拦截(oldString 未命中)', { file: peek.miss.filePath }) } catch {}
+              const n = (editMissStreak.get(sessionId) || 0) + 1
+              editMissStreak.set(sessionId, n)
+              if (editMissStreak.size > 200) editMissStreak.delete(editMissStreak.keys().next().value)
+              log('edit 预检拦截:oldString 未命中 ' + peek.miss.filePath + ' → 拒并回实际区域 (连撞 ' + n + ')')
+              try { S.audit && S.audit('workflow', '编辑预检拦截(oldString 未命中)', { file: peek.miss.filePath, streak: n }) } catch {}
               oc.replyPermission(si.serve, sessionId, requestId, 'reject')
+              if (n >= 3) {   // 连撞熔断:撞 3 次还不对 = 它陷入死循环,掐停本轮交收官兜底/主控重派
+                log('edit 连撞熔断:' + sessionId + ' 连续 ' + n + ' 次未命中 → abort 本轮')
+                try { S.audit && S.audit('workflow', '编辑连撞熔断(abort)', { sessionId, streak: n }) } catch {}
+                try { await oc.abort(si.serve, sessionId) } catch {}
+              }
               return
             }
           } catch {}
+          editMissStreak.delete(sessionId)   // 预检通过(或没法检)→ 连撞清零
           oc.replyPermission(si.serve, sessionId, requestId, 'once')
         })()
         return

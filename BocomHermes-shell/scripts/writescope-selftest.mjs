@@ -1,7 +1,7 @@
 // 自测:src/writescope.js(分片写归属)—— 解析格式、范围匹配、越界判定。跑法:npm run scope:test
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
-const { parseWriteScope, matchScope } = require('../src/writescope.js')
+const { parseWriteScope, matchScope, bashWriteTargets, parseContract } = require('../src/writescope.js')
 
 let pass = 0, fail = 0
 function ok(name, cond, extra) {
@@ -29,6 +29,32 @@ console.log('用例2:范围匹配')
   ok('.. 逃逸拒绝', matchScope(scope, '/repo', '../secret/x.py') === false)
   ok('绝对路径在归属内也命中', matchScope(scope, '/repo', '/repo/backend/app/routers/a.py') === true)
   ok('空归属 → 全放行', matchScope([], '/repo', 'anything/at/all.py') === true)
+}
+
+console.log('用例3:bash 写目标提取(bash 写文件过归属闸)')
+{
+  ok('重定向 > 命中', bashWriteTargets('cat <<EOF > src/a.py\n...\nEOF').join() === 'src/a.py', bashWriteTargets('cat <<EOF > src/a.py'))
+  ok('追加 >> 命中', bashWriteTargets('echo hi >> logs/b.txt').join() === 'logs/b.txt')
+  ok('stderr 重定向 2> 不算写目标', bashWriteTargets('pytest 2> err.log').length === 0, bashWriteTargets('pytest 2> err.log'))
+  ok('fd 复制 >& 不算', bashWriteTargets('echo x >&2').length === 0)
+  ok('引号路径剥引号', bashWriteTargets('cat > "src/my file.py"').join() === 'src/my file.py', bashWriteTargets('cat > "src/my file.py"'))
+  ok('tee / tee -a 命中', bashWriteTargets('echo x | tee -a out.log').join() === 'out.log', bashWriteTargets('echo x | tee -a out.log'))
+  ok('sed -i 取末位目标(GNU)', bashWriteTargets("sed -i 's/a/b/' src/c.py").join() === 'src/c.py', bashWriteTargets("sed -i 's/a/b/' src/c.py"))
+  ok('sed -i 带 macOS 备份后缀也命中', bashWriteTargets("sed -i '' 's/a/b/' src/d.py").join() === 'src/d.py', bashWriteTargets("sed -i '' 's/a/b/' src/d.py"))
+  ok('复合命令多目标全收', bashWriteTargets('echo a > x.txt && echo b >> y.txt').join('|') === 'x.txt|y.txt', bashWriteTargets('echo a > x.txt && echo b >> y.txt'))
+  ok('纯读命令无目标', bashWriteTargets('ls -la && grep -r foo src/').length === 0)
+  ok('含 $/`/~ 的目标跳过(不硬猜)', bashWriteTargets('echo x > $OUT/f.txt; echo y > ~/g.txt').length === 0, bashWriteTargets('echo x > $OUT/f.txt; echo y > ~/g.txt'))
+}
+
+console.log('用例4:契约签名解析(收官缺口核对)')
+{
+  const g = '[orch:OC-ab12]\n实现采购接口\n写归属: src/purchase.py\n契约: create_order(), class OrderSvc, GET /api/orders'
+  const c = parseContract(g)
+  ok('契约行解析出 3 个签名', c.length === 3, c)
+  ok('尾括号剥掉(foo() → foo)', c[0] === 'create_order', c)
+  ok('class/端点原样保留', c[1] === 'class OrderSvc' && c[2] === 'GET /api/orders', c)
+  ok('无契约行 → 空(不设检)', parseContract('实现采购接口').length === 0)
+  ok('中文冒号+顿号也认', parseContract('契约：fnA、fnB()').join('|') === 'fnA|fnB', parseContract('契约：fnA、fnB()'))
 }
 
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)
