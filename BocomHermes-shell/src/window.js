@@ -877,6 +877,18 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     S.dockWin.on('closed', () => { S.dockWin = null })
   }
 
+  // 「控制台」主界面:类 Claude Code / Kimi CLI 的三栏会话台(左:历史会话;中:对话流;下:输入区)——
+  // 卡片体系之外的第二种主交互形态(更人性化的大屏操作台)。会话接线零新增:复用 card-init/card-reinit/card-send
+  // 全套(窗口 webContents 绑一个会话;侧栏点历史 = cardInit({sid}) 重连回放;＋新会话 = cardReinit)。
+  function createConsole() {
+    if (S.consoleWin && !S.consoleWin.isDestroyed()) { S.consoleWin.show(); S.consoleWin.focus(); return }
+    const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
+    const W = Math.min(1180, sw - 60), Hh = Math.min(820, sh - 60)
+    S.consoleWin = new BrowserWindow(baseOpts({ width: W, height: Hh, x: Math.round((sw - W) / 2), y: Math.round((sh - Hh) / 2), skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 860, minHeight: 560 }))
+    S.consoleWin.on('closed', () => { S.consoleWin = null })
+    S.consoleWin.loadFile(path.join(__dirname, '..', 'ui', 'console.html'))
+  }
+
   // 【内嵌浏览器核心】整块搬进 ./browser 的 initBrowser(ctx) 工厂(见该文件抬头)。
   // 必须在 initRecorder 之前构造:后者构造时即读取返回的 brActive(const,非提升)。
   // 录制钩子 wireRecToTab/brSendRecCount 与 ensureOrbAlive 是后定义但已提升的 function,按引用注入。
@@ -1465,6 +1477,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       { label: '唤起输入框', accelerator: 'Ctrl+Shift+Space', click: toggleInput },
       { label: S.settings.orbHidden ? '显示桌面悬浮球' : '隐藏桌面悬浮球', click: () => setOrbHidden(!S.settings.orbHidden) },
       { type: 'separator' },
+      { label: '控制台（主界面）', accelerator: 'Ctrl+Shift+C', click: () => createConsole() },
       { label: '调试工作台（Agent + 浏览器）', accelerator: 'Ctrl+Shift+B', click: () => createWorkspace() },
       { label: '录制与回放（浏览器技能）', accelerator: 'Ctrl+Shift+R', click: () => createSkillCenter() },
       { label: '邮件（收件箱 · 摘要 · 设置）', accelerator: 'Ctrl+Shift+M', click: () => createMailCenter() },
@@ -3150,9 +3163,10 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   })
 
   ipcMain.handle('open-dock', () => openDock())
+  ipcMain.handle('open-console', () => createConsole())
   ipcMain.on('get-history', (e) => { e.returnValue = S.history })
   ipcMain.handle('open-history', (_e, { sid, title }) => spawnCard(title, sid))
   ipcMain.handle('clear-history', () => { S.history = []; saveHistory(); return true })
 
-  return { createOrb, createBrowser, createWorkspace, createSkillCenter, createMailCenter, openMailView, spawnCard, spawnWorkflow, spawnEmailCard, snapAsk, toggleInput, toggleOrbInput, buildTray, openDock, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory, replaceHistoryId }
+  return { createOrb, createBrowser, createWorkspace, createSkillCenter, createMailCenter, createConsole, openMailView, spawnCard, spawnWorkflow, spawnEmailCard, snapAsk, toggleInput, toggleOrbInput, buildTray, openDock, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory, replaceHistoryId }
 }

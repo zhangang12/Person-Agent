@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   dbTest: () => ipcRenderer.invoke('db-test'),
   // 卡坞 / 会话历史
   openDock: () => ipcRenderer.invoke('open-dock'),
+  openConsole: () => ipcRenderer.invoke('open-console'),   // 控制台主界面(三栏会话台)
   getHistory: () => ipcRenderer.sendSync('get-history'),
   openHistory: (sid, title) => ipcRenderer.invoke('open-history', { sid, title }),
   clearHistory: () => ipcRenderer.invoke('clear-history'),

@@ -131,7 +131,7 @@ app.whenReady().then(() => {
 
   initAudit(S, { app, path, fs, ipcMain, log })   // 先于 initWindow:S.audit 供各埋点处调用
   const deps = { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }
-  const { createOrb, createBrowser, createWorkspace, createSkillCenter, createMailCenter, openMailView, toggleOrbInput, buildTray, spawnEmailCard, snapAsk, recordHistory, touchHistory, replaceHistoryId } = initWindow(S, deps)
+  const { createOrb, createBrowser, createWorkspace, createSkillCenter, createMailCenter, createConsole, openMailView, toggleOrbInput, buildTray, spawnEmailCard, snapAsk, recordHistory, touchHistory, replaceHistoryId } = initWindow(S, deps)
   S.snapAsk = snapAsk
   S.createOrb = createOrb   // 留给 window-all-closed 兜底拉起球
 
@@ -158,6 +158,7 @@ app.whenReady().then(() => {
   oc.ensureServe(S.settings.projectDir || '', S.handlers, log).catch((e) => log('prewarm failed: ' + e.message))
 
   if (!globalShortcut.register('Control+Shift+Space', toggleOrbInput)) log('global shortcut register failed (maybe in use)')
+  globalShortcut.register('Control+Shift+C', () => createConsole())   // 控制台主界面(类 CLI 三栏会话台)
   globalShortcut.register('Control+Shift+B', () => createWorkspace())
   globalShortcut.register('Control+Shift+R', () => createSkillCenter())   // 🎬 录制与回放
   globalShortcut.register('Control+Shift+M', () => createMailCenter())
