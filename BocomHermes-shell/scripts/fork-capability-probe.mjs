@@ -136,12 +136,16 @@ async function main() {
     if (Array.isArray(send.json)) msgs = send.json
     else if (send.json && Array.isArray(send.json.parts)) msgs = [send.json]
     else if (send.json && (send.json.messages || send.json.data)) msgs = send.json.messages || send.json.data
-    if (!msgs || !msgs.length) { const g = await api('GET', '/session/' + sid + '/message'); msgs = g.json && (Array.isArray(g.json) ? g.json : (g.json.messages || g.json.data)) }
-    const readParts = []
+    // POST 只带本轮【最后一条】消息(实测)——工具 part 在前面几条里,必须拉全量消息列表判
+    const g = await api('GET', '/session/' + sid + '/message')
+    msgs = g.json && (Array.isArray(g.json) ? g.json : (g.json.messages || g.json.data)) || msgs
+    const allTools = [], readParts = []
     for (const m of msgs || []) for (const p of (m.parts || (m.data && m.data.parts) || [])) {
-      if (p && p.type === 'tool' && /^(read|grep|bash)$/i.test(String(p.tool || (p.state && p.state.tool) || p.name || ''))) readParts.push(p)
+      if (p && p.type === 'tool') allTools.push(String(p.tool || (p.state && p.state.tool) || p.name || '?') + '(' + String((p.state && p.state.output) || p.output || '').length + '字)')
+      if (p && p.type === 'tool' && /^(read|grep|bash|powershell|pwsh|cmd)$/i.test(String(p.tool || (p.state && p.state.tool) || p.name || ''))) readParts.push(p)
     }
-    if (!readParts.length) WARN('模型没调 read/grep/bash', '模型行为差异,不是机制问题 —— 换个更强势的 prompt 重跑本探针')
+    if (allTools.length) console.log('  (本轮实际调用的工具: ' + allTools.join(', ') + ')')
+    if (!readParts.length) WARN('模型没调 read/grep/bash', '(msgs=' + ((msgs && msgs.length) || 0) + ', toolParts=' + allTools.length + ') 模型行为差异,不是机制问题 —— 换个更强势的 prompt 重跑本探针')
     else {
       const out = String(readParts.map((p) => (p.state && p.state.output) || p.output || '').join('\n'))
       const usedBash = readParts.some((p) => /bash/i.test(String(p.tool || (p.state && p.state.tool) || p.name || '')))

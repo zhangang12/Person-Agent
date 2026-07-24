@@ -59,6 +59,9 @@
       "ui/**/*",
       "assets/**/*",
       "mcp/**/*",
+      "plugin/**/*",
+      "scripts/fork-capability-probe.mjs",
+      "scripts/lsp-smoke.mjs",
       "package.json"
     ],
     "asarUnpack": [
