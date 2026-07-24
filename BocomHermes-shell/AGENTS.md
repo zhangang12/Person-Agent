@@ -12,7 +12,7 @@
 
 ## 技术栈
 
-- **运行时**：Electron 34（`package.json` `devDependencies`），主进程是 CommonJS（`.js`，`'use strict'` 开头）；UI 是无框架的原生 HTML/JS/CSS（`ui/*.html`，脚本内联在 HTML 里）。
+- **运行时**：Electron 34（`package.json` `devDependencies`），主进程是 CommonJS（`.js`，`'use strict'` 开头）；UI 主体是无框架的原生 HTML/JS/CSS（`ui/*.html`，脚本内联在 HTML 里）——**例外**：控制台 2.0（`ui/console.html`，应用主界面）用 **Vue 3 全局构建**（本地 vendor `ui/vendor/vue.global.prod.js`，无构建步骤、运行时零外网，随包分发；`vue` 已进 dependencies 供打包溯源）。
 - **Node**：开发机 Node v20+ 可跑主仓库；`mcp/` 下的 MCP server（ESM `.mjs`）**要求 Node 22+**（需内置全局 WebSocket，用于 CDP 驱动系统 Edge/Chrome）。
 - **打包**：electron-builder 25（Windows NSIS + portable，macOS dmg + zip），配置全在 `package.json` 的 `build` 字段。
 - **依赖**（运行时）：`pdf-parse`、`mammoth`、`xlsx`（需求文档解析）、`mysql2`（OceanBase MySQL 模式只读连接）、`typescript-language-server`+`typescript@5.x`+`@vue/language-server`+`pyright`（随包自带 LSP，内网无外网装不了——TS/Vue/Python 代码智能全靠它们，用 Electron 内嵌 Node 跑，必须 asarUnpack）。MCP server 与自测脚本**零依赖**（只用 Node 内置模块）。
@@ -44,6 +44,7 @@ BocomHermes-shell/
 │   ├── todos.js / todo-reminder.js / trigger.js / cdp-format.js
 │   ├── knowledge.js   # 项目级知识库(任务尾蒸馏落点,纯逻辑可单测):slug/条目追加去重/注入裁剪
 ├── ui/                # 全部窗口页面（原生 HTML，脚本内联）：card.html(对话卡,~117KB)、browser.html(~115KB)、
+│                      #   console.html(控制台 2.0 = 启动主界面:导航轨 + 对话/工作流/待办/设置四视图,Vue 3 本地 vendor)、
 │                      #   orb.html/orb-input.html(悬浮球)、dock.html(卡坞)、mailcenter.html、skills.html、
 │                      #   settings.html、glass.css(双主题设计令牌,html[data-theme] 驱动)等
 ├── mcp/               # 8 个本地 stdio MCP server(ESM,零依赖,打包时 asarUnpack)：
@@ -130,7 +131,7 @@ npm run bars:e2e           # card.html 真 Chromium 渲染 e2e：重放工作流
 
 运行期数据都在 Electron `userData` 目录：`settings.json`（theme/projectDir/backendDir/serveBin/editorCmd/recentDirs/proxy/browserArgs/smtp 等）、`history.json`、`BocomHermes.log`（3MB 滚动）、`audit.jsonl`、`memory.md`（个人记忆库，注入会话上下文）、`recordings/`（录制与技能 JSON）、`evidence/`（复现取证）。
 
-全局热键（`main.js`）：`Ctrl+Shift+Space` 唤起输入框、`+B` 工作台、`+R` 技能中心、`+M` 邮件中心、`+S` 截图提问、`+V` 剪贴板带入输入框。
+全局热键（`main.js`）：`Ctrl+Shift+Space` 唤起输入框、`+C` 控制台（主界面，启动即开）、`+B` 工作台、`+R` 技能中心、`+M` 邮件中心、`+S` 截图提问、`+V` 剪贴板带入输入框。
 
 ## 文档地图
 

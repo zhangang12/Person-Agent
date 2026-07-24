@@ -16,6 +16,7 @@
     "tool:test": "node scripts/tool-part-selftest.mjs",
     "compact:test": "node scripts/recorder-compact-selftest.mjs",
     "card:ui:test": "node scripts/card-ui-selftest.mjs",
+    "console:test": "electron scripts/console-smoke.cjs",
     "knowledge:test": "node scripts/knowledge-selftest.mjs",
     "scope:test": "node scripts/writescope-selftest.mjs",
     "lsp:test": "node scripts/lsp-smoke.mjs",
@@ -42,6 +43,7 @@
     "pyright": "^1.1.411",
     "typescript": "^5.9.3",
     "typescript-language-server": "^4.4.1",
+    "vue": "^3.5.40",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

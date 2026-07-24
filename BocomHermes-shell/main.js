@@ -154,6 +154,7 @@ app.whenReady().then(() => {
 
   createOrb()
   buildTray()
+  createConsole()   // 控制台 2.0 = 启动主界面(orb 仍常驻,热键/托盘照旧)
   // 启动即预热引擎（即便没选项目也预热 home serve），等用户敲字时多半已就绪
   oc.ensureServe(S.settings.projectDir || '', S.handlers, log).catch((e) => log('prewarm failed: ' + e.message))
 
