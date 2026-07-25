@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <title>BocomHermes</title>
 <script>try { document.documentElement.dataset.theme = window.BocomHermes.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
-<script>(function(){try{var p=new URLSearchParams(location.search),d=document.documentElement.style;['gox','goy','gfx','gfy'].forEach(function(k){var v=p.get(k);if(v)d.setProperty('--'+k,v)})}catch(e){}})()</script>
+<script>(function(){try{var p=new URLSearchParams(location.search),d=document.documentElement.style;['gox','goy','gfx','gfy'].forEach(function(k){var v=p.get(k);if(v)d.setProperty('--'+k,v)});if(p.get('embedded')==='1')document.documentElement.dataset.embed='1'}catch(e){}})()</script>
 <link rel="stylesheet" href="glass.css" />
 <style>
   .card { display: flex; flex-direction: column; height: 100%; padding: 11px 13px 12px; gap: 9px; position: relative; }
@@ -865,9 +865,16 @@
   }
   const quick = document.getElementById('quick')
 
-  // 工作台内嵌：隐藏自带窗口控件（由工作台窗口的系统边框负责），不自动发首条消息
+  // 工作台/主窗口内嵌：隐藏自带窗口控件（由宿主窗口的系统边框负责），不自动发首条消息;
+  // data-embed="1" 触发 glass.css 嵌入态覆盖(去 body 内边距/圆角/阴影/出场动画,实底)
   const embedded = params.get('embedded') === '1'
-  if (embedded) ['pin', 'max', 'min', 'x'].forEach((id) => { const el = document.getElementById(id); if (el) el.style.display = 'none' })
+  if (embedded) {
+    document.documentElement.dataset.embed = '1'
+    ;['pin', 'max', 'min', 'x'].forEach((id) => { const el = document.getElementById(id); if (el) el.style.display = 'none' })
+  }
+  // 主窗口对话视图内嵌卡(波2):与工作台调试助手卡(纯 embedded)区分 —— 它是正常会话卡:
+  // 带 msg 自动首发、无 msg 空态等输入、init 成功经 cardBoundEmit 把 sid/标题回写宿主 shell 侧栏
+  const chatEmbed = embedded && params.get('chat') === '1'
 
   document.getElementById('x').addEventListener('click', () => window.BocomHermes.closeSelf())
   document.getElementById('min').addEventListener('click', () => window.BocomHermes.minimizeSelf())
@@ -2337,8 +2344,8 @@
   const sid = params.get('sid') || ''   // 带 sid = 从卡坞续接旧会话
   ;(async () => {
     setBusy(true)
-    if (!sid && !embedded) addMsg(dispMsg, 'me')      // 全新卡：先显示任务（disp 在场时只展示摘要，不展示大段上下文）
-    const boot = addMsg('', 'ai'); boot.textContent = sid ? '正在续接对话…' : embedded ? '正在连接调试助手…' : '正在启动引擎…（首次较慢，请稍候）'
+    if (!sid && (!embedded || (chatEmbed && params.get('msg')))) addMsg(dispMsg, 'me')      // 全新卡：先显示任务（disp 在场时只展示摘要，不展示大段上下文）;主窗口内嵌会话卡带首发消息时同此
+    const boot = addMsg('', 'ai'); boot.textContent = sid ? '正在续接对话…' : (embedded && !chatEmbed) ? '正在连接调试助手…' : '正在启动引擎…（首次较慢，请稍候）'
     try {
       const r = await window.BocomHermes.cardInit(sid ? { sid, title, shard: shardMode } : { title, shard: shardMode })
       paintProj(r.project, r.dir)          // 本卡真实绑定目录
@@ -2348,6 +2355,8 @@
       if (sid || embedded) draftRestore()             // 续接/调试卡恢复草稿;新卡自动发首条消息,不恢复
       boot.remove()
       cardReady = true
+      // 主窗口内嵌卡:把绑定的会话 id/标题回写宿主 shell 侧栏(发卡收口时 shell 不知道引擎侧 sid)
+      if (chatEmbed) { try { window.BocomHermes.cardBoundEmit && window.BocomHermes.cardBoundEmit({ cardId: params.get('id') || '', sid: r.sessionId || '', title, wf: wfMode }) } catch (e) {} }
       if (sid) {
         // 历史回放(续接与转录两路共用):历史思考链随消息一起回放(normalizeMessages 带回 reasoning),每一轮的思考都在。
         // 历史块默认折叠(几十轮全展开会淹没对话),点标题即展开 —— "能看到"是底线,展不展开由人定
@@ -2370,9 +2379,11 @@
           } else addMsg('（原对话已不在引擎中，已为你新开一段，标题：' + title + '）', 'ai')
         }
         setBusy(false); scrollFeed()
-      } else if (embedded) {
+      } else if (embedded && !chatEmbed) {
         setBusy(false)
         addMsg('我是你的调试助手。在右侧浏览器复现问题后点「发给 Agent」，我会拿到控制台报错、网络异常和页面结构来定位；也可以直接在下面提问。', 'ai')
+      } else if (chatEmbed && !params.get('msg')) {
+        setBusy(false)   // 主窗口「新建对话」:空态等用户输入,不把标题当首条消息发出去
       } else {
         let initFiles = []
         try { const cid = params.get('id'); if (cid) initFiles = await window.BocomHermes.getCardFiles(cid) } catch (e) {}   // 对话坞拖进来的附件(图片)

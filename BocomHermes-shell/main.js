@@ -27,7 +27,7 @@ const S = {
   settings: { theme: 'light', projectDir: '', backendDir: '', serveBin: '', editorCmd: '', recentDirs: [] },
   history: [],
   cardSeq: 0,
-  inputWin: null, settingsWin: null, dockWin: null, tray: null,
+  settingsWin: null, dockWin: null, tray: null,
   sessionByWc: new Map(), sessionInfo: new Map(), pendingPerm: new Map(), pendingQuestion: new Map(),
   streamBuf: new Map(), sentPrompt: new Map(), firstMsgCtx: new Map(), workflows: new Map(),
   handlers: null,   // 由 initSession 填入
@@ -131,9 +131,8 @@ app.whenReady().then(() => {
 
   initAudit(S, { app, path, fs, ipcMain, log })   // 先于 initWindow:S.audit 供各埋点处调用
   const deps = { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }
-  const { createOrb, createBrowser, createWorkspace, createSkillCenter, createMailCenter, createConsole, openMailView, toggleOrbInput, buildTray, spawnEmailCard, snapAsk, recordHistory, touchHistory, replaceHistoryId } = initWindow(S, deps)
+  const { createBrowser, createWorkspace, createSkillCenter, createMailCenter, createMainWindow, openMailView, buildTray, spawnEmailCard, snapAsk, recordHistory, touchHistory, replaceHistoryId } = initWindow(S, deps)
   S.snapAsk = snapAsk
-  S.createOrb = createOrb   // 留给 window-all-closed 兜底拉起球
 
   initSession(S, { ipcMain, path, fs, shell, oc, log, recordHistory, touchHistory, replaceHistoryId })
   const todosApi = initTodos(S, { ipcMain, app, path, fs, log })
@@ -152,36 +151,51 @@ app.whenReady().then(() => {
   oc.setServeBin(serveBin)
   log('serve binary: ' + serveBin + (app.isPackaged ? ' (packaged)' : ' (dev)'))
 
-  createOrb()
   buildTray()
-  createConsole()   // 控制台 2.0 = 启动主界面(orb 仍常驻,热键/托盘照旧)
+  createMainWindow()   // 桌面主窗口(shell.html) = 启动主界面(悬浮球/控制台 2.0 均已退役)
   // 启动即预热引擎（即便没选项目也预热 home serve），等用户敲字时多半已就绪
   oc.ensureServe(S.settings.projectDir || '', S.handlers, log).catch((e) => log('prewarm failed: ' + e.message))
 
-  if (!globalShortcut.register('Control+Shift+Space', toggleOrbInput)) log('global shortcut register failed (maybe in use)')
-  globalShortcut.register('Control+Shift+C', () => createConsole())   // 控制台主界面(类 CLI 三栏会话台)
-  globalShortcut.register('Control+Shift+B', () => createWorkspace())
-  globalShortcut.register('Control+Shift+R', () => createSkillCenter())   // 🎬 录制与回放
-  globalShortcut.register('Control+Shift+M', () => createMailCenter())
+  // 主窗口化:热键统一改道主窗口 —— 拉起/聚焦后 send('shell-view') 切到目标视图;
+  // 窗口新建时 webContents 尚在加载,等 did-finish-load 再发,否则消息丢失
+  function openMainView(view) {
+    const win = createMainWindow()
+    if (!win) return
+    const send = () => { try { if (!win.isDestroyed()) win.webContents.send('shell-view', { view }) } catch (e) { log('shell-view send err: ' + e.message) } }
+    if (win.webContents.isLoading()) win.webContents.once('did-finish-load', send)
+    else send()
+  }
+  // 快捷输入层(波4):拉起主窗口 + send('shell-quick-open') 由 shell 弹内置输入条(Enter 即开新会话);
+  // payload.text 在场 = 预填文本(Ctrl+Shift+V 剪贴板带入)。同样等 did-finish-load 再发,防丢消息
+  function openMainQuick(payload) {
+    const win = createMainWindow()
+    if (!win) return
+    const send = () => { try { if (!win.isDestroyed()) win.webContents.send('shell-quick-open', payload || {}) } catch (e) { log('shell-quick-open send err: ' + e.message) } }
+    if (win.webContents.isLoading()) win.webContents.once('did-finish-load', send)
+    else send()
+  }
+  if (!globalShortcut.register('Control+Shift+Space', () => openMainQuick())) log('global shortcut register failed (maybe in use)')
+  globalShortcut.register('Control+Shift+B', () => openMainView('orch'))
+  globalShortcut.register('Control+Shift+R', () => createSkillCenter())   // 🎬 录制与回放(技能中心在工作台,保持不变)
+  globalShortcut.register('Control+Shift+M', () => openMainView('mail'))
   globalShortcut.register('Control+Shift+S', () => { try { snapAsk() } catch (e) { log('snapAsk shortcut err: ' + e.message) } })   // 截图提问
 
-  // Ctrl+Shift+V：把剪贴板内容带入输入框（"选中即问"快捷路径）
+  // Ctrl+Shift+V:剪贴板内容预填进主窗口快捷输入层(波4 改道 quick-open;原 fill-input 直填会话卡
+  // 输入框的路径不再发向 mainWin —— 全仓库已无其他 fill-input 发送方,shell 侧 onFillInput 处理保留兜底)
   globalShortcut.register('Control+Shift+V', () => {
     const text = clipboard.readText().trim()
     if (!text) return
-    if (!S.orbInputWin || S.orbInputWin.isDestroyed()) toggleOrbInput()
-    setTimeout(() => { if (S.orbInputWin && !S.orbInputWin.isDestroyed()) S.orbInputWin.webContents.send('fill-input', text) }, 80)
+    openMainQuick({ text })
   })
-  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createOrb() })
+  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createMainWindow() })   // mac 点 dock 图标:无窗时拉起主窗口(原是重建 orb)
 })
 
-// 常驻 agent: 关掉所有窗口不退 app; 真没窗口了就把球重新拉起来
+// 平台默认窗口策略: mac 全关不退(dock 再点拉主窗口), 其余平台全关即退
 app.on('before-quit', () => { app.isQuitting = true })
+// 主窗口化:orb 兜底重建退役,恢复平台默认(mac 全关不退,其余平台退出)
 app.on('window-all-closed', () => {
   if (app.isQuitting) return
-  if (BrowserWindow.getAllWindows().length === 0 && typeof S.createOrb === 'function') {
-    try { S.createOrb() } catch (e) { log('recreate orb FAIL: ' + e.message) }
-  }
+  if (process.platform !== 'darwin') app.quit()
 })
 app.on('will-quit', () => { globalShortcut.unregisterAll(); oc.killAll() })
 // 兜底:任何未捕获错误都进日志,便于排查偶发崩溃

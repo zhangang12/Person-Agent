@@ -1,6 +1,6 @@
 'use strict'
 const USE_ACRYLIC = false
-const { clipboard, session, Notification, desktopCapturer } = require('electron')
+const { clipboard, session, Notification, desktopCapturer, webContents } = require('electron')
 const email = require('./email')
 const attachments = require('./attachments')
 const mailCache = require('./mail-cache')
@@ -19,12 +19,16 @@ const initBrowser = require('./browser')
 const knowledge = require('./knowledge')   // 项目知识库治理 IPC 用(纯逻辑,落盘/审计在本文件)
 const writescope = require('./writescope')   // 分片写归属(编码模式):goal 解析 + 范围匹配,session.js 的权限硬闸用
 const standards = require('./standards')     // 内置编码规范库(后端/前端/UI·UX/SQL/架构):编码模式全量注入
+const makeCardCleanup = require('./card-cleanup')   // 卡关闭清理链工厂(波2 抽出/波3 独立成可测模块)
 
 module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }) {
   // 纯文件 IO 函数搬进 recorder-core 的 initStore 工厂,这里注入依赖后解构使用
   const { recDir, readRec, writeLastRun, skillList, loadAssertions, loadScans, loadReview, gitChangedFiles } = require('./recorder-core').initStore({ app, fs, path, execSync: require('child_process').execSync })
   // 额外窗口引用
-  S.orbInputWin = null
+  S.mainWin = null   // 桌面主窗口(shell.html)单例,createMainWindow 管理
+  S.embedWc = new Set()   // 主窗口内嵌会话卡的 guest webContents id(波2):发卡收口进 shell 的会话都登记在这
+  S.pinnedWc = new Set()   // 钉出窗的 wcId(波3):从主窗口钉出的独立迷你卡;钉出卡 closed 分流(detach+收回 vs 正常清理)的判据
+  S.cardWcById = new Map()   // 卡 id → wcId(仅真窗口路径登记,关卡清理):波3 钉出 IPC 按卡 id 反查 wcId(回包/钉出窗登记)
   S.browser = { win: null, tabs: [], activeId: null, consoleH: 0, seq: 0, mode: 'standalone', leftW: 0, cardView: null, cardWcId: null, _dragging: false }
   // ── 设置 ────────────────────────────────────────────────────────────────────
   // 阈值旋钮(治理波次):弱模型补偿参数全部进 settings.json 的 knobs 节,可拧松/随模型升级逐档退掉;
@@ -53,7 +57,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // ── 邮件子系统 ──────────────────────────────────────────────────────────────
   // 收发/发件箱安全闸门/IMAP IDLE/本地中继/mail-cache/待办-邮件闭环/DB 只读中继,整块搬进 ./mail 的
   // initMail(ctx) 工厂。ctx 注入外部模块 + 后定义但已提升的 function;回传 3 个外部调用点用到的函数。
-  const mail = initMail({ S, app, path, fs, shell, ipcMain, log, oc, Notification, email, attachments, mailCache, emailSummarySeen, db, initOutbox, openOutbox, sendOrbState, createMailCenter, openMailView, spawnCard, spawnWorkflow, spawnOrchestrator, maybeSuggestMeeting, skillList, skillRun, skillRunBatch, skillPageRead, skillPageAct, skillTakeoverDone })
+  const mail = initMail({ S, app, path, fs, shell, ipcMain, log, oc, Notification, email, attachments, mailCache, emailSummarySeen, db, initOutbox, openOutbox, createMailCenter, openMailView, spawnCard, spawnWorkflow, spawnOrchestrator, maybeSuggestMeeting, skillList, skillRun, skillRunBatch, skillPageRead, skillPageAct, skillTakeoverDone })
 
   const projName = () => S.settings.projectDir ? path.basename(S.settings.projectDir) : '未选目录'
 
@@ -103,99 +107,58 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     return opts
   }
 
-  function createOrb() {
-    const { width, height } = screen.getPrimaryDisplay().workAreaSize
-    const W = 280
-    S.inputWin = new BrowserWindow(baseOpts({
-      width: W, height: W,
-      x: width - W - 20, y: height - W - 20,
-      skipTaskbar: true, hasShadow: false,
-    }))
-    S.inputWin.setIgnoreMouseEvents(true, { forward: true })
-    S.inputWin.loadFile(path.join(__dirname, '..', 'ui', 'orb.html'))
-    S.inputWin.on('closed', () => { S.inputWin = null })
-    // "不用应用时隐藏桌面悬浮球":窗口照建(给 orb-input 做锚点定位用),但不显示
-    if (S.settings.orbHidden) { try { S.inputWin.hide() } catch {} }
-  }
-
-  // 隐藏/显示桌面悬浮球。隐藏只是 hide()——窗口仍在(留作 orb-input 锚点),全局快捷键/托盘照常唤起;
-  // 全部功能窗口都关掉时 window-all-closed 也不会误判"无窗口"而重建球。
-  function setOrbHidden(hidden) {
-    S.settings.orbHidden = !!hidden
-    saveSettings()
-    if (hidden) {
-      if (S.inputWin && !S.inputWin.isDestroyed()) S.inputWin.hide()
-    } else {
-      if (!S.inputWin || S.inputWin.isDestroyed()) createOrb()
-      else { S.inputWin.show(); ensureOrbAlive() }
-    }
-    refreshTrayMenu()
-  }
-
-  // 自由拖动：可在桌面任意位置；只做轻量夹取，避免球被拖出屏幕外抓不回来
-  function clampOrbPos(x, y) {
-    const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
-    const C = 140, M = 24   // 球心位于 280 窗口中心，保证球心离屏幕边 ≥M
-    return [Math.max(M - C, Math.min(sw - C - M, x)), Math.max(M - C, Math.min(sh - C - M, y))]
-  }
-  function snapOrbToCorner() {   // 名字保留；拖动结束后只把球夹回可见区，不再吸附边/角
-    if (!S.inputWin || S.inputWin.isDestroyed()) return
-    const [x, y] = S.inputWin.getPosition()
-    const [nx, ny] = clampOrbPos(x, y)
-    S.inputWin.setPosition(nx, ny)
-  }
-
-  // 关掉浏览器/工作台后让球闪一下,提醒"agent 还在"——避免用户误以为退出
-  // 关键: 球已销毁就重建; 任何窗口 API 都推到下一 tick,避免与 close 回调里的清理路径竞态
-  function ensureOrbAlive() {
-    if (!S.inputWin || S.inputWin.isDestroyed()) { try { createOrb() } catch (e) { log('createOrb err: ' + e.message) } ; return }
-    setImmediate(() => {
-      if (!S.inputWin || S.inputWin.isDestroyed()) return
-      try { S.inputWin.webContents.send('orb-wake') } catch (e) { log('orb-wake send err: ' + e.message) }
-    })
-  }
-
-  // 功能窗口「从智能体长出来」：算出球心相对该窗口的 transform-origin + 朝球方向的初始位移，
-  // 作为 query 传给窗口（glass.css 的 orbGrow 据此从球的方向放大长出）
-  function orbAnchorFor(winX, winY, winW, winH) {
-    if (!S.inputWin || S.inputWin.isDestroyed()) return {}
-    const [ox, oy] = S.inputWin.getPosition()
-    const cx = ox + 140, cy = oy + 140                                   // 球心屏幕坐标
-    const gox = Math.max(0, Math.min(winW, Math.round(cx - winX)))
-    const goy = Math.max(0, Math.min(winH, Math.round(cy - winY)))
-    const gfx = cx < winX ? -16 : cx > winX + winW ? 16 : 0
-    const gfy = cy < winY ? -16 : cy > winY + winH ? 16 : 0
-    return { gox: gox + 'px', goy: goy + 'px', gfx: gfx + 'px', gfy: gfy + 'px' }
-  }
-
-  function createOrbInput(mode) {
-    if (S.orbInputWin && !S.orbInputWin.isDestroyed()) {
-      S.orbInputWin.close(); S.orbInputWin = null; return
-    }
-    const pw = 520, ph = 56, M = 12
-    const [ox, oy] = S.inputWin ? S.inputWin.getPosition() : [100, 100]
-    const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
-    let px = ox + (280 - pw) / 2
-    if (px < 10) px = 10
-    if (px + pw > sw - 10) px = sw - pw - 10
-    const py = (oy - ph - M) < 10 ? oy + 280 + M : oy - ph - M
-    const above = py < oy                                                          // 输入框在球上方 → 从底边长出，否则从顶边
-    const anchorX = Math.max(20, Math.min(pw - 20, Math.round(ox + 140 - px)))     // 球心相对输入框左边的 x
-    const query = { dir: above ? 'up' : 'down', ax: String(anchorX) }
-    if (mode) query.mode = mode
-    S.orbInputWin = new BrowserWindow(baseOpts({
-      width: pw, height: ph, x: Math.round(px), y: Math.round(py), skipTaskbar: true,
-    }))
-    S.orbInputWin.loadFile(path.join(__dirname, '..', 'ui', 'orb-input.html'), { query })
-    S.orbInputWin.on('closed', () => { S.orbInputWin = null })
-  }
-
-  function toggleOrbInput(mode) { createOrbInput(mode) }
-
   function spawnCard(title, sid, msg, disp, opts) {
     const id = ++S.cardSeq
+    // ── 主窗口收口(波2):主窗口活着且未显式要真窗口 → 不开悬浮卡窗,参数转发 shell(shell-spawn)
+    //    在主窗口对话视图以 webview 内嵌开卡。opts.window===true 保留真窗口路径(波3 钉出用);
+    //    opts.hidden(多层派发分片/索引棒)是无人值守工人不开窗,必须留在真窗口路径(webContents 得独立存活)。
+    if (S.mainWin && !S.mainWin.isDestroyed() && !(opts && opts.window) && !(opts && opts.hidden)) {
+      // 会话已钉出到独立窗(波3):收口路径不再内嵌重开 —— 同 sid 双绑会把钉出窗打成僵尸(sessionInfo 只认最新绑定),聚焦钉出窗即回
+      if (sid && S.pinnedWc && S.pinnedWc.size) {
+        for (const pid of S.pinnedWc) {
+          if (S.sessionByWc.get(pid) !== sid) continue
+          const w0 = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === pid)
+          if (w0) { try { if (w0.isMinimized()) w0.restore(); w0.show(); w0.focus() } catch {} ; return id }
+        }
+      }
+      const wfKindE = opts && opts.orch ? 'orch' : opts && opts.wf ? 'workflow' : (opts && opts.pipeline) ? 'pipeline' : ''
+      // 工作流注册表同步登记(spawnWorkflow 紧接着按 id 查):wcId 此刻未知先挂 null,
+      // webview guest 就绪后由 shell 经 session-bind IPC 回报补齐(顺带把 wfCardByWc 建上)
+      if (wfKindE) {
+        S.wfRegistry = S.wfRegistry || new Map(); S.wfCardByWc = S.wfCardByWc || new Map()
+        const reg = { id: String(id), wcId: null, kind: wfKindE, goal: disp || title || '', status: 'running', round: 0, rounds: 0, at: Date.now(), archive: null, final: '', todos: null, files: [], actions: [], dir: S.settings.projectDir || '', elapsedMs: 0 }
+        if (wfKindE === 'orch') reg.planApproved = false   // 规划闸壳层状态位(同真窗口路径)
+        S.wfRegistry.set(reg.id, reg)
+        if (S.wfRegistry.size > 50) { const k = S.wfRegistry.keys().next().value; S.wfRegistry.delete(k) }
+      }
+      // 与真窗口路径的 query 字段一一对应(gox 系"从球长出"锚点对内嵌无意义,不带)
+      const p = { id: String(id), title: title || '未命名任务' }
+      if (sid) p.sid = sid
+      if (msg) p.msg = msg
+      if (disp) p.disp = disp
+      if (opts && opts.orch) p.orch = '1'
+      if (wfKindE === 'workflow' || wfKindE === 'orch') p.wf = '1'
+      const mw = S.mainWin
+      try { if (mw.isMinimized()) mw.restore(); mw.show(); mw.focus() } catch {}
+      const send = () => { try { if (!mw.isDestroyed()) mw.webContents.send('shell-spawn', p) } catch (e) { log('shell-spawn send err: ' + e.message) } }
+      if (mw.webContents.isLoading()) mw.webContents.once('did-finish-load', send)   // 同 main.js openMainView:加载中等就绪再发,防丢消息
+      else send()
+      return id   // 返回值契约不变(卡 id):cardFiles 暂存键 / wfRegistry 查询 / spawn-card、start-conversation 回包都靠它
+    }
     const col = (id - 1) % 4, row = Math.floor((id - 1) / 4) % 4
-    const wx = 160 + col * 56, wy = 90 + row * 50 + col * 18
+    let wx = 160 + col * 56, wy = 90 + row * 50 + col * 18
+    // opts.window(波3 钉出)落点:拖出传光标屏幕坐标(卡横心对齐光标、稍上抬,避免遮住落点);缺省居中主屏。
+    // 钳进目标显示器工作区(getDisplayNearestPoint:拖到副屏就钳副屏,取不到回退主屏)
+    if (opts && opts.window) {
+      const hasXY = Number.isFinite(+opts.x) && Number.isFinite(+opts.y)
+      let wa = null
+      try { if (hasXY && screen.getDisplayNearestPoint) wa = (screen.getDisplayNearestPoint({ x: +opts.x, y: +opts.y }) || {}).workArea } catch {}
+      if (!wa) { const p = screen.getPrimaryDisplay(); wa = p.workArea || { x: 0, y: 0, width: p.workAreaSize.width, height: p.workAreaSize.height } }
+      wx = hasXY ? Math.round(+opts.x - 340) : Math.round(wa.x + (wa.width - 680) / 2)
+      wy = hasXY ? Math.round(+opts.y - 16) : Math.round(wa.y + (wa.height - 860) / 2)
+      wx = Math.max(wa.x, Math.min(wa.x + Math.max(0, wa.width - 680), wx))
+      wy = Math.max(wa.y, Math.min(wa.y + Math.max(0, wa.height - 860), wy))
+    }
     // opts.hidden:隐藏卡(多层派发分片/索引棒)——不开窗,会话回流到主控卡主区域看;权限自动放行,进度聚合到主控卡
     // opts.inactive:不抢焦卡 —— showInactive 亮相,可见但不夺焦
     const hidden = !!(opts && opts.hidden)
@@ -205,7 +168,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       alwaysOnTop: false, skipTaskbar: hidden ? true : false, x: wx, y: wy, show: !hidden && !inactive,
     }))
     const wcId = win.webContents.id
-    const query = { title: title || '未命名任务', id: String(id), ...orbAnchorFor(wx, wy, 680, 860) }
+    S.cardWcById = S.cardWcById || new Map(); S.cardWcById.set(String(id), wcId)   // 波3:钉出 IPC 按卡 id 反查 wcId(回包/钉出窗登记);关卡清理反查摘除
+    const query = { title: title || '未命名任务', id: String(id) }
     if (sid) query.sid = sid
     if (msg) query.msg = msg
     if (disp) query.disp = disp
@@ -250,41 +214,38 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         } catch {}
       })
     }
+    // 清理链抽成公共函数(波2):独立卡/内嵌会话/主窗口关闭同走一条。钉出窗(波3)在此分流:
+    // 主窗口活着 → 收回(detach 降级清理,会话不 abort + 通知 shell 按 sid 重建内嵌 webview);
+    // 主窗口已关/非钉出窗 → 正常清理链(abort 全链)。pinnedWc 命中即删(一次性,幂等)。
     win.on('closed', () => {
-      const s = S.sessionByWc.get(wcId)
-      let oldServe = null
-      if (s) { const si = S.sessionInfo.get(s); if (si) { oldServe = si.serve; oc.abort(si.serve, s) } S.sessionInfo.delete(s); S.streamBuf.delete(s); S.sentPrompt.delete(s); S.firstMsgCtx.delete(s); S.dropPendingPerm && S.dropPendingPerm(s); if (typeof S.dropPendingQuestion === 'function') S.dropPendingQuestion(s) }   // 未答的审批/提问记录随卡清,别在 pendingPerm/pendingQuestion 里留孤儿
-      S.sessionByWc.delete(wcId)
-      if (S.shardWc) S.shardWc.delete(wcId)   // 分片权限自动放行随卡失效
-      if (S.shardForceClose) S.shardForceClose.delete(wcId)   // 销毁白名单随卡清理(弹窗查看后的 X 转隐藏不进这里)
-      if (S.cardDir) S.cardDir.delete(wcId)       // per-card 目录/模型状态随卡销毁
-      if (S.modelByWc) S.modelByWc.delete(wcId)
-      // 本卡独占的自起 serve(切过项目的卡)没别的会话引用就退休,不留孤儿进程
-      if (oldServe) {
-        const inUseBases = new Set([...S.sessionInfo.values()].map((si) => si.serve && si.serve.base).filter(Boolean))
-        try { if (oc.retireIfOrphan(oldServe, inUseBases)) log('card closed: serve ' + oldServe.base + ' 已退休(无会话引用)') } catch {}
+      const wasPinned = !!(S.pinnedWc && S.pinnedWc.delete(wcId))
+      if (wasPinned && S.mainWin && !S.mainWin.isDestroyed()) {
+        const sid0 = S.sessionByWc.get(wcId)   // detach 前先取 sid(清完就没了)
+        cleanupCardContext(S, wcId, win, { detach: true })
+        if (sid0) {
+          const mw = S.mainWin
+          try { if (mw.isMinimized()) mw.restore(); mw.show(); mw.focus() } catch {}
+          const send = () => { try { if (!mw.isDestroyed()) mw.webContents.send('session-reattached', { sid: sid0 }) } catch (e) { log('session-reattached send err: ' + e.message) } }
+          if (mw.webContents.isLoading()) mw.webContents.once('did-finish-load', send)   // 同 shell-spawn:加载中等就绪再发,防丢消息
+          else send()
+        }
+        return
       }
-      // 工作流卡收尾:注册表落终态 + 落最终存档(关窗不丢,workflow_result 仍可取回)。
-      // 终态语义:此前已判 done 保持 done;此前还 running 被关卡 = interrupted(列表/重试据此区分"干完了"与"被掐断")。
-      const wreg = S.wfCardByWc && S.wfCardByWc.get(wcId)
-      if (wreg) { wreg.status = wreg.status === 'done' ? 'done' : 'interrupted'; wreg.elapsedMs = Date.now() - wreg.at; S.wfCardByWc.delete(wcId); try { S.wfArchive && S.wfArchive(wreg) } catch (e2) { log('wf archive err: ' + e2.message) } }
-      clearTimeout(shardSettleTimers.get(wcId)); shardSettleTimers.delete(wcId)   // 关窗即埋落定计时:否则计时器到点把 close 写入的 interrupted 覆写回 done(终态写错)
-      if (wreg) { try { wfDequeue() } catch {} }   // 关卡腾出并发位 → 排队工作流补位(出队触发点②)
-      // 主控关卡 → 它的分片卡(隐藏工人)一并关掉:主控没了分片就是烧 token 的孤儿,不会再有人看它的窗口
-      if (wreg && wreg.kind === 'orch' && S.orchByTag && S.wfRegistry) {
-        try {
-          for (const [tag, oref] of S.orchByTag) {
-            if (String(oref.id) !== String(wreg.id)) continue
-            for (const r of [...S.wfRegistry.values()].filter((x) => x.parentOrch === tag)) {
-              const w2 = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === r.wcId)
-              if (w2) { try { (S.shardForceClose = S.shardForceClose || new Set()).add(r.wcId); w2.close() } catch {} }   // 白名单真销毁(否则被 close 拦截转隐藏,杀不掉)
-            }
-          }
-        } catch {}
-      }
-      forgetBusy(wcId)   // 关卡即清"忙"，避免球卡在思考态
+      cleanupCardContext(S, wcId, win)
     })
     return id
+  }
+
+  // ── 卡关闭清理链:独立成 ./card-cleanup(波2 从 closed 内联体抽出;波3 模块化,探针可直测)──────
+  // 语义对照与 browser.js:644-664 教训见模块头注释;依赖全部注入,shardSettleTimers 惰性取(装配期尚在 TDZ)。
+  const cleanupCardContext = makeCardCleanup({ S, oc, log, BrowserWindow, getShardSettleTimers: () => shardSettleTimers, wfDequeue, forgetBusy })
+  S.cleanupCardContext = (wcId, opts) => cleanupCardContext(S, wcId, null, opts)   // 挂 S:零依赖探针(scripts/cleanup-detach-test.mjs)与后续波次复用同一入口,别复刻
+
+  // wcId → webContents(顶层窗或 webview guest 皆可):guest 不在 BrowserWindow.getAllWindows() 里,
+  // 主窗口化后工作流/主控卡是内嵌 guest,凡是按 wcId 找窗投递(card-inject / shard-progress)必须走这里
+  function wcById(wcId) {
+    if (wcId == null) return null
+    try { const wc = webContents.fromId(wcId); return (wc && !wc.isDestroyed()) ? wc : null } catch { return null }
   }
 
   // 「动态工作流」= Claude Code 式:单个【主 Agent】在连续上下文里自己【看清形状 → 规划 → 执行 → 综合】,
@@ -384,15 +345,15 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       if (tag) { S.orchProgressAt = S.orchProgressAt || new Map(); S.orchProgressAt.set(tag, Date.now()) }   // 主控停滞巡检的"还活着"打点
       const oref = S.orchByTag && S.orchByTag.get(tag); if (!oref) return
       const oreg = S.wfRegistry && S.wfRegistry.get(String(oref.id)); if (!oreg) return
-      const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === oreg.wcId)
-      if (!win) return
+      const wc = wcById(oreg.wcId)   // 主控卡可能是内嵌 guest(波2)
+      if (!wc) return
       const shards = [...S.wfRegistry.values()].filter((r) => r.parentOrch === tag)
         .map((r) => ({ id: r.id, goal: String(r.goal || '').slice(0, 60), status: r.status, round: r.rounds || 0 }))
       for (const q of (S.wfQueue || [])) {   // 排队中的分片(goal 带 [orch:tag] 前缀,还在等并发位)
         const m = parseOrchTag(q.goal)   // 与 spawnWorkflow 同一份解析(行首前缀+全文兜底),不再两份正则各写各的
         if (m.tag && m.tag === tag) shards.push({ id: '', goal: String(m.rest).slice(0, 60), status: 'queued', round: 0 })
       }
-      win.webContents.send('shard-progress', { shards })
+      wc.send('shard-progress', { shards })
     } catch {}
   }
   // ── 主控停滞巡检:主控卡没有"分片式"45s 落定(等分片时它是空闲态,挂死看门狗也不盯闲卡)——
@@ -415,10 +376,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         const unsettled = sibs.some((r) => r.status !== 'done' && r.status !== 'interrupted')
         const empty = sibs.length === 0 && (reg.rounds || 0) >= 2
         if (!unsettled && !empty) continue
-        const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === reg.wcId)
-        if (!win) continue
+        const wc = wcById(reg.wcId)   // 主控卡可能是内嵌 guest(波2):按 wcId 取可投递的 webContents
+        if (!wc) continue
         S.orchProgressAt = S.orchProgressAt || new Map(); S.orchProgressAt.set(tag, now)   // 催过一次就重置计时,10 分钟后再看
-        win.webContents.send('card-inject', { text: '<主控进度>(壳层停滞巡检)你已过批准闸但 ' + (empty ? '名下一个分片都没有 —— 你的分片很可能把标记写成了别的 tag(唤醒流去了别的主控),检查:调 workflow_result 自取成果直接收口,或按正确标记 [orch:' + tag + '] 重派' : '仍有分片未收官且 10 分钟无进度 —— 对照 todo:该继续等就结束本轮,该派索引棒/校验棒收口就立即派') + '。</主控进度>', disp: '停滞巡检:主控 10 分钟无进度,已催办' })
+        wc.send('card-inject', { text: '<主控进度>(壳层停滞巡检)你已过批准闸但 ' + (empty ? '名下一个分片都没有 —— 你的分片很可能把标记写成了别的 tag(唤醒流去了别的主控),检查:调 workflow_result 自取成果直接收口,或按正确标记 [orch:' + tag + '] 重派' : '仍有分片未收官且 10 分钟无进度 —— 对照 todo:该继续等就结束本轮,该派索引棒/校验棒收口就立即派') + '。</主控进度>', disp: '停滞巡检:主控 10 分钟无进度,已催办' })
         log('[ctx-stall] 主控停滞催办 (tag ' + tag + ', shards=' + sibs.length + ', empty=' + empty + ')')
       }
     } catch {}
@@ -498,13 +459,13 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // 严格模式(固定步骤链)下一步下发:走 card-inject 进卡片渲染端,让每一步都过 card-send 通道 ——
   // 这样 session.js 每轮终答必回调 wfTurnDone,链条闭环不依赖主进程直发后的回合检测。
   function strictSendNext(reg) {
-    const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === reg.wcId)
-    if (!win) return false
+    const wc = wcById(reg.wcId)   // 严格模式编排卡可能是内嵌 guest(波2)
+    if (!wc) return false
     const n = reg.strictIdx   // 下一步下标(0 起;steps[0] 已在开卡首条消息里发掉)
     const step = String(reg.strictSteps[n] || '')
     if (!step) return false
     const text = '<任务编排·严格模式>\n【第 ' + (n + 1) + '/' + reg.strictSteps.length + ' 步】只执行这一步并汇报结果;做完等下一步自动下发,不要提前做后续步骤。若本步失败,明说「失败」及原因。\n</任务编排·严格模式>\n' + step
-    try { win.webContents.send('card-inject', { text, disp: '【第 ' + (n + 1) + '/' + reg.strictSteps.length + ' 步】' + step.slice(0, 120) }); reg.strictIdx++; return true } catch { return false }
+    try { wc.send('card-inject', { text, disp: '【第 ' + (n + 1) + '/' + reg.strictSteps.length + ' 步】' + step.slice(0, 120) }); reg.strictIdx++; return true } catch { return false }
   }
   // 契约缺口核对(编码模式):分片 goal 带「契约: 签名…」行时,收官前拿签名去该片写归属文件里逐个对 ——
   // 弱模型"看上去做完了实际差一截"是交付质量头号病灶;提示词叮嘱它自检会忘,壳层机械核对不会。
@@ -544,7 +505,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     // 先确认主控窗真的在,再置一次性标志 —— 以前是"先置标志再找窗",窗没了(tag 查无/主控已关)静默跳过且永不重试,主控变聋
     const oref = S.orchByTag && S.orchByTag.get(reg.parentOrch)
     const oreg = oref && S.wfRegistry && S.wfRegistry.get(String(oref.id))
-    const win = oreg && BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === oreg.wcId)
+    const win = oreg && wcById(oreg.wcId)   // 主控卡可能是内嵌 guest(波2):wcById 顶层窗/guest 通吃
     if (!win) { log('⚠ orch wake target missing (tag ' + reg.parentOrch + ', shard card ' + reg.id + ') —— orchNotified 不置位,留待重试'); return }
     reg.orchNotified = true
     pushShardProgress(reg.parentOrch)   // 先刷进度条,再注入唤醒消息(主控卡看到 N/M 变化)
@@ -555,7 +516,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       const doneN = sibs.filter((r) => r.status === 'done' || r.status === 'interrupted').length
       const miss = (reg.contractMiss && reg.contractMiss.length) ? reg.contractMiss : null
       const gapTxt = miss ? ('【契约缺口:' + miss.slice(0, 10).join('、') + ' —— 该片号称完成但归属文件里找不到这些签名;按缺口对待:重派补缺或索引显著标注,别当完成。】') : ''
-      win.webContents.send('card-inject', { text: '<主控进度>分片「' + String(reg.goal).slice(0, 60) + '」已' + (reg.status === 'done' ? '完成' : '中断') + ' (' + doneN + '/' + total + ')。' + gapTxt + '调 workflow_result(id="' + reg.id + '") 取回它的成果;对照你的 todo 清单 —— 全部 ' + total + ' 个分片齐了,就按规程第 6 条派【索引棒】收口;还没齐,结束本轮继续等。</主控进度>', disp: '分片 ' + doneN + '/' + total + ' 已' + (reg.status === 'done' ? '完成' : '中断') + (miss ? '(契约缺口)' : '') + ':' + String(reg.goal).slice(0, 40) })
+      win.send('card-inject', { text: '<主控进度>分片「' + String(reg.goal).slice(0, 60) + '」已' + (reg.status === 'done' ? '完成' : '中断') + ' (' + doneN + '/' + total + ')。' + gapTxt + '调 workflow_result(id="' + reg.id + '") 取回它的成果;对照你的 todo 清单 —— 全部 ' + total + ' 个分片齐了,就按规程第 6 条派【索引棒】收口;还没齐,结束本轮继续等。</主控进度>', disp: '分片 ' + doneN + '/' + total + ' 已' + (reg.status === 'done' ? '完成' : '中断') + (miss ? '(契约缺口)' : '') + ':' + String(reg.goal).slice(0, 40) })
       if (!queuedN && doneN === sibs.length) {   // 全部收官(且无排队片)
         for (const r of sibs) {   // 还活着的分片窗口一律关掉(隐藏工人不停下就一直烧 token);忙着的别杀 —— 可能正在交棒/补零产出文档,杀了就毁在半路
           if (S.isCardBusy && S.isCardBusy(r.wcId)) continue
@@ -569,8 +530,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
           try {
             const spawned = [...S.wfRegistry.values()].some((r) => r.parentOrch === tag0 && (r.at || 0) >= settledAt - 1000)
             if (spawned) return
-            const w3 = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === oreg.wcId)
-            if (w3) { w3.webContents.send('card-inject', { text: '<主控进度>(壳层兜底)全部分片已收官 5 分钟,仍未看到索引棒派出 —— 请立即按规程第 6 条派【索引棒】收口;若你判断无需索引,直接向用户总结交付即可,别再干等。</主控进度>', disp: '兜底提醒:分片已齐,该派索引棒了' }); log('orch index nudge fired (tag ' + tag0 + ')') }
+            const w3 = wcById(oreg.wcId)   // 主控卡可能是内嵌 guest(波2)
+            if (w3) { w3.send('card-inject', { text: '<主控进度>(壳层兜底)全部分片已收官 5 分钟,仍未看到索引棒派出 —— 请立即按规程第 6 条派【索引棒】收口;若你判断无需索引,直接向用户总结交付即可,别再干等。</主控进度>', disp: '兜底提醒:分片已齐,该派索引棒了' }); log('orch index nudge fired (tag ' + tag0 + ')') }
           } catch {}
         }, 300000)
       }
@@ -678,8 +639,6 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   async function spawnEmailCard() {
     const imap = S.settings.imap
     if (!imap || !imap.host || !imap.user || !imap.passEncrypted) throw new Error('IMAP 未配置')
-    // 整个流程期间球进 thinking 态(球在转 + 眼眯成线)→ 用户立刻知道"在拉"
-    sendOrbState('thinking')
     try {
       log('email: fetching today+yesterday emails (limit 30, onlyUnseen=false)…')
       const r = await email.fetchUnread(imap, { onlyUnseen: false, days: 2, limit: 30 })
@@ -711,10 +670,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       // 标记 seen 放在卡片建好之后:摘要卡若没弹出来,这些邮件不会被误标"已整理"而永久漏掉
       emailSummarySeen.markSeen(app.getPath('userData'), fresh.map((e) => e.messageId).filter(Boolean))
       log('email: summarized ' + fresh.length + ' new of ' + all.length + ' total (skipped ' + skipped + ' already-seen)')
-      sendOrbState('done')   // 球绿色脉冲,2.2s 后自动回 idle
       return fresh.length
     } catch (e) {
-      sendOrbState('idle')   // 失败立即回 idle,renderer 自己再红/绿闪
       throw e
     }
   }
@@ -724,7 +681,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const { width } = screen.getPrimaryDisplay().workAreaSize
     const ox = Math.round(width / 2 - 270), oy = 120
     S.outboxWin = new BrowserWindow(baseOpts({ width: 540, height: 640, x: ox, y: oy, skipTaskbar: false, alwaysOnTop: true, resizable: true, minWidth: 420, minHeight: 360 }))
-    S.outboxWin.loadFile(path.join(__dirname, '..', 'ui', 'outbox.html'), { query: orbAnchorFor(ox, oy, 540, 640) })
+    S.outboxWin.loadFile(path.join(__dirname, '..', 'ui', 'outbox.html'))
     S.outboxWin.on('closed', () => { S.outboxWin = null })
   }
 
@@ -733,7 +690,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const { width } = screen.getPrimaryDisplay().workAreaSize
     const ax = Math.round(width / 2 - 320), ay = 100
     S.auditWin = new BrowserWindow(baseOpts({ width: 640, height: 720, x: ax, y: ay, skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 460, minHeight: 400 }))
-    S.auditWin.loadFile(path.join(__dirname, '..', 'ui', 'audit.html'), { query: orbAnchorFor(ax, ay, 640, 720) })
+    S.auditWin.loadFile(path.join(__dirname, '..', 'ui', 'audit.html'))
     S.auditWin.on('closed', () => { S.auditWin = null })
   }
 
@@ -803,7 +760,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const { width } = screen.getPrimaryDisplay().workAreaSize
     const hx = Math.round(width / 2 - 380), hy = 90
     S.httpcapWin = new BrowserWindow(baseOpts({ width: 760, height: 760, x: hx, y: hy, skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 540, minHeight: 420 }))
-    S.httpcapWin.loadFile(path.join(__dirname, '..', 'ui', 'httpcap.html'), { query: orbAnchorFor(hx, hy, 760, 760) })
+    S.httpcapWin.loadFile(path.join(__dirname, '..', 'ui', 'httpcap.html'))
     S.httpcapWin.on('closed', () => { S.httpcapWin = null })
   }
 
@@ -819,7 +776,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       wc.setWindowOpenHandler(({ url }) => { if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => {}); return { action: 'deny' } })
       wc.on('will-navigate', (e, url) => { if (!url.startsWith('file:')) { e.preventDefault(); if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => {}) } })
     } else { S.mailViewWin.show(); S.mailViewWin.focus() }
-    S.mailViewWin.loadFile(path.join(__dirname, '..', 'ui', 'mailview.html'), { query: { msgId: id, ...orbAnchorFor(mx, my, 760, 800) } })
+    S.mailViewWin.loadFile(path.join(__dirname, '..', 'ui', 'mailview.html'), { query: { msgId: id } })
   }
 
   // 邮件中心：收件箱 + 设置一体（邮件模块的设置归口在此）
@@ -835,7 +792,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       wc.setWindowOpenHandler(({ url }) => { if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => {}); return { action: 'deny' } })
       wc.on('will-navigate', (e, url) => { if (!url.startsWith('file:')) { e.preventDefault(); if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => {}) } })
     } else { S.mailCenterWin.show(); S.mailCenterWin.focus() }
-    const query = { ...orbAnchorFor(mx, my, W, Hh) }
+    const query = {}
     if (tab) query.tab = tab
     S.mailCenterWin.loadFile(path.join(__dirname, '..', 'ui', 'mailcenter.html'), { query })
   }
@@ -847,14 +804,12 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // 事件中继:工作台窗(S.browser.win)与 Agent 卡片都在同一窗口体系,skillsNotify 直接推给工作台壳
   function skillsNotify(ch, d) { const w = S.browser && S.browser.win; if (w && !w.isDestroyed()) { try { w.webContents.send(ch, d || {}) } catch {} } }
 
-  function toggleInput() { toggleOrbInput() }
-
   function toggleTheme() {
     // 托盘快捷循环:浅磨砂 → 墨玻璃 → 曜黑 → 纸白 → …(设置页可直选)
     const order = ['light', 'dark', 'onyx', 'paper']
     const i = order.indexOf(S.settings.theme)
     S.settings.theme = order[(i + 1) % order.length] || 'light'; saveSettings()
-    for (const w of BrowserWindow.getAllWindows()) w.webContents.send('theme-changed', S.settings.theme)
+    for (const wc of webContents.getAllWebContents()) { try { wc.send('theme-changed', S.settings.theme) } catch {} }   // 波2:含 webview guest(内嵌视图也要跟主题)
   }
 
   // ── 面板 / 托盘 ─────────────────────────────────────────────────────────────
@@ -863,7 +818,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const { width } = screen.getPrimaryDisplay().workAreaSize
     const sx = Math.round(width / 2 - 280), sy = 120
     S.settingsWin = new BrowserWindow(baseOpts({ width: 560, height: 640, x: sx, y: sy, skipTaskbar: false, alwaysOnTop: true, resizable: true, minWidth: 460, minHeight: 460 }))
-    S.settingsWin.loadFile(path.join(__dirname, '..', 'ui', 'settings.html'), { query: orbAnchorFor(sx, sy, 560, 640) })
+    S.settingsWin.loadFile(path.join(__dirname, '..', 'ui', 'settings.html'))
     S.settingsWin.on('closed', () => { S.settingsWin = null })
   }
 
@@ -873,29 +828,45 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const W = 700, Hh = 880
     const dx = Math.round(width / 2 - W / 2), dy = 70
     S.dockWin = new BrowserWindow(baseOpts({ width: W, height: Hh, x: dx, y: dy, skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 480, minHeight: 520 }))
-    S.dockWin.loadFile(path.join(__dirname, '..', 'ui', 'dock.html'), { query: orbAnchorFor(dx, dy, W, Hh) })
+    S.dockWin.loadFile(path.join(__dirname, '..', 'ui', 'dock.html'))
     S.dockWin.on('closed', () => { S.dockWin = null })
   }
 
-  // 「控制台」主界面:类 Claude Code / Kimi CLI 的三栏会话台(左:历史会话;中:对话流;下:输入区)——
-  // 卡片体系之外的第二种主交互形态(更人性化的大屏操作台)。会话接线零新增:复用 card-init/card-reinit/card-send
-  // 全套(窗口 webContents 绑一个会话;侧栏点历史 = cardInit({sid}) 重连回放;＋新会话 = cardReinit)。
-  function createConsole() {
-    if (S.consoleWin && !S.consoleWin.isDestroyed()) { S.consoleWin.show(); S.consoleWin.focus(); return }
+  // 「桌面主窗口」(主窗口化重构·波1 骨架):ui/shell.html = 侧栏 + 视图区 + 状态栏,
+  // 对话/任务编排/邮件中心/设置以 <webview> 收编为视图(?embed=1 / ?embedded=1 嵌入态)。
+  // chrome 写法照 browser.js 的非透明窗:系统红绿灯(mac hiddenInset)/ Win titleBarOverlay,不走 baseOpts 的透明无边框系。
+  function createMainWindow() {
+    if (S.mainWin && !S.mainWin.isDestroyed()) { if (S.mainWin.isMinimized()) S.mainWin.restore(); S.mainWin.show(); S.mainWin.focus(); return S.mainWin }
     const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
-    const W = Math.min(1180, sw - 60), Hh = Math.min(820, sh - 60)
-    S.consoleWin = new BrowserWindow(baseOpts({ width: W, height: Hh, x: Math.round((sw - W) / 2), y: Math.round((sh - Hh) / 2), skipTaskbar: false, alwaysOnTop: false, resizable: true, minWidth: 860, minHeight: 560,
-      // webviewTag:邮件视图以 <webview> 内嵌完整邮件中心(零移植收进壳);preload 与主窗同一份(白名单不变)
-      webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false, webviewTag: true } }))
-    S.consoleWin.on('closed', () => { S.consoleWin = null })
-    S.consoleWin.loadFile(path.join(__dirname, '..', 'ui', 'console.html'))
+    const W = Math.min(1280, sw - 40), Hh = Math.min(800, sh - 40)
+    S.mainWin = new BrowserWindow({
+      width: W, height: Hh, minWidth: 940, minHeight: 600,
+      x: Math.round((sw - W) / 2), y: Math.round((sh - Hh) / 2),
+      title: 'BocomHermes',
+      titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
+      trafficLightPosition: { x: 13, y: 12 },
+      // Windows: 系统三键 overlay 融进自绘标题栏(38px),渲染层不自绘窗控
+      titleBarOverlay: process.platform === 'win32' ? { color: '#f3f4f7', symbolColor: '#3c4250', height: 38 } : undefined,
+      autoHideMenuBar: true,
+      backgroundColor: '#f3f4f7',
+      // webviewTag:四个视图页全部以 <webview> 收编;preload 与全应用同一份(白名单不变)
+      webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false, webviewTag: true },
+    })
+    S.mainWin.on('closed', () => {
+      // 主窗口关 = 内嵌会话卡全灭:逐张走卡关闭清理链(波2 抽出的 cleanupCardContext),
+      // 不然 serve 进程/会话映射/busy 状态全成孤儿(browser.js:644-664 同款教训)
+      try { for (const wcId of [...(S.embedWc || [])]) cleanupCardContext(S, wcId, null) } catch (e) { log('mainWin embedded cleanup err: ' + e.message) }
+      S.mainWin = null
+    })
+    S.mainWin.loadFile(path.join(__dirname, '..', 'ui', 'shell.html'))
+    return S.mainWin
   }
 
   // 【内嵌浏览器核心】整块搬进 ./browser 的 initBrowser(ctx) 工厂(见该文件抬头)。
   // 必须在 initRecorder 之前构造:后者构造时即读取返回的 brActive(const,非提升)。
-  // 录制钩子 wireRecToTab/brSendRecCount 与 ensureOrbAlive 是后定义但已提升的 function,按引用注入。
+  // 录制钩子 wireRecToTab/brSendRecCount 是后定义但已提升的 function,按引用注入。
   // 浏览器 IPC / brWC / 调试分诊层仍留在本文件,消费下面解构出的函数。
-  const { brActive, newTab, closeTab, activateTab, brSetDevice, brRotateDevice, brZoom, brLayout, brSendTabs, sendNetSnapshot, attachDbg, detachDbg, normalizeUrl, brScreenshot, brNetBody, brPickElement, brEval, createBrowser, createWorkspace } = initBrowser({ S, session, log, path, fs, app, BrowserWindow, WebContentsView, oc, ensureOrbAlive, forgetBusy, wireRecToTab, brSendRecCount, cdpConsoleLevel, fmtRO, fmtException })
+  const { brActive, newTab, closeTab, activateTab, brSetDevice, brRotateDevice, brZoom, brLayout, brSendTabs, sendNetSnapshot, attachDbg, detachDbg, normalizeUrl, brScreenshot, brNetBody, brPickElement, brEval, createBrowser, createWorkspace } = initBrowser({ S, session, log, path, fs, app, BrowserWindow, WebContentsView, oc, forgetBusy, wireRecToTab, brSendRecCount, cdpConsoleLevel, fmtRO, fmtException })
 
   // 【解析链②·文件总线】回放暂停步 ↔ Agent 的通信(设计:docs/技能系统-意图执行与Agent解析链设计.md 第 4 节):
   // 主进程写 req(userData/resolves/<gateId>.json)+ card-inject 通知工作台 Agent;
@@ -1474,23 +1445,34 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     cardWc.send('card-inject', { text: prompt, disp })
   }
 
+  // 托盘改道主窗视图(波5):与 main.js openMainView 同款 —— 拉起主窗口后 send('shell-view'),
+  // 窗口新建时 webContents 尚在加载,等 did-finish-load 再发,防丢消息
+  function openMainView(view) {
+    const win = createMainWindow()
+    if (!win) return
+    const send = () => { try { if (!win.isDestroyed()) win.webContents.send('shell-view', { view }) } catch (e) { log('shell-view send err: ' + e.message) } }
+    if (win.webContents.isLoading()) win.webContents.once('did-finish-load', send)
+    else send()
+  }
+
   function trayMenuTemplate() {
     return [
-      { label: '唤起输入框', accelerator: 'Ctrl+Shift+Space', click: toggleInput },
-      { label: S.settings.orbHidden ? '显示桌面悬浮球' : '隐藏桌面悬浮球', click: () => setOrbHidden(!S.settings.orbHidden) },
+      // 主窗口化(波5 收尾):orb/输入框/控制台已退役删除;凡已有主窗视图的入口一律改道主窗,
+      // 未收编的独立小窗(工作台/录制回放/发件箱/待办/审计/抓包)保留
+      { label: '主界面', accelerator: 'Ctrl+Shift+Space', click: () => createMainWindow() },
       { type: 'separator' },
-      { label: '控制台（主界面）', accelerator: 'Ctrl+Shift+C', click: () => createConsole() },
-      { label: '调试工作台（Agent + 浏览器）', accelerator: 'Ctrl+Shift+B', click: () => createWorkspace() },
+      { label: '任务编排 · 历史对话', accelerator: 'Ctrl+Shift+B', click: () => openMainView('orch') },
+      { label: '邮件（收件箱 · 摘要 · 设置）', accelerator: 'Ctrl+Shift+M', click: () => openMainView('mail') },
+      { label: '设置…', click: () => openMainView('settings') },
+      { type: 'separator' },
+      { label: '调试工作台（Agent + 浏览器）', click: () => createWorkspace() },
       { label: '录制与回放（浏览器技能）', accelerator: 'Ctrl+Shift+R', click: () => createSkillCenter() },
-      { label: '邮件（收件箱 · 摘要 · 设置）', accelerator: 'Ctrl+Shift+M', click: () => createMailCenter() },
       { label: '发件箱', click: openOutbox },
       { label: '待办事项', click: () => createMailCenter('todos') },
       { label: '截图提问', accelerator: 'Ctrl+Shift+S', click: () => snapAsk() },
       { label: '审计流水', click: openAudit },
       { label: 'HTTP 抓包(外部程序)', click: openHttpcap },
-      { label: '卡坞 · 历史对话', click: openDock },
       { label: '切换深 / 浅主题', click: toggleTheme },
-      { label: '设置…', click: openSettings },
       { label: '打开日志', click: () => { if (S.logFile) shell.openPath(S.logFile).catch(() => {}) } },
       { type: 'separator' },
       { label: '退出', click: () => app.quit() },
@@ -1504,7 +1486,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     S.tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img)
     S.tray.setToolTip('BocomHermes')
     refreshTrayMenu()
-    S.tray.on('click', toggleOrbInput)
+    S.tray.on('click', () => createMainWindow())   // 主窗口化:点托盘图标开主界面
   }
 
   function attachContextMenu(wc) {
@@ -1544,7 +1526,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   const THEMES = ['light', 'dark', 'onyx', 'paper']   // 浅磨砂 / 墨玻璃 / 曜黑(实底) / 纸白(实底)
   ipcMain.on('set-theme', (_e, t) => {
     S.settings.theme = THEMES.includes(t) ? t : 'light'; saveSettings()
-    for (const w of BrowserWindow.getAllWindows()) w.webContents.send('theme-changed', S.settings.theme)
+    for (const wc of webContents.getAllWebContents()) { try { wc.send('theme-changed', S.settings.theme) } catch {} }   // 波2:含 webview guest(内嵌视图也要跟主题)
   })
 
   ipcMain.on('get-project', (e) => { e.returnValue = projName() })
@@ -1894,6 +1876,15 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     try {
       const r = (S.wfRegistry ? [...S.wfRegistry.values()] : []).find((x) => String(x.id) === String(it && it.id))
       if (r && r.wcId != null && S.wfCardByWc && S.wfCardByWc.has(r.wcId)) {   // 卡还活着 → 聚焦
+        // 内嵌卡(主窗口 webview guest):聚焦主窗口 + shell-spawn {sid} 让侧栏激活该会话;
+        // 独立卡(波3 钉出/分片弹窗)照旧聚焦真窗口(getAllWindows 找得到)
+        if (S.embedWc && S.embedWc.has(r.wcId) && S.mainWin && !S.mainWin.isDestroyed()) {
+          try { if (S.mainWin.isMinimized()) S.mainWin.restore(); S.mainWin.show(); S.mainWin.focus() } catch {}
+          const p = { sid: String(r.sid || '') }
+          const send = () => { try { if (S.mainWin && !S.mainWin.isDestroyed()) S.mainWin.webContents.send('shell-spawn', p) } catch {} }
+          if (S.mainWin.webContents.isLoading()) S.mainWin.webContents.once('did-finish-load', send); else send()
+          return { ok: true, kind: 'focus' }
+        }
         const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === r.wcId)
         if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); return { ok: true, kind: 'focus' } }
       }
@@ -1951,14 +1942,10 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   const busyEndAt = new Map()   // wcId → 最近一次转闲的时间戳:出队补位给 3s 宽限 —— 分片轮间空窗(过规划闸/交棒)瞬间"闲"是假象,曾被机制性超发(4 并发跑出 8 张活卡,加剧内网 429)
   S.isCardBusy = (wcId) => busyCards.has(wcId)   // 暴露给 relay:/orch/result 据此区分"干活中"与"空闲(等批准/等插话)"
   S.isCardBusyLately = (wcId) => busyCards.has(wcId) || (Date.now() - (busyEndAt.get(wcId) || 0) < 3000)
-  function sendOrbState(state) {
-    if (S.inputWin && !S.inputWin.isDestroyed()) S.inputWin.webContents.send('orb-state', state)
-  }
   function updateTrayBusy() {
     if (!S.tray) return
     const n = busyCards.size
     S.tray.setToolTip(n > 0 ? `BocomHermes · ${n} 个任务运行中` : 'BocomHermes')
-    sendOrbState(n > 0 ? 'thinking' : 'idle')
   }
   ipcMain.on('card-busy', (e, busy) => {
     const wcId = e.sender.id
@@ -1975,24 +1962,101 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
           win.flashFrame(true)
           win.once('focus', () => win.flashFrame(false))
         }
-        // 所有任务完成时闪绿眼
-        if (busyCards.size === 0) {
-          sendOrbState('done')
-          setTimeout(() => { if (busyCards.size === 0) sendOrbState('idle') }, 2200)
-        }
       }
     }
     if (busyCards.size > 0) updateTrayBusy()
     else if (S.tray) S.tray.setToolTip('BocomHermes')
+    // 波2:忙闲转发主窗口侧栏(按 wcId 找会话条目改状态点/转圈);内嵌 guest 卡的 sender 即 guest wcId
+    try { if (S.mainWin && !S.mainWin.isDestroyed()) S.mainWin.webContents.send('shell-sess-status', { wcId, busy: !!busy }) } catch {}
   })
-  // 卡片关闭时清掉它的"忙"记录 —— 否则正在生成的卡被关，wcId 永留 busyCards，球会一直思考态
+  // 卡片关闭时清掉它的"忙"记录 —— 否则正在生成的卡被关，wcId 永留 busyCards,托盘提示会一直"运行中"
   function forgetBusy(wcId) {
     if (!busyCards.delete(wcId)) return
     if (busyCards.size === 0) {
-      sendOrbState('idle')
       if (S.tray && !S.tray.isDestroyed()) S.tray.setToolTip('BocomHermes')
     } else updateTrayBusy()
   }
+
+  // ── 主窗口会话视图(波2)─────────────────────────────────────────────────────────
+  // 内嵌会话卡登记:shell 在 webview dom-ready 后回报 {cardId, wcId};发卡收口时 wf 注册表项的 wcId 只能
+  // 先挂 null,在此补齐(顺带建 wfCardByWc 映射);reg.sid 也顺手回填(card-init 可能早于本绑定跑完)
+  ipcMain.handle('session-bind', (_e, arg) => {
+    const a = arg || {}; if (a.wcId == null) return { ok: false }
+    S.embedWc = S.embedWc || new Set(); S.embedWc.add(a.wcId)
+    const reg = a.cardId != null && a.cardId !== '' && S.wfRegistry ? S.wfRegistry.get(String(a.cardId)) : null
+    if (reg) {
+      reg.wcId = a.wcId
+      S.wfCardByWc = S.wfCardByWc || new Map(); S.wfCardByWc.set(a.wcId, reg)
+      const sid0 = S.sessionByWc.get(a.wcId); if (sid0 && !reg.sid) reg.sid = sid0
+    }
+    return { ok: true }
+  })
+  // 活动会话清单(侧栏「会话」区):分片是内部工人不进列表;title 取历史/wf 注册表,拿不到给 null;
+  // embed 标记该会话是否内嵌在主窗口(shell 启动时据此收养重载前还活着的会话)
+  ipcMain.handle('session-list', () => {
+    const out = []
+    for (const [wcId, sid] of S.sessionByWc) {
+      if (S.shardWc && S.shardWc.has(wcId)) continue
+      const h = S.history.find((x) => x.id === sid)
+      const reg = S.wfCardByWc && S.wfCardByWc.get(wcId)
+      out.push({ sid, wcId, title: (h && h.title) || (reg && reg.goal) || null, dir: (h && h.dir) || '', busy: busyCards.has(wcId), wf: reg ? reg.kind : '', embed: !!(S.embedWc && S.embedWc.has(wcId)), pinned: !!(S.pinnedWc && S.pinnedWc.has(wcId)) })
+    }
+    return out
+  })
+  // 关闭内嵌会话:与独立卡 closed 同一条清理链(幂等 —— shell 的 × 与 webview destroyed 兜底会同发,重复调用安全)
+  ipcMain.handle('session-close', (_e, arg) => {
+    const a = arg || {}; if (a.wcId == null) return { ok: false }
+    try { cleanupCardContext(S, a.wcId, null) } catch (e) { log('session-close err: ' + e.message) }
+    return { ok: true }
+  })
+  // 编排并发真值(波4 主窗口状态栏):只读聚合 —— running 与并发闸同一份 wfRunningCount()
+  // (只占动态工作流,pipeline/orch 不占位,15s 启动宽限);max = knobs.wfConcurrency(缺失/非正回退 4)
+  ipcMain.handle('wf-running-count', () => ({ running: wfRunningCount(), max: wfConcurrency() }))
+
+  // ── 钉出(波3):侧栏会话钉出为独立迷你卡(独立真窗口盯梢单个会话)—— 全产品唯一保留的悬浮窗 ──────────
+  // 流程:① 找 sid 当前 sessionInfo.wc(内嵌 guest;兜底扫 sessionByWc)② detach 语义摘死 wc 登记
+  // (不动会话/serve/工作流注册表)③ spawnCard 真窗口重接(card-init 按 sid 天然接管:回放+流式续推;
+  // wf 注册表挂键由 session.js trackWcSession 按 sid 认领)④ 登记 S.pinnedWc → resolve 后 shell 移除该
+  // webview 与侧栏条目(绝不走 sessionClose,会话必须活着)。收回 = 钉出窗 closed 分流(见 spawnCard)。
+  // 幂等:sid 已钉出 → 聚焦已有窗;sid 无活动会话 → 报错。x/y 缺省 → spawnCard 居中主屏。
+  ipcMain.handle('session-pin-out', (_e, arg) => {
+    try {
+      const a = arg || {}; const sid = String(a.sid || '')
+      if (!sid) return { ok: false, err: 'missing sid' }
+      // 幂等:已在钉出窗 → 聚焦已有窗,不重复开
+      for (const pid of (S.pinnedWc || [])) {
+        if (S.sessionByWc.get(pid) !== sid) continue
+        const w0 = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === pid)
+        if (w0) { try { if (w0.isMinimized()) w0.restore(); w0.show(); w0.focus() } catch {} ; return { ok: true, wcId: pid, already: true } }
+      }
+      // ① 找 sid 当前绑的 wc(sessionInfo 权威且需活着;兜底扫 sessionByWc —— 收养条目的 wc 已死,走兜底)
+      let oldWcId = null
+      const si = S.sessionInfo.get(sid)
+      if (si && si.wc && !si.wc.isDestroyed()) oldWcId = si.wc.id
+      if (oldWcId == null) { for (const [w, s2] of S.sessionByWc) { if (s2 === sid) { oldWcId = w; break } } }
+      if (oldWcId == null) return { ok: false, err: '会话无活动卡片(可能已关闭)' }
+      if (S.shardWc && S.shardWc.has(oldWcId)) return { ok: false, err: '分片工人会话不可钉出' }
+      // 已在独立真窗口(非内嵌):不重复开,聚焦即"钉出";不登记 pinnedWc —— 它的 closed 走正常清理链,收回语义不适用
+      if (!(S.embedWc && S.embedWc.has(oldWcId))) {
+        const w1 = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === oldWcId)
+        if (w1) { try { if (w1.isMinimized()) w1.restore(); w1.show(); w1.focus() } catch {} ; return { ok: true, wcId: oldWcId, already: true } }
+        // 顶层窗找不到的死 wc(收养/残留登记):照常走 detach + 重开,顺带清掉残留
+      }
+      const h = S.history.find((x) => x.id === sid)
+      const reg = S.wfCardByWc && S.wfCardByWc.get(oldWcId)
+      const title = (h && h.title) || (reg && reg.goal) || '对话'
+      // ② detach 清死 wc 登记(降级版清理链:不 abort / 不 retire serve / 工作流注册表不收官)
+      cleanupCardContext(S, oldWcId, null, { detach: true })
+      // ③ 真窗口重接(card.html 非 embedded,窗控齐全;card-init 按 sid 接管流式)
+      const id = spawnCard(title, sid, null, null, { window: true, x: a.x, y: a.y })
+      const wcId = S.cardWcById && S.cardWcById.get(String(id))
+      if (wcId == null) return { ok: false, err: '钉出窗创建失败' }
+      // ④ 登记钉出窗(closed 分流判据)
+      S.pinnedWc = S.pinnedWc || new Set(); S.pinnedWc.add(wcId)
+      log('session pinned out: sid ' + sid.slice(0, 18) + ' → wc ' + wcId)
+      return { ok: true, wcId }
+    } catch (e) { return { ok: false, err: e.message } }
+  })
 
   ipcMain.on('close-self', (e) => BrowserWindow.fromWebContents(e.sender)?.close())
   ipcMain.on('hide-self', (e) => BrowserWindow.fromWebContents(e.sender)?.hide())
@@ -2212,31 +2276,10 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     for (const w of BrowserWindow.getAllWindows()) { try { w.webContents.send('todos-updated') } catch {} }
   })
 
-  // ── Orb 窗口控制 ─────────────────────────────────────────────────────────
-  ipcMain.on('orb-passthrough', (_e, pass) => {
-    if (S.inputWin && !S.inputWin.isDestroyed()) S.inputWin.setIgnoreMouseEvents(pass, { forward: true })
-  })
-  // 拖拽：在桌面内自由移动（仅夹取在可见区）
-  ipcMain.on('orb-drag', (_e, { dx, dy }) => {
-    if (!S.inputWin || S.inputWin.isDestroyed()) return
-    const [x, y] = S.inputWin.getPosition()
-    const [nx, ny] = clampOrbPos(x + dx, y + dy)
-    S.inputWin.setPosition(nx, ny)
-    if (S.orbInputWin && !S.orbInputWin.isDestroyed()) {
-      const [px, py] = S.orbInputWin.getPosition()
-      S.orbInputWin.setPosition(px + (nx - x), py + (ny - y))
-    }
-  })
-  ipcMain.on('orb-snap', () => snapOrbToCorner())
-  ipcMain.handle('toggle-orb-input', (_e, mode) => toggleOrbInput(mode))
-  ipcMain.handle('close-orb-input', () => {
-    if (S.orbInputWin && !S.orbInputWin.isDestroyed()) { S.orbInputWin.close(); S.orbInputWin = null }
-  })
-
   // ── 浏览器 IPC ───────────────────────────────────────────────────────────
   const brWC = () => { const t = brActive(); return t && !t.view.webContents.isDestroyed() ? t.view.webContents : null }
   ipcMain.handle('open-browser', (_e, url) => createWorkspace(url))
-  ipcMain.handle('open-skill-center', () => createSkillCenter())   // 悬浮球「🎬 录制回放」
+  ipcMain.handle('open-skill-center', () => createSkillCenter())   // 「🎬 录制回放」入口(托盘/热键)
   // 分隔条拖动：start=临时分离内容视图让 chrome 独占鼠标事件；end=落定宽度并复位视图
   ipcMain.on('browser-split', (_e, arg) => {
     const b = S.browser
@@ -3165,10 +3208,10 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   })
 
   ipcMain.handle('open-dock', () => openDock())
-  ipcMain.handle('open-console', () => createConsole())
+  ipcMain.handle('open-main', () => createMainWindow())   // 桌面主窗口(shell.html)
   ipcMain.on('get-history', (e) => { e.returnValue = S.history })
   ipcMain.handle('open-history', (_e, { sid, title }) => spawnCard(title, sid))
   ipcMain.handle('clear-history', () => { S.history = []; saveHistory(); return true })
 
-  return { createOrb, createBrowser, createWorkspace, createSkillCenter, createMailCenter, createConsole, openMailView, spawnCard, spawnWorkflow, spawnEmailCard, snapAsk, toggleInput, toggleOrbInput, buildTray, openDock, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory, replaceHistoryId }
+  return { createBrowser, createWorkspace, createSkillCenter, createMailCenter, createMainWindow, openMailView, spawnCard, spawnWorkflow, spawnEmailCard, snapAsk, buildTray, openDock, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory, replaceHistoryId }
 }

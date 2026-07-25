@@ -6,13 +6,13 @@
 
 **BocomHermes**（产品对外名，原代号"天枢"，已全仓库统一命名，无残留）是一个 **Electron 桌面壳**，定位是**公司内网环境下的个人桌面智能体**（单人、自己机器、个人/工作邮箱，不是企业/团队产品）。
 
-核心形态：**可拖动的透明玻璃卡片 + 全局输入框**。一张对话卡 = 一个独立的 `opencode serve` 会话，多卡并行。除此之外还有：悬浮球（orb）、内嵌浏览器（多标签 + CDP 控制台/网络面板）、浏览器操作录制回放（技能系统）、邮件中心（IMAP/SMTP + 发件箱安全闸门）、待办、需求分析多 Agent 对抗管线、动态工作流编排等。
+核心形态：**一体化桌面主窗口（`ui/shell.html`，侧栏 + 视图区 + 状态栏）+ 快捷输入层**。对话会话以 `<webview>` 内嵌在主窗口对话视图，多会话并行（一张会话卡 = 一个 `opencode serve` 会话）；可从主窗口**钉出单张迷你卡**盯梢单个会话（唯一独立对话窗）。悬浮球（orb）与自由悬浮卡已退役（波5 删除装配），控制台 2.0（console.html）被 shell 取代后同步删除。除此之外还有：内嵌浏览器（多标签 + CDP 控制台/网络面板，独立工作台窗）、浏览器操作录制回放（技能系统）、邮件中心（IMAP/SMTP + 发件箱安全闸门，主窗邮件视图）、待办、需求分析多 Agent 对抗管线、动态工作流编排等。
 
 铁律：**数据不出网**。shell 本身不发任何外网请求（无 analytics / CDN / update check），LLM 流量只走本地 spawn 的 `opencode serve`（其对接内网模型端点）。所有工具一律本地。
 
 ## 技术栈
 
-- **运行时**：Electron 34（`package.json` `devDependencies`），主进程是 CommonJS（`.js`，`'use strict'` 开头）；UI 主体是无框架的原生 HTML/JS/CSS（`ui/*.html`，脚本内联在 HTML 里）——**例外**：控制台 2.0（`ui/console.html`，应用主界面）用 **Vue 3 全局构建**（本地 vendor `ui/vendor/vue.global.prod.js`，无构建步骤、运行时零外网，随包分发；`vue` 已进 dependencies 供打包溯源）。
+- **运行时**：Electron 34（`package.json` `devDependencies`），主进程是 CommonJS（`.js`，`'use strict'` 开头）；UI 全部是无框架的原生 HTML/JS/CSS（`ui/*.html`，脚本内联在 HTML 里，无构建步骤）。
 - **Node**：开发机 Node v20+ 可跑主仓库；`mcp/` 下的 MCP server（ESM `.mjs`）**要求 Node 22+**（需内置全局 WebSocket，用于 CDP 驱动系统 Edge/Chrome）。
 - **打包**：electron-builder 25（Windows NSIS + portable，macOS dmg + zip），配置全在 `package.json` 的 `build` 字段。
 - **依赖**（运行时）：`pdf-parse`、`mammoth`、`xlsx`（需求文档解析）、`mysql2`（OceanBase MySQL 模式只读连接）、`typescript-language-server`+`typescript@5.x`+`@vue/language-server`+`pyright`（随包自带 LSP，内网无外网装不了——TS/Vue/Python 代码智能全靠它们，用 Electron 内嵌 Node 跑，必须 asarUnpack）。MCP server 与自测脚本**零依赖**（只用 Node 内置模块）。
@@ -28,7 +28,7 @@ BocomHermes-shell/
 ├── opencode.js        # serve 连接层：按项目目录分池 spawn serve、会话/消息/中止/SSE 事件流、
 │                      #   权限审批路由、子 agent 会话(parentID)路由回父卡片
 ├── src/
-│   ├── window.js      # ⚠ 最大模块(~178KB)：所有窗口工厂(orb/卡片/工作台/技能中心/邮件中心…)、
+│   ├── window.js      # ⚠ 最大模块(~178KB)：所有窗口工厂(主窗口/钉出迷你卡/工作台/技能中心/邮件中心…)、
 │   │                  #   大部分 IPC 处理器、托盘、设置、历史、快照提问等
 │   ├── session.js     # 卡片↔opencode 会话 IPC、个人记忆库(memory.md)、成果抽屉读文件(路径围栏)、项目上下文注入
 │   ├── browser.js     # 内嵌浏览器核心(initBrowser 工厂)：多标签/WebContentsView/CDP 控制台与网络面板/截图/元素拾取
@@ -43,9 +43,11 @@ BocomHermes-shell/
 │   ├── httpcap.js     # HTTP 正向代理抓包(仅 HTTP)
 │   ├── todos.js / todo-reminder.js / trigger.js / cdp-format.js
 │   ├── knowledge.js   # 项目级知识库(任务尾蒸馏落点,纯逻辑可单测):slug/条目追加去重/注入裁剪
-├── ui/                # 全部窗口页面（原生 HTML，脚本内联）：card.html(对话卡,~117KB)、browser.html(~115KB)、
-│                      #   console.html(控制台 2.0 = 启动主界面:导航轨 + 对话/工作流/待办/设置四视图,Vue 3 本地 vendor)、
-│                      #   orb.html/orb-input.html(悬浮球)、dock.html(卡坞)、mailcenter.html、skills.html、
+│   ├── card-cleanup.js # 卡关闭清理链(波3 独立成可测模块):abort 会话/退休孤儿 serve/forgetBusy/
+│   │                  #   钉出 detach 降级/orch 级联;窗口 closed 与主窗视图关闭都走它
+├── ui/                # 全部窗口页面（原生 HTML，脚本内联）：shell.html(桌面主窗口=唯一主界面:侧栏+
+│                      #   对话/任务编排/邮件/设置四视图+快捷输入层+状态栏)、card.html(会话卡,~117KB)、
+│                      #   browser.html(~115KB)、dock.html(编排视图页)、mailcenter.html、skills.html、
 │                      #   settings.html、glass.css(双主题设计令牌,html[data-theme] 驱动)等
 ├── mcp/               # 9 个本地 stdio MCP server(ESM,零依赖,打包时 asarUnpack)：
 │                      #   browser-mcp(浏览器自动化+技能回放)、httpcap-mcp、repro-mcp(复现取证)、
@@ -66,7 +68,7 @@ BocomHermes-shell/
 
 **多层派发（主控卡，window.js `spawnOrchestrator`）**：复杂目标的统一入口，**卡坞「动态工作流」模式即走此路**（`start-conversation` mode=`wf`/`orch` → 主控；MCP `run_orchestration` → relay `/orch/run-orch`）——L0 主控卡（kind `orch`，不占并发位）先【预检路由】（只扫清单不读内容：相关文件 ≤20 且 ≤150KB 就改用单工作流，超线才拆）→ 出拆分方案（规划闸批准）→ 用 `run_workflow` 派 N 个分片工作流卡（各自全新 128k + task 扇出 + 55% 交棒）→ 分片 goal 带 `[orch:TAG]` 前缀登记 `reg.parentOrch`——**分片是隐藏卡**（不开窗、不占任务栏、自动过规划闸、权限自动放行——无人值守，否则 task 子 Agent/写文档卡死在看不见的批准框上）；**会话经 `session.js mirrorToOrch` 镜像回流主控卡**：主控卡顶部「分片进度」面板（`pushShardProgress`）点一片即在主区域就地渲染该分片的会话（shard 视图，不另开空间）；`wfTurnDone` 判收官后给主控卡注入进度消息（N/M）事件唤醒 → 主控派【索引棒】把各分片结论关联成两级索引 README（分片收官判定 = todowrite 全勾；兜底 = 轮末/回合报错后 45s 无新回合由 `armShardSettle` 补判 done/interrupted——内网模型常不收尾 todowrite，无兜底会永远卡 running；新回合经 `S.wfTurnStart` 解除计时，报错路径经 `S.wfTurnError` 起兜底，card-init/card-reinit 失败同样补回调，reinit 入口先解计时防交棒误杀）。`wfConcurrency` 只数"正在干活"的卡（`isCardBusyLately`：在跑或 3s 内刚闲——分片轮间空窗是假象，曾机制性超发；pipeline/orch 不占位，起卡 15s 宽限）。**健壮性口径（逻辑审查后落地）**：批准升级为壳层状态位（`reg.planApproved`，卡片 approvePlan 经 `wf-plan-approved` 上报，relay `/orch/run` 拦主控未批派发——以前批准只是会话文案，模型不守规程直接派也照单全收）；`[orch:TAG]` 解析统一走 `parseOrchTag`（行首前缀 + 全文二次扫描，全角括号也认）；唤醒目标缺失不置 `orchNotified`（留待重试，不再一次性聋掉）；`session.js` 主回合挂死看门狗（分片/主控 300s 静默自动 abort，45s tick；可见卡不代劳）；分片/主控空答自动重试经 setTimeout 排期 + `autoRetryPending` 保 busy（防旧 finally 踩出并发双回合）；interrupted 收官也出队，"全部收官"分母含排队片；settle 判 done 三判据（最后一轮被中止/全程零产出 → interrupted）；全收官 5min 未派索引棒壳层催办一次（只催不代派）；连带关窗跳过忙卡、关窗即埋 settle 计时；长任务防停（`card.html maybeContinueNudge`）：成功轮末 todo 还有未完项 → wf/orch/shard 卡自动注入"继续执行"（停=链死；连催 3 次未完项没降就停催转人工，防死循环；有进展即复位），普通对话卡出可见「继续执行」按钮（判动权给人）；委派驱动（`maybeDelegateNudge`）：todo ≥3 步且已实质干活且 ≥2 轮未派 task → wf 卡自动注入"按规程第 4 条派子 Agent 并行"，普通卡给可见建议（每任务只催一次，派过/催过不再管）；出错轮不挂批准条（防预检没做完就批）；递归硬禁（relay `/orch/run-orch` 拦带已有 [orch:TAG] 的 goal——下级主控的分片回报会回流到别的 Tag 名下、唤醒错乱黑盒停摆（实测），层级只到"主控→分片→task"；分片太大只能拆得更小或片内 task 细分）；主控停滞巡检（`window.js` 60s tick：已过批准但分片没齐/名下空挂且 10 分钟无进度且空闲 → 注入催办，递归场景分片标记写错流去父主控、自己空等停摆的兜底，只催不代派，日志 `[ctx-stall]`）；分片弹窗可见（进度卡/分片视图 ⧉ 按钮 → `shard-pop` 亮出真实隐藏窗直接看实时会话，镜像缓冲空的纯黑盒场景兜底；用户点 X 经 close 拦截转隐藏不销毁，壳层销毁走 `S.shardForceClose` 白名单）。**落盘哲学**：一切中间成果写成文档落盘，上下文只过路径+一句话索引，不限字数、不限棒数（`autoCompactMax` 默认 20 仅兜底病态循环）；任何一块太大就把分片拆得更小（≤10 文件/片）或片内用 task 子 Agent 细分，**禁止递归派主控**（relay `/orch/run-orch` 硬拦带已有 [orch:TAG] 的 goal，层级只到"主控→分片→task"）。红线：主控严禁自己深读/执行；分片有强依赖就别多层。
 
-**serve 池架构**（`opencode.js`）：一个项目目录 = 一个独立 serve 进程（端口从 4096 起自动找空闲），因为此版 opencode 的 `POST /session` 不支持会话级目录。同项目多卡复用同一 serve 的并发会话；每个 serve 一条 `/event` SSE。只读工具(read/grep/glob/list/ls/find/tree)自动放行，写/执行转卡片内联确认（允许一次/总是/拒绝）。逐 token 流式靠 SSE `message.part`，POST 结果作权威兜底。
+**serve 池架构**（`opencode.js`）：一个项目目录 = 一个独立 serve 进程（端口从 4096 起自动找空闲），因为此版 opencode 的 `POST /session` 不支持会话级目录。同项目多卡复用同一 serve 的并发会话；每个 serve 一条 `/event` SSE。只读工具(read/grep/glob/list/ls/find/tree)自动放行，写/执行转卡片内联确认（允许一次/总是/拒绝）。逐 token 流式靠 SSE `message.part`，POST 结果作权威兜底。**主窗口化后的发卡与清理**：所有发卡收口在 `window.js spawnCard`——主窗口活着就转发 `shell-spawn` 由 shell 对话视图内嵌 webview 开卡（`opts.window`=钉出、`opts.hidden`=无人值守工人才走真 BrowserWindow）；关会话/关卡的清理链统一走 `src/card-cleanup.js` 的 `cleanupCardContext`（窗口 `closed`、主窗视图关闭、钉出收回分流都复用它）。
 
 **128k 上下文口径（所有 Agent 同规，MiniMax M2.5）**：subAgent 由 serve 内置 `task` 工具（或 oh-my-openagent 插件的 `delegate_task`，带必填参 `load_skills`）创建、隔离上下文，不进卡片水位；两族委派工具壳层同待（计量/硬闸/子agent窗格）。四道防线——①纪律注入：`session.js` 项目背景锚携带 `<上下文纪律(128k)>`（所有卡），`window.js workflowSystemPrompt` 第4条是工作流卡的加强版（指令≤2000字、只给路径不贴原文、回报≤400字、delegate_task 必传 load_skills，不需要就 []），第3条附【编码/转换/迁移铁律】（源码不进主上下文：逐文件派子 Agent 读原文→写目标文件→只回路径，主 Agent 只验收；琐碎目标禁派单），主控编码模式 A2 同口径（按文件清单分片、片内逐文件派单）；①b 周期目标背诵（Manus recitation 抗 lost-in-middle）：wf/orch/shard 卡每 5 轮把总目标+未完事项附到下一条消息尾部（单会话卡不加——用户在场人就是锚）；①c KV-cache 度量：ctx chip 悬停显示命中率（cacheRead/实际进上下文量，serve 报缓存字段才有），注入顺序铁律=稳定块在前动态内容只追加尾部；②硬闸：`knobs.taskPromptMax`（默认 20000 字，只拦"贴原文"级病态指令），`session.js onText` 检出超限 task/delegate_task → 精确 abort 该调用的子会话（taskChild 可解析才杀，绝不株连并行兄弟；解析不到降级为只警告，挂死交看门狗），主 Agent 收 cancelled 后拆小重派；③看门狗（`session.js`）：子会话用量 ≥80%×128k 预警一次，静默 5min 且生成挂死自动中止；③b 读文件字节计量（`session.js`，内网"几个文件就爆"对症）：单次 read 输出 >12k 字提醒 offset/limit 分段读、会话累计读字节 >60k（≈128k 三成）提醒改派 task 子 Agent，工作流/分片卡走 card-inject、普通卡走 card-note，每档每会话一次；③c read-spill 插件（`plugin/read-spill.js`，serve 插件层硬机制）：挂 opencode `tool.execute.after` 钩子，read/grep 输出 >8000 字符（`BOCOMHERMES_READ_SPILL_MAX` 可调，0=关）自动写临时文件、上下文只留头 40 行+路径+总量，模型按提示用 offset/limit 读落盘文件；`plugin-install.js` 首启拷进 `~/.config/opencode/plugin/`（覆盖式=自更新）；注入侧预算：memory.md 截尾 3000 字（保留最新）、项目背景 ≤5500、知识 ≤6000；④工作流卡【主动交棒】（`card.html maybeAutoCompact`）：水位 ≥`knobs.ctxHandoffPct`（默认 0.55）就写交接单换下一棒主 Agent（全新会话新 128k），模型清醒时交接，永不触发被动压缩；**交棒优先于一切轮末催办**（`handoffDue`：水位到线的轮末，防停/委派/产出兜底注入一律不发——注入会立刻起新回合置 busy，排在后面的 maybeAutoCompact 见 busy 弃权，催办曾把交棒饿死到 100%+，实测回归）；普通对话卡不自动压缩（会清可见对话），≥90% 提醒用户点 chip 手动压缩；水位上限以 `knobs.ctxLimitMax`（默认 128000）收口——serve 报 192k 也按 128k 算，否则阈值线会算到真实上限之外。改这几处时保持数值口径一致。
 
@@ -91,6 +93,7 @@ npm run tool:test      # 工具 part 解析 + question 路由 + 生成挂死判�
 npm run compact:test   # 录制事件压缩
 npm run card:ui:test   # card.html 主脚本无头自测：vm + DOM 桩真跑（抓 TDZ/esc 类运行时雷）
 npm run knowledge:test # 项目知识库(knowledge.js)：slug 稳定/追加去重/注入裁剪
+npm run cleanup:test  # 卡关闭清理链(card-cleanup.js)：全清理逐项/detach 降级/幂等/orch 级联
 npm run lsp:test       # LSP 冒烟:ELECTRON_RUN_AS_NODE 起 ts/vue/pyright 三个 server 握手
 npm run readspill:test # read-spill 插件:大输出落盘/小输出放行/阈值开关(零依赖,不连真 serve)
 npm run lspmcp:test    # lsp-mcp:帧编解码/路由/行列换算/路径围栏 + ts server 真实握手
@@ -114,7 +117,7 @@ npm run bars:e2e           # card.html 真 Chromium 渲染 e2e：重放工作流
 - 模块文件头惯例有一段中文块注释：说明职责、设计要点、注入哪些依赖、为何这样切分——改动模块时请同步维护这段头注释。
 - UI 无构建步骤：HTML 内联脚本直接写，改完重启即可；`card.html`/`browser.html`/`window.js` 都是超大单文件，**改前先定位、最小改动**，不要顺手重构（历史包袱重，自测只覆盖部分）。
 - 命名：产品文案/品牌一律用 **BocomHermes**；内部 API 命名空间 `window.BocomHermes` 保持不变。
-- 每卡 = 一个独立无边框透明 `BrowserWindow`；内嵌浏览器标签页用 `WebContentsView`。
+- 对话会话 = 主窗口对话视图里的内嵌 `<webview>`（card.html）；只有**钉出的迷你卡**才是独立无边框透明 `BrowserWindow`；内嵌浏览器标签页用 `WebContentsView`。
 
 ## 安全与内网约束（改代码时必须守住）
 
@@ -133,11 +136,12 @@ npm run bars:e2e           # card.html 真 Chromium 渲染 e2e：重放工作流
 
 运行期数据都在 Electron `userData` 目录：`settings.json`（theme/projectDir/backendDir/serveBin/editorCmd/recentDirs/proxy/browserArgs/smtp 等）、`history.json`、`BocomHermes.log`（3MB 滚动）、`audit.jsonl`、`memory.md`（个人记忆库，注入会话上下文）、`recordings/`（录制与技能 JSON）、`evidence/`（复现取证）。
 
-全局热键（`main.js`）：`Ctrl+Shift+Space` 唤起输入框、`+C` 控制台（主界面，启动即开）、`+B` 工作台、`+R` 技能中心、`+M` 邮件中心、`+S` 截图提问、`+V` 剪贴板带入输入框。
+全局热键（`main.js`）：`Ctrl+Shift+Space` 唤起主窗口快捷输入层（回车=新会话带首发消息）、`+B` 主窗任务编排视图、`+M` 主窗邮件视图、`+R` 技能中心（录制回放工作台）、`+S` 截图提问、`+V` 剪贴板带入快捷输入层。（原 `+C` 控制台已随 console.html 退役删除。）
 
 ## 文档地图
 
 - `README.md`：面向用户的功能说明与运行/打包手册。
 - `mcp/README.md`：9 个 MCP server 的完整工具清单与注册方法。
 - `docs/`：设计文档（记忆系统设计、动态工作流设计备忘、需求分析多 Agent 对抗方案、信贷需求到详设方案、技能系统设计、研发功能路线图等）。
+- `docs/ui-design/`：桌面主窗口化设计套件（W0-W5 设计稿 `desktop.html` 等）；重构实施方案见仓库根 `plan.md`。
 - `docs/项目记忆/`：Claude Code 项目记忆的版本化镜像（真实来源在仓库外 `~/.claude/.../memory/`，可能短暂不一致）——含产品定位（个人桌面智能体优先于企业合规）、内网模式等关键决策背景。

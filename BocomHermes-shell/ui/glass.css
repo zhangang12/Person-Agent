@@ -178,3 +178,16 @@ body { padding: 24px; }
 @keyframes orbGrow { 0% { opacity: 0; transform: translate(var(--gfx, 0), var(--gfy, 16px)) scale(.58); } 55% { opacity: 1; } 100% { opacity: 1; transform: none; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes tw { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+
+/* ===== 嵌入态:主窗口以 <webview> 收编各功能页(?embed=1 / ?embedded=1)=====
+   页面在自己的 embed 分支给 <html> 打 data-embed="1",此处统一关掉透明悬浮壳三件套:
+   body 24px 内边距、.glass 圆角+阴影+出场动画、透明底(改实底令牌)。
+   ⚠ 默认分支(悬浮卡/悬浮窗)一字未动 —— 只新增 html[data-embed="1"] 覆盖。 */
+html[data-embed="1"], html[data-embed="1"] body { background: var(--glass-bg); }
+html[data-embed="1"] body { padding: 0; }
+html[data-embed="1"] .glass {
+  border: none; border-radius: 0; box-shadow: none; animation: none;
+  -webkit-app-region: no-drag; cursor: auto;   /* 拖动归主窗口标题栏,嵌入页不再抢 */
+}
+html[data-embed="1"] .glass:active { cursor: auto; }
+html[data-embed="1"] .glass .hl { display: none; }

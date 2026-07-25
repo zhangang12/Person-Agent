@@ -766,10 +766,26 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
   }
   // 卡片↔会话登记(每次建/换会话都过这里):
   // ①工作流卡把最新会话 id 记进注册表(reg.sid)—— 存档头带会话,关卡后仍能重开【完整会话】而不是只甩一个 md;
-  // ②分片会话 id 进 S.shardSids —— recordHistory 硬闸的第二道防线(光靠各调用点传 shard 旗标,漏一个就污染最近会话)
+  // ②分片会话 id 进 S.shardSids —— recordHistory 硬闸的第二道防线(光靠各调用点传 shard 旗标,漏一个就污染最近会话);
+  // ③钉出/收回重挂(波3):工作流会话挪窝(内嵌 guest ↔ 钉出窗)后,注册表项的键还指在旧 wc 上 ——
+  //   新 wc 按 sid 把【活着的(running)】注册表项认领回来重新挂键,否则 wfTurnDone/wf-open 全打在死 wcId 上(重挂后工作流断链)。
+  //   已终态(done/interrupted)的项不认领:wf-open 有意以普通卡重开完工会话,不复活注册表(window.js wf-open 注释同款语义);
+  //   旧 wc 仍是主(sessionByWc 还指它,双绑竞态)不抢。
   function trackWcSession(wcId, sessionId) {
     try {
-      const wreg = S.wfCardByWc && S.wfCardByWc.get(wcId)
+      let wreg = S.wfCardByWc && S.wfCardByWc.get(wcId)
+      if (!wreg && S.wfRegistry) {
+        for (const reg of S.wfRegistry.values()) {
+          if (!reg || reg.sid !== sessionId || reg.wcId === wcId) continue
+          if (reg.status !== 'running') continue
+          if (reg.wcId != null && S.sessionByWc.get(reg.wcId) === sessionId) continue   // 旧 wc 仍是主:不抢
+          if (S.wfCardByWc && reg.wcId != null) S.wfCardByWc.delete(reg.wcId)
+          S.wfCardByWc = S.wfCardByWc || new Map()
+          reg.wcId = wcId; S.wfCardByWc.set(wcId, reg)
+          wreg = reg
+          break
+        }
+      }
       if (wreg) wreg.sid = sessionId
       if (S.shardWc && S.shardWc.has(wcId)) { S.shardSids = S.shardSids || new Set(); S.shardSids.add(sessionId) }
     } catch {}

@@ -34,7 +34,17 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   dbTest: () => ipcRenderer.invoke('db-test'),
   // 卡坞 / 会话历史
   openDock: () => ipcRenderer.invoke('open-dock'),
-  openConsole: () => ipcRenderer.invoke('open-console'),   // 控制台主界面(三栏会话台)
+  openMain: () => ipcRenderer.invoke('open-main'),         // 桌面主窗口(shell.html)
+  onShellView: (cb) => ipcRenderer.on('shell-view', (_e, p) => cb(p)),   // 主窗口:热键/托盘切视图 {view}
+  onShellQuickOpen: (cb) => ipcRenderer.on('shell-quick-open', (_e, p) => cb(p || {})),   // 主窗口:快捷输入层唤起(波4) {text?}
+  onShellSpawn: (cb) => ipcRenderer.on('shell-spawn', (_e, p) => cb(p)),           // 主窗口:发卡收口 → 对话视图开/激活会话 {id,title,sid,msg,disp,orch,wf}
+  onShellSessStatus: (cb) => ipcRenderer.on('shell-sess-status', (_e, p) => cb(p)), // 主窗口:会话忙闲转发 {wcId,busy}
+  sessionBind: (cardId, wcId) => ipcRenderer.invoke('session-bind', { cardId, wcId }),   // webview dom-ready 后登记 wcId↔卡(wf 注册表补 wcId)
+  sessionList: () => ipcRenderer.invoke('session-list'),        // 活动会话清单(侧栏「会话」区)
+  sessionClose: (wcId) => ipcRenderer.invoke('session-close', { wcId }),   // 关闭内嵌会话(走卡关闭清理链,幂等)
+  sessionPinOut: (arg) => ipcRenderer.invoke('session-pin-out', arg || {}),   // 钉出(波3):内嵌会话 → 独立迷你卡(真窗口盯梢);arg={sid, x?, y?}
+  onSessionReattached: (cb) => ipcRenderer.on('session-reattached', (_e, p) => cb(p)),   // 收回(波3):钉出窗关闭 → 会话回主窗口侧栏 {sid}
+  cardBoundEmit: (meta) => { try { ipcRenderer.sendToHost('card-bound', meta || {}) } catch (e) {} },   // webview guest → 宿主 shell 回写绑定;顶层窗调用静默吞掉
   getHistory: () => ipcRenderer.sendSync('get-history'),
   openHistory: (sid, title) => ipcRenderer.invoke('open-history', { sid, title }),
   clearHistory: () => ipcRenderer.invoke('clear-history'),
@@ -46,6 +56,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   wfOpen: (it) => ipcRenderer.invoke('wf-open', it),
   wfDelete: (id) => ipcRenderer.invoke('wf-delete', id),
   wfPlanApproved: () => ipcRenderer.send('wf-plan-approved'),
+  wfRunningCount: () => ipcRenderer.invoke('wf-running-count'),   // 编排并发真值(波4 状态栏):{running, max},只读
   shardPop: (id) => ipcRenderer.invoke('shard-pop', id),
   // 任务编排(卡坞):断点重试 / 模板(内置+用户) / 定时编排
   pipelineRetry: (id) => ipcRenderer.invoke('pipeline-retry', id),
@@ -148,7 +159,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   onOutboxUpdated: (cb) => ipcRenderer.on('outbox-updated', () => cb()),
   // 内嵌浏览器
   openBrowser:          (url) => ipcRenderer.invoke('open-browser', url),
-  openSkillCenter:      ()    => ipcRenderer.invoke('open-skill-center'),   // 悬浮球「🎬 录制回放」入口
+  openSkillCenter:      ()    => ipcRenderer.invoke('open-skill-center'),   // 「🎬 录制回放」入口
   browserNavigate:      (url) => ipcRenderer.invoke('browser-navigate', url),
   browserMenuOverlay:   (on)  => ipcRenderer.send('browser-menu-overlay', !!on),
   browserSettingsOverlay: (on) => ipcRenderer.send('browser-settings-overlay', !!on),
@@ -233,13 +244,4 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   onBrowserFindResult:      (cb) => ipcRenderer.on('browser-find-result',      (_e, p) => cb(p)),
   onBrowserFocusUrl:        (cb) => ipcRenderer.on('browser-focus-url',        () => cb()),
   onBrowserOpenFind:        (cb) => ipcRenderer.on('browser-open-find',        () => cb()),
-  // orb 窗口控制
-  setOrbMousePassthrough: (pass) => ipcRenderer.send('orb-passthrough', pass),
-  moveOrbBy: (dx, dy) => ipcRenderer.send('orb-move', { dx, dy }),
-  dragOrb: (dx, dy) => ipcRenderer.send('orb-drag', { dx, dy }),
-  snapOrbToCorner: () => ipcRenderer.send('orb-snap'),
-  toggleOrbInput: (mode) => ipcRenderer.invoke('toggle-orb-input', mode),
-  closeOrbInput: () => ipcRenderer.invoke('close-orb-input'),
-  onOrbState: (cb) => ipcRenderer.on('orb-state', (_e, state) => cb(state)),
-  onOrbWake: (cb) => ipcRenderer.on('orb-wake', () => cb()),
 })

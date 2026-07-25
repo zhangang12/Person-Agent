@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <title>设置 · BocomHermes</title>
 <script>try { document.documentElement.dataset.theme = window.BocomHermes.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
-<script>(function(){try{var p=new URLSearchParams(location.search),d=document.documentElement.style;['gox','goy','gfx','gfy'].forEach(function(k){var v=p.get(k);if(v)d.setProperty('--'+k,v)})}catch(e){}})()</script>
+<script>(function(){try{var p=new URLSearchParams(location.search),d=document.documentElement.style;['gox','goy','gfx','gfy'].forEach(function(k){var v=p.get(k);if(v)d.setProperty('--'+k,v)});if(p.has('embed'))document.documentElement.dataset.embed='1'}catch(e){}})()</script>
 <link rel="stylesheet" href="glass.css" />
 <style>
   .set { display: flex; flex-direction: column; height: 100%; padding: 13px 16px 14px; gap: 13px; }
@@ -62,6 +62,8 @@
   .kn-edit { display: flex; flex-direction: column; gap: 5px; border-top: .5px dashed var(--composer-border); padding-top: 6px; }
   .kn-edit .in { font-size: 12px; }
   .kn-edit textarea.in { resize: vertical; min-height: 54px; font-family: var(--font); }
+  /* 嵌入主窗口(?embed=1):关闭钮归主窗口,藏掉 */
+  html[data-embed="1"] .hd .hbtn { display: none; }
 </style>
 </head>
 <body>
@@ -510,11 +512,13 @@
       if (!silent) { msg.textContent = '已保存 ✓'; setTimeout(() => { msg.textContent = '' }, 1800) }
     } catch (e) { msg.style.color = 'var(--diff-del)'; msg.textContent = '保存失败' }
   }
+  // 嵌入主窗口(?embed=1):Esc 不关窗(close-self 对 webview guest 静默失效,禁掉防误操作语义)
+  const EMBED = new URLSearchParams(location.search).has('embed')
   $('save').addEventListener('click', save)
   $('x').addEventListener('click', () => window.BocomHermes.closeSelf())
   $('cancel').addEventListener('click', () => window.BocomHermes.closeSelf())
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') window.BocomHermes.closeSelf()
+    if (e.key === 'Escape') { if (!EMBED) window.BocomHermes.closeSelf() }
     else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) save()
   })
 </script>

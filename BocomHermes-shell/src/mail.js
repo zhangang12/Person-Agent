@@ -5,7 +5,7 @@
 'use strict'
 const knowledge = require('./knowledge')
 module.exports = function initMail(ctx) {
-  const { S, app, path, fs, shell, ipcMain, log, oc, Notification, email, attachments, mailCache, emailSummarySeen, db, initOutbox, openOutbox, sendOrbState, createMailCenter, openMailView, spawnCard, spawnWorkflow, spawnOrchestrator, maybeSuggestMeeting, skillList, skillRun, skillRunBatch, skillPageRead, skillPageAct, skillTakeoverDone } = ctx
+  const { S, app, path, fs, shell, ipcMain, log, oc, Notification, email, attachments, mailCache, emailSummarySeen, db, initOutbox, openOutbox, createMailCenter, openMailView, spawnCard, spawnWorkflow, spawnOrchestrator, maybeSuggestMeeting, skillList, skillRun, skillRunBatch, skillPageRead, skillPageAct, skillTakeoverDone } = ctx
   // 解析"有效的" SMTP 配置:sameAsImap=true 时用户名/密码从 IMAP 取(host/port/secure 仍从 SMTP 取)
   function effectiveSmtp(S) {
     const sm = S.settings.smtp || {}
@@ -72,8 +72,7 @@ module.exports = function initMail(ctx) {
       log,
       onNew: (n) => {
         try { S.syncMailCache && S.syncMailCache({ full: false }) } catch {}   // 新邮件即时拉进本地缓存(下次进收件箱就有,不用等 5 分钟定时)
-        // 球绿色脉冲 + 通知;点击通知=打开邮件中心(收件箱默认只看未读 → 新邮件自然置顶)
-        try { sendOrbState && sendOrbState('done') } catch {}
+        // 通知;点击通知=打开邮件中心(收件箱默认只看未读 → 新邮件自然置顶)
         notifyMail('新邮件', (n > 1 ? n + ' 封新邮件到达' : '有新邮件到达') + ' — 点击打开邮件中心',
           () => { try { createMailCenter() } catch (e) { log('idle open center err: ' + e.message) } })
       },
@@ -448,6 +447,16 @@ module.exports = function initMail(ctx) {
       const probe = (probes || []).find((p) => p.port === si.serve.port)   // 推本卡 serve 的探活报文给日志面板
       if (probe) { try { si.wc.send('serve-probe', probe) } catch {} }
     }
+    // 主窗口状态栏/标题栏引擎灯(波4):聚合推送 —— 任一在用 serve 健康即绿(报其端口);全灭 → 失连。
+    // 只报真实探到的端口;一条都探不到(无在用 serve)时不发,shell 保持「未连接」初始态
+    try {
+      if (S.mainWin && !S.mainWin.isDestroyed()) {
+        const list = (probes || []).filter((p) => p && p.port != null)
+        const good = list.find((p) => p.healthy)
+        const any = good || list[0]
+        if (any) S.mainWin.webContents.send('serve-health', { healthy: !!good, port: any.port, at: Date.now() })
+      }
+    } catch {}
   })
   // 探活日志:取本卡 serve 的历史(开面板时拉)
   ipcMain.handle('get-probe-log', (e) => {

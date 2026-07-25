@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <title>对话 · BocomHermes</title>
 <script>try { document.documentElement.dataset.theme = window.BocomHermes.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
-<script>(function(){try{var p=new URLSearchParams(location.search),d=document.documentElement.style;['gox','goy','gfx','gfy'].forEach(function(k){var v=p.get(k);if(v)d.setProperty('--'+k,v)})}catch(e){}})()</script>
+<script>(function(){try{var p=new URLSearchParams(location.search),d=document.documentElement.style;['gox','goy','gfx','gfy'].forEach(function(k){var v=p.get(k);if(v)d.setProperty('--'+k,v)});if(p.has('embed'))document.documentElement.dataset.embed='1'}catch(e){}})()</script>
 <link rel="stylesheet" href="glass.css" />
 <style>
   /* 整张卡 JS 拖动:关掉 app-region,靠鼠标事件移动窗口(同需求分析卡) */
@@ -136,6 +136,8 @@
   .item .proj { font-family: var(--mono); background: var(--orb-bg); border: .5px solid var(--orb-border); border-radius: 999px; padding: 1px 8px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--txt3); font-size: 12.5px; text-align: center; padding: 0 24px; line-height: 1.7; gap: 6px; }
   .empty .big { font-size: 28px; opacity: .45; }
+  /* 嵌入主窗口(?embed=1):自带窗控(min/max/x)由主窗口负责,藏掉;close-self 对 webview guest 本就静默失效,这里直接不出按钮 */
+  html[data-embed="1"] .hd .hbtn { display: none; }
 </style>
 </head>
 <body>
@@ -727,12 +729,13 @@
   goalEl.addEventListener('input', () => { const w = $('pipeBlockMsg'); if (w) w.remove() })   // 改了描述就清掉体检红字(T9)
   setTimeout(() => { try { goalEl.focus() } catch (e) {} }, 60)
 
-  // 窗口控制
+  // 窗口控制(嵌入态 ?embed=1:Esc 不关窗 —— close-self 对 webview guest 静默失效,防误关语义)
+  const EMBED = new URLSearchParams(location.search).has('embed')
   $('x').addEventListener('click', () => H.closeSelf())
   $('min').addEventListener('click', () => H.minimizeSelf())
   $('max').addEventListener('click', () => H.toggleMaximize())
   $('clear').addEventListener('click', async () => { try { await H.clearHistory() } catch (e) {} render() })
-  document.addEventListener('keydown', (e) => { if (e.key !== 'Escape') return; if (!stepPrev.hidden) { closeStepPreview(); return } H.closeSelf() })   // 预览条开着时 Esc 先收预览,再按才关窗
+  document.addEventListener('keydown', (e) => { if (e.key !== 'Escape') return; if (!stepPrev.hidden) { closeStepPreview(); return } if (!EMBED) H.closeSelf() })   // 预览条开着时 Esc 先收预览,再按才关窗
 
   // 整卡拖动统一在 carddrag.js（见 </body> 前引入）
 </script>

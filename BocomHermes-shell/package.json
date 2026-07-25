@@ -2,7 +2,7 @@
   "name": "BocomHermes-shell",
   "version": "0.6.6",
   "private": true,
-  "description": "BocomHermes：可拖动透明玻璃卡片 + 全局输入框（Electron，基于 opencode serve）",
+  "description": "BocomHermes：一体化桌面主窗口的个人智能体壳（Electron，基于 opencode serve）",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -16,8 +16,8 @@
     "tool:test": "node scripts/tool-part-selftest.mjs",
     "compact:test": "node scripts/recorder-compact-selftest.mjs",
     "card:ui:test": "node scripts/card-ui-selftest.mjs",
-    "console:test": "electron scripts/console-smoke.cjs",
     "knowledge:test": "node scripts/knowledge-selftest.mjs",
+    "cleanup:test": "node scripts/cleanup-detach-test.mjs",
     "scope:test": "node scripts/writescope-selftest.mjs",
     "lsp:test": "node scripts/lsp-smoke.mjs",
     "forkcheck": "node scripts/fork-capability-probe.mjs",
@@ -44,7 +44,6 @@
     "pyright": "^1.1.411",
     "typescript": "^5.9.3",
     "typescript-language-server": "^4.4.1",
-    "vue": "^3.5.40",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

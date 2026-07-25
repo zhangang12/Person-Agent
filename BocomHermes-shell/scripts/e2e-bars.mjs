@@ -15,6 +15,7 @@ const async0 = async () => null
 contextBridge.exposeInMainWorld('BocomHermes', {
   onStream: (f) => { streamCb = f },
   onPermission: () => {}, onCardInject: () => {}, onCardNote: () => {}, onServeHealth: () => {}, onServeProbe: () => {}, onTheme: () => {},
+  onQuestion: () => {}, questionReply: async0, questionReject: async0,   // 提问卡:桩补齐,否则主脚本 boot 即 TypeError 白屏
   getTheme: () => 'light', getSettings: () => ({}), getDropPath: () => '', getProbeLog: async () => [],
   cardInit: async () => ({ sessionId: 'w1', project: 'demo', dir: 'C:/demo', model: null, reattached: false }),
   cardSend: async () => { await new Promise((r) => setTimeout(r, 60000)); return '' },   // 60s 窗口:一直"在跑"

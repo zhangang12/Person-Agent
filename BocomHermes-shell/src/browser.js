@@ -6,13 +6,13 @@
 //   #8 渲染侧 netMap 裁剪(在 ui/browser.html)、#9 fetch 流式读取、#11 did-finish-load 重施缩放。
 // ctx 注入:S / electron(session/app/BrowserWindow/WebContentsView)/ node(path/fs)/ log / oc,
 //   + cdp-format 纯函数(cdpConsoleLevel/fmtRO/fmtException),
-//   + window.js 内后定义但已提升的 function:ensureOrbAlive / forgetBusy / wireRecToTab / brSendRecCount(按引用注入,构造期不调用故无环)。
+//   + window.js 内后定义但已提升的 function:forgetBusy / wireRecToTab / brSendRecCount(按引用注入,构造期不调用故无环)。
 // 对外回传 19 个被 window.js 的浏览器 IPC / 调试层 / 录制层 / 托盘 / initWindow 返回值用到的函数。
 // 时序:initBrowser 必须在 initRecorder(window.js)之前构造——后者构造时即读取返回的 brActive(const,非提升)。
 // 放置约束:本文件必须在 src/ 下与 window.js 同目录,__dirname 才与原来一致(loadFile 路径不变)。
 'use strict'
 module.exports = function initBrowser(ctx) {
-  const { S, session, log, path, fs, app, BrowserWindow, WebContentsView, oc, ensureOrbAlive, forgetBusy, wireRecToTab, brSendRecCount, cdpConsoleLevel, fmtRO, fmtException } = ctx
+  const { S, session, log, path, fs, app, BrowserWindow, WebContentsView, oc, forgetBusy, wireRecToTab, brSendRecCount, cdpConsoleLevel, fmtRO, fmtException } = ctx
   const BR_TOP_H = 82   // 标签栏 38 + 工具栏 44
   const BR_SKILLBAR_H = 52   // 工作台底部技能控制条高度(录制/技能库/运行 + 实况)
   const SPLIT_GUTTER = 6   // 工作台模式左右分隔条宽度
@@ -603,7 +603,6 @@ module.exports = function initBrowser(ctx) {
       // ⚠ 不要手动 destroy 子 WebContentsView 的 webContents —— Electron 自己会清,
       // 双重 destroy 在 Windows 触发 native 段错误(crashpad: not connected),整个 agent 进程会崩。
       S.browser = { win: null, tabs: [], activeId: null, consoleH: 0, seq: 0, mode: 'standalone', leftW: 0, cardView: null, cardWcId: null, _dragging: false }
-      ensureOrbAlive()   // 关浏览器 ≠ 退出 agent —— 球带回前台
     })
     // chrome 加载完后再建首个标签（保证 IPC 能收到）
     win.webContents.once('did-finish-load', () => newTab(initialUrl || ''))
@@ -645,7 +644,7 @@ module.exports = function initBrowser(ctx) {
       // ⚠ 不要手动 destroy 子 WebContentsView 的 webContents —— Electron 自己会清,
       // 双重 destroy 在 Windows 触发 native 段错误(crashpad: not connected),整个 agent 进程会崩。
       // #1 左侧卡片的清理必须与独立卡 spawnCard 的 closed 处理对齐:否则关工作台会
-      //   ① 漏 forgetBusy → 死 wcId 留在 busyCards,状态球永久卡"思考中",全局卡片的完成/空闲态失效;
+      //   ① 漏 forgetBusy → 死 wcId 留在 busyCards,托盘提示永久卡"运行中",全局卡片的完成/空闲态失效;
       //   ② 漏 retireIfOrphan → 切过项目的卡自起的 serve 变孤儿进程;③ 漏 cardDir/modelByWc 删除 → Map 泄漏。
       const wcId = b.cardWcId
       const s = S.sessionByWc.get(wcId)
@@ -658,9 +657,8 @@ module.exports = function initBrowser(ctx) {
         const inUseBases = new Set([...S.sessionInfo.values()].map((si) => si.serve && si.serve.base).filter(Boolean))
         try { if (oc.retireIfOrphan(oldServe, inUseBases)) log('workspace closed: serve ' + oldServe.base + ' 已退休(无会话引用)') } catch {}
       }
-      if (wcId != null) forgetBusy(wcId)   // 关工作台即清"忙",避免状态球卡在思考态
+      if (wcId != null) forgetBusy(wcId)   // 关工作台即清"忙",避免托盘提示卡在"运行中"
       S.browser = { win: null, tabs: [], activeId: null, consoleH: 0, seq: 0, mode: 'standalone', leftW: 0, cardView: null, cardWcId: null, _dragging: false }
-      ensureOrbAlive()
     })
     win.webContents.once('did-finish-load', () => {
       win.webContents.send('browser-split-set', b.leftW)
