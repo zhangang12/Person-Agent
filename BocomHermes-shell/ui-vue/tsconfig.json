@@ -1,0 +1,25 @@
+{
+  // ui-vue TS 配置:strict 大方向,务实放宽两项(见下注释)
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "strict": true,
+    // 务实放宽:渐进迁移期允许隐式 any(preload 桥不少负载是动态形状,index signature 兜底)
+    "noImplicitAny": false,
+    // 务实放宽:不动态推断 this 的场景不挡构建
+    "noImplicitThis": false,
+    "noUnusedLocals": true,
+    "noUnusedParameters": false,
+    "noFallthroughCasesInSwitch": true,
+    "useDefineForClassFields": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "jsx": "preserve",
+    "types": ["vite/client"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.vue", "vite.config.ts"]
+}

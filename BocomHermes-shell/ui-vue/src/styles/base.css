@@ -1,0 +1,35 @@
+/* ==========================================================================
+   BocomHermes · Vue 基础样式 base.css
+   reset 要点 + svg.ic 图标基类 + 滚动条 + 中文禁 italic + 全局动效降级
+   只吃 tokens.css 变量;全部页面 import(tokens.css 必须先于本文件)。
+   ========================================================================== */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+body {
+  font: var(--b2); color: var(--label-1); background: var(--bg-ground);
+  font-feature-settings: "tnum" 0;
+}
+code, pre, .mono { font-family: var(--font-mono); }
+::selection { background: var(--selected); }
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+input, textarea, select { font: inherit; color: inherit; }
+
+/* 中文禁 italic:斜体标签一律回正 */
+em, i, cite, dfn { font-style: normal; }
+
+/* 图标基类:1.8px stroke,随文字色 */
+svg.ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+svg.ic.s16 { width: 16px; height: 16px; }
+svg.ic.s20 { width: 20px; height: 20px; }
+
+/* 滚动条:细轨,hover 显形,不抢戏 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--fill-3); border-radius: var(--r-full); border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--fill-4); border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+
+/* 全局动效降级:减少动态偏好下全部退化为瞬时切换 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+}

@@ -1,6 +1,12 @@
 node_modules/
 dist/
 out/
+# 例外:ui/dist 是 ui-vue(Vue 新 UI)的构建产物,需提交入库 ——
+# 内网发包机不一定有构建环境,electron-builder 直接打包(files 白名单 "ui/**/*" 已覆盖)
+!ui/dist/
 *.log
 opencode-wire-dump.txt
 scripts/e2e-bars-preload.cjs
+
+# 外部研究代码(不入库)
+external/

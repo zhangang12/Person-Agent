@@ -1,0 +1,98 @@
+/* ==========================================================================
+   BocomHermes · Vue 设计令牌包 tokens.css
+   事实源:docs/ui-design/design.css —— 浅色一套,变量名/值照抄(:root)
+   附加:组件态变量(--btn-press-scale 等,P0 按需补充,值取自 interactions.html
+   动效规格表)。改值必须先改 design.css,再同步此处,保持单一事实源。
+   ========================================================================== */
+
+/* ── 颜色(照抄 design.css 浅色块) ─────────────────────────────────────── */
+:root {
+  --bg-primary: #ffffff;
+  --bg-primary-90: rgba(255,255,255,0.9);
+  --bg-secondary: #f5f5f5;
+  --bg-tertiary: #ffffff;
+  --bg-quaternary: #ffffff;
+  --bg-ground: #f9fbfc;
+
+  --label-1: rgba(0,0,0,0.9);
+  --label-2: rgba(0,0,0,0.6);
+  --label-3: rgba(0,0,0,0.45);
+  --label-4: rgba(0,0,0,0.3);
+
+  --fill-1: rgba(0,0,0,0.03);
+  --fill-2: rgba(0,0,0,0.05);
+  --fill-3: rgba(0,0,0,0.15);
+  --fill-4: rgba(0,0,0,0.25);
+
+  --sep: rgba(0,0,0,0.13);
+
+  --blue: #1783ff;
+  --green: #16c456;
+  --danger: #ff3849;
+  --orange: #ff9500;
+  --yellow: #ffd230;
+  --purple: #985ffb;
+  --brand: rgba(0,0,0,0.9);
+  --brand-text: #ffffff;
+
+  --blue-10: rgba(23,131,255,0.1);
+  --green-10: rgba(22,196,86,0.1);
+  --red-10: rgba(255,77,77,0.1);
+  --orange-10: rgba(255,149,0,0.1);
+  --yellow-10: rgba(255,200,0,0.2);
+  --selected: rgba(23,131,255,0.2);
+
+  --bubble-user: #f5f5f5;
+  --toast-bg: #2b2b2b;                 /* toastPc 恒定深底,不随主题变 */
+  --mask: rgba(0,0,0,0.4);
+
+  --syn-kw: #034C7C; --syn-str: #A44185; --syn-cmt: #B2B2B2;
+  --syn-fn: #7EB233; --syn-var: #2F86D2; --syn-num: #174781; --syn-op: #0991B6;
+
+  --shadow-input: 0 5px 16px -4px rgba(0,0,0,0.07);
+  --shadow-small: 0 4px 16.4px rgba(0,0,0,0.1);
+  --shadow-medium: 0 4px 15px 2px rgba(0,0,0,0.15);
+  --blur-heavy: 30px;
+}
+
+/* ── 字体/字阶/圆角/间距/动效(照抄 design.css 第二 :root 块) ───────────── */
+:root {
+  --font-ui: "PingFang SC", -apple-system, "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --t-largeTitle: 600 20px/30px var(--font-ui);
+  --t2: 400 16px/24px var(--font-ui);
+  --t2-em: 500 16px/24px var(--font-ui);
+  --b1: 400 15px/22px var(--font-ui);
+  --b1-em: 500 15px/22px var(--font-ui);
+  --b2: 400 14px/20px var(--font-ui);
+  --b2-em: 500 14px/20px var(--font-ui);
+  --c1: 400 12px/18px var(--font-ui);
+  --c1-em: 500 12px/18px var(--font-ui);
+  --c2: 400 10px/14px var(--font-ui);
+  --md-body: 400 16px/26px var(--font-ui);
+  --md-code: 400 14px/22px var(--font-mono);
+
+  --r-xxs: 4px; --r-sm: 8px; --r-md: 10px; --r-lg: 12px; --r-xl: 16px; --r-full: 100px;
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s7: 32px;
+
+  --ez-out: cubic-bezier(0.23, 1, 0.32, 1);       /* 进/出场 */
+  --ez-inout: cubic-bezier(0.77, 0, 0.175, 1);    /* 屏内移动 */
+  --ez-drawer: cubic-bezier(0.32, 0.72, 0, 1);    /* 抽屉 */
+  --z-toast: 1000; --z-tooltip: 900; --z-dialog: 860; --z-modal: 810; --z-header: 500;
+}
+
+/* ── 组件态变量(P0 补充,值取自 interactions.html 动效规格表/组件契约) ── */
+:root {
+  --btn-press-scale: 0.97;        /* 按钮按压定格 */
+  --btn-press-dur: 120ms;         /* 按压时长 ez-out */
+  --hover-dur: 150ms;             /* 通用 hover 换背景 */
+  --tooltip-dur: 125ms;           /* Tooltip scale(.97→1) */
+  --tooltip-delay: 300ms;         /* Tooltip 首开延迟(已开一条后续即时) */
+  --dialog-dur: 180ms;            /* Dialog 内容 scale(.96→1) + mask fade */
+  --menu-dur: 150ms;              /* 菜单 scale(.95→1) */
+  --toast-in-dur: 350ms;          /* Toast 进场 translateY(-8px)→0 */
+  --toast-out-dur: 260ms;         /* Toast 退场仅 fade */
+  --toggle-dur: 200ms;            /* 开关滑动/轨道换色(契约 150-200ms 上限) */
+  --skl-dur: 1.4s;                /* 骨架屏 shimmer */
+}

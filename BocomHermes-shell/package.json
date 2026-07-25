@@ -34,10 +34,12 @@
     "mcp:repro:test": "node mcp/repro-selftest.mjs",
     "repro:e2e": "electron scripts/e2e-repro-test.mjs",
     "bars:e2e": "electron scripts/e2e-bars.mjs",
-    "mcp:config": "node mcp/print-config.mjs"
+    "mcp:config": "node mcp/print-config.mjs",
+    "ui:dev": "node ui-vue/build.mjs --watch",
+    "ui:build": "node ui-vue/build.mjs",
+    "ui:typecheck": "vue-tsc --noEmit -p ui-vue/tsconfig.json"
   },
   "dependencies": {
-    "@vue/language-server": "^3.3.8",
     "mammoth": "^1.8.0",
     "mysql2": "^3.11.0",
     "pdf-parse": "^1.1.1",
@@ -47,8 +49,14 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.4",
+    "@vue/language-server": "^3.3.8",
     "electron": "^34.0.0",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "vite": "^6.3.5",
+    "vite-plugin-singlefile": "^2.2.0",
+    "vue": "^3.5.13",
+    "vue-tsc": "^2.2.10"
   },
   "build": {
     "appId": "com.BocomHermes.shell",

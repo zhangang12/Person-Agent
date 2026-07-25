@@ -49,6 +49,11 @@ BocomHermes-shell/
 │                      #   对话/任务编排/邮件/设置四视图+快捷输入层+状态栏)、card.html(会话卡,~117KB)、
 │                      #   browser.html(~115KB)、dock.html(编排视图页)、mailcenter.html、skills.html、
 │                      #   settings.html、glass.css(浅色单主题设计令牌,令牌值事实源 docs/ui-design/design.css)等
+├── ui-vue/            # Vue 迁移工作区(P0 已落地)：Vite+Vue3+TS,shell/lab 两入口,src/components/ 是
+│                      #   设计令牌组件库(KButton/KToggle/KDialog/KToaster 等 14 件,契约值见 docs/ui-design/);
+│                      #   `npm run ui:build` 全内联单文件构建,`ui:dev` 监听,`ui:typecheck` vue-tsc 零错误门槛
+├── ui/dist/           # ui-vue 构建产物(shell.html/lab.html,全内联零外链),随库入库——内网发包机
+│                      #   不一定有构建环境,electron-builder files 白名单 "ui/**/*" 已直接覆盖
 ├── mcp/               # 9 个本地 stdio MCP server(ESM,零依赖,打包时 asarUnpack)：
 │                      #   browser-mcp(浏览器自动化+技能回放)、httpcap-mcp、repro-mcp(复现取证)、
 │                      #   orch-mcp(动态工作流编排)、mail-mcp、db-mcp、doc-mcp、git-mcp、
