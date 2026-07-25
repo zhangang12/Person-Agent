@@ -38,7 +38,7 @@ BocomHermes-shell/
 │   ├── email.js       # IMAP/SMTP 协议实现(零依赖)
 │   ├── attachments.js / mail-cache.js / email-summary-seen.js / outbox.js / meeting-extract.js
 │   ├── db.js          # OceanBase(MySQL 模式)只读连接器：只放行单条 SELECT/SHOW/DESCRIBE，强制 LIMIT
-│   ├── mcp-config.js  # 把 8 个自带 MCP server 一键注册进 opencode.json(备份+深合并)
+│   ├── mcp-config.js  # 把 9 个自带 MCP server 一键注册进 opencode.json(备份+深合并)
 │   ├── audit.js       # 审计流水：userData/audit.jsonl，append-only，启动时裁剪到 5000 行
 │   ├── httpcap.js     # HTTP 正向代理抓包(仅 HTTP)
 │   ├── todos.js / todo-reminder.js / trigger.js / cdp-format.js
@@ -47,9 +47,10 @@ BocomHermes-shell/
 │                      #   console.html(控制台 2.0 = 启动主界面:导航轨 + 对话/工作流/待办/设置四视图,Vue 3 本地 vendor)、
 │                      #   orb.html/orb-input.html(悬浮球)、dock.html(卡坞)、mailcenter.html、skills.html、
 │                      #   settings.html、glass.css(双主题设计令牌,html[data-theme] 驱动)等
-├── mcp/               # 8 个本地 stdio MCP server(ESM,零依赖,打包时 asarUnpack)：
+├── mcp/               # 9 个本地 stdio MCP server(ESM,零依赖,打包时 asarUnpack)：
 │                      #   browser-mcp(浏览器自动化+技能回放)、httpcap-mcp、repro-mcp(复现取证)、
-│                      #   orch-mcp(动态工作流编排)、mail-mcp、db-mcp、doc-mcp、git-mcp；
+│                      #   orch-mcp(动态工作流编排)、mail-mcp、db-mcp、doc-mcp、git-mcp、
+│                      #   lsp-mcp(模型主动 LSP 能力:定义/引用/诊断,server 走随包的 ts/vue/pyright)；
 │                      #   print-config.mjs 打印注册块；README.md 有完整工具清单
 ├── scripts/           # 自测与探针脚本(见下"测试")
 ├── plugin/            # opencode 插件(装在 serve 侧,不经壳层 IPC)：read-spill.js=read/grep 大输出
@@ -92,6 +93,7 @@ npm run card:ui:test   # card.html 主脚本无头自测：vm + DOM 桩真跑（
 npm run knowledge:test # 项目知识库(knowledge.js)：slug 稳定/追加去重/注入裁剪
 npm run lsp:test       # LSP 冒烟:ELECTRON_RUN_AS_NODE 起 ts/vue/pyright 三个 server 握手
 npm run readspill:test # read-spill 插件:大输出落盘/小输出放行/阈值开关(零依赖,不连真 serve)
+npm run lspmcp:test    # lsp-mcp:帧编解码/路由/行列换算/路径围栏 + ts server 真实握手
 npm run forkcheck      # fork 兼容性一键探针(内网验收:插件钩子回写/LSP 配置面/serve 健康,需真实 serve+模型,真实调一次模型)
 npm run scope:test     # 分片写归属(writescope.js)：goal 解析/范围匹配/越界判定
 npm run mcp:browser:test   # 浏览器 MCP 端到端(需本机 Edge/Chrome)
@@ -136,6 +138,6 @@ npm run bars:e2e           # card.html 真 Chromium 渲染 e2e：重放工作流
 ## 文档地图
 
 - `README.md`：面向用户的功能说明与运行/打包手册。
-- `mcp/README.md`：8 个 MCP server 的完整工具清单与注册方法。
+- `mcp/README.md`：9 个 MCP server 的完整工具清单与注册方法。
 - `docs/`：设计文档（记忆系统设计、动态工作流设计备忘、需求分析多 Agent 对抗方案、信贷需求到详设方案、技能系统设计、研发功能路线图等）。
 - `docs/项目记忆/`：Claude Code 项目记忆的版本化镜像（真实来源在仓库外 `~/.claude/.../memory/`，可能短暂不一致）——含产品定位（个人桌面智能体优先于企业合规）、内网模式等关键决策背景。

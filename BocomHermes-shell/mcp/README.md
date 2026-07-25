@@ -1,4 +1,4 @@
-﻿# BocomHermes · 本地 MCP 工具（浏览器自动化 + HTTP 抓包）
+# BocomHermes · 本地 MCP 工具（浏览器自动化 + HTTP 抓包）
 
 给 opencode/bocomcode 的 agent 扩能。任何 agent（包括动态工作流的 worker）注册后即可调用。
 - **浏览器自动化**：在内置无头浏览器里导航、取文本、点击、输入、执行 JS、截图。
@@ -59,6 +59,16 @@ npm run mcp:config
 
 > 用法：`httpcap_start` 后，把被测程序/浏览器的 **HTTP 代理**指向返回的地址
 > （如 Java：`-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=<端口>`），即可捕获其 HTTP 调用。
+
+**LSP 代码智能（BocomHermes-lsp）** — 模型【主动】用 LSP 的入口（serve 内置 LSP 对模型不可见，这里摆成工具）；server 全部随包自带（typescript-language-server / @vue/language-server / pyright），按扩展名路由、单例懒启动、崩溃自动重启一次
+| 工具 | 作用 |
+|---|---|
+| `lsp_definition {file,line,character}` | 跳转定义：返回定义位置 file:line:col 列表（行列 1 基） |
+| `lsp_references {file,line,character,includeDeclaration?}` | 查引用：返回全项目引用位置列表，标注哪处是声明/定义 |
+| `lsp_diagnostics {file?}` | 诊断清单（级别/行列/消息/source）；不传 file 汇总本次会话所有已打开文件 |
+
+> 支持 ts/tsx/js/jsx/mjs/cjs → typescript-language-server、.vue → vue-language-server、.py/.pyi → pyright；
+> file 有路径围栏（必须在项目目录内）；诊断是 server 异步推送的，首次调用可能还在分析，稍后再调一次。
 
 ## 技能(Record & Replay → SKILL,对标 Codex)
 「录一次 → 生成技能 → 复用自动化」的完整链路:

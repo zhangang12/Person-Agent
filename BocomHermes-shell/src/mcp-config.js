@@ -1,4 +1,4 @@
-// 【MCP 一键注册】把 BocomHermes 自带的 8 个本地 MCP server 写进 opencode/bocomcode 配置文件。
+// 【MCP 一键注册】把 BocomHermes 自带的 9 个本地 MCP server 写进 opencode/bocomcode 配置文件。
 // 从 window.js 整块搬来,做成 initMcpConfig(ctx) 工厂——只搬不改。纯自足:只用 app/path/fs/ipcMain/log,
 // 不碰 S、不引用 window.js 内其它函数。注册两个 ipcMain 处理器(mcp-register-status / mcp-register)。
 'use strict'
@@ -25,6 +25,7 @@ module.exports = function initMcpConfig(ctx) {
       'BocomHermes-db':      { type: 'local', command: ['node', b + '/db-mcp.mjs'],      enabled: true },
       'BocomHermes-orch':    { type: 'local', command: ['node', b + '/orch-mcp.mjs'],    enabled: true },
       'BocomHermes-doc':     { type: 'local', command: ['node', b + '/doc-mcp.mjs'],     enabled: true },
+      'BocomHermes-lsp':     { type: 'local', command: ['node', b + '/lsp-mcp.mjs'],     enabled: true },
     }
   }
   function configCandidates() {

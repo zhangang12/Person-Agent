@@ -22,6 +22,7 @@
     "lsp:test": "node scripts/lsp-smoke.mjs",
     "forkcheck": "node scripts/fork-capability-probe.mjs",
     "readspill:test": "node scripts/read-spill-selftest.mjs",
+    "lspmcp:test": "node scripts/lsp-mcp-selftest.mjs",
     "session:test": "node scripts/session-selftest.mjs",
     "modelroute": "node scripts/model-route-probe.mjs",
     "mcp:browser": "node mcp/browser-mcp.mjs",
