@@ -26,7 +26,7 @@
   .sm { flex: 1; font-size: 12.5px; color: var(--txt); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ts { font-size: 10.5px; color: var(--txt3); font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .pj { font-size: 10px; color: var(--txt3); }
-  .dt { margin-top: 5px; font-size: 11px; color: var(--txt2); font-family: var(--mono); white-space: pre-wrap; word-break: break-all; max-height: 150px; overflow-y: auto; background: rgba(127,127,127,.06); border-radius: 6px; padding: 5px 8px; display: none; }
+  .dt { margin-top: 5px; font-size: 11px; color: var(--txt2); font-family: var(--mono); white-space: pre-wrap; word-break: break-all; max-height: 150px; overflow-y: auto; background: rgba(0,0,0,.06); border-radius: 6px; padding: 5px 8px; display: none; }
   .row.open .dt { display: block; }
   .row[data-has] { cursor: pointer; }
   .empty { color: var(--txt3); font-size: 12.5px; text-align: center; padding: 26px 12px; line-height: 1.7; }
@@ -58,11 +58,11 @@
 
   const KINDS = [
     { k: '', label: '全部', c: 'var(--accent)' },
-    { k: 'mail', label: '发信', c: '#4d9fff' },
-    { k: 'edit', label: '改文件', c: '#3dcc8e' },
-    { k: 'rollback', label: '回滚', c: '#e8b44c' },
-    { k: 'permission', label: '权限', c: '#c9a0ff' },
-    { k: 'skill', label: '技能', c: '#5dcf95' },
+    { k: 'mail', label: '发信', c: '#1783ff' },
+    { k: 'edit', label: '改文件', c: '#16c456' },
+    { k: 'rollback', label: '回滚', c: '#ff9500' },
+    { k: 'permission', label: '权限', c: '#985ffb' },
+    { k: 'skill', label: '技能', c: '#16c456' },
   ]
   let curKind = '', curQ = ''
   const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')

@@ -53,7 +53,7 @@
   .kn-item.kn-red { background: var(--diff-del-bg); border-color: var(--diff-del); }
   .kn-meta { display: flex; align-items: center; gap: 7px; font-size: 10.5px; color: var(--txt3); flex-wrap: wrap; }
   .kn-status { font-size: 9px; flex: none; }
-  .kn-conf { font-size: 9.5px; font-weight: 600; border-radius: 999px; padding: 0 7px; line-height: 15px; background: var(--orb-bg); color: var(--txt2); border: .5px solid var(--orb-border); }
+  .kn-conf { font-size: 9.5px; font-weight: 600; border-radius: 999px; padding: 0 7px; line-height: 15px; background: var(--fill-1); color: var(--txt2); border: .5px solid var(--sep); }
   .kn-text { font-size: 12px; color: var(--txt); line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
   .kn-anchors { font-family: var(--mono); font-size: 10.5px; color: var(--txt3); word-break: break-all; }
   .kn-reasons { font-size: 10.5px; line-height: 1.5; }
@@ -77,12 +77,7 @@
     <div class="body nodrag">
       <div class="fld">
         <span class="lbl">主题</span>
-        <div class="seg" id="theme-seg">
-          <button data-theme="light">浅磨砂</button>
-          <button data-theme="dark">墨玻璃</button>
-          <button data-theme="onyx">曜黑</button>
-          <button data-theme="paper">纸白</button>
-        </div>
+        <span class="hint">浅色(已锁定,样式事实源 docs/ui-design)</span>
       </div>
 
       <div class="fld">
@@ -196,15 +191,8 @@
   let cur = {}
   try { cur = window.BocomHermes.getSettings() || {} } catch (e) {}
 
-  // 主题（即时预览 + 广播）
-  const seg = $('theme-seg')
-  function paintTheme(t) { for (const b of seg.children) b.classList.toggle('on', b.dataset.theme === t) }
-  paintTheme(document.documentElement.dataset.theme)
-  seg.addEventListener('click', (e) => {
-    const b = e.target.closest('button[data-theme]'); if (!b) return
-    window.BocomHermes.setTheme(b.dataset.theme)
-  })
-  window.BocomHermes.onTheme((t) => { document.documentElement.dataset.theme = t; paintTheme(t) })
+  // 主题已锁定浅色(set-theme 幂等);只保留广播落地,不再提供切换控件
+  window.BocomHermes.onTheme(() => { document.documentElement.dataset.theme = 'light' })
 
   // 编辑器命令 + 预设
   const editorCmd = $('editorCmd'); editorCmd.value = cur.editorCmd || ''

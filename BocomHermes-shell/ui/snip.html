@@ -7,12 +7,12 @@
   /* 透明窗:真实桌面透过窗体可见。整屏一层暗色veil,拖出的选框区域挖空(还原清晰桌面) */
   html, body { margin: 0; height: 100%; overflow: hidden; cursor: crosshair; -webkit-user-select: none; user-select: none; background: transparent; }
   #veil { position: fixed; inset: 0; }
-  #sel { position: fixed; border: 1.5px solid #4d9fff; box-shadow: 0 0 0 1px rgba(255,255,255,.5); display: none; pointer-events: none; }
-  #dim { position: fixed; inset: 0; background: rgba(10,12,18,.42); pointer-events: none; }
+  #sel { position: fixed; border: 1.5px solid #1783ff; box-shadow: 0 0 0 1px rgba(255,255,255,.5); display: none; pointer-events: none; }
+  #dim { position: fixed; inset: 0; background: rgba(0,0,0,.42); pointer-events: none; }
   /* 用 4 条遮罩围出"选框外变暗、框内透明"的效果 */
-  .mask { position: fixed; background: rgba(10,12,18,.42); pointer-events: none; }
-  #tip { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); background: rgba(15,17,32,.9); color: #eef2f8; font: 13px system-ui, sans-serif; padding: 7px 15px; border-radius: 999px; pointer-events: none; box-shadow: 0 6px 20px rgba(0,0,0,.4); }
-  #size { position: fixed; font: 11px ui-monospace, monospace; color: #fff; background: #4d9fff; padding: 1px 6px; border-radius: 4px; display: none; pointer-events: none; }
+  .mask { position: fixed; background: rgba(0,0,0,.42); pointer-events: none; }
+  #tip { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); background: rgba(43,43,43,.9); color: #fff; font: 13px system-ui, sans-serif; padding: 7px 15px; border-radius: 999px; pointer-events: none; box-shadow: 0 6px 20px rgba(0,0,0,.4); }
+  #size { position: fixed; font: 11px ui-monospace, monospace; color: #fff; background: #1783ff; padding: 1px 6px; border-radius: 4px; display: none; pointer-events: none; }
 </style>
 </head>
 <body>
@@ -33,10 +33,10 @@
     sel.style.display = 'block'
     sel.style.left = x + 'px'; sel.style.top = y + 'px'; sel.style.width = w + 'px'; sel.style.height = h + 'px'
     dim.style.display = 'none'   // 用 4 条 mask 精确围空选框
-    masks.top.style.cssText = 'position:fixed;background:rgba(10,12,18,.42);left:0;top:0;width:100%;height:' + y + 'px'
-    masks.bot.style.cssText = 'position:fixed;background:rgba(10,12,18,.42);left:0;top:' + (y + h) + 'px;width:100%;height:' + (Hh - y - h) + 'px'
-    masks.lft.style.cssText = 'position:fixed;background:rgba(10,12,18,.42);left:0;top:' + y + 'px;width:' + x + 'px;height:' + h + 'px'
-    masks.rgt.style.cssText = 'position:fixed;background:rgba(10,12,18,.42);left:' + (x + w) + 'px;top:' + y + 'px;width:' + (W - x - w) + 'px;height:' + h + 'px'
+    masks.top.style.cssText = 'position:fixed;background:rgba(0,0,0,.42);left:0;top:0;width:100%;height:' + y + 'px'
+    masks.bot.style.cssText = 'position:fixed;background:rgba(0,0,0,.42);left:0;top:' + (y + h) + 'px;width:100%;height:' + (Hh - y - h) + 'px'
+    masks.lft.style.cssText = 'position:fixed;background:rgba(0,0,0,.42);left:0;top:' + y + 'px;width:' + x + 'px;height:' + h + 'px'
+    masks.rgt.style.cssText = 'position:fixed;background:rgba(0,0,0,.42);left:' + (x + w) + 'px;top:' + y + 'px;width:' + (W - x - w) + 'px;height:' + h + 'px'
     sizeEl.style.display = 'block'; sizeEl.textContent = w + ' × ' + h
     sizeEl.style.left = x + 'px'; sizeEl.style.top = Math.max(0, y - 18) + 'px'
   }

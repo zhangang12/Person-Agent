@@ -19,21 +19,21 @@
   .pd-hd { display: flex; align-items: center; gap: 7px; padding: 10px 12px; flex: none; border-bottom: 1px solid var(--composer-border); flex-wrap: wrap; }
   .pd-title { font-size: 12.5px; font-weight: 700; color: var(--txt); }
   .pd-sub { font-size: 10px; color: var(--txt3); font-family: var(--mono); }
-  .pd-now { margin-left: auto; font-size: 10.5px; color: var(--accent); background: var(--accent-dim, rgba(74,168,255,.12)); border: .5px solid rgba(74,168,255,.3); border-radius: 6px; padding: 3px 8px; cursor: pointer; }
-  .pd-now:hover { background: rgba(74,168,255,.22); }
+  .pd-now { margin-left: auto; font-size: 10.5px; color: var(--accent); background: var(--accent-dim, rgba(23,131,255,.12)); border: .5px solid rgba(23,131,255,.3); border-radius: 6px; padding: 3px 8px; cursor: pointer; }
+  .pd-now:hover { background: rgba(23,131,255,.22); }
   .pd-x { font-size: 13px; color: var(--txt2); background: transparent; border: none; cursor: pointer; padding: 2px 5px; }
   .pd-x:hover { color: var(--txt); }
   .pd-list { flex: 1; overflow-y: auto; padding: 6px 8px; font-family: var(--mono); font-size: 11px; line-height: 1.5; }
   .pd-empty { color: var(--txt3); text-align: center; padding: 24px 12px; font-size: 11.5px; }
   .pd-row { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 8px; align-items: baseline; padding: 5px 6px; border-radius: 6px; border-left: 2px solid transparent; }
   .pd-row + .pd-row { margin-top: 2px; }
-  .pd-row.ok { border-left-color: #2bb673; background: rgba(43,182,115,.06); }
-  .pd-row.bad { border-left-color: #e5534b; background: rgba(229,83,75,.08); }
+  .pd-row.ok { border-left-color: #16c456; background: rgba(22,196,86,.06); }
+  .pd-row.bad { border-left-color: #ff3849; background: rgba(255,56,73,.08); }
   .pd-t { color: var(--txt3); font-variant-numeric: tabular-nums; }
   .pd-m { color: var(--txt2); grid-column: 2; word-break: break-all; }
   .pd-r { grid-column: 2; font-weight: 600; }
-  .pd-row.ok .pd-r { color: #2bb673; }
-  .pd-row.bad .pd-r { color: #e5534b; }
+  .pd-row.ok .pd-r { color: #16c456; }
+  .pd-row.bad .pd-r { color: #ff3849; }
   .pd-ms { grid-row: 1; grid-column: 3; color: var(--txt3); }
   /* 成果预览抽屉:与 feed 并排钉在右侧(不吃输入框),点标题栏「成果」滑出。
      布局上参与 flex(挤的是对话区),不像 probedraw 那样浮在卡片上 —— 需求明确"不遮输入框"。 */
@@ -146,7 +146,7 @@
   .toolbox .ts2, .toolbox .tsum { font-variant-numeric: tabular-nums; }   /* 耗时/计数列数字等宽,流式刷新不抖 */
   .proj { font-size: 10.5px; font-family: var(--mono); color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 999px; padding: 2px 8px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; transition: color .12s, border-color .12s, background .12s; }
   .proj:hover { color: var(--txt); border-color: var(--accent); }
-  .proj.empty { color: var(--accent); border-color: var(--accent); background: rgba(74,168,255,.08); }
+  .proj.empty { color: var(--accent); border-color: var(--accent); background: rgba(23,131,255,.08); }
   /* 上下文用量 chip:安静的估算,只在开始有分量(≥5%)时出现;70% 转警示、90% 转红 —— 点击压缩续聊 */
   #ctxchip { font-variant-numeric: tabular-nums; }
   #ctxchip.ctxwarn { color: var(--warn-txt); border-color: var(--warn-border); background: var(--warn-bg); }
@@ -158,7 +158,7 @@
   .hd .icn { filter: hue-rotate(var(--card-hue, 0deg)); }
   /* 模型选择 */
   .modelchip { display: inline-flex; align-items: center; gap: 4px; max-width: 134px; }
-  .model-menu { position: fixed; z-index: 100; min-width: 210px; max-width: 290px; max-height: 340px; overflow-y: auto; background: var(--glass-bg); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border: 1px solid var(--composer-border); border-radius: 12px; padding: 5px; box-shadow: 0 10px 34px rgba(0,0,0,.28); }
+  .model-menu { position: fixed; z-index: 100; min-width: 210px; max-width: 290px; max-height: 340px; overflow-y: auto; background: var(--glass-float); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border: 1px solid var(--composer-border); border-radius: 12px; padding: 5px; box-shadow: 0 10px 34px rgba(0,0,0,.28); }
   .model-menu::-webkit-scrollbar { width: 6px; } .model-menu::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
   .model-menu .mi { padding: 7px 10px; border-radius: 8px; cursor: pointer; display: flex; flex-direction: column; gap: 1px; }
   .model-menu .mi:hover, .model-menu .mi.on { background: var(--hover); }
@@ -166,7 +166,7 @@
   .model-menu .mi .mp { font-size: 10.5px; color: var(--txt3); }
   .model-menu .mhint { padding: 8px 10px; font-size: 12px; color: var(--txt3); }
   /* 作答技能:slash 菜单(浮在输入框上方) + 当前技能胶囊 */
-  .skill-menu { position: absolute; left: 12px; right: 12px; bottom: 52px; z-index: 90; max-height: 260px; overflow-y: auto; background: var(--glass-bg); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border: 1px solid var(--composer-border); border-radius: 12px; padding: 5px; box-shadow: 0 10px 34px rgba(0,0,0,.28); }
+  .skill-menu { position: absolute; left: 12px; right: 12px; bottom: 52px; z-index: 90; max-height: 260px; overflow-y: auto; background: var(--glass-float); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border: 1px solid var(--composer-border); border-radius: 12px; padding: 5px; box-shadow: 0 10px 34px rgba(0,0,0,.28); }
   .skill-menu[hidden] { display: none; }
   .skill-menu::-webkit-scrollbar { width: 6px; } .skill-menu::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
   .skill-menu .si { padding: 7px 10px; border-radius: 8px; cursor: pointer; display: flex; flex-direction: column; gap: 1px; }
@@ -177,8 +177,8 @@
   .skill-menu .snone { padding: 8px 10px; font-size: 12px; color: var(--txt3); }
   .skill-bar { padding: 0 2px 5px; }
   .skill-bar[hidden] { display: none; }
-  .skill-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--accent); background: rgba(74,168,255,.1); border: .5px solid var(--accent); border-radius: 999px; padding: 3px 6px 3px 10px; }
-  .skill-chip .sx { cursor: pointer; opacity: .7; display: inline-flex; padding: 1px; border-radius: 50%; font-size: 12px; line-height: 1; } .skill-chip .sx:hover { opacity: 1; background: rgba(74,168,255,.2); }
+  .skill-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--accent); background: rgba(23,131,255,.1); border: .5px solid var(--accent); border-radius: 999px; padding: 3px 6px 3px 10px; }
+  .skill-chip .sx { cursor: pointer; opacity: .7; display: inline-flex; padding: 1px; border-radius: 50%; font-size: 12px; line-height: 1; } .skill-chip .sx:hover { opacity: 1; background: rgba(23,131,255,.2); }
   /* 拖拽 / 粘贴 附件 */
   .att-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 2px 6px; }
   .att-row:empty { display: none; }
@@ -186,14 +186,14 @@
   .att img { width: 26px; height: 26px; object-fit: cover; border-radius: 4px; flex: none; }
   .att .an { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .att .ax { cursor: pointer; color: var(--txt3); flex: none; font-size: 12px; } .att .ax:hover { color: var(--diff-del); }
-  .drop-hint { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; padding: 20px; background: rgba(74,168,255,.14); border: 2.5px dashed var(--accent); border-radius: 14px; color: var(--accent); font-size: 14px; font-weight: 600; z-index: 60; pointer-events: none; }
+  .drop-hint { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; padding: 20px; background: rgba(23,131,255,.14); border: 2.5px dashed var(--accent); border-radius: 14px; color: var(--accent); font-size: 14px; font-weight: 600; z-index: 60; pointer-events: none; }
   .drop-hint.show { display: flex; }
   .hb { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-family: var(--mono); color: var(--txt2); padding: 1px 6px 1px 5px; border-radius: 999px; border: .5px solid var(--composer-border); background: var(--composer-bg); user-select: none; cursor: default; }
-  .hb .hb-dot { width: 7px; height: 7px; border-radius: 50%; background: #9aa0a6; box-shadow: 0 0 0 0 rgba(0,0,0,0); transition: background .2s, box-shadow .2s; }
-  .hb.ok  .hb-dot { background: #2bb673; box-shadow: 0 0 6px rgba(43,182,115,.7); }
-  .hb.bad .hb-dot { background: #e5534b; box-shadow: 0 0 6px rgba(229,83,75,.7); }
-  .hb.ok  { color: #2bb673; border-color: rgba(43,182,115,.35); }
-  .hb.bad { color: #e5534b; border-color: rgba(229,83,75,.4); }
+  .hb .hb-dot { width: 7px; height: 7px; border-radius: 50%; background: rgba(0,0,0,0.3); box-shadow: 0 0 0 0 rgba(0,0,0,0); transition: background .2s, box-shadow .2s; }
+  .hb.ok  .hb-dot { background: #16c456; box-shadow: 0 0 6px rgba(22,196,86,.7); }
+  .hb.bad .hb-dot { background: #ff3849; box-shadow: 0 0 6px rgba(255,56,73,.7); }
+  .hb.ok  { color: #16c456; border-color: rgba(22,196,86,.35); }
+  .hb.bad { color: #ff3849; border-color: rgba(255,56,73,.4); }
   .hbtn { border: none; background: transparent; color: var(--txt3); cursor: pointer; padding: 3px; border-radius: 6px; display: flex; align-items: center; }
   .hbtn:hover { color: var(--txt); background: var(--hover); }
   .hbtn.on { color: var(--accent); }
@@ -234,7 +234,7 @@
   .ai blockquote { margin: 6px 0; padding: 3px 11px; border-left: 2.5px solid var(--c-quote); color: var(--c-quote); background: var(--composer-bg); border-radius: 0 7px 7px 0; }
   .floc { color: var(--accent); cursor: pointer; text-decoration: none; border-bottom: 1px dotted var(--accent); }
   .floc:hover { opacity: .75; }
-  .extlink { color: var(--accent); cursor: pointer; text-decoration: underline; text-decoration-color: rgba(74,168,255,.4); word-break: break-all; }
+  .extlink { color: var(--accent); cursor: pointer; text-decoration: underline; text-decoration-color: rgba(23,131,255,.4); word-break: break-all; }
   .extlink:hover { opacity: .8; }
   .ai table { border-collapse: collapse; margin: 7px 0; font-size: 13px; display: block; max-width: 100%; overflow-x: auto; }
   .ai th, .ai td { border: .5px solid var(--composer-border); padding: 4px 8px; text-align: left; vertical-align: top; }
@@ -293,7 +293,7 @@
   .qchip { transition: color .12s, border-color .12s, background .12s; }
   .qchip:hover { color: var(--txt); border-color: var(--accent); background: var(--hover); }
   .qchip.go { color: var(--green); border-color: var(--green); background: transparent; font-weight: 600; }   /* 描边强调,不用渐变糖果色 */
-  .qchip.go:hover { background: rgba(43,182,115,.1); }
+  .qchip.go:hover { background: rgba(22,196,86,.1); }
 
   .perm { display: flex; align-items: center; gap: 8px; background: var(--warn-bg); border: .5px solid var(--warn-border); border-radius: 11px; padding: 7px 9px; }
   .perm .t { flex: 1; font-size: 12px; color: var(--warn-txt); }
@@ -301,7 +301,7 @@
   .perm .no { font-size: 11px; color: var(--txt2); background: transparent; border: none; cursor: pointer; padding: 4px 6px; }
   /* 权限盒内嵌迷你 diff 预览(edit/write 批准前可见要改成什么样) */
   .perm .pdiff { flex-basis: 100%; margin-top: 5px; font-family: var(--mono); font-size: 11px; line-height: 1.5; max-height: 150px; overflow: auto; background: var(--composer-bg); border-radius: 8px; padding: 6px 9px; white-space: pre; }
-  .perm .pdiff .add { color: #2bb673; }
+  .perm .pdiff .add { color: #16c456; }
   .perm .pdiff .del { color: var(--diff-del); }
   /* 编辑预检黄牌:oldString 未命中时的警告区(建议拒绝让模型拿真内容重写) */
   .perm .pmiss { flex-basis: 100%; margin-top: 5px; background: var(--warn-bg); border: .5px solid var(--warn-border); border-radius: 8px; padding: 6px 9px; }
@@ -318,11 +318,11 @@
   .qbox .qhead { font-size: 11px; font-weight: 700; color: var(--accent); letter-spacing: .03em; }
   .qbox .qsec { display: flex; flex-direction: column; gap: 5px; }
   .qbox .qt { font-size: 13px; color: var(--txt); line-height: 1.5; }
-  .qbox .qt .qh { display: inline-block; font-size: 10px; font-weight: 700; color: var(--accent); background: rgba(74,168,255,.12); border-radius: 999px; padding: 0 8px; margin-right: 6px; line-height: 16px; }
+  .qbox .qt .qh { display: inline-block; font-size: 10px; font-weight: 700; color: var(--accent); background: rgba(23,131,255,.12); border-radius: 999px; padding: 0 8px; margin-right: 6px; line-height: 16px; }
   .qbox .qopts { display: flex; flex-direction: column; gap: 4px; }
   .qbox .qopt { text-align: left; background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 9px; padding: 6px 10px; cursor: pointer; display: flex; flex-direction: column; gap: 1px; }
   .qbox .qopt:hover { border-color: var(--accent); }
-  .qbox .qopt.on { border-color: var(--accent); background: rgba(74,168,255,.1); box-shadow: inset 2px 0 0 var(--accent); }
+  .qbox .qopt.on { border-color: var(--accent); background: rgba(23,131,255,.1); box-shadow: inset 2px 0 0 var(--accent); }
   .qbox .qopt .ql { font-size: 12.5px; font-weight: 600; color: var(--txt); }
   .qbox .qopt .qd { font-size: 11px; color: var(--txt3); line-height: 1.4; }
   .qbox .qconfirm { align-self: flex-start; font-size: 11px; font-weight: 600; color: var(--warn-btn-fg); background: var(--warn-btn); padding: 4px 10px; border-radius: 7px; border: none; cursor: pointer; }
@@ -357,14 +357,14 @@
   /* 工具输出:一行就是一行(对齐终端/Claude Code)。之前 pre-wrap+break-word 会把 130 条长路径在任意字符处折行,
      糊成密不透风的"字符砖"(用户看到的"压缩")。改 white-space:pre 不折行,长行横向滚;纵向 340px 内滚(内滚用户认可)。 */
   .toolbox .tsec pre { margin: 0; font-family: var(--mono); font-size: 11.5px; line-height: 1.55; white-space: pre; overflow: auto; max-height: 340px; color: var(--txt); }
-  .toolbox .tsec pre .ttrunc { color: var(--txt3); font-style: italic; }   /* 截断明示(以前静默砍断,用户以为就这么多) */
+  .toolbox .tsec pre .ttrunc { color: var(--txt3); }   /* 截断明示(以前静默砍断,用户以为就这么多) */
   .toolbox .tsec.e pre { color: var(--diff-del); }
-  .toolbox.wf > summary { border: .5px solid var(--accent); background: rgba(74,168,255,.08); }   /* 升格工作流仍保留高亮框:它是大事件,值得一个盒子 */
+  .toolbox.wf > summary { border: .5px solid var(--accent); background: rgba(23,131,255,.08); }   /* 升格工作流仍保留高亮框:它是大事件,值得一个盒子 */
   .toolbox.wf .tn { color: var(--accent); font-family: inherit; }
   /* 子 Agent 的展示已挪到右侧侧边栏(#subdraw,样式见上);思考/产出样式在 .sd-pane 作用域下 */
   /* 体验感:滚动守卫的"跳到最新"悬浮键 + AI 回答悬停复制 */
   .card { position: relative; }
-  .jumpbtn { position: absolute; left: 50%; bottom: 64px; transform: translateX(-50%); z-index: 8; display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--txt); background: var(--glass-bg); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border: .5px solid var(--composer-border); border-radius: 999px; padding: 5px 12px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.2); }
+  .jumpbtn { position: absolute; left: 50%; bottom: 64px; transform: translateX(-50%); z-index: 8; display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--txt); background: var(--glass-float); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border: .5px solid var(--composer-border); border-radius: 999px; padding: 5px 12px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.2); }
   .jumpbtn:hover { border-color: var(--accent); color: var(--accent); }
   .jumpbtn[hidden] { display: none; }
   .msg.ai { position: relative; }
@@ -557,7 +557,7 @@
   // ── 多层派发:分片进度(主控卡)── 分片是静默卡不弹窗,进度聚合在此(可折叠);点卡片 → 把那张大隐藏分片卡拉到台前细看
   const shardWrap = document.createElement('div')
   shardWrap.id = 'shardWrap'; shardWrap.hidden = true
-  shardWrap.style.cssText = 'margin:6px 10px 0;border:1px solid var(--composer-border);border-radius:12px;background:var(--glass-bg);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);overflow:hidden;'
+  shardWrap.style.cssText = 'margin:6px 10px 0;border:1px solid var(--composer-border);border-radius:12px;background:var(--glass-float);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);overflow:hidden;'
   const shardHead = document.createElement('button')
   shardHead.style.cssText = 'width:100%;display:flex;align-items:center;gap:8px;padding:8px 12px;border:none;background:transparent;cursor:pointer;color:var(--txt);font-size:12px;font-weight:600;text-align:left;'
   const shardBody = document.createElement('div')
@@ -1021,7 +1021,7 @@
     const pop = document.createElement('div'); pop.id = 'memPop'
     pop.style.cssText = 'position:absolute;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35);border-radius:14px;'
     const box = document.createElement('div')
-    box.style.cssText = 'width:86%;max-width:460px;background:var(--glass-bg);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border:1px solid var(--composer-border);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;box-shadow:0 10px 34px rgba(0,0,0,.3);'
+    box.style.cssText = 'width:86%;max-width:460px;background:var(--glass-float);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border:1px solid var(--composer-border);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;box-shadow:0 10px 34px rgba(0,0,0,.3);'
     box.innerHTML = '<div style="font-size:13px;font-weight:600;color:var(--txt)">压缩续聊</div>'
       + '<div style="font-size:12px;color:var(--txt2);line-height:1.6">让模型把本段对话总结成「接力摘要」，然后开一段新会话继续 —— 结论、路径、未完成事项都会带过去，上下文占用回到起点。原对话内容会从本卡清空（引擎侧历史仍在，可从卡坞找回）。</div>'
     const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;'
@@ -2264,7 +2264,7 @@
     const pop = document.createElement('div'); pop.id = 'memPop'
     pop.style.cssText = 'position:absolute;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35);border-radius:14px;'
     const box = document.createElement('div')
-    box.style.cssText = 'width:86%;max-width:520px;background:var(--glass-bg);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border:1px solid var(--composer-border);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;box-shadow:0 10px 34px rgba(0,0,0,.3);'
+    box.style.cssText = 'width:86%;max-width:520px;background:var(--glass-float);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border:1px solid var(--composer-border);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;box-shadow:0 10px 34px rgba(0,0,0,.3);'
     const ttl2 = document.createElement('div'); ttl2.textContent = '个人记忆（每张新卡自动注入，留空即清除）'; ttl2.style.cssText = 'font-size:12.5px;font-weight:600;color:var(--txt);'
     const ta = document.createElement('textarea'); ta.value = cur; ta.placeholder = '例如：我是信贷系统后端开发，回答优先给 Java 示例…'
     ta.style.cssText = 'height:150px;resize:vertical;background:var(--composer-bg);border:.5px solid var(--composer-border);border-radius:8px;color:var(--txt);font-size:12.5px;font-family:var(--font);padding:8px;outline:none;line-height:1.5;'

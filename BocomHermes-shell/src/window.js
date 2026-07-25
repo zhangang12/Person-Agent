@@ -48,10 +48,11 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   }
   const mergeKnobs = (k) => ({ ...DEFAULT_KNOBS, ...((k && typeof k === 'object') ? k : {}) })
   function loadSettings() {
+    // 浅色单主题:无论 settings.json 里存的是什么,theme 恒为 'light'(主题机制已锁定)
     try {
       const p = JSON.parse(fs.readFileSync(S.settingsFile, 'utf8'))
-      return { ...S.settings, ...p, knobs: mergeKnobs(p && p.knobs) }
-    } catch { return { ...S.settings, knobs: mergeKnobs(S.settings && S.settings.knobs) } }
+      return { ...S.settings, ...p, theme: 'light', knobs: mergeKnobs(p && p.knobs) }
+    } catch { return { ...S.settings, theme: 'light', knobs: mergeKnobs(S.settings && S.settings.knobs) } }
   }
   function saveSettings() { try { fs.writeFileSync(S.settingsFile, JSON.stringify(S.settings)) } catch {} }
   // ── 邮件子系统 ──────────────────────────────────────────────────────────────
@@ -804,14 +805,6 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // 事件中继:工作台窗(S.browser.win)与 Agent 卡片都在同一窗口体系,skillsNotify 直接推给工作台壳
   function skillsNotify(ch, d) { const w = S.browser && S.browser.win; if (w && !w.isDestroyed()) { try { w.webContents.send(ch, d || {}) } catch {} } }
 
-  function toggleTheme() {
-    // 托盘快捷循环:浅磨砂 → 墨玻璃 → 曜黑 → 纸白 → …(设置页可直选)
-    const order = ['light', 'dark', 'onyx', 'paper']
-    const i = order.indexOf(S.settings.theme)
-    S.settings.theme = order[(i + 1) % order.length] || 'light'; saveSettings()
-    for (const wc of webContents.getAllWebContents()) { try { wc.send('theme-changed', S.settings.theme) } catch {} }   // 波2:含 webview guest(内嵌视图也要跟主题)
-  }
-
   // ── 面板 / 托盘 ─────────────────────────────────────────────────────────────
   function openSettings() {
     if (S.settingsWin && !S.settingsWin.isDestroyed()) { S.settingsWin.show(); S.settingsWin.focus(); return }
@@ -1472,7 +1465,6 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       { label: '截图提问', accelerator: 'Ctrl+Shift+S', click: () => snapAsk() },
       { label: '审计流水', click: openAudit },
       { label: 'HTTP 抓包(外部程序)', click: openHttpcap },
-      { label: '切换深 / 浅主题', click: toggleTheme },
       { label: '打开日志', click: () => { if (S.logFile) shell.openPath(S.logFile).catch(() => {}) } },
       { type: 'separator' },
       { label: '退出', click: () => app.quit() },
@@ -1522,11 +1514,11 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   app.on('web-contents-created', (_e, wc) => attachContextMenu(wc))
 
   // ── IPC ─────────────────────────────────────────────────────────────────────
-  ipcMain.on('get-theme', (e) => { e.returnValue = S.settings.theme })
-  const THEMES = ['light', 'dark', 'onyx', 'paper']   // 浅磨砂 / 墨玻璃 / 曜黑(实底) / 纸白(实底)
-  ipcMain.on('set-theme', (_e, t) => {
-    S.settings.theme = THEMES.includes(t) ? t : 'light'; saveSettings()
-    for (const wc of webContents.getAllWebContents()) { try { wc.send('theme-changed', S.settings.theme) } catch {} }   // 波2:含 webview guest(内嵌视图也要跟主题)
+  // 浅色单主题:get-theme 恒回 'light';set-theme 幂等空操作(留壳防调用方炸,输入一律忽略)
+  ipcMain.on('get-theme', (e) => { e.returnValue = 'light' })
+  ipcMain.on('set-theme', () => {
+    S.settings.theme = 'light'
+    for (const wc of webContents.getAllWebContents()) { try { wc.send('theme-changed', 'light') } catch {} }   // 仍广播,调用方的 onTheme 回调照常触发
   })
 
   ipcMain.on('get-project', (e) => { e.returnValue = projName() })

@@ -48,7 +48,7 @@ BocomHermes-shell/
 ├── ui/                # 全部窗口页面（原生 HTML，脚本内联）：shell.html(桌面主窗口=唯一主界面:侧栏+
 │                      #   对话/任务编排/邮件/设置四视图+快捷输入层+状态栏)、card.html(会话卡,~117KB)、
 │                      #   browser.html(~115KB)、dock.html(编排视图页)、mailcenter.html、skills.html、
-│                      #   settings.html、glass.css(双主题设计令牌,html[data-theme] 驱动)等
+│                      #   settings.html、glass.css(浅色单主题设计令牌,令牌值事实源 docs/ui-design/design.css)等
 ├── mcp/               # 9 个本地 stdio MCP server(ESM,零依赖,打包时 asarUnpack)：
 │                      #   browser-mcp(浏览器自动化+技能回放)、httpcap-mcp、repro-mcp(复现取证)、
 │                      #   orch-mcp(动态工作流编排)、mail-mcp、db-mcp、doc-mcp、git-mcp、
@@ -143,5 +143,5 @@ npm run bars:e2e           # card.html 真 Chromium 渲染 e2e：重放工作流
 - `README.md`：面向用户的功能说明与运行/打包手册。
 - `mcp/README.md`：9 个 MCP server 的完整工具清单与注册方法。
 - `docs/`：设计文档（记忆系统设计、动态工作流设计备忘、需求分析多 Agent 对抗方案、信贷需求到详设方案、技能系统设计、研发功能路线图等）。
-- `docs/ui-design/`：桌面主窗口化设计套件（W0-W5 设计稿 `desktop.html` 等）；重构实施方案见仓库根 `plan.md`。
+- `docs/ui-design/`：桌面主窗口化设计套件（W0-W5 设计稿 `desktop.html` 等）——同时是**全产品样式事实源**（`design.css` 令牌值为准，`ui/glass.css` 从中映射）；重构实施方案见仓库根 `plan.md`。
 - `docs/项目记忆/`：Claude Code 项目记忆的版本化镜像（真实来源在仓库外 `~/.claude/.../memory/`，可能短暂不一致）——含产品定位（个人桌面智能体优先于企业合规）、内网模式等关键决策背景。

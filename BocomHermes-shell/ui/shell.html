@@ -8,7 +8,7 @@
 <style>
   /* ── 桌面主窗口壳(波1 骨架,布局照 docs/ui-design/desktop.html 的 W1)──
      本页是顶层窗口自身,不是嵌入页:手动关掉 glass.css 的透明悬浮假设(实底 + body 无 padding),
-     色值一律用 glass.css 令牌,双主题由 html[data-theme] 驱动。 */
+     色值一律用 glass.css 令牌(浅色单主题,令牌事实源 docs/ui-design/design.css)。 */
   html, body { background: var(--glass-bg); }
   body { padding: 0; }
   #app { height: 100%; display: grid; grid-template-rows: 38px 1fr 28px; }
@@ -103,10 +103,10 @@
   /* ── 快捷输入层(波4):视图区顶部居中浮层(气质参照 docs/ui-design/desktop.html S1 输入容器:
      20px 圆角 + 玻璃阴影;令牌全吃 glass.css)。遮罩点击/Esc 关闭;淡入 150ms ease-out scale .97→1 ── */
   #quickMask { position: absolute; inset: 0; z-index: 50; display: none; align-items: flex-start; justify-content: center;
-    background: rgba(20, 24, 40, .18); }
+    background: rgba(0,0,0,0.15); }
   #quickMask.on { display: flex; }
   #quickIn { margin-top: 72px; width: min(560px, calc(100% - 64px)); border-radius: 20px; padding: 12px 16px 9px;
-    background: var(--glass-bg); border: .5px solid var(--glass-border); box-shadow: var(--glass-shadow);
+    background: var(--glass-float); border: .5px solid var(--glass-border); box-shadow: var(--glass-shadow);
     opacity: 0; transform: scale(.97); transition: opacity .15s ease-out, transform .15s ease-out; }
   #quickIn.in { opacity: 1; transform: scale(1); }
   #qiTa { display: block; width: 100%; box-sizing: border-box; border: none; outline: none; resize: none;
@@ -123,9 +123,6 @@
     <span class="tt">BocomHermes</span>
     <span class="sp"></span>
     <span class="chip" id="engineChip" title="引擎连接状态(保活心跳推送,与状态栏引擎灯同源)"><span class="dot" id="chipDot" style="background:var(--txt3)"></span><span id="chipTx">引擎未连接</span></span>
-    <button class="ibtn" id="themeBtn" title="切换主题">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
-    </button>
   </header>
 
   <div id="body">
@@ -218,17 +215,10 @@
   // ── mac 红绿灯 inset 占位 ──
   if (/mac/i.test(navigator.platform || '')) $('tbar').classList.add('mac')
 
-  // ── 主题:跟随广播;标题栏钮循环四主题(浅磨砂→墨玻璃→曜黑→纸白)──
-  const THEMES = ['light', 'dark', 'onyx', 'paper']
-  const THEME_NAMES = { light: '浅磨砂', dark: '墨玻璃', onyx: '曜黑', paper: '纸白' }
-  let curTheme = document.documentElement.dataset.theme || 'light'
-  function paintTheme() { $('sbTheme').textContent = '主题 ' + (THEME_NAMES[curTheme] || curTheme) }
+  // ── 主题:浅色单主题(锁定);状态栏只展示,切换机制已退役 ──
+  function paintTheme() { $('sbTheme').textContent = '主题 浅色' }
   paintTheme()
-  BH.onTheme && BH.onTheme((t) => { curTheme = t; document.documentElement.dataset.theme = t; paintTheme() })
-  $('themeBtn').addEventListener('click', () => {
-    curTheme = THEMES[(THEMES.indexOf(curTheme) + 1) % THEMES.length] || 'light'
-    BH.setTheme(curTheme)   // 广播回来后经 onTheme 统一落 data-theme(含本页)
-  })
+  BH.onTheme && BH.onTheme(() => { document.documentElement.dataset.theme = 'light'; paintTheme() })   // set-theme 已幂等,广播恒为 light
 
   // ── 状态栏:项目目录(拿得到什么显示什么)──
   ;(function () {
@@ -274,7 +264,7 @@
   // ── 对话视图:多会话工作台(波2)── 每会话一个 webview 保活(切走仅隐藏);Map 维护 wcId/sid/标题/忙闲 ──
   const chats = new Map()   // key → {key, wv, wcId, sid, title, wf, busy, cardId, ready, pending}
   let activeKey = '', chatSeq = 0
-  const DOTS = ['var(--accent)', 'var(--green)', '#e8a13c', '#9b7ede']   // 状态点按 sid hash 取色(blue/green/orange/purple)
+  const DOTS = ['var(--accent)', 'var(--green)', 'var(--orange)', 'var(--purple)']   // 状态点按 sid hash 取色(blue/green/orange/purple)
   const dotColor = (sid) => { let h = 0; const s = String(sid || ''); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return DOTS[h % DOTS.length] }
   const ensureEmptyState = () => { $('chatEmpty').style.display = chats.size ? 'none' : '' }
 
