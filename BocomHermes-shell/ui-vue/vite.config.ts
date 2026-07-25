@@ -21,7 +21,8 @@ const page = process.env.UI_PAGE || 'shell'   // shell | lab
 export default defineConfig({
   root: dir,
   base: './',
-  plugins: [vue(), viteSingleFile()],
+  // isCustomElement 放行 <webview>:Electron 内嵌页标签,Vue 不当组件解析
+  plugins: [vue({ template: { compilerOptions: { isCustomElement: (tag) => tag === 'webview' } } }), viteSingleFile()],
   build: {
     outDir: path.resolve(dir, '..', 'ui', 'dist'),
     emptyOutDir: false,   // 逐页构建,清理由 build.mjs 统一做一次

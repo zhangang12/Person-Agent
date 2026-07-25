@@ -825,8 +825,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     S.dockWin.on('closed', () => { S.dockWin = null })
   }
 
-  // 「桌面主窗口」(主窗口化重构·波1 骨架):ui/shell.html = 侧栏 + 视图区 + 状态栏,
+  // 「桌面主窗口」(主窗口化重构·波1 骨架):shell 页 = 侧栏 + 视图区 + 状态栏,
   // 对话/任务编排/邮件中心/设置以 <webview> 收编为视图(?embed=1 / ?embedded=1 嵌入态)。
+  // shell 实现双轨(Vue 迁移 P1):默认 Vue 版(ui/dist/shell.html);settings.json 置
+  // "shellImpl":"legacy" 回退原生版(ui/shell.html,保留不删)。设置页无开关,只读配置。
   // chrome 写法照 browser.js 的非透明窗:系统红绿灯(mac hiddenInset)/ Win titleBarOverlay,不走 baseOpts 的透明无边框系。
   function createMainWindow() {
     if (S.mainWin && !S.mainWin.isDestroyed()) { if (S.mainWin.isMinimized()) S.mainWin.restore(); S.mainWin.show(); S.mainWin.focus(); return S.mainWin }
@@ -851,7 +853,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       try { for (const wcId of [...(S.embedWc || [])]) cleanupCardContext(S, wcId, null) } catch (e) { log('mainWin embedded cleanup err: ' + e.message) }
       S.mainWin = null
     })
-    S.mainWin.loadFile(path.join(__dirname, '..', 'ui', 'shell.html'))
+    const shellImpl = (S.settings && S.settings.shellImpl) || 'vue'   // 'legacy' = 回退原生 shell.html
+    S.mainWin.loadFile(shellImpl === 'legacy'
+      ? path.join(__dirname, '..', 'ui', 'shell.html')
+      : path.join(__dirname, '..', 'ui', 'dist', 'shell.html'))
     return S.mainWin
   }
 
