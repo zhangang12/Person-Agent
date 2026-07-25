@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BocomHermes 设计套件 · 交互与动效</title>
+<link rel="stylesheet" href="design.css">
+<style>
+  .nav { display:flex; align-items:center; gap:var(--s2); }
+  .nav a { font:var(--b2); color:var(--label-3); text-decoration:none; padding:6px 10px; border-radius:var(--r-sm); }
+  .nav a:hover { color:var(--label-1); background:var(--fill-1); }
+  .nav a.here { color:var(--label-1); background:var(--fill-2); }
+  .nav .sp { flex:1; }
+  .shot { margin-top:var(--s5); }
+  .spec { margin-top:var(--s3); }
+  .spec li { margin-left:16px; margin-top:2px; }
+  .mx { display:grid; gap:0; margin-top:var(--s4); border:0.5px solid var(--sep); border-radius:var(--r-lg); overflow:hidden; }
+  .mx .hd, .mx .rw { display:grid; grid-template-columns:120px repeat(5, 1fr); align-items:center; }
+  .mx .hd { background:var(--fill-1); font:var(--c1-em); color:var(--label-2); }
+  .mx .hd > div, .mx .rw > div { padding:12px 14px; border-bottom:0.5px solid var(--sep); }
+  .mx .rw:last-child > div { border-bottom:none; }
+  .mx .rw .rn { font:var(--b2-em); }
+  .mx .cell { display:flex; align-items:center; gap:8px; min-height:56px; }
+  .lbl { font:var(--c2); color:var(--label-4); margin-top:4px; }
+  .state-col { display:flex; flex-direction:column; align-items:flex-start; }
+
+  /* hover/active 静态仿真(仅展示用) */
+  .btn.hov.pri { background:var(--label-1); }
+  .btn.hov.sec { background:var(--fill-2); }
+  .btn.hov.out { background:var(--fill-1); }
+  .btn.act { transform:scale(0.97); }
+  .btn.load { pointer-events:none; color:var(--label-3); }
+.btn.pri.load { color:var(--brand-text); opacity:0.75; }
+  .spin { width:12px; height:12px; border-radius:50%; border:1.5px solid currentColor; border-top-color:transparent; animation:rot 0.8s linear infinite; flex:none; }
+  @keyframes rot { to { transform:rotate(360deg); } }
+
+  /* toggle 契约静态帧(toggle.md:sm 32×18,thumb 恒正圆) */
+  .tg { position:relative; width:32px; height:18px; border-radius:100px; background:var(--fill-3); flex:none; }
+  .tg .th { position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:#fff; }
+  .tg.on { background:var(--label-1); }
+  .tg.on .th { left:16px; }
+  .tg.hov .th { width:12px; height:12px; top:3px; left:2px; }
+  .tg.on.hov .th { width:12px; height:12px; top:3px; left:18px; }
+  .tg.dis { opacity:0.4; }
+  .tg.dis.on { background:var(--fill-2); }
+  .tg.dis .th { background:rgba(255,255,255,0.4); }
+
+  /* menu / tooltip / dialog 契约静态帧 */
+  .menu { width:220px; background:var(--bg-tertiary); border:0.5px solid var(--sep); border-radius:var(--r-lg); box-shadow:var(--shadow-small); padding:8px; }
+  .mi2 { display:flex; align-items:center; gap:4px; height:36px; padding:8px; border-radius:var(--r-md); font:var(--b2); }
+  .mi2 .ck { margin-left:auto; }
+  .mi2.hov { background:var(--fill-1); }
+  .mi2.dis { color:var(--label-4); }
+  .mi2.dis svg { opacity:0.4; }
+  .tip { position:relative; background:var(--toast-bg); color:#fff; border-radius:var(--r-md); padding:8px 12px; font:var(--b2); max-width:240px; }
+  .tip::after { content:""; position:absolute; left:50%; bottom:-4px; margin-left:-5px; border:5px solid transparent; border-top-color:var(--toast-bg); border-bottom:none; }
+  .coach { width:240px; background:var(--toast-bg); color:#fff; border-radius:var(--r-xl); padding:16px; display:flex; flex-direction:column; gap:12px; position:relative; }
+  .coach::before { content:""; position:absolute; left:50%; top:-4px; margin-left:-5px; border:5px solid transparent; border-bottom-color:var(--toast-bg); border-top:none; }
+  .dlg-wrap { position:relative; border-radius:var(--r-lg); overflow:hidden; background:var(--bg-ground); border:0.5px solid var(--sep); min-height:240px; display:flex; align-items:center; justify-content:center; }
+  .dlg-wrap .mask { position:absolute; inset:0; background:var(--mask); }
+  .dlg { position:relative; width:360px; background:var(--bg-secondary); border-radius:var(--r-xl); padding:16px; display:flex; flex-direction:column; gap:12px; }
+  .dlg .t { font:var(--t2-em); }
+  .dlg .d { font:var(--b2); line-height:20px; }
+
+  /* 分镜 */
+  .flow { display:flex; align-items:stretch; gap:0; flex-wrap:wrap; margin-top:var(--s4); }
+  .fr { width:250px; border:0.5px solid var(--sep); border-radius:var(--r-lg); background:var(--bg-primary); padding:12px; display:flex; flex-direction:column; gap:8px; }
+  .fr .cap { font:var(--c1-em); color:var(--label-2); }
+  .fr .sub { font:var(--c2); color:var(--label-4); line-height:1.6; }
+  .arr { align-self:center; padding:0 10px; color:var(--label-4); flex:none; }
+  .mini-hd { display:flex; align-items:center; gap:6px; font:var(--c1-em); color:var(--label-1); }
+  .kbd { display:inline-flex; align-items:center; justify-content:center; min-width:18px; height:18px; padding:0 4px; border-radius:4px; background:var(--fill-3); font:var(--c2); font-weight:600; box-shadow:0 1px 0 rgba(0,0,0,0.3); }
+  .kbd.press { background:var(--blue); color:#fff; }
+  .trace { display:flex; align-items:center; gap:6px; font:var(--c1); color:var(--label-3); padding:6px 8px; border-radius:var(--r-sm); background:var(--fill-1); }
+  .perm-mini { border:0.5px solid var(--orange); background:var(--orange-10); border-radius:var(--r-md); padding:10px; display:flex; flex-direction:column; gap:8px; font:var(--c1); }
+  .perm-mini .cmd { font-family:var(--font-mono); font-size:11px; background:rgba(0,0,0,0.22); border-radius:6px; padding:5px 8px; }
+  .perm-mini .btn { min-width:0; white-space:nowrap; padding:4px 6px; }
+  .banner-y { display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:var(--r-md); background:var(--yellow-10); border:0.5px solid var(--yellow); font:var(--c1); }
+  .banner-o { display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:var(--r-md); background:var(--orange-10); border:0.5px solid var(--orange); font:var(--c1); }
+  .note-r { display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:var(--r-md); background:var(--red-10); border:0.5px solid var(--danger); font:var(--c1); }
+  .skl { border-radius:var(--r-sm); background:linear-gradient(90deg, var(--fill-1) 25%, var(--fill-2) 50%, var(--fill-1) 75%); background-size:200% 100%; animation:shim 1.4s linear infinite; }
+  @keyframes shim { to { background-position:-200% 0; } }
+  .k-card2 { width:100%; background:var(--bg-primary-90); border:0.5px solid var(--sep); border-radius:var(--r-lg); overflow:hidden; }
+  .k-hd2 { display:flex; align-items:center; gap:6px; padding:8px 10px; border-bottom:0.5px solid var(--sep); font:var(--c1-em); }
+  .flash { animation:flash 1.8s var(--ez-out) infinite; border-radius:var(--r-lg); }
+  @keyframes flash { 0%,100% { box-shadow:0 0 0 0 rgba(22,196,86,0); } 20% { box-shadow:0 0 0 2px rgba(22,196,86,0.7); } }
+  .mo { display:grid; grid-template-columns:150px 90px 190px 1fr; border:0.5px solid var(--sep); border-radius:var(--r-lg); overflow:hidden; margin-top:var(--s4); }
+  .mo > div { padding:10px 14px; border-bottom:0.5px solid var(--sep); font:var(--c1); color:var(--label-2); }
+  .mo .h { background:var(--fill-1); font:var(--c1-em); color:var(--label-1); }
+  .mo .n { font:var(--b2-em); color:var(--label-1); }
+  .mo code { font-size:11px; }
+</style>
+</head>
+<body>
+<div class="board">
+
+  <nav class="nav">
+    <a href="index.html">设计总览</a>
+    <a href="desktop.html">桌面客户端 ×5</a>
+    <a href="screens.html">悬浮卡片 ×8</a>
+    <a class="here" href="interactions.html">交互与动效</a>
+    <span class="sp"></span>
+    <button class="chip" id="themeBtn">切换浅色</button>
+  </nav>
+
+  <header class="b-head">
+    <h1 class="b-title">交互与动效</h1>
+    <p class="b-sub">组件全状态矩阵、动效规格表、四条关键交互流分镜。所有「效果图」以静态帧呈现,hover/pressed 等瞬态直接定格,旁边标注触发条件与动效参数。</p>
+  </header>
+
+  <!-- ═══ 01 按钮矩阵 ═══ -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">01</span>按钮 · 状态矩阵</h2>
+    <p class="b-sec-d">契约:44/32/26 三档高,primary/secondary/outline 三变体 + danger 修饰。按压一律 scale(0.97) / 120ms ez-out,禁用降不透明度不改配色。</p>
+    <div class="mx">
+      <div class="hd"><div>变体</div><div>默认</div><div>悬停</div><div>按压(定格)</div><div>加载</div><div>禁用</div></div>
+      <div class="rw"><div class="rn">primary</div>
+        <div class="cell"><button class="btn pri">开始执行</button></div>
+        <div class="cell"><button class="btn pri hov">开始执行</button></div>
+        <div class="cell"><button class="btn pri act">开始执行</button></div>
+        <div class="cell"><button class="btn pri load"><span class="spin"></span>执行中</button></div>
+        <div class="cell"><button class="btn pri" disabled>开始执行</button></div></div>
+      <div class="rw"><div class="rn">secondary</div>
+        <div class="cell"><button class="btn sec">取消自动</button></div>
+        <div class="cell"><button class="btn sec hov">取消自动</button></div>
+        <div class="cell"><button class="btn sec act">取消自动</button></div>
+        <div class="cell"><button class="btn sec load"><span class="spin"></span>处理中</button></div>
+        <div class="cell"><button class="btn sec" disabled>取消自动</button></div></div>
+      <div class="rw"><div class="rn">outline</div>
+        <div class="cell"><button class="btn out">查看计划</button></div>
+        <div class="cell"><button class="btn out hov">查看计划</button></div>
+        <div class="cell"><button class="btn out act">查看计划</button></div>
+        <div class="cell"><button class="btn out load"><span class="spin"></span>打开中</button></div>
+        <div class="cell"><button class="btn out" disabled>查看计划</button></div></div>
+      <div class="rw"><div class="rn">danger</div>
+        <div class="cell"><button class="btn pri danger">删除</button></div>
+        <div class="cell"><button class="btn out danger">拒绝</button></div>
+        <div class="cell"><button class="btn pri danger act">删除</button></div>
+        <div class="cell"><button class="btn out danger load"><span class="spin"></span>拒绝</button></div>
+        <div class="cell"><button class="btn out danger" disabled>拒绝</button></div></div>
+    </div>
+  </section>
+
+  <!-- ═══ 02 表单控件矩阵 ═══ -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">02</span>开关 / 分段 / 输入 · 状态矩阵</h2>
+    <p class="b-sec-d">开关严格按 toggle.md:轨道 32×18(sm),滑块恒为正圆,on 态轨道 = labels.primary;悬停时滑块缩 2px 并向 active 边微移,是「预压」手感。</p>
+    <div class="shot" style="display:flex;gap:32px;flex-wrap:wrap;background:var(--bg-primary)">
+      <div class="state-col"><div class="row"><div class="tg"><span class="th"></span></div><span style="font:var(--b2)">关 · 默认</span></div><div class="lbl">轨道 fills.f3 · 滑块 14px</div></div>
+      <div class="state-col"><div class="row"><div class="tg hov"><span class="th"></span></div><span style="font:var(--b2)">关 · 悬停</span></div><div class="lbl">滑块缩至 12px,右移</div></div>
+      <div class="state-col"><div class="row"><div class="tg on"><span class="th"></span></div><span style="font:var(--b2)">开 · 默认</span></div><div class="lbl">轨道 labels.primary</div></div>
+      <div class="state-col"><div class="row"><div class="tg on hov"><span class="th"></span></div><span style="font:var(--b2)">开 · 悬停</span></div><div class="lbl">滑块 12px,停右缘</div></div>
+      <div class="state-col"><div class="row"><div class="tg dis"><span class="th"></span></div><span style="font:var(--b2);color:var(--label-4)">禁用</span></div><div class="lbl">整体 opacity 0.4</div></div>
+      <div class="state-col"><div class="row"><div class="tg on dis"><span class="th"></span></div><span style="font:var(--b2);color:var(--label-4)">开 · 禁用</span></div><div class="lbl">轨道退为 fills.f2</div></div>
+    </div>
+    <div class="shot" style="display:flex;gap:32px;flex-wrap:wrap;align-items:flex-start;background:var(--bg-primary)">
+      <div class="state-col">
+        <div class="seg"><button>自动</button><button class="on">任务编排</button><button>动态工作流</button></div>
+        <div class="lbl">分段控件:轨 fills.f2 / 选中块浮起 · 150ms 换背景,不移动画块以外的任何东西</div>
+      </div>
+      <div class="state-col" style="min-width:280px">
+        <div class="inputbox" style="border-color:var(--blue)">
+          <textarea rows="1">聚焦态:0.5px 边换 kimiBlue</textarea>
+        </div>
+        <div class="lbl">focus 用色不用影:无发光环,阴影保持 inputDefault 不变</div>
+      </div>
+      <div class="state-col" style="min-width:240px">
+        <div class="inputbox" style="opacity:0.5"><textarea rows="1" placeholder="引擎失连时输入禁用"></textarea></div>
+        <div class="lbl">禁用:整体 50% 不透明度,placeholder 仍在,恢复后原样回来</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 03 浮层契约 ═══ -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">03</span>菜单 / 工具提示 / 对话框</h2>
+    <p class="b-sec-d">三档打断面各司其职:菜单即时、Tooltip 被动、Dialog 必须二选一。层叠唯一遮罩原则:同一时刻全屏只有一个 mask。</p>
+    <div class="shot" style="display:flex;gap:40px;flex-wrap:wrap;align-items:flex-start;background:var(--bg-primary)">
+      <div class="state-col">
+        <div class="menu">
+          <div class="mi2"><svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>新建对话卡</div>
+          <div class="mi2 hov"><svg class="ic" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>重命名</div>
+          <div class="mi2"><svg class="ic" viewBox="0 0 24 24"><path d="M12 17V3M7 8l5-5 5 5M5 21h14"/></svg>置顶卡片<span class="ck"><svg class="ic" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span></div>
+          <div class="mi2 dis"><svg class="ic" viewBox="0 0 24 24"><path d="M12 3v12M6 11l6 6 6-6M4 21h16"/></svg>导出记录(暂无内容)</div>
+        </div>
+        <div class="lbl">菜单:36px 行高 / radius.md 项 / hover = fills.f1 / 选中尾置 18px 勾</div>
+      </div>
+      <div class="state-col" style="gap:20px">
+        <div class="state-col" style="align-items:center;gap:14px">
+          <div class="tip">上下文用量 · 已用 42%,真实 token 计量</div>
+          <button class="ibtn" style="border:0.5px solid var(--sep)"><svg class="ic" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 12l6-6"/></svg></button>
+        </div>
+        <div class="lbl">Tooltip:toastPc 恒定深底、radius.md、无阴影;首次 300ms 延迟,125ms scale(0.97)→1</div>
+      </div>
+      <div class="state-col">
+        <div class="coach">
+          <div style="display:flex;align-items:center;gap:8px;font:var(--t2-em)"><svg class="ic" style="width:24px;height:24px" viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>技能可以接编排</div>
+          <div style="font:var(--b2)">回放完成后,顺手点「下载后→编排」,结果直接进工作流。</div>
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <span style="font:var(--c1-em);color:rgba(255,255,255,0.56)">1/2</span>
+            <button class="btn sec s26" style="background:rgba(255,255,255,0.1)">我知道了</button>
+          </div>
+        </div>
+        <div class="lbl">Coach Mark:radius.xl / padding 16 / 步骤指示 + 单动作,用于新功能引导</div>
+      </div>
+    </div>
+    <div class="shot" style="background:var(--bg-primary)">
+      <div class="dlg-wrap">
+        <div style="position:absolute;inset:0;padding:20px;opacity:0.4">
+          <div class="skl" style="height:14px;width:60%"></div>
+          <div class="skl" style="height:14px;width:80%;margin-top:10px"></div>
+          <div class="skl" style="height:14px;width:45%;margin-top:10px"></div>
+        </div>
+        <div class="mask"></div>
+        <div class="dlg">
+          <div class="t">删除这张卡片?</div>
+          <div class="d">「信贷管理系统 · loan-web」的会话历史将一并清除,知识库条目不受影响。此操作不可撤销。</div>
+          <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button class="btn sec">取消</button>
+            <button class="btn pri danger">删除</button>
+          </div>
+        </div>
+      </div>
+      <div class="lbl" style="margin-top:10px">Dialog(alertdialog):恒宽 360px、radius.xl、无关闭钮;破坏性操作初始焦点落在「取消」;mask = color.mask,点击 mask 等于点安全动作。</div>
+    </div>
+  </section>
+
+  <!-- ═══ 04 Toast 矩阵 ═══ -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">04</span>Toast · 五型 + 动作</h2>
+    <p class="b-sec-d">底恒定 toastPc 深灰,语义全靠 20px 图标色;顶中进场 350ms / 退场 260ms,最多叠 3 条,3s 自隐(错误 5s)。</p>
+    <div class="shot" style="display:flex;gap:16px;flex-wrap:wrap;background:var(--bg-primary)">
+      <div class="toast"><svg class="ic s20 t-ic" viewBox="0 0 24 24" style="color:var(--green)"><circle cx="12" cy="12" r="9"/><path d="m8 12.5 3 3 5.5-6.5"/></svg>工作流已完成 · 5/5</div>
+      <div class="toast"><svg class="ic s20 t-ic" viewBox="0 0 24 24" style="color:var(--danger)"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>引擎连接中断,正在重连</div>
+      <div class="toast"><svg class="ic s20 t-ic" viewBox="0 0 24 24" style="color:var(--orange)"><path d="M12 3 2.5 20h19L12 3z"/><path d="M12 10v4M12 17.5v.01"/></svg>知识条目「费率表」锚点失效,已隔离</div>
+      <div class="toast"><svg class="ic s20 t-ic" viewBox="0 0 24 24" style="color:var(--blue)"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>压缩完成:释放 61% 上下文</div>
+      <div class="toast"><span class="spin" style="width:20px;height:20px;color:#fff"></span>正在回放技能 · 第 4/12 步</div>
+      <div class="toast"><svg class="ic s20 t-ic" viewBox="0 0 24 24" style="color:var(--orange)"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>《利率调整通知》已发<span class="act">撤回</span></div>
+    </div>
+  </section>
+
+  <!-- ═══ 05 动效规格 ═══ -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">05</span>动效规格表</h2>
+    <p class="b-sec-d">只动 transform 与 opacity;禁 ease-in、禁弹跳;prefers-reduced-motion 下全部退化为瞬时 opacity 切换。</p>
+    <div class="mo">
+      <div class="h">场景</div><div class="h">时长</div><div class="h">缓动</div><div class="h">变换与说明</div>
+      <div class="n">卡片入场</div><div>180ms</div><div><code>ez-out</code></div><div>opacity 0→1 + scale(0.96→1),从屏幕边缘出现时叠加 12px 位移</div>
+      <div class="n">权限条弹出</div><div>200ms</div><div><code>ez-out</code></div><div>scale(0.97→1) + opacity;吸附输入区上方,历史消息区不动</div>
+      <div class="n">按钮按压</div><div>120ms</div><div><code>ez-out</code></div><div>scale(0.97);松开 160ms 回弹(无 overshoot)</div>
+      <div class="n">菜单弹出</div><div>150ms</div><div><code>ez-out</code></div><div>scale(0.95→1) + opacity,变换原点挂在触发角</div>
+      <div class="n">Tooltip</div><div>125ms</div><div><code>ez-out</code></div><div>scale(0.97→1);首次 300ms 延迟,已开一条后续即时</div>
+      <div class="n">Dialog / Modal</div><div>180ms</div><div><code>ez-out</code></div><div>内容 scale(0.96→1),mask 同步 fade;时序一致不分先后</div>
+      <div class="n">子 Agent 侧栏</div><div>300ms</div><div><code>ez-drawer</code></div><div>translateX 24px→0 + opacity,抽屉专属曲线</div>
+      <div class="n">Toast 进 / 出</div><div>350 / 260ms</div><div><code>ez-out</code></div><div>顶中 translateY(-8px)→0;退场仅 fade,不回弹</div>
+      <div class="n">开关滑动</div><div>150–200ms</div><div><code>ease-out</code></div><div>滑块 translateX;悬停缩放 100–150ms;轨道换色 ≤150ms</div>
+      <div class="n">流式光标</div><div>1.06s</div><div><code>steps(1)</code></div><div>8×16 块 opacity 闪烁;减少动态偏好下静止常亮</div>
+      <div class="n">完成闪框</div><div>600ms ×1</div><div><code>ez-out</code></div><div>卡框 0→2px green 光晕后消散,一次不循环(下图循环仅为展示)</div>
+    </div>
+  </section>
+
+  <!-- ═══ 06 交互流分镜 ═══ -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">06</span>关键交互流 · 分镜</h2>
+
+    <p class="b-sec-d" style="margin-top:var(--s5)"><b style="color:var(--label-1)">F1 · 权限批准流</b> —— 只读工具自动放行,写/执行转内联确认;键盘 y/a/n 全程可盲按,批准后留一行可追溯的痕迹。</p>
+    <div class="flow">
+      <div class="fr"><div class="cap">1 · 工具发起</div>
+        <div class="trace" style="background:var(--fill-1)"><svg class="ic s16" viewBox="0 0 24 24"><path d="m4 17 6-6-6-6M12 19h8"/></svg><span style="font-family:var(--font-mono)">bash</span>mvn deploy -pl interest</div>
+        <div class="sub">Agent 请求执行写命令,卡片停顿在该行,流式光标消失。</div></div>
+      <div class="arr"><svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="fr"><div class="cap">2 · 权限条弹出</div>
+        <div class="perm-mini"><div style="display:flex;gap:6px;align-items:center;font-weight:500"><svg class="ic s16" viewBox="0 0 24 24" style="color:var(--orange)"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3z"/></svg>请求执行命令</div>
+        <div class="cmd">mvn deploy -pl interest</div>
+        <div style="display:flex;gap:6px"><button class="btn pri s26">允许一次 <span class="kbd">Y</span></button><button class="btn sec s26">总是 <span class="kbd">A</span></button><button class="btn out danger s26">拒绝 <span class="kbd">N</span></button></div></div>
+        <div class="sub">180ms scale(0.97→1);橙 = 常规写,红 = 高危(无「总是」)。</div></div>
+      <div class="arr"><svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="fr"><div class="cap">3 · 按 Y 批准</div>
+        <div class="row"><span class="kbd press">Y</span><span style="font:var(--c1);color:var(--label-3)">无需鼠标,焦点在卡即达</span></div>
+        <div class="sub">按钮 scale(0.97) 120ms 后整条权限条 260ms 收起。</div></div>
+      <div class="arr"><svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="fr"><div class="cap">4 · 留痕续跑</div>
+        <div class="trace"><svg class="ic s16" viewBox="0 0 24 24" style="color:var(--green)"><path d="M20 6 9 17l-5-5"/></svg>已允许一次 · bash mvn deploy</div>
+        <div class="sub">痕迹行可点开回放命令与输出;审计流水同步落 audit.jsonl。</div></div>
+    </div>
+
+    <p class="b-sec-d" style="margin-top:var(--s6)"><b style="color:var(--label-1)">F2 · 压缩续聊流</b> —— 真实 token 计量驱动:82% 变红预警,压缩不中断对话,摘要卡交代「扔了什么、留了什么」。</p>
+    <div class="flow">
+      <div class="fr"><div class="cap">1 · 超阈预警</div>
+        <div class="mini-hd"><span class="dot" style="background:var(--blue)"></span>信贷管理系统<span style="flex:1"></span><span class="k-chip" style="background:var(--red-10);color:var(--danger);display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:100px;font:var(--c2)">82%</span></div>
+        <div class="sub">chip ≥80% 由橙转红,悬停 tooltip 给出「现在压缩」手动入口。</div></div>
+      <div class="arr"><svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="fr"><div class="cap">2 · 后台压缩</div>
+        <div class="skl" style="height:12px"></div><div class="skl" style="height:12px;width:75%"></div>
+        <div class="sub">正文区骨架屏微光(shimmer 1.4s),输入不禁用——用户可以继续打字。</div></div>
+      <div class="arr"><svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="fr"><div class="cap">3 · 摘要留卡</div>
+        <div class="trace" style="align-items:flex-start"><svg class="ic s16" viewBox="0 0 24 24" style="color:var(--blue);margin-top:1px"><path d="m12 3 9 5-9 5-9-5 9-5z"/><path d="m3 13 9 5 9-5"/></svg><span>已压缩:保留最近 20 条 + 312 字摘要<br><span style="color:var(--label-4)">释放 61% · 全文可查历史</span></span></div>
+        <div class="sub">chip 回落 31% 转绿;摘要卡可展开,压缩是第 2/5 次。</div></div>
+      <div class="arr"><svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="fr"><div class="cap">4 · 无缝续聊</div>
+        <div class="sub">同一张卡、同一个 session,用户只注意到 chip 变色过一次——这就是全部存在感。</div></div>
+    </div>
+
+    <p class="b-sec-d" style="margin-top:var(--s6)"><b style="color:var(--label-1)">F3 · 看门狗两级</b> —— 判死看进展不看时长:先黄牌提醒 Agent,再橙牌把中止权交给用户。</p>
+    <div class="flow">
+      <div class="fr"><div class="cap">1 · 绕圈检测</div>
+        <div class="trace" style="font-family:var(--font-mono);font-size:10.5px">read InterestCalc.java ×3<br>grep "monthly(" ×3</div>
+        <div class="sub">连续 2 轮无新进展(同一批文件反复读),进展计数器停滞。</div></div>
+      <div class="arr"><svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="fr"><div class="cap">2 · 黄牌提醒</div>
+        <div class="banner-y"><svg class="ic s16" viewBox="0 0 24 24" style="color:var(--yellow)"><path d="M12 3 2.5 20h19L12 3z"/><path d="M12 10v4M12 17.5v.01"/></svg><span>看门狗:2 轮无新进展,已提醒 Agent 聚焦目标</span></div>
+        <div class="sub">只打扰 Agent,不打扰人;提醒注入下一轮提示词。</div></div>
+      <div class="arr"><svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="fr"><div class="cap">3 · 橙牌判死</div>
+        <div class="banner-o"><svg class="ic s16" viewBox="0 0 24 24" style="color:var(--orange)"><path d="M12 3 2.5 20h19L12 3z"/><path d="M12 10v4M12 17.5v.01"/></svg><span style="flex:1">第 3 轮仍无进展,疑似绕圈</span><button class="btn out s26" style="border-color:var(--orange);color:var(--orange)">中止并接管</button></div>
+        <div class="sub">横幅常驻不收起;中止权交人,不擅自 kill。</div></div>
+      <div class="arr"><svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="fr"><div class="cap">4 · 用户接管</div>
+        <div class="sub">中止后现场保留:已读文件、已改内容、轮次快照都在;输入框获得焦点,提示「已暂停,可直接指挥」。</div></div>
+    </div>
+
+    <p class="b-sec-d" style="margin-top:var(--s6)"><b style="color:var(--label-1)">F4 · 批准闸倒计时流</b> —— 无人值守不卡死:默认 15 分钟(旋钮)后自动开跑,人在场随时可接管或取消自动。</p>
+    <div class="flow">
+      <div class="fr"><div class="cap">1 · 计划就绪</div>
+        <div class="mini-hd"><svg class="ic s16" viewBox="0 0 24 24" style="color:var(--orange)"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>批准闸 · 计划已就绪</div>
+        <div class="sub">改 2 个文件、新增 4 个单测,计划卡可展开审阅。</div></div>
+      <div class="arr"><svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="fr"><div class="cap">2 · 倒计时行走</div>
+        <div class="row"><svg class="ic s16" viewBox="0 0 24 24" style="color:var(--orange)"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg><span style="font:var(--c1-em);color:var(--orange)">12:34 后自动开跑</span></div>
+        <div class="sub">mm:ss 单色调制,1s 一跳;不闪烁、不进度条——它不是催促,是告知。</div></div>
+      <div class="arr"><svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="fr"><div class="cap">3a · 人接管</div>
+        <div class="row"><button class="btn pri s26">开始执行</button><button class="btn sec s26">取消自动</button></div>
+        <div class="sub">点「取消自动」:倒计时消失,闸变纯手动,徽标提示「已改手动」。</div></div>
+      <div class="arr"><svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="fr"><div class="cap">3b · 超时自跑</div>
+        <div class="toast" style="min-height:34px"><svg class="ic s20 t-ic" viewBox="0 0 24 24" style="color:var(--blue)"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>批准闸超时,已按计划自动开跑</div>
+        <div class="sub">Toast 告知 + 审计落一条 auto-approved,事后永远查得到。</div></div>
+    </div>
+  </section>
+
+  <!-- ═══ 07 多卡并行 ═══ -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">07</span>多卡并行 · 会话染色</h2>
+    <p class="b-sec-d">卡片按 session 轮换 blue/green/orange/purple 四色:标题圆点 + 1.5px 高亮框同源。完成时闪框一次(green,600ms),余光即可认领,不用读标题。</p>
+    <div class="shot darkstage">
+      <div class="stage" style="display:flex;gap:24px;justify-content:center;padding:32px;align-items:flex-start">
+        <span class="stage-label">DESKTOP · 三卡并行</span>
+        <div class="k-card2" style="width:250px;box-shadow:0 0 0 1.5px rgba(26,136,255,0.45), var(--shadow-medium)">
+          <div class="k-hd2"><span class="dot" style="background:var(--blue)"></span>信贷管理 · loan-web<span style="flex:1"></span><span class="spin" style="border-color:var(--blue);border-top-color:transparent"></span></div>
+          <div style="padding:12px;display:flex;flex-direction:column;gap:8px">
+            <div class="skl" style="height:11px"></div><div class="skl" style="height:11px;width:70%"></div>
+            <div style="font:var(--c1);color:var(--blue)">运行中 · 修复 monthly()</div>
+          </div>
+        </div>
+        <div class="k-card2 flash" style="width:250px">
+          <div class="k-hd2"><span class="dot" style="background:var(--green)"></span>对账下载 · 技能回放<span style="flex:1"></span><svg class="ic s16" viewBox="0 0 24 24" style="color:var(--green)"><path d="M20 6 9 17l-5-5"/></svg></div>
+          <div style="padding:12px;font:var(--c1);color:var(--label-2)">12 步全部成功 · 文件已入成果抽屉<div style="margin-top:6px;color:var(--green)">完成 · 闪框认领(展示循环,实为一次)</div></div>
+        </div>
+        <div class="k-card2" style="width:250px;box-shadow:0 0 0 1.5px rgba(161,107,255,0.45), var(--shadow-medium)">
+          <div class="k-hd2"><span class="dot" style="background:var(--purple)"></span>需求评审 · 子 Agent<span style="flex:1"></span><span class="k-chip" style="height:18px;font:var(--c2);background:var(--fill-2);border-radius:100px;display:inline-flex;align-items:center;padding:0 6px">第 2 轮</span></div>
+          <div style="padding:12px;font:var(--c1);color:var(--label-2)">对抗阅读中:合规读者提出 2 个疑问<div style="margin-top:6px;color:var(--label-3)">等待第 3 轮汇总</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 08 空态 / 错误态 / 加载态 ═══ -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">08</span>空态 · 错误态 · 加载态</h2>
+    <p class="b-sec-d">三种「非正常」时刻最见功力:不甩英文堆栈,不装死,现场就能恢复。</p>
+    <div class="shot" style="display:flex;gap:24px;flex-wrap:wrap;background:var(--bg-primary)">
+      <div class="state-col" style="width:280px">
+        <div class="k-card2">
+          <div class="k-hd2"><span class="dot" style="background:var(--blue)"></span>新对话卡</div>
+          <div style="padding:24px 16px;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center">
+            <svg class="ic" style="width:26px;height:26px;color:var(--label-3)" viewBox="0 0 24 24"><path d="M12 3l1.9 5.6 5.6 1.4-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4L12 3z"/></svg>
+            <div style="font:var(--b2-em)">从一句具体的话开始</div>
+            <div style="font:var(--c1);color:var(--label-3);line-height:1.7">「看下 monthly() 的计息口径」<br>比「帮我看看代码」有效十倍</div>
+            <div class="chips" style="justify-content:center;margin-top:4px"><span class="chip" style="height:24px;font:var(--c1)">粘贴截图提问 ⌃⇧S</span><span class="chip" style="height:24px;font:var(--c1)">带入剪贴板 ⌃⇧V</span></div>
+          </div>
+        </div>
+        <div class="lbl">空态:给一个可照抄的例句,而不是一句「暂无数据」</div>
+      </div>
+      <div class="state-col" style="width:280px">
+        <div class="k-card2">
+          <div class="k-hd2"><span class="dot" style="background:var(--label-4)"></span>信贷管理 · loan-web<span style="flex:1"></span><span class="badge red">失连</span></div>
+          <div style="padding:12px;display:flex;flex-direction:column;gap:10px">
+            <div class="note-r"><svg class="ic s16" viewBox="0 0 24 24" style="color:var(--danger)"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg><span style="flex:1">引擎心跳丢失,已暂停流式输出</span><button class="btn out s26" style="border-color:var(--danger);color:var(--danger)">重连</button></div>
+            <div style="font:var(--c1);color:var(--label-3)">已生成的内容原样保留,重连后从断点续传,不重发整段。</div>
+          </div>
+        </div>
+        <div class="lbl">错误态:说清发生了什么 + 一个恢复动作,内容不丢</div>
+      </div>
+      <div class="state-col" style="width:280px">
+        <div class="k-card2">
+          <div class="k-hd2"><span class="dot" style="background:var(--blue)"></span>载入历史会话</div>
+          <div style="padding:12px;display:flex;flex-direction:column;gap:10px">
+            <div class="skl" style="height:12px;width:55%"></div>
+            <div class="skl" style="height:12px"></div>
+            <div class="skl" style="height:12px;width:80%"></div>
+            <div class="skl" style="height:34px"></div>
+            <div style="font:var(--c1);color:var(--label-3)">shimmer 1.4s,骨架形状预告内容结构</div>
+          </div>
+        </div>
+        <div class="lbl">加载态:骨架屏不用 spinner;形状即预告,减少布局跳动</div>
+      </div>
+    </div>
+  </section>
+
+</div>
+<script>
+  (function () {
+    var h = document.documentElement, b = document.getElementById('themeBtn');
+    function r() { b.textContent = h.dataset.theme === 'dark' ? '切换浅色' : '切换深色'; }
+    b.addEventListener('click', function () { h.dataset.theme = h.dataset.theme === 'dark' ? 'light' : 'dark'; r(); });
+    r();
+  })();
+</script>
+</body>
+</html>

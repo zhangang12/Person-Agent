@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BocomHermes 设计套件 · 设计总览</title>
+<link rel="stylesheet" href="design.css">
+<style>
+  /* ── 本页局部样式(仅陈列用) ─────────────────────────── */
+  .nav { display: flex; align-items: center; gap: var(--s2); margin-bottom: var(--s7); }
+  .nav a { font: var(--b2); color: var(--label-3); text-decoration: none; padding: 6px 10px;
+    border-radius: var(--r-sm); transition: color 150ms ease, background-color 150ms ease; }
+  .nav a:hover { color: var(--label-1); background: var(--fill-1); }
+  .nav a.here { color: var(--label-1); background: var(--fill-2); }
+  .nav .sp { flex: 1; }
+
+  .hero-tag { display: inline-flex; align-items: center; gap: var(--s2); font: var(--c1-em);
+    color: var(--blue); background: var(--blue-10); border-radius: var(--r-full);
+    padding: 4px 12px; margin-bottom: var(--s4); }
+  .hero-t { font: 600 34px/44px var(--font-ui); letter-spacing: 0.01em; max-width: 640px; }
+  .hero-d { font: var(--b1); color: var(--label-2); max-width: 620px; line-height: 1.8; margin-top: var(--s4); }
+  .hero-d b { color: var(--label-1); font-weight: 500; }
+  .hero-meta { display: flex; gap: var(--s5); margin-top: var(--s5); font: var(--c1); color: var(--label-3); }
+  .hero-meta b { display: block; font: var(--b1-em); color: var(--label-1); margin-bottom: 2px; }
+
+  .prin { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: var(--s3); margin-top: var(--s5); }
+  .prin .panel { padding: var(--s4); }
+  .prin .en { font: var(--c1-em); color: var(--blue); letter-spacing: 0.04em; }
+  .prin .zh { font: var(--b1-em); margin-top: var(--s1); }
+  .prin .ds { font: var(--c1); color: var(--label-3); line-height: 1.7; margin-top: var(--s2); }
+
+  .sw-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: var(--s3); margin-top: var(--s3); }
+  .sw { border-radius: var(--r-md); overflow: hidden; border: 0.5px solid var(--sep); }
+  .sw .c { height: 56px; }
+  .sw .n { font: var(--c1-em); color: var(--label-1); padding: 6px 8px 0; }
+  .sw .v { font: var(--c2); color: var(--label-3); padding: 1px 8px 7px; font-family: var(--font-mono); }
+  .sw-lab { font: var(--c1-em); color: var(--label-2); margin-top: var(--s5); }
+
+  .typ-row { display: flex; align-items: baseline; gap: var(--s4); padding: var(--s3) 0; border-bottom: 0.5px solid var(--sep); }
+  .typ-row:last-child { border-bottom: none; }
+  .typ-meta { width: 220px; flex: none; font: var(--c1); color: var(--label-3); font-family: var(--font-mono); }
+  .typ-meta b { display: block; color: var(--label-2); font-family: var(--font-ui); }
+
+  .lad { display: flex; align-items: flex-end; gap: var(--s4); flex-wrap: wrap; margin-top: var(--s4); }
+  .lad .it { display: flex; flex-direction: column; align-items: center; gap: var(--s2); }
+  .lad .bx { background: var(--fill-2); border: 0.5px solid var(--sep); }
+  .lad .lb { font: var(--c2); color: var(--label-3); font-family: var(--font-mono); }
+  .sp-bar { height: 12px; background: var(--blue); border-radius: 2px; opacity: 0.85; }
+
+  .sh-row { display: flex; gap: var(--s4); flex-wrap: wrap; margin-top: var(--s4); }
+  .sh-row .bx { width: 120px; height: 72px; background: var(--bg-primary); border-radius: var(--r-lg);
+    display: flex; align-items: flex-end; padding: 8px; font: var(--c2); color: var(--label-3); font-family: var(--font-mono); }
+
+  .ez { display: flex; gap: var(--s4); flex-wrap: wrap; margin-top: var(--s4); }
+  .ez .panel { padding: var(--s3) var(--s4); width: 240px; }
+  .ez .nm { font: var(--c1-em); color: var(--label-1); margin-top: var(--s1); }
+  .ez .vl { font: var(--c2); color: var(--label-3); font-family: var(--font-mono); }
+
+  .go { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4); margin-top: var(--s5); }
+  .go a { display: block; text-decoration: none; color: inherit; }
+  .go .panel { padding: var(--s5); transition: background-color 180ms ease, transform 180ms var(--ez-out); }
+  .go a:hover .panel { background: var(--fill-1); }
+  .go .t { font: var(--t2-em); display: flex; align-items: center; gap: var(--s2); }
+  .go .d { font: var(--c1); color: var(--label-3); margin-top: var(--s2); line-height: 1.7; }
+  .go .n { font: 600 28px/36px var(--font-ui); color: var(--blue); }
+  @media (max-width: 760px) { .go { grid-template-columns: 1fr; } .typ-meta { width: 130px; } }
+</style>
+</head>
+<body>
+<div class="board">
+
+  <nav class="nav">
+    <a class="here" href="index.html">设计总览</a>
+    <a href="desktop.html">桌面客户端 ×5</a>
+    <a href="screens.html">悬浮卡片 ×8</a>
+    <a href="interactions.html">交互与动效</a>
+    <span class="sp"></span>
+    <button class="chip" id="themeBtn">切换浅色</button>
+  </nav>
+
+  <header class="b-head">
+    <div class="hero-tag"><span class="dot" style="background:var(--blue)"></span>BocomHermes 客户端设计套件 · v1.0</div>
+    <h1 class="hero-t">安静、克制，<br>为长时间共处的桌面智能体而设计。</h1>
+    <p class="hero-d">BocomHermes 是活在桌面上的个人智能体：透明玻璃对话卡、悬浮球、卡坞、内嵌浏览器与邮件中心。
+      它一天被注视数小时，所以这套设计的最高原则是 <b>Quiet Utility</b>——没有装饰性渐变、没有多余的描边与投影，
+      每一个元素都要挣得自己的位置。色彩、字阶、圆角、动效全部来自<b>语义化设计令牌</b>，
+      深浅双主题只换令牌值，不动一行业务样式。密度与质感对标 Claude Code 桌面端:
+      信息密而不挤,层级靠字重与不透明度说话,而不是靠盒子和线条。形态上,以<b>一体化桌面主窗口</b>为主(desktop.html),
+      悬浮球与迷你卡只保留为快捷入口。</p>
+    <div class="hero-meta">
+      <div><b>2</b>主题(dark 默认 / light)</div>
+      <div><b>8</b>界面全图(screens.html)</div>
+      <div><b>12+</b>组件状态矩阵(interactions.html)</div>
+      <div><b>0</b>外部依赖(离线可开)</div>
+    </div>
+  </header>
+
+  <!-- ── 01 设计原则 ─────────────────────────────── -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">01</span>设计原则 → 落地规则</h2>
+    <p class="b-sec-d">原则不是口号，每一条都翻译成可检查的规则，贯穿后面所有界面与交互稿。</p>
+    <div class="prin">
+      <div class="panel"><div class="en">QUIET UTILITY</div><div class="zh">安静实用</div>
+        <div class="ds">禁装饰性渐变、禁左色条卡片、禁无信息投影。玻璃质感只来自 primary-90 + blur(30px) 这一对令牌。</div></div>
+      <div class="panel"><div class="en">TOKEN FIRST</div><div class="zh">令牌先行</div>
+        <div class="ds">任何颜色/字号/圆角先查令牌表。新增样式写语义变量路径(如 <code>labels.secondary</code>),不写死色值。</div></div>
+      <div class="panel"><div class="en">SEMANTIC HIERARCHY</div><div class="zh">语义层级</div>
+        <div class="ds">一屏最多一个主按钮。文字层级 = labels.primary→quaternary 四档不透明度,而不是四档字号。</div></div>
+      <div class="panel"><div class="en">COMPONENT CONTRACT</div><div class="zh">组件即契约</div>
+        <div class="ds">按钮只有 44/32/26 三档高,开关滑块永远是正圆,Dialog 恒宽 360px。遇到契约没有的形态,先扩充契约再画。</div></div>
+      <div class="panel"><div class="en">PURPOSEFUL MOTION</div><div class="zh">动效有因</div>
+        <div class="ds">动效只为解释状态:进场 scale(0.96)+opacity,按压 0.97,抽屉用 ez-drawer。禁 ease-in、禁弹跳、禁无目的漂浮。</div></div>
+    </div>
+  </section>
+
+  <!-- ── 02 颜色令牌 ─────────────────────────────── -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">02</span>颜色令牌</h2>
+    <p class="b-sec-d">全部来自 tokens.json 的语义路径,深浅主题同路径不同值。右侧色值随当前主题实时变化(点右上角切换验证)。</p>
+
+    <div class="sw-lab">背景阶梯 background.*</div>
+    <div class="sw-row">
+      <div class="sw"><div class="c" style="background:var(--bg-primary);border-bottom:0.5px solid var(--sep)"></div><div class="n">primary</div><div class="v">--bg-primary</div></div>
+      <div class="sw"><div class="c" style="background:var(--bg-secondary)"></div><div class="n">secondary</div><div class="v">--bg-secondary</div></div>
+      <div class="sw"><div class="c" style="background:var(--bg-tertiary)"></div><div class="n">tertiary</div><div class="v">--bg-tertiary</div></div>
+      <div class="sw"><div class="c" style="background:var(--bg-quaternary)"></div><div class="n">quaternary</div><div class="v">--bg-quaternary</div></div>
+      <div class="sw"><div class="c" style="background:var(--bg-ground)"></div><div class="n">groundPc</div><div class="v">--bg-ground</div></div>
+    </div>
+
+    <div class="sw-lab">文字阶梯 labels.*(不透明度即层级)</div>
+    <div class="sw-row">
+      <div class="sw"><div class="c" style="background:var(--label-1)"></div><div class="n">primary</div><div class="v">--label-1</div></div>
+      <div class="sw"><div class="c" style="background:var(--label-2)"></div><div class="n">secondary</div><div class="v">--label-2</div></div>
+      <div class="sw"><div class="c" style="background:var(--label-3)"></div><div class="n">tertiary</div><div class="v">--label-3</div></div>
+      <div class="sw"><div class="c" style="background:var(--label-4)"></div><div class="n">quaternary</div><div class="v">--label-4</div></div>
+    </div>
+
+    <div class="sw-lab">填充与分隔 fills.* / separator</div>
+    <div class="sw-row">
+      <div class="sw"><div class="c" style="background:var(--fill-1)"></div><div class="n">fills.f1</div><div class="v">--fill-1</div></div>
+      <div class="sw"><div class="c" style="background:var(--fill-2)"></div><div class="n">fills.f2</div><div class="v">--fill-2</div></div>
+      <div class="sw"><div class="c" style="background:var(--fill-3)"></div><div class="n">fills.f3</div><div class="v">--fill-3</div></div>
+      <div class="sw"><div class="c" style="background:var(--fill-4)"></div><div class="n">fills.f4</div><div class="v">--fill-4</div></div>
+      <div class="sw"><div class="c" style="background:var(--sep)"></div><div class="n">separator.s1</div><div class="v">--sep · 0.5px 专用</div></div>
+    </div>
+
+    <div class="sw-lab">状态色 status.*(唯一允许的功能色彩,大面积铺色一律 10% 底)</div>
+    <div class="sw-row">
+      <div class="sw"><div class="c" style="background:var(--blue)"></div><div class="n">kimiBlue</div><div class="v">--blue · 链接/进行中</div></div>
+      <div class="sw"><div class="c" style="background:var(--green)"></div><div class="n">positiveGreen</div><div class="v">--green · 成功/保活</div></div>
+      <div class="sw"><div class="c" style="background:var(--danger)"></div><div class="n">danger</div><div class="v">--danger · 拒绝/高危</div></div>
+      <div class="sw"><div class="c" style="background:var(--orange)"></div><div class="n">orange</div><div class="v">--orange · 待批准/警告</div></div>
+      <div class="sw"><div class="c" style="background:var(--yellow)"></div><div class="n">yellow</div><div class="v">--yellow · 降级提醒</div></div>
+      <div class="sw"><div class="c" style="background:var(--purple)"></div><div class="n">purple</div><div class="v">--purple · 子 Agent 标记</div></div>
+    </div>
+
+    <div class="sw-lab">功能色 others.* / mask</div>
+    <div class="sw-row">
+      <div class="sw"><div class="c" style="background:var(--selected)"></div><div class="n">textSelected</div><div class="v">--selected</div></div>
+      <div class="sw"><div class="c" style="background:var(--bubble-user)"></div><div class="n">bubbleGrayPc</div><div class="v">--bubble-user · 用户气泡</div></div>
+      <div class="sw"><div class="c" style="background:var(--toast-bg)"></div><div class="n">toastPc</div><div class="v">--toast-bg · 恒定深底</div></div>
+      <div class="sw"><div class="c" style="background:var(--blue-10)"></div><div class="n">kimiBlue10</div><div class="v">--blue-10</div></div>
+      <div class="sw"><div class="c" style="background:var(--green-10)"></div><div class="n">lightGreenBg</div><div class="v">--green-10</div></div>
+      <div class="sw"><div class="c" style="background:var(--orange-10)"></div><div class="n">lightOrangeBg</div><div class="v">--orange-10</div></div>
+    </div>
+
+    <div class="sw-lab">代码高亮 syntax.*(仅 code 场景使用,不得挪作装饰)</div>
+    <div class="sw-row">
+      <div class="sw"><div class="c" style="background:var(--syn-kw)"></div><div class="n">keyword</div><div class="v">--syn-kw</div></div>
+      <div class="sw"><div class="c" style="background:var(--syn-str)"></div><div class="n">string</div><div class="v">--syn-str</div></div>
+      <div class="sw"><div class="c" style="background:var(--syn-fn)"></div><div class="n">function</div><div class="v">--syn-fn</div></div>
+      <div class="sw"><div class="c" style="background:var(--syn-var)"></div><div class="n">variable</div><div class="v">--syn-var</div></div>
+      <div class="sw"><div class="c" style="background:var(--syn-num)"></div><div class="n">number</div><div class="v">--syn-num</div></div>
+      <div class="sw"><div class="c" style="background:var(--syn-cmt)"></div><div class="n">comment</div><div class="v">--syn-cmt</div></div>
+    </div>
+  </section>
+
+  <!-- ── 03 字阶 ───────────────────────────────── -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">03</span>字阶 typography.webUI + markdown</h2>
+    <p class="b-sec-d">UI 主体只有 14px(b2)与 12px(c1)两档,靠字重与不透明度分层;16px 以上只给标题。
+      中文 PingFang SC,代码 Geist Mono/等宽栈,数字开 tnum 等宽。中文场景禁 italic。</p>
+    <div class="panel pad" style="margin-top:var(--s5)">
+      <div class="typ-row"><div class="typ-meta"><b>largeTitleEmphasized</b>20/30 · 600</div><div style="font:var(--t-largeTitle)">卡坞 · 任务编排</div></div>
+      <div class="typ-row"><div class="typ-meta"><b>t2Emphasized</b>16/24 · 500</div><div style="font:var(--t2-em)">批准闸:等待开始执行</div></div>
+      <div class="typ-row"><div class="typ-meta"><b>t2Regular</b>16/24 · 400</div><div style="font:var(--t2)">输入框正文与光标</div></div>
+      <div class="typ-row"><div class="typ-meta"><b>b1Emphasized</b>15/22 · 500</div><div style="font:var(--b1-em)">对话卡标题 · 信贷管理系统</div></div>
+      <div class="typ-row"><div class="typ-meta"><b>b1Regular</b>15/22 · 400</div><div style="font:var(--b1)">技能卡片正文与列表主行</div></div>
+      <div class="typ-row"><div class="typ-meta"><b>b2Emphasized</b>14/20 · 500</div><div style="font:var(--b2-em)">按钮文字 / 工具调用名</div></div>
+      <div class="typ-row"><div class="typ-meta"><b>b2Regular</b>14/20 · 400</div><div style="font:var(--b2);color:var(--label-2)">界面主力字号:菜单、表单、辅助说明</div></div>
+      <div class="typ-row"><div class="typ-meta"><b>c1Emphasized</b>12/18 · 500</div><div style="font:var(--c1-em)">徽标 / 上下文 chip / 步骤指示</div></div>
+      <div class="typ-row"><div class="typ-meta"><b>c1Regular</b>12/18 · 400</div><div style="font:var(--c1);color:var(--label-3)">元信息:耗时、时间戳、文件路径</div></div>
+      <div class="typ-row"><div class="typ-meta"><b>c2Regular</b>10/14 · 400</div><div style="font:var(--c2);color:var(--label-3)">角标与快捷键提示 ⌘B</div></div>
+      <div class="typ-row"><div class="typ-meta"><b>markdown.b1Content</b>16/26</div><div style="font:var(--md-body)">AI 回答的正文,行高放到 26,长读不累。</div></div>
+      <div class="typ-row"><div class="typ-meta"><b>markdown.codeblocks</b>14/22 mono</div><div style="font:var(--md-code)">InterestCalc.monthly(principal, rate)</div></div>
+    </div>
+  </section>
+
+  <!-- ── 04 圆角/间距/阴影/动效 ──────────────────── -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">04</span>圆角 · 间距 · 阴影 · 动效曲线</h2>
+    <p class="b-sec-d">间距节奏只有 4/8/12/16/20/24/32 七档,凭手感排版的自由被有意剥夺——一致性由此而来。</p>
+
+    <div class="sw-lab">radius.*(输入容器特许 20px,其余不出表)</div>
+    <div class="lad">
+      <div class="it"><div class="bx" style="width:56px;height:56px;border-radius:4px"></div><div class="lb">xxs 4</div></div>
+      <div class="it"><div class="bx" style="width:56px;height:56px;border-radius:8px"></div><div class="lb">sm 8</div></div>
+      <div class="it"><div class="bx" style="width:56px;height:56px;border-radius:10px"></div><div class="lb">md 10</div></div>
+      <div class="it"><div class="bx" style="width:56px;height:56px;border-radius:12px"></div><div class="lb">lg 12</div></div>
+      <div class="it"><div class="bx" style="width:56px;height:56px;border-radius:16px"></div><div class="lb">xl 16</div></div>
+      <div class="it"><div class="bx" style="width:56px;height:56px;border-radius:100px"></div><div class="lb">full</div></div>
+    </div>
+
+    <div class="sw-lab">spacing 节奏(横向条长即数值)</div>
+    <div class="col" style="margin-top:var(--s3);gap:10px">
+      <div class="row" style="gap:12px"><div class="sp-bar" style="width:4px"></div><span class="lb" style="font:var(--c2);color:var(--label-3)">4 · 图标-文字</span></div>
+      <div class="row" style="gap:12px"><div class="sp-bar" style="width:8px"></div><span style="font:var(--c2);color:var(--label-3)">8 · 紧凑内边距</span></div>
+      <div class="row" style="gap:12px"><div class="sp-bar" style="width:12px"></div><span style="font:var(--c2);color:var(--label-3)">12 · 卡片内边距</span></div>
+      <div class="row" style="gap:12px"><div class="sp-bar" style="width:16px"></div><span style="font:var(--c2);color:var(--label-3)">16 · 常规内边距</span></div>
+      <div class="row" style="gap:12px"><div class="sp-bar" style="width:20px"></div><span style="font:var(--c2);color:var(--label-3)">20 · 区块间隔</span></div>
+      <div class="row" style="gap:12px"><div class="sp-bar" style="width:24px"></div><span style="font:var(--c2);color:var(--label-3)">24 · 小节间隔</span></div>
+      <div class="row" style="gap:12px"><div class="sp-bar" style="width:32px"></div><span style="font:var(--c2);color:var(--label-3)">32 · 大区块间隔</span></div>
+    </div>
+
+    <div class="sw-lab">effect.shadow.*(Surface Over Stroke:有投影就不用描边,二选一)</div>
+    <div class="sh-row">
+      <div class="bx" style="box-shadow:var(--shadow-input)">inputDefault</div>
+      <div class="bx" style="box-shadow:var(--shadow-small)">small</div>
+      <div class="bx" style="box-shadow:var(--shadow-medium)">medium</div>
+    </div>
+
+    <div class="sw-lab">easing(animation.md:禁 ease-in / 禁 bounce,只动 transform 与 opacity)</div>
+    <div class="ez">
+      <div class="panel">
+        <svg width="200" height="72" viewBox="0 0 200 72"><g stroke="rgba(128,128,128,0.25)" stroke-width="0.5"><path d="M16 4v64M16 4h176M16 68h176"/></g><path d="M16 68 C 56 68, 178 4, 192 4" fill="none" stroke="var(--blue)" stroke-width="1.8"/></svg>
+        <div class="nm">ez-out · 进/出场</div><div class="vl">cubic-bezier(0.23, 1, 0.32, 1)</div>
+      </div>
+      <div class="panel">
+        <svg width="200" height="72" viewBox="0 0 200 72"><g stroke="rgba(128,128,128,0.25)" stroke-width="0.5"><path d="M16 4v64M16 4h176M16 68h176"/></g><path d="M16 68 C 152 68, 44 4, 192 4" fill="none" stroke="var(--green)" stroke-width="1.8"/></svg>
+        <div class="nm">ez-inout · 屏内移动</div><div class="vl">cubic-bezier(0.77, 0, 0.175, 1)</div>
+      </div>
+      <div class="panel">
+        <svg width="200" height="72" viewBox="0 0 200 72"><g stroke="rgba(128,128,128,0.25)" stroke-width="0.5"><path d="M16 4v64M16 4h176M16 68h176"/></g><path d="M16 68 C 80 22, 96 4, 192 4" fill="none" stroke="var(--orange)" stroke-width="1.8"/></svg>
+        <div class="nm">ez-drawer · 抽屉/侧边栏</div><div class="vl">cubic-bezier(0.32, 0.72, 0, 1) · 250-400ms</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 05 进入图纸 ─────────────────────────────── -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">05</span>进入图纸</h2>
+    <div class="go">
+      <a href="desktop.html" style="grid-column:1/-1"><div class="panel" style="border-color:var(--blue)">
+        <div class="n">05</div>
+        <div class="t">桌面客户端 desktop.html <span class="badge blue" style="margin-left:4px">主形态</span>
+          <svg class="ic s16" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+        <div class="d">一体化桌面主窗口:自绘标题栏 + 侧栏导航 + 主工作区 + 状态栏。含形态总览与对话 / 任务编排 / 邮件 / 设置四个视图。</div>
+      </div></a>
+      <a href="screens.html"><div class="panel">
+        <div class="n">08</div>
+        <div class="t">界面图 screens.html
+          <svg class="ic s16" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+        <div class="d">悬浮球与全局输入、对话卡三态、工作流卡、卡坞、技能中心、邮件中心、设置与知识库。
+          每一屏下方附令牌注解,可对照查值。</div>
+      </div></a>
+      <a href="interactions.html"><div class="panel">
+        <div class="n">12+</div>
+        <div class="t">交互与动效 interactions.html
+          <svg class="ic s16" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+        <div class="d">组件状态矩阵、动效规格表、四条关键交互流分镜、多卡并行染色、空态/错误态/加载态。</div>
+      </div></a>
+    </div>
+    <p class="b-note">本套件零外部依赖、零网络请求,双击即可离线打开;所有颜色随 <b>data-theme</b> 一键切换,即令牌化的活证明。</p>
+  </section>
+
+</div>
+<script>
+  (function () {
+    var h = document.documentElement, b = document.getElementById('themeBtn');
+    function r() { b.textContent = h.dataset.theme === 'dark' ? '切换浅色' : '切换深色'; }
+    b.addEventListener('click', function () { h.dataset.theme = h.dataset.theme === 'dark' ? 'light' : 'dark'; r(); });
+    r();
+  })();
+</script>
+</body>
+</html>

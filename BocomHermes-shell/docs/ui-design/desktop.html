@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BocomHermes 设计套件 · 桌面客户端</title>
+<link rel="stylesheet" href="design.css">
+<style>
+  .nav { display:flex; align-items:center; gap:var(--s2); flex-wrap:wrap; }
+  .nav a { font:var(--b2); color:var(--label-3); text-decoration:none; padding:6px 10px; border-radius:var(--r-sm); }
+  .nav a:hover { color:var(--label-1); background:var(--fill-1); }
+  .nav a.here { color:var(--label-1); background:var(--fill-2); }
+  .nav .sp { flex:1; }
+  .shot { margin-top:var(--s5); }
+  .spec { margin-top:var(--s3); }
+  .spec li { margin-left:16px; margin-top:2px; }
+
+  /* ══ 桌面窗口壳 ══ */
+  .d-win { width:100%; max-width:1180px; margin:0 auto; height:700px; display:grid; grid-template-rows:38px 1fr 28px;
+    background:var(--bg-primary); border:0.5px solid var(--sep); border-radius:var(--r-lg);
+    box-shadow:var(--shadow-medium); overflow:hidden; text-align:left; }
+  .d-tb { display:flex; align-items:center; gap:8px; padding:0 14px; background:var(--bg-secondary); border-bottom:0.5px solid var(--sep); }
+  .d-tl { display:flex; gap:8px; }
+  .d-tl i { width:12px; height:12px; border-radius:50%; }
+  .d-tl i:nth-child(1){background:#ff5f57} .d-tl i:nth-child(2){background:#febc2e} .d-tl i:nth-child(3){background:#28c840}
+  .d-tb .tt { font:var(--b2-em); color:var(--label-2); margin-left:8px; }
+  .d-tb .rt { margin-left:auto; display:flex; align-items:center; gap:8px; }
+  .d-body { display:grid; grid-template-columns:228px 1fr; min-height:0; }
+  .d-body.has-r { grid-template-columns:228px 1fr 264px; }
+  .d-side { background:var(--bg-secondary); border-right:0.5px solid var(--sep); padding:10px 8px;
+    display:flex; flex-direction:column; gap:2px; overflow:hidden; }
+  .d-logo { display:flex; align-items:center; gap:8px; padding:4px 8px 12px; font:var(--b1-em); color:var(--blue); }
+  .d-logo b { color:var(--label-1); font-weight:600; }
+  .d-new { margin:0 4px 10px; }
+  .d-new button { width:100%; }
+  .d-lab { font:var(--c2); color:var(--label-4); letter-spacing:0.08em; padding:10px 8px 4px; }
+  .d-item { display:flex; align-items:center; gap:8px; padding:7px 8px; border-radius:var(--r-sm); font:var(--b2); color:var(--label-2); cursor:pointer; }
+  .d-item:hover { background:var(--fill-1); }
+  .d-item.on { background:var(--fill-2); color:var(--label-1); }
+  .d-item .mt { margin-left:auto; font:var(--c2); color:var(--label-4); }
+  .d-sess { display:flex; flex-direction:column; gap:1px; }
+  .d-sess .r2 { font:var(--c2); color:var(--label-4); padding-left:22px; margin-top:-3px; padding-bottom:3px; }
+  .d-main { min-width:0; display:flex; flex-direction:column; }
+  .d-status { display:flex; align-items:center; gap:14px; padding:0 14px; border-top:0.5px solid var(--sep);
+    font:var(--c1); color:var(--label-3); background:var(--bg-secondary); }
+  .d-status .rt { margin-left:auto; display:flex; align-items:center; gap:14px; }
+  .d-status code { font-family:var(--font-mono); font-size:11px; }
+
+  /* 对话主区 */
+  .d-chat { flex:1; overflow:hidden; padding:20px 28px 12px; display:flex; flex-direction:column; gap:16px; }
+  .d-msg-u { align-self:flex-end; max-width:70%; background:var(--bubble-user); border-radius:var(--r-xl); padding:8px 14px; font:var(--b2); }
+  .d-md { font:var(--md-body); max-width:640px; display:flex; flex-direction:column; gap:8px; }
+  .d-md code { font-family:var(--font-mono); font-size:13.5px; background:var(--fill-1); padding:1px 5px; border-radius:var(--r-xxs); }
+  .d-md ul { padding-left:18px; display:flex; flex-direction:column; gap:4px; }
+  .d-tool { display:flex; align-items:center; gap:8px; max-width:640px; padding:7px 10px; border-radius:var(--r-md);
+    background:var(--fill-1); font:var(--c1); color:var(--label-2); }
+  .d-tool .fn { font-family:var(--font-mono); color:var(--label-1); font-weight:500; }
+  .d-tool .ms { margin-left:auto; color:var(--label-3); font-family:var(--font-mono); font-size:11px; }
+  .d-composer { padding:0 28px 16px; display:flex; flex-direction:column; gap:10px; }
+  .d-perm { border:0.5px solid var(--orange); background:var(--orange-10); border-radius:var(--r-lg);
+    padding:12px 14px; display:flex; flex-direction:column; gap:10px; max-width:760px; }
+  .d-perm .tt { display:flex; align-items:center; gap:8px; font:var(--b2-em); }
+  .d-perm .tt .tag { margin-left:auto; }
+  .d-perm .cmd { font-family:var(--font-mono); font-size:12.5px; background:rgba(0,0,0,0.22); border-radius:var(--r-sm); padding:7px 10px; }
+  html[data-theme="light"] .d-perm .cmd { background:rgba(0,0,0,0.05); }
+  .d-perm .acts { display:flex; gap:8px; }
+  .k-chip { display:inline-flex; align-items:center; gap:4px; height:22px; padding:0 8px; border-radius:var(--r-full);
+    background:var(--fill-2); font:var(--c1-em); color:var(--label-2); white-space:nowrap; }
+  .k-chip.green { background:var(--green-10); color:var(--green); }
+  .k-chip.orange { background:var(--orange-10); color:var(--orange); }
+  .ibar { display:flex; align-items:center; gap:6px; padding:4px 8px 8px; }
+  .k-send { width:28px; height:28px; border-radius:50%; background:var(--brand); color:var(--brand-text);
+    display:inline-flex; align-items:center; justify-content:center; }
+
+  /* 右侧面板 */
+  .d-right { border-left:0.5px solid var(--sep); background:var(--bg-secondary); padding:14px 12px;
+    display:flex; flex-direction:column; gap:14px; overflow:hidden; }
+  .d-rsec { display:flex; flex-direction:column; gap:8px; }
+  .d-rt { font:var(--c1-em); color:var(--label-3); letter-spacing:0.04em; display:flex; align-items:center; gap:6px; }
+  .d-rt .n { margin-left:auto; }
+  .w-step { display:flex; align-items:center; gap:8px; font:var(--c1); color:var(--label-2); }
+  .w-step .st { width:14px; height:14px; border-radius:50%; flex:none; display:inline-flex; align-items:center; justify-content:center; }
+  .w-step.done { color:var(--label-3); }
+  .w-step.done .st { background:var(--green); color:#fff; }
+  .w-step.doing .st { border:1.5px solid var(--blue); }
+  .w-step.doing .st::after { content:""; width:5px; height:5px; border-radius:50%; background:var(--blue); }
+  .w-step.todo { color:var(--label-4); }
+  .w-step.todo .st { border:1.5px solid var(--fill-4); }
+  .d-agent { display:flex; align-items:center; gap:8px; padding:8px; border:0.5px solid var(--sep); border-radius:var(--r-md); font:var(--c1); }
+  .d-file { display:flex; align-items:center; gap:6px; font:var(--c1); color:var(--label-2); padding:5px 6px; border-radius:var(--r-xxs); }
+  .d-file:hover { background:var(--fill-1); }
+  .d-file .sz { margin-left:auto; color:var(--label-4); font-family:var(--font-mono); font-size:10px; }
+  .d-kb { display:flex; align-items:center; gap:6px; font:var(--c1); color:var(--label-2); }
+
+  /* 编排视图 */
+  .d-wf-list { border-right:0.5px solid var(--sep); display:flex; flex-direction:column; background:var(--bg-secondary); }
+  .d-wf-row { padding:12px 14px; border-bottom:0.5px solid var(--sep); cursor:pointer; }
+  .d-wf-row:hover { background:var(--fill-1); }
+  .d-wf-row.on { background:var(--fill-2); }
+  .d-wf-row .nm { font:var(--b2-em); display:flex; align-items:center; gap:8px; }
+  .d-wf-row .mt { font:var(--c1); color:var(--label-3); margin-top:3px; }
+  .bar { width:100%; height:3px; border-radius:var(--r-full); background:var(--fill-2); overflow:hidden; margin-top:8px; }
+  .bar i { display:block; height:100%; background:var(--blue); border-radius:var(--r-full); }
+  .d-wf-detail { padding:20px 24px; display:flex; flex-direction:column; gap:14px; overflow:hidden; }
+  .w-gate { border:0.5px solid var(--sep); border-radius:var(--r-lg); padding:14px; display:flex; flex-direction:column; gap:10px; background:var(--fill-1); }
+  .w-gate .tt { display:flex; align-items:center; gap:8px; font:var(--t2-em); }
+  .w-gate .ds { font:var(--b2); color:var(--label-2); line-height:20px; }
+  .w-count { display:inline-flex; align-items:center; gap:6px; font:var(--c1-em); color:var(--orange); }
+  .w-todo2 { display:grid; grid-template-columns:1fr 1fr; gap:6px 20px; }
+  .w-todo2 .w-step { font:var(--b2); padding:6px 8px; border-radius:var(--r-md); }
+  .w-todo2 .w-step .st { width:16px; height:16px; }
+
+  /* 邮件视图 */
+  .mail { display:grid; grid-template-columns:170px 240px 1fr; height:100%; min-height:0; }
+  .mail .c1x { border-right:0.5px solid var(--sep); padding:10px 8px; display:flex; flex-direction:column; gap:2px; background:var(--bg-secondary); }
+  .mail .fld { display:flex; align-items:center; gap:8px; padding:7px 8px; border-radius:var(--r-sm); font:var(--b2); color:var(--label-2); }
+  .mail .fld.on { background:var(--fill-2); color:var(--label-1); }
+  .mail .fld .ct { margin-left:auto; font:var(--c1); color:var(--label-3); }
+  .mail .lst { border-right:0.5px solid var(--sep); overflow:hidden; }
+  .mail .mi { padding:10px 12px; border-bottom:0.5px solid var(--sep); display:flex; flex-direction:column; gap:2px; }
+  .mail .mi.on { background:var(--fill-2); }
+  .mail .mi .r1 { display:flex; align-items:center; gap:6px; font:var(--b2-em); }
+  .mail .mi .r1 time { margin-left:auto; font:var(--c1); color:var(--label-3); font-weight:400; }
+  .mail .mi .r2 { font:var(--b2); color:var(--label-2); }
+  .mail .mi .r3 { font:var(--c1); color:var(--label-3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .mail .rd { padding:18px 22px; display:flex; flex-direction:column; gap:12px; }
+  .mail .av { width:32px; height:32px; border-radius:50%; background:var(--fill-3); display:inline-flex; align-items:center; justify-content:center; font:var(--c1-em); }
+  .gatebar { display:flex; align-items:center; gap:10px; padding:10px 14px; border-top:0.5px solid var(--sep); background:var(--orange-10); }
+  .gatebar .tx { font:var(--b2); }
+  .gatebar .tx b { color:var(--orange); font-weight:500; }
+
+  /* 设置视图 */
+  .knob { display:flex; flex-direction:column; gap:6px; }
+  .knob .lb { font:var(--b2); }
+  .knob .hint { font:var(--c1); color:var(--label-3); }
+  .num { display:flex; align-items:center; height:32px; border:0.5px solid var(--sep); border-radius:var(--r-md); background:var(--fill-1); padding:0 10px; gap:6px; }
+  .num input { width:100%; background:none; border:none; outline:none; font:var(--b2); font-family:var(--font-mono); }
+  .num .un { font:var(--c1); color:var(--label-3); flex:none; }
+  .kn-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px 16px; }
+  .kb-row { display:flex; align-items:center; gap:10px; padding:10px 12px; border:0.5px solid var(--sep); border-radius:var(--r-lg); }
+  .kb-row .nm { font:var(--b2-em); }
+  .kb-row .mt { font:var(--c1); color:var(--label-3); margin-top:1px; }
+  .kb-row .rt { margin-left:auto; display:flex; gap:4px; }
+  .dot { width:6px; height:6px; border-radius:50%; background:currentColor; flex:none; }
+
+  /* W0 形态图 */
+  .forms { display:grid; grid-template-columns:1.6fr 1fr 0.7fr; gap:16px; align-items:stretch; }
+  .form-c { border:0.5px solid var(--sep); border-radius:var(--r-lg); background:var(--bg-primary); padding:16px;
+    display:flex; flex-direction:column; gap:10px; align-items:center; justify-content:center; min-height:220px; text-align:center; }
+  .form-c .t { font:var(--b2-em); }
+  .form-c .d { font:var(--c1); color:var(--label-3); line-height:1.7; }
+  .form-c.primary { border-color:var(--blue); }
+  .badge.blue { background:var(--blue-10); color:var(--blue); }
+  .badge.gray { background:var(--fill-2); color:var(--label-2); }
+  .mini-win { width:100%; height:110px; border:0.5px solid var(--sep); border-radius:8px; background:var(--bg-secondary); display:grid; grid-template-rows:12px 1fr; overflow:hidden; }
+  .mini-win .tb { background:var(--fill-2); display:flex; align-items:center; gap:3px; padding:0 5px; }
+  .mini-win .tb i { width:5px; height:5px; border-radius:50%; background:var(--label-4); }
+  .mini-win .bd { display:grid; grid-template-columns:30px 1fr; }
+  .mini-win .sd { background:var(--fill-1); border-right:0.5px solid var(--sep); }
+  .mini-card { width:130px; height:96px; border-radius:12px; background:var(--bg-primary-90); border:0.5px solid var(--sep);
+    box-shadow:var(--shadow-small); display:grid; grid-template-rows:16px 1fr; overflow:hidden; }
+  .mini-card .hd { background:var(--fill-1); display:flex; align-items:center; gap:4px; padding:0 6px; }
+  .mini-orb { width:52px; height:52px; border-radius:50%; background:var(--bg-primary-90); border:0.5px solid var(--sep);
+    box-shadow:var(--shadow-small); display:flex; align-items:center; justify-content:center; color:var(--blue); position:relative; }
+  .spin { width:10px; height:10px; border-radius:50%; border:1.5px solid var(--blue); border-top-color:transparent; animation:rot 0.8s linear infinite; flex:none; }
+  @keyframes rot { to { transform:rotate(360deg); } }
+  .cur { display:inline-block; width:8px; height:16px; background:var(--label-1); border-radius:1px; vertical-align:-2px; animation:blink 1.06s steps(1) infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+</style>
+</head>
+<body>
+<div class="board">
+
+  <nav class="nav">
+    <a href="index.html">设计总览</a>
+    <a class="here" href="desktop.html">桌面客户端 ×5</a>
+    <a href="screens.html">悬浮卡片 ×8</a>
+    <a href="interactions.html">交互与动效</a>
+    <span class="sp"></span>
+    <button class="chip" id="themeBtn">切换浅色</button>
+  </nav>
+
+  <header class="b-head">
+    <h1 class="b-title">桌面客户端 · 主窗口形态</h1>
+    <p class="b-sub">一体化桌面应用:自绘标题栏 + 左侧导航 + 主工作区 + 状态栏,对标 Claude Code 桌面端的密度与秩序。
+      悬浮球与迷你卡不退场,降级为「快捷入口」——主窗口承载完整工作,轻量形态负责唤起与盯梢。</p>
+  </header>
+
+  <!-- ═══ W0 形态总览 ═══ -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">W0</span>三种形态 · 主从关系</h2>
+    <p class="b-sec-d">桌面主窗口是唯一完整形态;迷你卡是「钉住单个会话」的盯梢窗;悬浮球是全局唤起点。三者共享同一套会话与令牌。</p>
+    <div class="shot" style="background:var(--bg-primary)">
+      <div class="forms">
+        <div class="form-c primary">
+          <div class="mini-win">
+            <div class="tb"><i></i><i></i><i></i></div>
+            <div class="bd"><div class="sd"></div><div></div></div>
+          </div>
+          <div class="t">桌面主窗口 <span class="badge blue">主形态</span></div>
+          <div class="d">1280×800 起 · 侧栏导航 + 主工作区 + 状态栏<br>对话 / 编排 / 邮件 / 技能 / 设置全部收编</div>
+        </div>
+        <div class="form-c">
+          <div class="mini-card">
+            <div class="hd"><span class="dot" style="background:var(--blue);width:4px;height:4px"></span></div>
+            <div></div>
+          </div>
+          <div class="t">迷你卡 <span class="badge gray">盯梢</span></div>
+          <div class="d">从主窗口「钉出」单个会话<br>半透明小窗,跑长任务时挂桌面角落</div>
+        </div>
+        <div class="form-c">
+          <div class="mini-orb">
+            <svg class="ic" style="width:22px;height:22px" viewBox="0 0 24 24"><path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4L12 3z"/></svg>
+          </div>
+          <div class="t">悬浮球 <span class="badge gray">唤起</span></div>
+          <div class="d">桌面常驻<br>Ctrl+Shift+Space 唤起输入,回车直达主窗口</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ W1 对话视图 ═══ -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">W1</span>主窗口 · 对话视图</h2>
+    <p class="b-sec-d">核心生产力界面。左栏会话列表(状态点+模型+上下文),中间消息流与输入容器,右栏任务上下文(可折叠),底栏引擎与 token 真值。</p>
+    <div class="shot darkstage" style="padding:24px">
+      <div class="d-win">
+        <!-- 标题栏 -->
+        <div class="d-tb">
+          <div class="d-tl"><i></i><i></i><i></i></div>
+          <span class="tt">BocomHermes</span>
+          <div class="rt">
+            <span class="k-chip green"><span class="dot" style="background:var(--green)"></span>引擎已连接</span>
+            <button class="ibtn"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
+          </div>
+        </div>
+        <!-- 主体 -->
+        <div class="d-body has-r">
+          <!-- 侧栏 -->
+          <div class="d-side">
+            <div class="d-logo"><svg class="ic" style="width:20px;height:20px" viewBox="0 0 24 24"><path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4L12 3z"/></svg><b>BocomHermes</b></div>
+            <div class="d-new"><button class="btn pri s26" style="height:30px"><svg class="ic s16" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>新建对话</button></div>
+            <div class="d-lab">会话 · LOAN-WEB</div>
+            <div class="d-sess">
+              <div class="d-item on"><span class="dot" style="background:var(--blue)"></span>结息口径修复<span class="mt">42%</span></div>
+              <div class="r2">qwen3-coder · 运行中</div>
+              <div class="d-item"><span class="dot" style="background:var(--green)"></span>银企对账下载<span class="mt">完</span></div>
+              <div class="d-item"><span class="dot" style="background:var(--purple)"></span>需求评审<span class="mt">R2</span></div>
+            </div>
+            <div class="d-lab">编排</div>
+            <div class="d-item"><svg class="ic s16" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5z"/><path d="m3 13 9 5 9-5"/></svg>任务编排<span class="mt badge orange" style="margin-left:auto">1</span></div>
+            <div class="d-lab">资源</div>
+            <div class="d-item"><svg class="ic s16" viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>技能中心</div>
+            <div class="d-item"><svg class="ic s16" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 8 9 5.5L21 8"/></svg>邮件中心<span class="mt badge orange" style="margin-left:auto">1</span></div>
+            <div class="d-item"><svg class="ic s16" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5v14z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/></svg>知识库</div>
+            <div class="d-item"><svg class="ic s16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 4 5.7 4 9s-1.5 6.4-4 9c-2.5-2.6-4-5.7-4-9s1.5-6.4 4-9z"/></svg>内嵌浏览器</div>
+            <div style="flex:1"></div>
+            <div class="d-item"><svg class="ic s16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg>设置</div>
+          </div>
+          <!-- 对话流 -->
+          <div class="d-main">
+            <div class="d-chat">
+              <div class="d-msg-u">月度结息金额和核心系统对不上,帮我看下 InterestCalc.monthly() 的逻辑</div>
+              <div class="d-md">
+                <p style="line-height:26px">我读了 <code>InterestCalc.java</code> 的 <code>monthly()</code>,差额来自计息天数口径:</p>
+                <ul>
+                  <li>当前实现按 <b>30/360</b> 折算(第 87 行);</li>
+                  <li>核心系统按 <b>实际天数/365</b> 计息;</li>
+                  <li>跨月分段时,2 月会少算 1–2 天。</li>
+                </ul>
+              </div>
+              <div class="d-tool"><svg class="ic s16" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg><span class="fn">read</span>src/interest/InterestCalc.java<span class="ms">120ms</span></div>
+              <div class="d-tool"><svg class="ic s16" viewBox="0 0 24 24"><path d="m4 17 6-6-6-6M12 19h8"/></svg><span class="fn">bash</span>mvn test -pl interest<span class="ms">8.4s</span><span style="color:var(--green)">✓ 12 passed</span></div>
+              <div class="d-md"><p style="line-height:26px">口径已统一到实际天数/365,单测全绿。下一步部署到联调环境:<span class="cur"></span></p></div>
+            </div>
+            <div class="d-composer">
+              <div class="d-perm">
+                <div class="tt"><svg class="ic" viewBox="0 0 24 24" style="color:var(--orange)"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3z"/></svg>opencode 请求执行命令<span class="tag badge orange">写操作</span></div>
+                <div class="cmd">mvn deploy -pl interest -DskipTests</div>
+                <div class="acts">
+                  <button class="btn pri s26">允许一次 Y</button>
+                  <button class="btn sec s26">总是允许 A</button>
+                  <button class="btn out danger s26">拒绝 N</button>
+                </div>
+              </div>
+              <div class="inputbox">
+                <textarea rows="2" placeholder="追问,或粘贴截图 / 文件…  (Enter 发送,Shift+Enter 换行)"></textarea>
+                <div class="ibar">
+                  <span class="k-chip"><svg class="ic s16" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/></svg>qwen3-coder</span>
+                  <span class="k-chip"><svg class="ic s16" viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>/ 技能</span>
+                  <button class="ibtn"><svg class="ic" viewBox="0 0 24 24"><path d="M21 12.5l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8L13 5a3.5 3.5 0 0 1 5 5l-8.5 8.5a1.5 1.5 0 0 1-2.1-2.1L15.2 8.7"/></svg></button>
+                  <span style="flex:1"></span>
+                  <span style="font:var(--c1);color:var(--label-3);font-family:var(--font-mono)">12,480 / 30,000 tok</span>
+                  <button class="k-send"><svg class="ic s16" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- 右侧面板 -->
+          <div class="d-right">
+            <div class="d-rsec">
+              <div class="d-rt">任务进展<span class="n">3/5</span></div>
+              <div class="w-step done"><span class="st"><svg class="ic" viewBox="0 0 24 24" style="width:9px;height:9px;stroke-width:2.6"><path d="M20 6 9 17l-5-5"/></svg></span>定位计息代码</div>
+              <div class="w-step done"><span class="st"><svg class="ic" viewBox="0 0 24 24" style="width:9px;height:9px;stroke-width:2.6"><path d="M20 6 9 17l-5-5"/></svg></span>复现差额并取证</div>
+              <div class="w-step doing"><span class="st"></span>修复 monthly() 并补单测</div>
+              <div class="w-step todo"><span class="st"></span>回归验证 + 核对报告</div>
+              <div class="w-step todo"><span class="st"></span>整理变更说明</div>
+            </div>
+            <div class="d-rsec">
+              <div class="d-rt">子 Agent<span class="n">2</span></div>
+              <div class="d-agent"><svg class="ic s16" viewBox="0 0 24 24" style="color:var(--purple)"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V4M8.5 13h.01M15.5 13h.01M9 16.5h6"/></svg>探索 Agent<span style="margin-left:auto" class="k-chip" style="height:18px;font:var(--c2)">第 2 轮</span></div>
+              <div class="d-agent"><svg class="ic s16" viewBox="0 0 24 24" style="color:var(--purple)"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V4M8.5 13h.01M15.5 13h.01M9 16.5h6"/></svg>评审 Agent<span style="margin-left:auto" class="k-chip" style="height:18px;font:var(--c2)">第 1 轮</span></div>
+            </div>
+            <div class="d-rsec">
+              <div class="d-rt">成果<span class="n">4</span></div>
+              <div class="d-file"><svg class="ic s16" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>结息口径修复计划.md<span class="sz">6.2K</span></div>
+              <div class="d-file"><svg class="ic s16" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>差额复现.zip<span class="sz">1.1M</span></div>
+            </div>
+            <div class="d-rsec">
+              <div class="d-rt">知识命中<span class="n">2</span></div>
+              <div class="d-kb"><span class="dot" style="background:var(--green)"></span>计息口径:实际天数/365</div>
+              <div class="d-kb"><span class="dot" style="background:var(--orange)"></span>批处理窗口提前至 01:30</div>
+            </div>
+          </div>
+        </div>
+        <!-- 状态栏 -->
+        <div class="d-status">
+          <span><svg class="ic s16" viewBox="0 0 24 24" style="width:12px;height:12px;vertical-align:-2px"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg> loan-web</span>
+          <span>⎇ main</span>
+          <span class="rt">
+            <span><span style="color:var(--green)">●</span> opencode :4096</span>
+            <span>上下文 <code>12,480/30,000</code></span>
+            <span>并发 <code>1/3</code></span>
+          </span>
+        </div>
+      </div>
+    </div>
+    <ul class="spec">
+      <li>窗口三段:标题栏 38px(<code>background.secondary</code>)+ 主区 + 状态栏 28px;macOS 红绿灯为 OS 固定色,Windows 换自绘 min/max/close,布局不变。</li>
+      <li>侧栏 228px:分组小标用 c2 labels.quaternary + 大写字距;选中行 = fills.f2,状态点沿用会话染色(blue/green/purple)。</li>
+      <li>输入容器内嵌 token 真值(<code>12,480/30,000 tok</code>,mono + tnum),与标题栏「引擎已连接」chip 共同取代原卡片标题栏的全部职责。</li>
+      <li>右栏 264px 上下文面板:任务/子 Agent/成果/知识命中四节,可整体收起;收起后主区居中限宽 760px(web-best-practices 主内容列宽)。</li>
+    </ul>
+  </section>
+
+  <!-- ═══ W2 任务编排视图 ═══ -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">W2</span>主窗口 · 任务编排</h2>
+    <p class="b-sec-d">左列表右详情的双栏结构。批准闸提到详情页顶部横幅位——它是全页唯一需要决策的东西,理应第一眼看到。</p>
+    <div class="shot darkstage" style="padding:24px">
+      <div class="d-win">
+        <div class="d-tb">
+          <div class="d-tl"><i></i><i></i><i></i></div>
+          <span class="tt">任务编排</span>
+          <div class="rt">
+            <div class="seg" style="padding:2px"><button style="height:24px;font:var(--c1)">自动</button><button class="on" style="height:24px;font:var(--c1)">任务编排</button><button style="height:24px;font:var(--c1)">动态工作流</button></div>
+          </div>
+        </div>
+        <div class="d-body" style="grid-template-columns:300px 1fr">
+          <div class="d-wf-list">
+            <div class="d-wf-row on">
+              <div class="nm"><span class="dot" style="background:var(--blue)"></span>结息口径修复<span class="badge blue" style="margin-left:auto">3/5</span></div>
+              <div class="mt">正在:修复 monthly() 并补单测</div>
+              <div class="bar"><i style="width:60%"></i></div>
+            </div>
+            <div class="d-wf-row">
+              <div class="nm"><span class="dot" style="background:var(--green)"></span>银企对账 · 6 月<span class="badge green" style="margin-left:auto">完成</span></div>
+              <div class="mt">技能回放 · 12 步全部成功 · 昨天 18:02</div>
+            </div>
+            <div class="d-wf-row">
+              <div class="nm"><span class="dot" style="background:var(--orange)"></span>监管报表批量下载<span class="badge orange" style="margin-left:auto">排队</span></div>
+              <div class="mt">并发已满 · 第 1 位</div>
+            </div>
+            <div class="d-wf-row">
+              <div class="nm"><span class="dot" style="background:var(--danger)"></span>利率公告核对<span class="badge red" style="margin-left:auto">中断</span></div>
+              <div class="mt">第 4 步选择器失效 · 可续跑</div>
+            </div>
+            <div style="flex:1"></div>
+            <div style="padding:10px"><button class="btn sec s26" style="width:100%"><svg class="ic s16" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>从模板新建</button></div>
+          </div>
+          <div class="d-wf-detail">
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font:var(--t2-em)">结息口径修复</span>
+              <span class="k-chip">探索成文 · 模板</span>
+              <span style="flex:1"></span>
+              <button class="btn out s26"><svg class="ic s16" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></svg>暂停</button>
+              <button class="btn out danger s26">终止</button>
+            </div>
+            <!-- 批准闸横幅 -->
+            <div class="w-gate" style="border-color:var(--orange);background:var(--orange-10)">
+              <div class="tt"><svg class="ic" viewBox="0 0 24 24" style="color:var(--orange)"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>批准闸 · 计划已就绪,等待放行</div>
+              <div class="ds">探索完成:改 2 个文件、新增 4 个单测,预计 6 分钟。无人值守时倒计时结束自动开跑。</div>
+              <div style="display:flex;align-items:center;gap:10px">
+                <span class="w-count"><svg class="ic s16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>12:34 后自动开跑</span>
+                <span style="flex:1"></span>
+                <button class="btn out s26">查看计划</button>
+                <button class="btn sec s26">取消自动</button>
+                <button class="btn pri s26">开始执行</button>
+              </div>
+            </div>
+            <div class="d-rt">任务清单</div>
+            <div class="w-todo2">
+              <div class="w-step done"><span class="st"><svg class="ic" viewBox="0 0 24 24" style="width:10px;height:10px;stroke-width:2.6"><path d="M20 6 9 17l-5-5"/></svg></span>定位计息代码</div>
+              <div class="w-step done"><span class="st"><svg class="ic" viewBox="0 0 24 24" style="width:10px;height:10px;stroke-width:2.6"><path d="M20 6 9 17l-5-5"/></svg></span>复现差额并取证</div>
+              <div class="w-step doing"><span class="st"></span>修复 monthly() 并补单测</div>
+              <div class="w-step todo"><span class="st"></span>回归验证 + 核对报告</div>
+              <div class="w-step todo"><span class="st"></span>整理变更说明给评审</div>
+            </div>
+            <div class="d-rt">子 Agent 与成果</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div class="d-agent"><svg class="ic s16" viewBox="0 0 24 24" style="color:var(--purple)"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V4M8.5 13h.01M15.5 13h.01M9 16.5h6"/></svg>探索 Agent · 第 2 轮<span style="margin-left:auto;color:var(--label-3)">快照 2 份</span></div>
+              <div class="d-agent"><svg class="ic s16" viewBox="0 0 24 24" style="color:var(--purple)"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V4M8.5 13h.01M15.5 13h.01M9 16.5h6"/></svg>评审 Agent · 第 1 轮<span style="margin-left:auto;color:var(--label-3)">快照 1 份</span></div>
+              <div class="d-file" style="border:0.5px solid var(--sep)"><svg class="ic s16" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>docs/结息口径修复计划.md<span class="sz">6.2 KB</span></div>
+              <div class="d-file" style="border:0.5px solid var(--sep)"><svg class="ic s16" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>evidence/差额复现.zip<span class="sz">1.1 MB</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="d-status">
+          <span>模板:探索成文 / 评审 / 排查</span>
+          <span class="rt"><span>并发 <code>1/3</code> · 排队 1</span><span>批准闸超时 <code>15min</code></span></span>
+        </div>
+      </div>
+    </div>
+    <ul class="spec">
+      <li>中断行内「续跑」、排队行内「取消」与卡片形态一致:错误现场就能恢复,不跳转。</li>
+      <li>批准闸横幅 = orange10 底 + 0.5px orange 边,详情页其余区块一律中性——决策点唯一。</li>
+    </ul>
+  </section>
+
+  <!-- ═══ W3 邮件中心视图 ═══ -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">W3</span>主窗口 · 邮件中心</h2>
+    <p class="b-sec-d">卡片形态的三栏原样搬进主窗口,发件箱闸门条仍压底——好布局不因为换了个窗壳就重发明。</p>
+    <div class="shot darkstage" style="padding:24px">
+      <div class="d-win" style="grid-template-rows:38px 1fr auto 28px">
+        <div class="d-tb">
+          <div class="d-tl"><i></i><i></i><i></i></div>
+          <span class="tt">邮件中心</span>
+          <div class="rt">
+            <span class="k-chip green"><span class="dot" style="background:var(--green)"></span>IMAP 已连接</span>
+            <button class="ibtn"><svg class="ic" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+            <button class="btn pri s26"><svg class="ic s16" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>写邮件</button>
+          </div>
+        </div>
+        <div class="mail">
+          <div class="c1x">
+            <div class="fld on"><svg class="ic s16" viewBox="0 0 24 24"><path d="M3 13h5l2 3h4l2-3h5"/><path d="M5 5h14l2 8v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5l2-8z"/></svg>收件箱<span class="ct">12</span></div>
+            <div class="fld"><svg class="ic s16" viewBox="0 0 24 24" style="color:var(--orange)"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>发件箱闸门<span class="ct" style="color:var(--orange)">1</span></div>
+            <div class="fld"><svg class="ic s16" viewBox="0 0 24 24"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></svg>已发送</div>
+            <div class="fld"><svg class="ic s16" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>草稿<span class="ct">2</span></div>
+          </div>
+          <div class="lst">
+            <div class="mi on">
+              <div class="r1"><span class="dot" style="background:var(--blue)"></span>计财部·王岚<time>21:47</time></div>
+              <div class="r2">7 月 LPR 报价已更新</div>
+              <div class="r3">请各条线于周五前完成存量贷款重定价核对…</div>
+            </div>
+            <div class="mi">
+              <div class="r1">核心系统运维<time>20:13</time></div>
+              <div class="r2" style="color:var(--label-3)">[公告] 周六凌晨批处理窗口调整</div>
+              <div class="r3">结息批处理提前至 01:30,请留意联调…</div>
+            </div>
+            <div class="mi">
+              <div class="r1">风险部·陈默<time>18:26</time></div>
+              <div class="r2" style="color:var(--label-3)">Re: 结息口径差异说明</div>
+              <div class="r3">口径统一后请补一份回归数据附件…</div>
+            </div>
+          </div>
+          <div class="rd">
+            <div style="font:var(--t2-em)">7 月 LPR 报价已更新</div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span class="av">王</span>
+              <div><div style="font:var(--b2-em)">计财部 · 王岚</div><div style="font:var(--c1);color:var(--label-3)">wanglan@bank.local · 今天 21:47</div></div>
+            </div>
+            <div style="font:var(--b2);line-height:22px;color:var(--label-2)">各位:<br>7 月 LPR 报价已更新(1 年期 3.0%,5 年期以上 3.5%)。请各条线于周五前完成存量贷款重定价核对,附件为调整清单。</div>
+            <div><span class="chip"><svg class="ic s16" viewBox="0 0 24 24"><path d="M12 3v12M6 11l6 6 6-6M4 21h16"/></svg>LPR调整清单.xlsx<span style="color:var(--label-4)">48 KB</span></span></div>
+          </div>
+        </div>
+        <div class="gatebar">
+          <svg class="ic" viewBox="0 0 24 24" style="color:var(--orange)"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+          <span class="tx">《利率调整通知》将在 <b>14s</b> 后发送</span>
+          <span class="bar" style="max-width:220px;margin-top:0;flex:1"><i style="width:78%;background:var(--orange)"></i></span>
+          <span style="flex:1"></span>
+          <button class="btn pri s26">撤回</button>
+          <button class="btn sec s26">立即发送</button>
+        </div>
+        <div class="d-status">
+          <span>work@bank.local</span>
+          <span class="rt"><span>IDLE 监听中</span><span>上次同步 <code>21:48:03</code></span></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ W4 设置视图 ═══ -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">W4</span>主窗口 · 设置(智能体旋钮 + 知识库)</h2>
+    <p class="b-sec-d">设置不再是独立小窗,而是主窗口的一个视图:左侧页签、右侧内容,改动即时生效。</p>
+    <div class="shot darkstage" style="padding:24px">
+      <div class="d-win">
+        <div class="d-tb">
+          <div class="d-tl"><i></i><i></i><i></i></div>
+          <span class="tt">设置</span>
+        </div>
+        <div class="d-body" style="grid-template-columns:200px 1fr">
+          <div class="d-side">
+            <div class="d-item">通用</div>
+            <div class="d-item on">智能体</div>
+            <div class="d-item">项目知识库</div>
+            <div class="d-item">邮件账户</div>
+            <div class="d-item">快捷键</div>
+          </div>
+          <div class="d-main" style="padding:20px 24px;gap:18px;display:flex;flex-direction:column">
+            <div class="d-rt">智能体旋钮 · 即时生效</div>
+            <div class="kn-grid">
+              <div class="knob"><span class="lb">自动压缩阈值</span><div class="num"><input value="80"><span class="un">%</span></div><span class="hint">上下文超过即触发压缩</span></div>
+              <div class="knob"><span class="lb">单会话压缩上限</span><div class="num"><input value="5"><span class="un">次</span></div><span class="hint">超过提示重开会话</span></div>
+              <div class="knob"><span class="lb">看门狗判死</span><div class="num"><input value="3"><span class="un">轮无进展</span></div><span class="hint">判死看进展不看时长</span></div>
+              <div class="knob"><span class="lb">批准闸超时</span><div class="num"><input value="15"><span class="un">分钟</span></div><span class="hint">0 = 永不自动开跑</span></div>
+              <div class="knob"><span class="lb">工作流并发上限</span><div class="num"><input value="3"><span class="un">个</span></div><span class="hint">超出排队</span></div>
+              <div class="knob"><span class="lb">知识注入条数</span><div class="num"><input value="60"><span class="un">条</span></div><span class="hint">超出按 scene 命中</span></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <div class="d-rt">项目知识库 · loan-web(47 条)</div>
+              <span style="flex:1"></span>
+              <span style="font:var(--c1);color:var(--label-3)"><span style="color:var(--green)">●</span> 完好 <span style="color:var(--orange)">●</span> 已重定位 <span style="color:var(--danger)">●</span> 已隔离</span>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div class="kb-row">
+                <span class="dot" style="background:var(--green)"></span>
+                <div><div class="nm">计息口径:实际天数/365,跨月分段</div><div class="mt">scene: 计息/结息 · InterestCalc.java:87 · 07-20</div></div>
+                <div class="rt"><button class="ibtn"><svg class="ic s16" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button></div>
+              </div>
+              <div class="kb-row">
+                <span class="dot" style="background:var(--orange)"></span>
+                <div><div class="nm">联调批处理窗口提前至 01:30</div><div class="mt">scene: 环境/批处理 · 行漂移 12→9 已回写 · 07-19</div></div>
+                <div class="rt"><button class="ibtn"><svg class="ic s16" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button></div>
+              </div>
+              <div class="kb-row" style="opacity:0.72">
+                <span class="dot" style="background:var(--danger)"></span>
+                <div><div class="nm">旧核心接口 /acct/query 费率表 <span class="badge red" style="margin-left:4px">已隔离</span></div><div class="mt">锚点文件已删除,注入自动跳过 · 07-11</div></div>
+                <div class="rt"><button class="btn out s26">恢复</button></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="d-status">
+          <span>settings.json · 改动即写盘</span>
+          <span class="rt"><span>审计 audit.jsonl 同步记录</span></span>
+        </div>
+      </div>
+    </div>
+    <ul class="spec">
+      <li>主窗口形态下,原独立小窗(技能中心/邮件中心/设置)全部变成「侧栏切换的视图」,窗口数量从 N 收编到 1 + 迷你卡 + 悬浮球。</li>
+    </ul>
+  </section>
+
+</div>
+<script>
+  (function () {
+    var h = document.documentElement, b = document.getElementById('themeBtn');
+    function r() { b.textContent = h.dataset.theme === 'dark' ? '切换浅色' : '切换深色'; }
+    b.addEventListener('click', function () { h.dataset.theme = h.dataset.theme === 'dark' ? 'light' : 'dark'; r(); });
+    r();
+  })();
+</script>
+</body>
+</html>

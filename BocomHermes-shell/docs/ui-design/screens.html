@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BocomHermes 设计套件 · 界面图 ×8</title>
+<link rel="stylesheet" href="design.css">
+<style>
+  /* ── 原型组件(吃 design.css 令牌,前缀 k-/w-) ─────────────────── */
+  .nav { display:flex; align-items:center; gap:var(--s2); }
+  .nav a { font:var(--b2); color:var(--label-3); text-decoration:none; padding:6px 10px; border-radius:var(--r-sm); }
+  .nav a:hover { color:var(--label-1); background:var(--fill-1); }
+  .nav a.here { color:var(--label-1); background:var(--fill-2); }
+  .nav .sp { flex:1; }
+  .shot { margin-top:var(--s5); }
+  .spec { margin-top:var(--s3); }
+  .spec li { margin-left:16px; margin-top:2px; }
+
+  /* 对话卡(透明玻璃卡:primary-90 + blur,令牌化的玻璃) */
+  .k-card { width:420px; background:var(--bg-primary-90); backdrop-filter:blur(var(--blur-heavy)); -webkit-backdrop-filter:blur(var(--blur-heavy));
+    border:0.5px solid var(--sep); border-radius:var(--r-xl); box-shadow:var(--shadow-medium); overflow:hidden; text-align:left; }
+  .k-card.hl-blue { box-shadow:0 0 0 1.5px rgba(26,136,255,0.45), var(--shadow-medium); }
+  .k-hd { display:flex; align-items:center; gap:8px; padding:10px 12px; border-bottom:0.5px solid var(--sep); cursor:grab; }
+  .k-grip { color:var(--label-4); display:flex; align-items:center; }
+  .k-title { font:var(--b1-em); white-space:nowrap; }
+  .k-dir { font:var(--c1); color:var(--label-3); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+  .k-hd .sp { flex:1; }
+  .k-chip { display:inline-flex; align-items:center; gap:4px; height:22px; padding:0 8px; border-radius:var(--r-full);
+    background:var(--fill-2); font:var(--c1-em); color:var(--label-2); white-space:nowrap; }
+  .k-chip.blue { background:var(--blue-10); color:var(--blue); }
+  .k-chip.orange { background:var(--orange-10); color:var(--orange); }
+  .k-chip.green { background:var(--green-10); color:var(--green); }
+  .k-body { padding:14px; display:flex; flex-direction:column; gap:14px; }
+  .k-msg-u { align-self:flex-end; max-width:80%; background:var(--bubble-user); border-radius:var(--r-xl); padding:8px 12px; font:var(--b2); }
+  .k-md { font:var(--md-body); display:flex; flex-direction:column; gap:8px; }
+  .k-md p { line-height:26px; }
+  .k-md code { font-family:var(--font-mono); font-size:13.5px; background:var(--fill-1); padding:1px 5px; border-radius:var(--r-xxs); }
+  .k-md ul { padding-left:18px; display:flex; flex-direction:column; gap:4px; color:var(--label-1); }
+  .k-md li::marker { color:var(--label-3); }
+  details.k-think summary { list-style:none; display:flex; align-items:center; gap:6px; font:var(--c1); color:var(--label-3); cursor:pointer; }
+  details.k-think summary::-webkit-details-marker { display:none; }
+  .k-tool { display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:var(--r-md); background:var(--fill-1); font:var(--c1); color:var(--label-2); }
+  .k-tool .fn { font-family:var(--font-mono); color:var(--label-1); font-weight:500; }
+  .k-tool .ms { margin-left:auto; color:var(--label-3); font-family:var(--font-mono); font-size:11px; }
+  .k-tool.open { flex-direction:column; align-items:stretch; gap:8px; }
+  .k-tool.open .top { display:flex; align-items:center; gap:8px; }
+  .k-tool .out { font-family:var(--font-mono); font-size:11.5px; line-height:18px; color:var(--label-3); border-top:0.5px solid var(--sep); padding-top:8px; white-space:pre; }
+  .k-tool .out .ok { color:var(--green); }
+  .k-perm { border:0.5px solid var(--orange); background:var(--orange-10); border-radius:var(--r-lg); padding:12px; display:flex; flex-direction:column; gap:10px; }
+  .k-perm.danger { border-color:var(--danger); background:var(--red-10); }
+  .k-perm .tt { display:flex; align-items:center; gap:8px; font:var(--b2-em); }
+  .k-perm .tt .tag { margin-left:auto; }
+  .k-perm .cmd { font-family:var(--font-mono); font-size:12.5px; line-height:20px; background:rgba(0,0,0,0.22); border-radius:var(--r-sm); padding:8px 10px; color:var(--label-1); }
+  html[data-theme="light"] .k-perm .cmd { background:rgba(0,0,0,0.05); }
+  .k-perm .acts { display:flex; gap:8px; align-items:center; }
+  .k-perm .acts .kb { font:var(--c2); color:var(--label-4); margin-left:2px; }
+  .k-note { display:flex; align-items:center; gap:6px; font:var(--c1); color:var(--label-3); }
+  .k-ft { padding:0 12px 12px; }
+  .k-ft .ibar { display:flex; align-items:center; gap:6px; padding:4px 8px 8px; }
+  .k-send { width:28px; height:28px; border-radius:50%; background:var(--brand); color:var(--brand-text); display:inline-flex; align-items:center; justify-content:center; transition:transform 120ms var(--ez-out); }
+  .k-send:active { transform:scale(0.92); }
+  .cur { display:inline-block; width:8px; height:16px; background:var(--label-1); border-radius:1px; vertical-align:-2px; animation:blink 1.06s steps(1) infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+  .spin { width:10px; height:10px; border-radius:50%; border:1.5px solid var(--blue); border-top-color:transparent; animation:rot 0.8s linear infinite; flex:none; }
+  @keyframes rot { to { transform:rotate(360deg); } }
+
+  /* 提问卡 */
+  .k-quiz { border:0.5px solid var(--sep); background:var(--fill-1); border-radius:var(--r-lg); padding:12px; display:flex; flex-direction:column; gap:10px; }
+  .k-quiz .tt { display:flex; align-items:baseline; gap:8px; font:var(--b2-em); }
+  .k-quiz .tt .n { margin-left:auto; font:var(--c1); color:var(--label-3); }
+  .k-opt { display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:var(--r-md); border:0.5px solid var(--sep); font:var(--b2); cursor:pointer; transition:border-color 150ms ease, background-color 150ms ease; }
+  .k-opt:hover { background:var(--fill-1); }
+  .k-opt.on { border-color:var(--blue); background:var(--blue-10); }
+  .k-rad { width:14px; height:14px; border-radius:50%; border:1.5px solid var(--label-3); flex:none; display:inline-flex; align-items:center; justify-content:center; }
+  .k-opt.on .k-rad { border-color:var(--blue); }
+  .k-opt.on .k-rad::after { content:""; width:6px; height:6px; border-radius:50%; background:var(--blue); }
+  .k-chk { width:14px; height:14px; border-radius:4px; border:1.5px solid var(--label-3); flex:none; display:inline-flex; align-items:center; justify-content:center; color:#fff; }
+  .k-opt.on .k-chk { background:var(--blue); border-color:var(--blue); }
+  .k-done { display:flex; align-items:center; gap:8px; font:var(--b2); color:var(--label-2); padding:9px 10px; border-radius:var(--r-md); background:var(--fill-1); }
+
+  /* 工作流卡 */
+  .w-todo { display:flex; flex-direction:column; gap:2px; }
+  .w-step { display:flex; align-items:center; gap:10px; padding:7px 8px; border-radius:var(--r-md); font:var(--b2); }
+  .w-step .st { width:16px; height:16px; border-radius:50%; flex:none; display:inline-flex; align-items:center; justify-content:center; }
+  .w-step.done { color:var(--label-3); }
+  .w-step.done .st { background:var(--green); color:#fff; }
+  .w-step.doing .st { border:1.5px solid var(--blue); }
+  .w-step.doing .st::after { content:""; width:6px; height:6px; border-radius:50%; background:var(--blue); animation:pulse 1.2s var(--ez-inout) infinite; }
+  @keyframes pulse { 50% { transform:scale(0.4); opacity:0.5; } }
+  .w-step.todo { color:var(--label-3); }
+  .w-step.todo .st { border:1.5px solid var(--fill-4); }
+  .w-sub { border:0.5px solid var(--sep); border-radius:var(--r-lg); overflow:hidden; }
+  .w-sub .row1 { display:flex; align-items:center; gap:8px; padding:10px 12px; cursor:pointer; }
+  .w-sub .row1:hover { background:var(--fill-1); }
+  .w-sub .nm { font:var(--b2-em); }
+  .w-sub .snaps { display:flex; gap:4px; margin-left:auto; }
+  .w-sub .snap { width:20px; height:20px; border-radius:var(--r-xxs); background:var(--fill-2); font:var(--c2); color:var(--label-3); display:inline-flex; align-items:center; justify-content:center; }
+  .w-sub .snap.on { background:var(--blue-10); color:var(--blue); }
+  .w-gate { border:0.5px solid var(--sep); border-radius:var(--r-lg); padding:14px; display:flex; flex-direction:column; gap:10px; background:var(--fill-1); }
+  .w-gate .tt { display:flex; align-items:center; gap:8px; font:var(--t2-em); }
+  .w-gate .ds { font:var(--b2); color:var(--label-2); line-height:20px; }
+  .w-count { display:inline-flex; align-items:center; gap:6px; font:var(--c1-em); color:var(--orange); }
+  .w-file { display:flex; align-items:center; gap:8px; font:var(--c1); color:var(--label-2); padding:6px 8px; border-radius:var(--r-sm); }
+  .w-file:hover { background:var(--fill-1); }
+  .w-file .sz { margin-left:auto; color:var(--label-3); font-family:var(--font-mono); font-size:11px; }
+  .w-setrow { display:flex; align-items:center; gap:8px; font:var(--b2); color:var(--label-2); }
+  .w-setrow .sp { flex:1; }
+
+  /* 卡坞 / 窗口壳 */
+  .win { background:var(--bg-primary); border:0.5px solid var(--sep); border-radius:var(--r-xl); box-shadow:var(--shadow-medium); overflow:hidden; text-align:left; }
+  .win-hd { display:flex; align-items:center; gap:10px; padding:12px 14px; border-bottom:0.5px solid var(--sep); }
+  .win-hd .t { font:var(--t2-em); }
+  .win-bd { padding:14px; display:flex; flex-direction:column; gap:16px; }
+  .lab { font:var(--c1-em); color:var(--label-3); letter-spacing:0.04em; }
+  .chips { display:flex; gap:8px; flex-wrap:wrap; }
+  .wf { border:0.5px solid var(--sep); border-radius:var(--r-lg); overflow:hidden; }
+  .wf-row { display:flex; align-items:center; gap:12px; padding:12px 14px; border-bottom:0.5px solid var(--sep); }
+  .wf-row:last-child { border-bottom:none; }
+  .wf-row:hover { background:var(--fill-1); }
+  .wf-row .nm { font:var(--b2-em); }
+  .wf-row .mt { font:var(--c1); color:var(--label-3); margin-top:2px; }
+  .wf-row .rt { margin-left:auto; display:flex; align-items:center; gap:10px; flex:none; }
+  .bar { width:110px; height:3px; border-radius:var(--r-full); background:var(--fill-2); overflow:hidden; }
+  .bar i { display:block; height:100%; border-radius:var(--r-full); background:var(--blue); }
+
+  /* 技能卡 */
+  .sk-grid { display:grid; grid-template-columns:repeat(3, 1fr); gap:12px; }
+  .sk { border:0.5px solid var(--sep); border-radius:var(--r-lg); padding:14px; display:flex; flex-direction:column; gap:10px; background:var(--bg-primary); }
+  .sk .nm { display:flex; align-items:center; gap:8px; font:var(--b1-em); }
+  .sk .mt { font:var(--c1); color:var(--label-3); line-height:18px; }
+  .sk .ft { display:flex; gap:8px; margin-top:auto; }
+  .sk.new { border-style:dashed; align-items:center; justify-content:center; color:var(--label-3); min-height:150px; gap:8px; cursor:pointer; }
+  .sk.new:hover { color:var(--label-1); background:var(--fill-1); }
+
+  /* 邮件中心 */
+  .mail { display:grid; grid-template-columns:180px 250px 1fr; min-height:430px; }
+  .mail .c1x { border-right:0.5px solid var(--sep); padding:10px 8px; display:flex; flex-direction:column; gap:2px; }
+  .mail .fld { display:flex; align-items:center; gap:8px; padding:7px 8px; border-radius:var(--r-sm); font:var(--b2); color:var(--label-2); cursor:pointer; }
+  .mail .fld:hover { background:var(--fill-1); }
+  .mail .fld.on { background:var(--fill-2); color:var(--label-1); }
+  .mail .fld .ct { margin-left:auto; font:var(--c1); color:var(--label-3); }
+  .mail .lst { border-right:0.5px solid var(--sep); display:flex; flex-direction:column; }
+  .mail .mi { padding:10px 12px; border-bottom:0.5px solid var(--sep); cursor:pointer; display:flex; flex-direction:column; gap:2px; }
+  .mail .mi:hover { background:var(--fill-1); }
+  .mail .mi.on { background:var(--fill-2); }
+  .mail .mi .r1 { display:flex; align-items:center; gap:6px; font:var(--b2-em); }
+  .mail .mi .r1 time { margin-left:auto; font:var(--c1); color:var(--label-3); font-weight:400; }
+  .mail .mi .r2 { font:var(--b2); color:var(--label-2); }
+  .mail .mi .r3 { font:var(--c1); color:var(--label-3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .mail .rd { padding:18px 20px; display:flex; flex-direction:column; gap:12px; }
+  .mail .av { width:32px; height:32px; border-radius:50%; background:var(--fill-3); display:inline-flex; align-items:center; justify-content:center; font:var(--c1-em); flex:none; }
+  .gatebar { display:flex; align-items:center; gap:10px; padding:10px 14px; border-top:0.5px solid var(--sep); background:var(--orange-10); }
+  .gatebar .tx { font:var(--b2); }
+  .gatebar .tx b { color:var(--orange); font-weight:500; }
+
+  /* 设置 */
+  .knob { display:flex; flex-direction:column; gap:6px; }
+  .knob .lb { font:var(--b2); }
+  .knob .hint { font:var(--c1); color:var(--label-3); }
+  .num { display:flex; align-items:center; height:32px; border:0.5px solid var(--sep); border-radius:var(--r-md); background:var(--fill-1); padding:0 10px; gap:6px; }
+  .num input { width:100%; background:none; border:none; outline:none; font:var(--b2); font-family:var(--font-mono); }
+  .num .un { font:var(--c1); color:var(--label-3); flex:none; }
+  .num:focus-within { border-color:var(--blue); }
+  .kn-grid { display:grid; grid-template-columns:repeat(3, 1fr); gap:14px 16px; }
+  .kb-row { display:flex; align-items:center; gap:10px; padding:11px 12px; border:0.5px solid var(--sep); border-radius:var(--r-lg); }
+  .kb-row:hover { background:var(--fill-1); }
+  .kb-row .nm { font:var(--b2-em); }
+  .kb-row .mt { font:var(--c1); color:var(--label-3); margin-top:1px; }
+  .kb-row .rt { margin-left:auto; display:flex; align-items:center; gap:4px; }
+
+  @media (max-width: 900px) { .sk-grid, .kn-grid { grid-template-columns:1fr 1fr; } .mail { grid-template-columns:150px 1fr; } .mail .rd { display:none; } }
+</style>
+</head>
+<body>
+<div class="board">
+
+  <nav class="nav">
+    <a href="index.html">设计总览</a>
+    <a href="desktop.html">桌面客户端 ×5</a>
+    <a class="here" href="screens.html">悬浮卡片 ×8</a>
+    <a href="interactions.html">交互与动效</a>
+    <span class="sp"></span>
+    <button class="chip" id="themeBtn">切换浅色</button>
+  </nav>
+
+  <header class="b-head">
+    <h1 class="b-title">悬浮卡片形态</h1>
+    <p class="b-sub">快捷入口形态:迷你卡(盯梢单个会话)与悬浮球。主形态是一体化桌面主窗口,见 desktop.html。
+      八张界面场景统一取自真实使用:信贷系统开发者在晚上联调月度结息。
+      每张图下方附令牌注解,标注关键用色/字号/圆角的来源路径,实现时按图索骥。</p>
+  </header>
+
+  <!-- ═══ S1 悬浮球 + 全局输入 ═══ -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">S1</span>悬浮球 Orb + 全局输入框</h2>
+    <p class="b-sec-d">桌面常驻入口。悬浮球 56px,玻璃材质与卡片同源;Ctrl+Shift+Space 唤起输入框,就近落在球旁边,视线不用旅行。</p>
+    <div class="shot darkstage">
+      <div class="stage" style="min-height:340px">
+        <span class="stage-label">DESKTOP · 桌面示意</span>
+        <div style="display:flex;align-items:flex-end;gap:18px;position:absolute;left:56px;bottom:48px">
+          <!-- Orb -->
+          <div style="position:relative;width:56px;height:56px;flex:none">
+            <div style="width:56px;height:56px;border-radius:50%;background:var(--bg-primary-90);backdrop-filter:blur(30px);border:0.5px solid var(--sep);box-shadow:var(--shadow-medium);display:flex;align-items:center;justify-content:center;color:var(--blue)">
+              <svg class="ic" style="width:24px;height:24px" viewBox="0 0 24 24"><path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4L12 3z"/></svg>
+            </div>
+            <span class="dot" style="position:absolute;right:1px;bottom:1px;width:10px;height:10px;background:var(--green);border:2px solid #101012"></span>
+          </div>
+          <!-- 输入框 -->
+          <div class="inputbox" style="width:520px">
+            <textarea rows="2" placeholder="问点什么,或粘贴截图 / 文件…">把昨晚的利率调整同步进 loan-web,顺便跑一遍结息单测</textarea>
+            <div class="k-ft" style="padding:0">
+              <div class="ibar">
+                <span class="k-chip"><svg class="ic s16" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/></svg>qwen3-coder<svg class="ic s16" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="m6 9 6 6 6-6"/></svg></span>
+                <span class="k-chip"><svg class="ic s16" viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>/ 技能</span>
+                <button class="ibtn" title="附件"><svg class="ic" viewBox="0 0 24 24"><path d="M21 12.5l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8L13 5a3.5 3.5 0 0 1 5 5l-8.5 8.5a1.5 1.5 0 0 1-2.1-2.1L15.2 8.7"/></svg></button>
+                <span style="flex:1"></span>
+                <span style="font:var(--c2);color:var(--label-4)">Ctrl+Shift+Space</span>
+                <button class="k-send"><svg class="ic s16" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <ul class="spec">
+      <li>材质:卡与球共用 <code>background.primary-90</code> + <code>blur(30px)</code> + 0.5px <code>separator.s1</code> + <code>shadow.medium</code>——玻璃感只有这一种配方。</li>
+      <li>输入容器:圆角 20px(全系统唯一特许值) + <code>shadow.inputDefault</code>;发送钮 28px 正圆,按压 scale(0.92) / 120ms ez-out。</li>
+      <li>保活点:绿 = <code>status.positiveGreen</code>,引擎心跳正常才亮;失连变灰并附 tooltip,见 interactions.html 错误态。</li>
+    </ul>
+  </section>
+
+  <!-- ═══ S2 对话卡 · 基础态 ═══ -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">S2</span>对话卡 · 基础态</h2>
+    <p class="b-sec-d">一卡 = 一个独立会话。标题栏从左到右:拖动柄 → 会话色点 → 项目名 → 模型 → 上下文用量 → 保活 → 最小化/关闭。信息密度对标 IDE 标签页。</p>
+    <div class="shot darkstage">
+      <div class="stage" style="display:flex;justify-content:center;padding:32px">
+        <span class="stage-label">DESKTOP · 单卡</span>
+        <div class="k-card hl-blue">
+          <div class="k-hd">
+            <span class="k-grip"><svg class="ic s16" viewBox="0 0 24 24" style="fill:currentColor;stroke:none"><circle cx="8" cy="6" r="1.1"/><circle cx="8" cy="12" r="1.1"/><circle cx="8" cy="18" r="1.1"/><circle cx="13" cy="6" r="1.1"/><circle cx="13" cy="12" r="1.1"/><circle cx="13" cy="18" r="1.1"/></svg></span>
+            <span class="dot" style="background:var(--blue)"></span>
+            <span class="k-title">信贷管理系统</span><span class="k-dir">loan-web</span>
+            <span class="k-hd sp"></span>
+            <span class="k-chip">qwen3-coder</span>
+            <span class="k-chip green"><svg class="ic s16" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 12l6-6"/></svg>42%</span>
+            <span class="dot" style="background:var(--green)" title="引擎保活"></span>
+            <button class="ibtn"><svg class="ic s16" viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+            <button class="ibtn"><svg class="ic s16" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+          </div>
+          <div class="k-body">
+            <div class="k-msg-u">月度结息金额和核心系统对不上,帮我看下 InterestCalc.monthly() 的逻辑</div>
+            <details class="k-think">
+              <summary><svg class="ic s16" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="m9 6 6 6-6 6"/></svg>思考过程 · 已折叠(3 步)</summary>
+            </details>
+            <div class="k-md">
+              <p>我读了 <code>InterestCalc.java</code> 的 <code>monthly()</code>,差额来自计息天数口径:</p>
+              <ul>
+                <li>当前实现按 <b>30/360</b> 折算(第 87 行);</li>
+                <li>核心系统按 <b>实际天数/365</b> 计息;</li>
+                <li>跨月分段时,2 月会少算 1–2 天,季度末差额被放大。</li>
+              </ul>
+              <pre class="code"><span class="c">// InterestCalc.java:87 现状(30/360 口径)</span>
+<span class="k">BigDecimal</span> interest = principal
+    .<span class="f">multiply</span>(rate)
+    .<span class="f">multiply</span>(<span class="f">valueOf</span>(<span class="n">30L</span> * months))
+    .<span class="f">divide</span>(<span class="f">valueOf</span>(<span class="n">360</span>), <span class="n">2</span>, <span class="v">HALF_UP</span>);</pre>
+            </div>
+            <div class="k-tool"><svg class="ic s16" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg><span class="fn">read</span>src/interest/InterestCalc.java<span class="ms">120ms</span></div>
+            <div class="k-tool"><svg class="ic s16" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><span class="fn">grep</span>"monthly(" · 4 处引用<span class="ms">85ms</span></div>
+          </div>
+          <div class="k-ft">
+            <div class="inputbox">
+              <textarea rows="1" placeholder="追问,或粘贴截图 / 文件…"></textarea>
+              <div class="ibar">
+                <span class="k-chip">qwen3-coder</span>
+                <button class="ibtn"><svg class="ic" viewBox="0 0 24 24"><path d="M21 12.5l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8L13 5a3.5 3.5 0 0 1 5 5l-8.5 8.5a1.5 1.5 0 0 1-2.1-2.1L15.2 8.7"/></svg></button>
+                <span style="flex:1"></span>
+                <button class="k-send"><svg class="ic s16" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <ul class="spec">
+      <li>用户气泡:<code>others.bubbleGrayPc</code>,最大宽 80%,右对齐;AI 回答不套气泡,正文直接排布(markdown.b1Content 16/26)。</li>
+      <li>标题栏 chips:22px 高 full 圆角,fills.f2 底;上下文用量 &lt;60% 绿、60–80% 橙、&gt;80% 红(语义着色,唯一色彩来源)。</li>
+      <li>工具行:fills.f1 底 + radius.md,工具名 mono 加粗,耗时 labels.tertiary——一行说完「做了什么、多久」。</li>
+      <li>会话色点:卡片按 session 取 blue/green/orange/purple 轮换,多卡并行时的身份线索(见 S4 与 interactions §4)。</li>
+    </ul>
+  </section>
+
+  <!-- ═══ S3 对话卡 · 运行态 ═══ -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">S3</span>对话卡 · 运行态(权限条 + 提问卡)</h2>
+    <p class="b-sec-d">写/执行类工具一律转卡片内联确认。权限条是全文唯一的「打断面」:橙 = 常规写操作,红 = 高危命令;键盘 y / a / n 可盲按,不打断心流。</p>
+    <div class="shot darkstage">
+      <div class="stage" style="display:flex;justify-content:center;padding:32px">
+        <span class="stage-label">DESKTOP · 运行中</span>
+        <div class="k-card hl-blue">
+          <div class="k-hd">
+            <span class="k-grip"><svg class="ic s16" viewBox="0 0 24 24" style="fill:currentColor;stroke:none"><circle cx="8" cy="6" r="1.1"/><circle cx="8" cy="12" r="1.1"/><circle cx="8" cy="18" r="1.1"/><circle cx="13" cy="6" r="1.1"/><circle cx="13" cy="12" r="1.1"/><circle cx="13" cy="18" r="1.1"/></svg></span>
+            <span class="dot" style="background:var(--blue)"></span>
+            <span class="k-title">信贷管理系统</span><span class="k-dir">loan-web</span>
+            <span class="k-hd sp"></span>
+            <span class="k-chip blue"><span class="spin"></span>运行中</span>
+            <span class="k-chip orange">78%</span>
+            <button class="ibtn"><svg class="ic s16" viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+            <button class="ibtn"><svg class="ic s16" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+          </div>
+          <div class="k-body">
+            <div class="k-tool open">
+              <div class="top"><svg class="ic s16" viewBox="0 0 24 24"><path d="m4 17 6-6-6-6M12 19h8"/></svg><span class="fn">bash</span>mvn test -pl interest<span class="ms">8.4s</span><svg class="ic s16" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></div>
+              <div class="out">Tests run: 12, Failures: 0, Errors: 0
+<span class="ok">✓ BUILD SUCCESS</span> · InterestCalcTest 全部通过</div>
+            </div>
+            <div class="k-md"><p>口径已统一到实际天数/365,单测全绿。下一步要把改动部署到联调环境:<span class="cur"></span></p></div>
+            <div class="k-note"><svg class="ic s16" viewBox="0 0 24 24" style="width:12px;height:12px"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>其余 2 条只读工具已自动放行 · 权限条吸附在输入区上方,不遮挡历史</div>
+            <!-- 常规权限条 -->
+            <div class="k-perm">
+              <div class="tt"><svg class="ic" viewBox="0 0 24 24" style="color:var(--orange)"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3z"/></svg>opencode 请求执行命令<span class="tag badge orange">写操作</span></div>
+              <div class="cmd">mvn deploy -pl interest -DskipTests</div>
+              <div class="acts">
+                <button class="btn pri s26">允许一次<span class="kb">Y</span></button>
+                <button class="btn sec s26">总是允许<span class="kb">A</span></button>
+                <button class="btn out danger s26">拒绝<span class="kb">N</span></button>
+              </div>
+            </div>
+            <!-- 高危权限条 -->
+            <div class="k-perm danger">
+              <div class="tt"><svg class="ic" viewBox="0 0 24 24" style="color:var(--danger)"><path d="M12 3 2.5 20h19L12 3z"/><path d="M12 10v4M12 17.5v.01"/></svg>高危命令,建议逐条确认<span class="tag badge red">危险</span></div>
+              <div class="cmd">rm -rf target/ &amp;&amp; git clean -fdx</div>
+              <div class="acts">
+                <button class="btn pri s26">允许一次<span class="kb">Y</span></button>
+                <button class="btn out danger s26">拒绝<span class="kb">N</span></button>
+                <span style="flex:1"></span>
+                <span style="font:var(--c1);color:var(--label-3)">高危命令不提供「总是允许」</span>
+              </div>
+            </div>
+          </div>
+          <div class="k-ft">
+            <div class="inputbox"><textarea rows="1" placeholder="等待批准中,可先输入下一步…"></textarea></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- 提问卡 -->
+    <div class="shot" style="background:var(--bg-primary)">
+      <div style="display:flex;gap:24px;flex-wrap:wrap;justify-content:center">
+        <div class="k-quiz" style="width:400px">
+          <div class="tt">需要确认计息口径<span class="n">单选 · 第 2/3 问</span></div>
+          <div class="k-opt on"><span class="k-rad"></span>按实际天数 / 365(与核心系统一致)</div>
+          <div class="k-opt"><span class="k-rad"></span>按实际天数 / 360</div>
+          <div class="k-opt"><span class="k-rad"></span>维持 30/360,只做跨月分段修正</div>
+          <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button class="btn out s26">上一问</button>
+            <button class="btn pri s26">确认</button>
+          </div>
+        </div>
+        <div class="k-quiz" style="width:400px">
+          <div class="tt">涉及哪些账户类型?<span class="n">多选 · 第 3/3 问</span></div>
+          <div class="k-opt on"><span class="k-chk"><svg class="ic" viewBox="0 0 24 24" style="width:10px;height:10px;stroke-width:2.4"><path d="M20 6 9 17l-5-5"/></svg></span>对公活期</div>
+          <div class="k-opt on"><span class="k-chk"><svg class="ic" viewBox="0 0 24 24" style="width:10px;height:10px;stroke-width:2.4"><path d="M20 6 9 17l-5-5"/></svg></span>对公定期</div>
+          <div class="k-opt"><span class="k-chk"></span>同业存放</div>
+          <div class="k-done"><svg class="ic s16" viewBox="0 0 24 24" style="color:var(--green)"><path d="M20 6 9 17l-5-5"/></svg>第 1 问已答:修复范围 = 仅 monthly(),不动 quarterly()</div>
+        </div>
+      </div>
+    </div>
+    <ul class="spec">
+      <li>权限条:0.5px <code>status.orange</code> 边 + <code>lightOrangeBg</code> 底(10% 铺色原则);高危换 danger/lightRedBg,且<b>移除「总是允许」</b>——危险操作没有快捷键习惯。</li>
+      <li>快捷键提示用 c2 labels.quaternary 跟在按钮文字后;三条按钮全部 26px 小尺寸,权限条高度被刻意压低。</li>
+      <li>流式光标:8×16 块,1.06s steps(1) 闪烁,颜色 labels.primary——不用 spinner 顶替文本光标。</li>
+      <li>提问卡:选中态 = <code>kimiBlue10</code> 底 + 0.5px blue 边;已答留痕用 done 行,历史问题可追溯,不凭空消失。</li>
+    </ul>
+  </section>
+
+  <!-- ═══ S4 工作流卡 ═══ -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">S4</span>工作流卡(任务编排)</h2>
+    <p class="b-sec-d">多步任务的所有状态收进一张卡:todo 清单、子 Agent 跨轮回看、批准闸、成果抽屉。用户随时能回答三个问题——进行到哪、谁在干、要我批什么。</p>
+    <div class="shot darkstage">
+      <div class="stage" style="display:flex;justify-content:center;padding:32px">
+        <span class="stage-label">DESKTOP · 工作流</span>
+        <div class="k-card hl-green" style="width:460px">
+          <div class="k-hd">
+            <span class="k-grip"><svg class="ic s16" viewBox="0 0 24 24" style="fill:currentColor;stroke:none"><circle cx="8" cy="6" r="1.1"/><circle cx="8" cy="12" r="1.1"/><circle cx="8" cy="18" r="1.1"/><circle cx="13" cy="6" r="1.1"/><circle cx="13" cy="12" r="1.1"/><circle cx="13" cy="18" r="1.1"/></svg></span>
+            <span class="dot" style="background:var(--green)"></span>
+            <span class="k-title">结息口径修复</span><span class="k-dir">任务编排</span>
+            <span class="k-hd sp"></span>
+            <span class="k-chip blue"><span class="spin"></span>3/5</span>
+            <span class="k-chip">探索成文</span>
+            <button class="ibtn"><svg class="ic s16" viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+            <button class="ibtn"><svg class="ic s16" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+          </div>
+          <div class="k-body">
+            <!-- todo 清单 -->
+            <div class="w-todo">
+              <div class="w-step done"><span class="st"><svg class="ic" viewBox="0 0 24 24" style="width:10px;height:10px;stroke-width:2.6"><path d="M20 6 9 17l-5-5"/></svg></span>定位计息代码<span style="margin-left:auto;font:var(--c1);color:var(--label-4)">2 分钟前</span></div>
+              <div class="w-step done"><span class="st"><svg class="ic" viewBox="0 0 24 24" style="width:10px;height:10px;stroke-width:2.6"><path d="M20 6 9 17l-5-5"/></svg></span>复现差额并取证<span style="margin-left:auto;font:var(--c1);color:var(--label-4)">1 分钟前</span></div>
+              <div class="w-step doing"><span class="st"></span>修复 monthly() 并补单测<span style="margin-left:auto;font:var(--c1);color:var(--blue)">进行中</span></div>
+              <div class="w-step todo"><span class="st"></span>回归验证 + 出核对报告</div>
+              <div class="w-step todo"><span class="st"></span>整理变更说明给评审</div>
+            </div>
+            <!-- 子 Agent 侧边栏(跨轮回看) -->
+            <div class="w-sub">
+              <div class="row1">
+                <svg class="ic s16" viewBox="0 0 24 24" style="color:var(--purple)"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V4M8.5 13h.01M15.5 13h.01M9 16.5h6"/></svg>
+                <span class="nm">探索 Agent</span>
+                <span class="k-chip" style="height:20px;font:var(--c2)">第 2 轮</span>
+                <span class="snaps"><span class="snap">1</span><span class="snap on">2</span></span>
+                <svg class="ic s16" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+              </div>
+              <div class="row1">
+                <svg class="ic s16" viewBox="0 0 24 24" style="color:var(--purple)"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V4M8.5 13h.01M15.5 13h.01M9 16.5h6"/></svg>
+                <span class="nm">评审 Agent</span>
+                <span class="k-chip" style="height:20px;font:var(--c2)">第 1 轮</span>
+                <span class="snaps"><span class="snap on">1</span></span>
+                <svg class="ic s16" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+              </div>
+            </div>
+            <!-- 批准闸 -->
+            <div class="w-gate">
+              <div class="tt"><svg class="ic" viewBox="0 0 24 24" style="color:var(--orange)"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>批准闸 · 计划已就绪</div>
+              <div class="ds">探索完成:改 2 个文件、新增 4 个单测,预计 6 分钟。无人值守时将在倒计时结束后自动开跑。</div>
+              <div class="w-count"><svg class="ic s16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>12:34 后自动开跑</div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <button class="btn pri">开始执行</button>
+                <button class="btn sec">取消自动</button>
+                <span style="flex:1"></span>
+                <button class="btn out s26">查看计划</button>
+              </div>
+            </div>
+            <!-- 成果抽屉 + 自动批准 -->
+            <div class="w-sub">
+              <div class="row1">
+                <svg class="ic s16" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5z"/><path d="m3 13 9 5 9-5"/></svg>
+                <span class="nm">成果抽屉</span>
+                <span class="k-chip" style="height:20px;font:var(--c2)">4 项</span>
+                <span style="margin-left:auto"></span>
+                <svg class="ic s16" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+              </div>
+              <div style="padding:0 8px 8px">
+                <div class="w-file"><svg class="ic s16" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>docs/结息口径修复计划.md<span class="sz">6.2 KB</span></div>
+                <div class="w-file"><svg class="ic s16" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>evidence/差额复现.zip<span class="sz">1.1 MB</span></div>
+              </div>
+            </div>
+            <div class="w-setrow">
+              <span>批准后自动放行写操作</span>
+              <span class="sp"></span>
+              <span style="font:var(--c1);color:var(--label-3)">仅本次工作流</span>
+              <span class="tgl on"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <ul class="spec">
+      <li>todo 状态三态全靠 16px 圆点:完成 = positiveGreen 实底白勾;进行 = blue 环 + 呼吸点(pulse 1.2s ez-inout,只动 transform/opacity);待办 = fills.f4 描边环。</li>
+      <li>子 Agent 用 <code>status.purple</code> 图标标记身份,轮次快照是 20px 小方块,当前轮 <code>kimiBlue10</code> 底——跨轮回看不占正文。</li>
+      <li>批准闸是卡内唯一 fills.f1 抬升区:倒计时用 orange c1Emphasized,主按钮唯一(「开始执行」),「取消自动」永远次级。</li>
+      <li>开关遵守 toggle.md 契约:32×18 轨道、14px 正圆滑块、on 态轨道 = labels.primary,滑块任何状态下都是正圆。</li>
+    </ul>
+  </section>
+
+  <!-- ═══ S5 卡坞 ═══ -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">S5</span>卡坞 Dock · 编排中枢</h2>
+    <p class="b-sec-d">所有卡片与工作流的停泊港。三种模式一个分段控件收编;技能、内置能力、预设模板全部 chip 化,一眼认得出、一点就带走。</p>
+    <div class="shot">
+      <div class="win" style="max-width:780px;margin:0 auto">
+        <div class="win-hd">
+          <span class="k-grip"><svg class="ic s16" viewBox="0 0 24 24" style="fill:currentColor;stroke:none"><circle cx="8" cy="6" r="1.1"/><circle cx="8" cy="12" r="1.1"/><circle cx="8" cy="18" r="1.1"/><circle cx="13" cy="6" r="1.1"/><circle cx="13" cy="12" r="1.1"/><circle cx="13" cy="18" r="1.1"/></svg></span>
+          <span class="t">卡坞</span>
+          <div class="seg">
+            <button>自动</button>
+            <button class="on">任务编排</button>
+            <button>动态工作流</button>
+          </div>
+          <span style="flex:1"></span>
+          <button class="btn sec s26"><svg class="ic s16" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>新卡片</button>
+        </div>
+        <div class="win-bd">
+          <div class="col" style="gap:8px">
+            <span class="lab">技能 · 录制回放</span>
+            <div class="chips">
+              <span class="chip"><svg class="ic s16" viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>银企对账下载</span>
+              <span class="chip"><svg class="ic s16" viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>监管报表填报</span>
+              <span class="chip"><svg class="ic s16" viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>利率公告核对</span>
+            </div>
+          </div>
+          <div class="col" style="gap:8px">
+            <span class="lab">内置能力</span>
+            <div class="chips">
+              <span class="chip"><svg class="ic s16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 4 5.7 4 9s-1.5 6.4-4 9c-2.5-2.6-4-5.7-4-9s1.5-6.4 4-9z"/></svg>内嵌浏览器</span>
+              <span class="chip"><svg class="ic s16" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 8 9 5.5L21 8"/></svg>邮件中心</span>
+              <span class="chip"><svg class="ic s16" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5v14z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/></svg>项目知识库</span>
+              <span class="chip"><svg class="ic s16" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>OceanBase 只读</span>
+            </div>
+          </div>
+          <div class="col" style="gap:8px">
+            <span class="lab">工作流模板</span>
+            <div class="chips">
+              <span class="chip" style="border-color:var(--blue);color:var(--blue)">探索成文<span class="badge blue">模板</span></span>
+              <span class="chip" style="border-color:var(--blue);color:var(--blue)">评审<span class="badge blue">模板</span></span>
+              <span class="chip" style="border-color:var(--blue);color:var(--blue)">排查<span class="badge blue">模板</span></span>
+            </div>
+          </div>
+          <div class="col" style="gap:8px">
+            <span class="lab">工作流 · 3 并发上限</span>
+            <div class="wf">
+              <div class="wf-row">
+                <span class="dot" style="background:var(--blue)"></span>
+                <div><div class="nm">结息口径修复</div><div class="mt">3/5 · 正在:修复 monthly() 并补单测</div></div>
+                <div class="rt"><span class="bar"><i style="width:60%"></i></span><span style="font:var(--c1);color:var(--label-3)">2:41</span></div>
+              </div>
+              <div class="wf-row">
+                <span class="dot" style="background:var(--green)"></span>
+                <div><div class="nm">银企对账 · 6 月</div><div class="mt">技能回放 · 12 步全部成功</div></div>
+                <div class="rt"><span class="badge green">完成</span><span style="font:var(--c1);color:var(--label-3)">昨天 18:02</span></div>
+              </div>
+              <div class="wf-row">
+                <span class="dot" style="background:var(--orange)"></span>
+                <div><div class="nm">监管报表批量下载</div><div class="mt">并发已满,排队中 · 第 1 位</div></div>
+                <div class="rt"><span class="badge orange">排队</span><button class="ibtn" title="取消排队"><svg class="ic s16" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+              </div>
+              <div class="wf-row">
+                <span class="dot" style="background:var(--danger)"></span>
+                <div><div class="nm">利率公告核对</div><div class="mt">第 4 步选择器失效 · 已中断,可续跑</div></div>
+                <div class="rt"><span class="badge red">中断</span><button class="btn out s26"><svg class="ic s16" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>续跑</button></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <ul class="spec">
+      <li>分段控件遵守 segmented-control.md:轨 40px / fills.f2 / radius.lg,选中块浮起用 background.quaternary(dark)或白底+轻投影(light)。</li>
+      <li>列表状态色语义闭环:进行中 blue / 完成 green / 排队 orange / 中断 red,与徽标、圆点、进度条三处同源,不发明第五种表达。</li>
+      <li>进度条刻意做到 3px、110px 宽:它是余光信息,不是仪表台。</li>
+      <li>「中断」行内直接给续跑动作(outline 26px),错误现场就能恢复,不用跳转。</li>
+    </ul>
+  </section>
+
+  <!-- ═══ S6 技能中心 ═══ -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">S6</span>技能中心</h2>
+    <p class="b-sec-d">录制回放的技能卡片墙。卡片只回答三件事:叫什么、稳不稳、跑完接什么。图标裸用 currentColor,不套彩色方块。</p>
+    <div class="shot">
+      <div class="win" style="max-width:780px;margin:0 auto">
+        <div class="win-hd">
+          <span class="t">技能中心</span>
+          <span class="k-chip">8 个技能</span>
+          <span style="flex:1"></span>
+          <div class="num" style="width:200px"><svg class="ic s16" viewBox="0 0 24 24" style="color:var(--label-3)"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input placeholder="搜索技能"></div>
+          <button class="btn pri s26"><svg class="ic s16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3" style="fill:currentColor;stroke:none"/></svg>开始录制</button>
+        </div>
+        <div class="win-bd">
+          <div class="sk-grid">
+            <div class="sk">
+              <div class="nm"><svg class="ic" viewBox="0 0 24 24" style="color:var(--blue)"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>银企对账·流水下载</div>
+              <div class="mt">12 步 · 录制于 07-18<br>最近 9 次回放全部成功</div>
+              <div class="chips"><span class="k-chip">下载后<svg class="ic s16" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M5 12h14M13 6l6 6-6 6"/></svg>编排</span></div>
+              <div class="ft"><button class="btn sec s26"><svg class="ic s16" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5-12-7.5z"/></svg>回放</button><button class="btn out s26">编辑</button></div>
+            </div>
+            <div class="sk">
+              <div class="nm"><svg class="ic" viewBox="0 0 24 24" style="color:var(--green)"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>监管报表填报</div>
+              <div class="mt">23 步 · 录制于 07-15<br>含 2 个敏感输入(脱敏)</div>
+              <div class="chips"><span class="k-chip"><svg class="ic s16" viewBox="0 0 24 24" style="width:12px;height:12px"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>密码已脱敏</span></div>
+              <div class="ft"><button class="btn sec s26"><svg class="ic s16" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5-12-7.5z"/></svg>回放</button><button class="btn out s26">编辑</button></div>
+            </div>
+            <div class="sk">
+              <div class="nm"><svg class="ic" viewBox="0 0 24 24" style="color:var(--orange)"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>利率公告核对</div>
+              <div class="mt">8 步 · 录制于 07-10<br><span style="color:var(--danger)">第 4 步选择器失效</span>,建议重新录制</div>
+              <div class="chips"><span class="k-chip" style="color:var(--orange)"><span class="dot" style="background:var(--orange)"></span>待修复</span></div>
+              <div class="ft"><button class="btn sec s26"><svg class="ic s16" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>重录</button><button class="btn out s26">编辑</button></div>
+            </div>
+            <div class="sk new">
+              <svg class="ic" style="width:22px;height:22px" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+              <span style="font:var(--b2)">录制新技能</span>
+              <span style="font:var(--c1)">在内嵌浏览器里操作一遍即可</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <ul class="spec">
+      <li>健康度内联进元信息行:全绿不贴标,异常才着色(danger 文本 + orange 待修复 chip)——安静实用:正常时不打扰。</li>
+      <li>「下载后→编排」chip 明示技能与工作流的接续关系,是技能中心最重要的一个信号。</li>
+      <li>新建卡用 0.5px dashed 边 + 无底色,是全系统唯一允许虚线的地方(虚线 = 这里还没有东西)。</li>
+    </ul>
+  </section>
+
+  <!-- ═══ S7 邮件中心 ═══ -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">S7</span>邮件中心 + 发件箱闸门</h2>
+    <p class="b-sec-d">经典三栏,密度向邮件客户端看齐。底部常驻发件箱闸门:每封待发邮件有 15s 软撤回窗口,倒计时条是这屏唯一的动效。</p>
+    <div class="shot">
+      <div class="win" style="max-width:880px;margin:0 auto">
+        <div class="win-hd">
+          <span class="t">邮件中心</span>
+          <span class="k-chip green"><span class="dot" style="background:var(--green)"></span>IMAP 已连接</span>
+          <span style="flex:1"></span>
+          <button class="ibtn"><svg class="ic" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+          <button class="btn pri s26"><svg class="ic s16" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>写邮件</button>
+        </div>
+        <div class="mail">
+          <div class="c1x">
+            <div class="fld on"><svg class="ic s16" viewBox="0 0 24 24"><path d="M3 13h5l2 3h4l2-3h5"/><path d="M5 5h14l2 8v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5l2-8z"/></svg>收件箱<span class="ct">12</span></div>
+            <div class="fld"><svg class="ic s16" viewBox="0 0 24 24" style="color:var(--orange)"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>发件箱闸门<span class="ct" style="color:var(--orange)">1</span></div>
+            <div class="fld"><svg class="ic s16" viewBox="0 0 24 24"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></svg>已发送</div>
+            <div class="fld"><svg class="ic s16" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>草稿<span class="ct">2</span></div>
+            <div style="flex:1"></div>
+            <div class="fld"><svg class="ic s16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.9 2.9l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.9-2.9l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.9-2.9l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.9 2.9l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>账户设置</div>
+          </div>
+          <div class="lst">
+            <div class="mi on">
+              <div class="r1"><span class="dot" style="background:var(--blue)"></span>计财部·王岚<time>21:47</time></div>
+              <div class="r2">7 月 LPR 报价已更新</div>
+              <div class="r3">请各条线于周五前完成存量贷款重定价核对…</div>
+            </div>
+            <div class="mi">
+              <div class="r1">核心系统运维<time>20:13</time></div>
+              <div class="r2" style="color:var(--label-3)">[公告] 周六凌晨批处理窗口调整</div>
+              <div class="r3">结息批处理提前至 01:30,请留意联调环境…</div>
+            </div>
+            <div class="mi">
+              <div class="r1">风险部·陈默<time>18:26</time></div>
+              <div class="r2" style="color:var(--label-3)">Re: 结息口径差异说明</div>
+              <div class="r3">口径统一后请补一份回归数据附件…</div>
+            </div>
+          </div>
+          <div class="rd">
+            <div style="font:var(--t2-em)">7 月 LPR 报价已更新</div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span class="av">王</span>
+              <div><div style="font:var(--b2-em)">计财部 · 王岚</div><div style="font:var(--c1);color:var(--label-3)">wanglan@bank.local · 今天 21:47 · 至 我</div></div>
+            </div>
+            <div style="font:var(--b2);line-height:22px;color:var(--label-2)">各位:<br>7 月 LPR 报价已更新(1 年期 3.0%,5 年期以上 3.5%)。请各条线于周五前完成存量贷款重定价核对,附件为调整清单。</div>
+            <div class="chips">
+              <span class="chip"><svg class="ic s16" viewBox="0 0 24 24"><path d="M12 3v12M6 11l6 6 6-6M4 21h16"/></svg>LPR调整清单.xlsx<span style="color:var(--label-4)">48 KB</span></span>
+            </div>
+          </div>
+        </div>
+        <!-- 发件箱闸门 -->
+        <div class="gatebar">
+          <svg class="ic" viewBox="0 0 24 24" style="color:var(--orange)"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+          <span class="tx">《利率调整通知》将在 <b>14s</b> 后发送</span>
+          <span class="bar" style="flex:1;max-width:220px"><i style="width:78%;background:var(--orange)"></i></span>
+          <span style="flex:1"></span>
+          <button class="btn pri s26">撤回</button>
+          <button class="btn sec s26">立即发送</button>
+        </div>
+      </div>
+    </div>
+    <ul class="spec">
+      <li>闸门条用 <code>lightOrangeBg</code> 整行铺底 + orange 图标与倒计时数:这是全屏唯一需要余光捕捉的东西。</li>
+      <li>撤回是主按钮(安全动作给最高权重),「立即发送」反而次级——非常规但符合闸门语义:它的职责是拦,不是催。</li>
+      <li>未读 = blue 6px 点 + b2Emphasized;已读行文字降到 labels.tertiary,靠不透明度分层,不用灰底。</li>
+    </ul>
+  </section>
+
+  <!-- ═══ S8 设置 · 旋钮与知识库 ═══ -->
+  <section class="b-sec">
+    <h2 class="b-sec-t"><span class="no">S8</span>设置 · 智能体旋钮 + 项目知识库</h2>
+    <p class="b-sec-d">阈值全部旋钮化,模型升级后一档档退;知识条目可视化管理,健康度一眼可见——过时地图比没地图危险,所以坏条目要被看见、被隔离。</p>
+    <div class="shot">
+      <div class="win" style="max-width:760px;margin:0 auto">
+        <div class="win-hd"><span class="t">设置</span>
+          <div class="seg"><button>通用</button><button class="on">智能体</button><button>项目知识库</button></div>
+          <span style="flex:1"></span>
+        </div>
+        <div class="win-bd">
+          <div class="col" style="gap:10px">
+            <span class="lab">智能体旋钮 · 改动即时生效</span>
+            <div class="kn-grid">
+              <div class="knob"><span class="lb">自动压缩阈值</span><div class="num"><input value="80"><span class="un">%</span></div><span class="hint">上下文用量超过即触发压缩</span></div>
+              <div class="knob"><span class="lb">单会话压缩上限</span><div class="num"><input value="5"><span class="un">次</span></div><span class="hint">超过后提示重开新卡</span></div>
+              <div class="knob"><span class="lb">看门狗判死</span><div class="num"><input value="3"><span class="un">轮无进展</span></div><span class="hint">判死看进展,不看时长</span></div>
+              <div class="knob"><span class="lb">批准闸超时</span><div class="num"><input value="15"><span class="un">分钟</span></div><span class="hint">0 = 永不自动开跑</span></div>
+              <div class="knob"><span class="lb">工作流并发上限</span><div class="num"><input value="3"><span class="un">个</span></div><span class="hint">超出排队,卡坞可见</span></div>
+              <div class="knob"><span class="lb">子 Agent 轮次上限</span><div class="num"><input value="6"><span class="un">轮</span></div><span class="hint">防止子任务无限自我续命</span></div>
+              <div class="knob"><span class="lb">知识注入条数</span><div class="num"><input value="60"><span class="un">条</span></div><span class="hint">超出按 scene 确定性命中</span></div>
+              <div class="knob"><span class="lb">压缩保留最近</span><div class="num"><input value="20"><span class="un">条消息</span></div><span class="hint">压缩时原样保留的尾部</span></div>
+              <div class="knob"><span class="lb">Toast 停留</span><div class="num"><input value="3"><span class="un">秒</span></div><span class="hint">成功/失败提示的停留时长</span></div>
+            </div>
+          </div>
+          <div class="col" style="gap:10px">
+            <div style="display:flex;align-items:center;gap:10px">
+              <span class="lab">项目知识库 · loan-web(47 条)</span>
+              <span style="flex:1"></span>
+              <span style="font:var(--c1);color:var(--label-3)"><span style="color:var(--green)">●</span> 锚点完好 <span style="color:var(--orange)">●</span> 行漂移已重定位 <span style="color:var(--danger)">●</span> 缺失已隔离</span>
+            </div>
+            <div class="col" style="gap:8px">
+              <div class="kb-row">
+                <span class="dot" style="background:var(--green)"></span>
+                <div><div class="nm">计息口径:实际天数/365,跨月分段</div><div class="mt">scene: 计息/结息 · 锚点 InterestCalc.java:87 · 更新于 07-20</div></div>
+                <div class="rt"><button class="ibtn"><svg class="ic s16" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button><button class="ibtn"><svg class="ic s16" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"/></svg></button></div>
+              </div>
+              <div class="kb-row">
+                <span class="dot" style="background:var(--orange)"></span>
+                <div><div class="nm">联调环境批处理窗口提前至 01:30</div><div class="mt">scene: 环境/批处理 · 行漂移 12→9,已重定位回写 · 更新于 07-19</div></div>
+                <div class="rt"><button class="ibtn"><svg class="ic s16" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button><button class="ibtn"><svg class="ic s16" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"/></svg></button></div>
+              </div>
+              <div class="kb-row" style="opacity:0.72">
+                <span class="dot" style="background:var(--danger)"></span>
+                <div><div class="nm">旧核心接口 /acct/query 费率表 <span class="badge red" style="margin-left:4px">已隔离</span></div><div class="mt">scene: 接口/费率 · 锚点文件已删除,注入时自动跳过 · 更新于 07-11</div></div>
+                <div class="rt"><button class="btn out s26">恢复</button><button class="ibtn"><svg class="ic s16" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"/></svg></button></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <ul class="spec">
+      <li>旋钮输入框:32px 高、radius.md、fills.f1 底,数字用 mono + tnum;聚焦态 0.5px 边换 kimiBlue,无发光环(focus 用色不用影)。</li>
+      <li>每个旋钮带一句 c1 hint 说清单位与后果——阈值不是给机器看的,是给三个月后的自己看的。</li>
+      <li>知识健康度三态与图例同屏;被隔离条目整行降到 72% 不透明度 + red 徽标,但仍可恢复:隔离是保护,不是删除。</li>
+    </ul>
+  </section>
+</div>
+<script>
+  (function () {
+    var h = document.documentElement, b = document.getElementById('themeBtn');
+    function r() { b.textContent = h.dataset.theme === 'dark' ? '切换浅色' : '切换深色'; }
+    b.addEventListener('click', function () { h.dataset.theme = h.dataset.theme === 'dark' ? 'light' : 'dark'; r(); });
+    r();
+  })();
+</script>
+</body>
+</html>

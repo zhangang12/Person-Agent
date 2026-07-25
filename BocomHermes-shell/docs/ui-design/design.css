@@ -1,0 +1,255 @@
+/* ==========================================================================
+   BocomHermes 客户端设计套件 · design.css
+   令牌来源:Kimi Design Tokens 0.2.0(tokens.json) —— 颜色/字阶/圆角/间距/阴影
+   原则:Quiet Utility(每个元素都要挣得自己的位置) · Token First · 语义层级
+   主题:html[data-theme="dark"] 默认(桌面智能体主场景),light 完整双主题
+   ========================================================================== */
+
+/* ── 令牌:颜色(语义路径 → 值) ─────────────────────────────────────────── */
+:root, html[data-theme="dark"] {
+  --bg-primary: #121212;            /* color.background.primary.dark */
+  --bg-primary-90: rgba(18,18,18,0.9);
+  --bg-secondary: #1f1f1f;          /* color.background.secondary.dark */
+  --bg-tertiary: #292929;           /* color.background.tertiary.dark */
+  --bg-quaternary: #4d4d4d;         /* color.background.quaternary.dark */
+  --bg-ground: #161717;             /* color.background.groundPc.dark */
+
+  --label-1: rgba(255,255,255,0.84);   /* color.labels.primary */
+  --label-2: rgba(255,255,255,0.56);   /* color.labels.secondary */
+  --label-3: rgba(255,255,255,0.42);   /* color.labels.tertiary */
+  --label-4: rgba(255,255,255,0.26);   /* color.labels.quaternary */
+
+  --fill-1: rgba(255,255,255,0.05);    /* color.fills.f1 */
+  --fill-2: rgba(255,255,255,0.1);     /* color.fills.f2 */
+  --fill-3: rgba(255,255,255,0.18);    /* color.fills.f3 */
+  --fill-4: rgba(255,255,255,0.25);    /* color.fills.f4 */
+
+  --sep: rgba(255,255,255,0.12);       /* color.separator.s1 */
+
+  --blue: #1a88ff;                  /* color.status.kimiBlue */
+  --green: #16c456;                 /* color.status.positiveGreen */
+  --danger: #ff4756;                /* color.status.danger */
+  --orange: #ff9f0a;                /* color.status.orange */
+  --yellow: #ffd230;                /* color.status.yellow */
+  --purple: #a16bff;                /* color.status.purple */
+  --brand: rgba(255,255,255,0.84);  /* color.brand.kimiDark(dark 主题下主按钮) */
+  --brand-text: #121212;
+
+  --blue-10: rgba(26,136,255,0.1);     /* color.others.kimiBlue10 */
+  --green-10: rgba(22,196,86,0.1);     /* color.others.lightGreenBg */
+  --red-10: rgba(255,82,82,0.1);       /* color.others.lightRedBg */
+  --orange-10: rgba(255,159,10,0.1);   /* color.others.lightOrangeBg */
+  --yellow-10: rgba(255,210,48,0.2);   /* color.others.lightYellowBg */
+  --selected: rgba(26,136,255,0.2);    /* color.others.textSelected */
+
+  --bubble-user: #292929;              /* color.others.bubbleGrayPc.dark */
+  --toast-bg: #404040;                 /* color.mask.toastPc.dark */
+  --mask: rgba(0,0,0,0.6);             /* color.mask.dark */
+
+  /* color.syntax.* (dark) */
+  --syn-kw: #C586C0; --syn-str: #CE9178; --syn-cmt: #B2B2B2;
+  --syn-fn: #DCDCAA; --syn-var: #9CDCFE; --syn-num: #B5CEA8; --syn-op: #D4D4D4;
+
+  --shadow-input: 0 5px 16px -4px rgba(0,0,0,0.35);  /* effect.shadow.inputDefault,深色下加深 */
+  --shadow-small: 0 4px 16.4px rgba(0,0,0,0.4);
+  --shadow-medium: 0 4px 15px 2px rgba(0,0,0,0.5);
+  --blur-heavy: 30px;                                 /* effect.backgroundBlur.heavy */
+}
+html[data-theme="light"] {
+  --bg-primary: #ffffff;
+  --bg-primary-90: rgba(255,255,255,0.9);
+  --bg-secondary: #f5f5f5;
+  --bg-tertiary: #ffffff;
+  --bg-quaternary: #ffffff;
+  --bg-ground: #f9fbfc;
+
+  --label-1: rgba(0,0,0,0.9);
+  --label-2: rgba(0,0,0,0.6);
+  --label-3: rgba(0,0,0,0.45);
+  --label-4: rgba(0,0,0,0.3);
+
+  --fill-1: rgba(0,0,0,0.03);
+  --fill-2: rgba(0,0,0,0.05);
+  --fill-3: rgba(0,0,0,0.15);
+  --fill-4: rgba(0,0,0,0.25);
+
+  --sep: rgba(0,0,0,0.13);
+
+  --blue: #1783ff;
+  --green: #16c456;
+  --danger: #ff3849;
+  --orange: #ff9500;
+  --yellow: #ffd230;
+  --purple: #985ffb;
+  --brand: rgba(0,0,0,0.9);
+  --brand-text: #ffffff;
+
+  --blue-10: rgba(23,131,255,0.1);
+  --green-10: rgba(22,196,86,0.1);
+  --red-10: rgba(255,77,77,0.1);
+  --orange-10: rgba(255,149,0,0.1);
+  --yellow-10: rgba(255,200,0,0.2);
+  --selected: rgba(23,131,255,0.2);
+
+  --bubble-user: #f5f5f5;
+  --toast-bg: #2b2b2b;
+  --mask: rgba(0,0,0,0.4);
+
+  --syn-kw: #034C7C; --syn-str: #A44185; --syn-cmt: #B2B2B2;
+  --syn-fn: #7EB233; --syn-var: #2F86D2; --syn-num: #174781; --syn-op: #0991B6;
+
+  --shadow-input: 0 5px 16px -4px rgba(0,0,0,0.07);
+  --shadow-small: 0 4px 16.4px rgba(0,0,0,0.1);
+  --shadow-medium: 0 4px 15px 2px rgba(0,0,0,0.15);
+}
+
+/* ── 令牌:字体/字阶(typography.webUI + markdown) ─────────────────────── */
+:root {
+  --font-ui: "PingFang SC", -apple-system, "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --t-largeTitle: 600 20px/30px var(--font-ui);   /* largeTitleEmphasized */
+  --t2: 400 16px/24px var(--font-ui);             /* t2Regular */
+  --t2-em: 500 16px/24px var(--font-ui);
+  --b1: 400 15px/22px var(--font-ui);
+  --b1-em: 500 15px/22px var(--font-ui);
+  --b2: 400 14px/20px var(--font-ui);             /* b2Regular,Web UI 主力字号 */
+  --b2-em: 500 14px/20px var(--font-ui);
+  --c1: 400 12px/18px var(--font-ui);             /* 仅徽标/辅助元信息 */
+  --c1-em: 500 12px/18px var(--font-ui);
+  --c2: 400 10px/14px var(--font-ui);
+  --md-body: 400 16px/26px var(--font-ui);        /* markdown.b1Content */
+  --md-code: 400 14px/22px var(--font-mono);      /* markdown.codeblocks */
+
+  /* radius */
+  --r-xxs: 4px; --r-sm: 8px; --r-md: 10px; --r-lg: 12px; --r-xl: 16px; --r-full: 100px;
+  /* spacing 节奏:32/24/20/16/12/8/4 */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s7: 32px;
+  /* 动效曲线(animation.md) */
+  --ez-out: cubic-bezier(0.23, 1, 0.32, 1);       /* 进/出场 */
+  --ez-inout: cubic-bezier(0.77, 0, 0.175, 1);    /* 屏内移动 */
+  --ez-drawer: cubic-bezier(0.32, 0.72, 0, 1);    /* 抽屉 */
+  --z-toast: 1000; --z-tooltip: 900; --z-dialog: 860; --z-modal: 810; --z-header: 500;
+}
+
+/* ── 基础 ────────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+body {
+  font: var(--b2); color: var(--label-1); background: var(--bg-ground);
+  font-feature-settings: "tnum" 0;
+}
+code, pre, .mono { font-family: var(--font-mono); }
+::selection { background: var(--selected); }
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+input, textarea, select { font: inherit; color: inherit; }
+svg.ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+svg.ic.s16 { width: 16px; height: 16px; }
+svg.ic.s20 { width: 20px; height: 20px; }
+
+/* ── 组件:按钮(button.md 契约:44/32/26 × primary/secondary/outline) ──── */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--s1);
+  border-radius: var(--r-md); font: var(--b2-em); height: 32px; padding: 6px 10px; min-width: 62px;
+  transition: background-color 150ms ease, transform 120ms var(--ez-out); user-select: none; }
+.btn:active { transform: scale(0.97); }                 /* 按压 0.96-0.97,100-160ms */
+.btn.pri { background: var(--brand); color: var(--brand-text); }
+.btn.pri:hover { background: var(--label-1); }
+.btn.sec { background: var(--fill-1); color: var(--label-1); }
+.btn.sec:hover { background: var(--fill-2); }
+.btn.out { border: 0.5px solid var(--sep); color: var(--label-1); background: transparent; }
+.btn.out:hover { background: var(--fill-1); }
+.btn.danger.pri { background: var(--danger); color: #fff; }
+.btn.danger.sec, .btn.danger.out { color: var(--danger); }
+.btn.s44 { height: 44px; border-radius: var(--r-lg); font: var(--t2-em); padding: 10px 14px; min-width: 72px; }
+.btn.s26 { height: 26px; border-radius: var(--r-sm); font: var(--c1-em); padding: 4px 8px; min-width: 52px; }
+.btn:disabled { color: var(--label-4); pointer-events: none; }
+
+/* 图标钮(独立 icon button,20-24px 图标,方形框架保持光学对齐) */
+.ibtn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+  border-radius: var(--r-sm); color: var(--label-3); transition: background-color 150ms ease, color 150ms ease; }
+.ibtn:hover { background: var(--fill-2); color: var(--label-1); }
+
+/* ── 组件:chip / 徽标(28-36px 高,s1 描边,icon-label 4px) ────────────── */
+.chip { display: inline-flex; align-items: center; gap: var(--s1); height: 28px; padding: 0 10px;
+  border: 0.5px solid var(--sep); border-radius: var(--r-sm); font: var(--b2); color: var(--label-2);
+  background: transparent; transition: background-color 150ms ease, color 150ms ease; }
+.chip:hover { background: var(--fill-1); color: var(--label-1); }
+.badge { display: inline-flex; align-items: center; gap: 3px; height: 16px; padding: 0 6px;
+  border-radius: var(--r-full); font: var(--c2); font-weight: 500; }
+.badge.green { background: var(--green-10); color: var(--green); }
+.badge.red { background: var(--red-10); color: var(--danger); }
+.badge.orange { background: var(--orange-10); color: var(--orange); }
+.badge.blue { background: var(--blue-10); color: var(--blue); }
+.badge.gray { background: var(--fill-2); color: var(--label-2); }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+
+/* ── 组件:分段控件(segmented-control.md:md 40px 轨,f2 底,选中浮起) ──── */
+.seg { display: inline-flex; gap: var(--s1); background: var(--fill-2); border-radius: var(--r-lg); padding: var(--s1); }
+.seg > button { display: inline-flex; align-items: center; justify-content: center; gap: var(--s1);
+  min-width: 52px; height: 32px; padding: 6px 12px; border-radius: var(--r-sm);
+  font: var(--b2); color: var(--label-1); transition: background-color 150ms ease; }
+.seg > button.on { background: var(--bg-quaternary); }
+html[data-theme="light"] .seg > button.on { background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+
+/* ── 组件:开关(toggle.md 简化:32×18 sm) ─────────────────────────────── */
+.tgl { position: relative; width: 32px; height: 18px; border-radius: var(--r-full);
+  background: var(--fill-3); transition: background-color 200ms ease; flex: none; }
+.tgl::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
+  border-radius: 50%; background: #fff; transition: transform 200ms var(--ez-out); }
+.tgl.on { background: var(--label-1); }   /* toggle.md:on 态轨道 = labels.primary */
+.tgl.on::after { transform: translateX(14px); }
+
+/* ── 组件:卡片(通用容器:primary 底 + 0.5px s1 边 + lg 圆角) ─────────── */
+.panel { background: var(--bg-primary); border: 0.5px solid var(--sep); border-radius: var(--r-lg); }
+.panel.pad { padding: var(--s4); }
+
+/* ── 组件:Toast(toast.md:dark 底恒定,图标色表意,顶中,3s) ───────────── */
+.toast { display: inline-flex; align-items: center; gap: var(--s2); min-height: 40px; max-width: 360px;
+  padding: 10px 12px; border-radius: var(--r-lg); background: var(--toast-bg);
+  color: #fff; font: var(--b2); box-shadow: var(--shadow-small); }
+.toast .act { color: var(--blue); font: var(--b2-em); padding: 4px; border-radius: var(--r-xxs); }
+.toast .t-ic { width: 20px; height: 20px; flex: none; }
+
+/* ── 组件:输入容器(web-best-practices §8:primary 底+s1 边+input 阴影) ── */
+.inputbox { background: var(--bg-primary); border: 0.5px solid var(--sep);
+  border-radius: 20px; box-shadow: var(--shadow-input); }
+.inputbox textarea { width: 100%; background: none; border: none; outline: none;
+  font: var(--t2); color: var(--label-1); padding: var(--s3) var(--s4) 0; resize: none; }
+.inputbox textarea::placeholder { color: var(--label-4); }
+
+/* ── 组件:代码块(markdown.codeblocks + color.syntax) ─────────────────── */
+pre.code { font: var(--md-code); background: var(--fill-1); border-radius: var(--r-sm);
+  padding: var(--s3) var(--s4); overflow-x: auto; color: var(--label-1); }
+pre.code .k { color: var(--syn-kw); } pre.code .s { color: var(--syn-str); }
+pre.code .c { color: var(--syn-cmt); } pre.code .f { color: var(--syn-fn); }
+pre.code .v { color: var(--syn-var); } pre.code .n { color: var(--syn-num); }
+
+/* ── 展示板骨架(仅设计稿陈列用,非产品组件) ─────────────────────────── */
+.board { max-width: 1280px; margin: 0 auto; padding: var(--s7) var(--s6) 96px; }
+.b-head { margin-bottom: var(--s7); }
+.b-title { font: var(--t-largeTitle); }
+.b-sub { font: var(--b2); color: var(--label-2); margin-top: var(--s2); max-width: 720px; line-height: 1.7; }
+.b-sec { margin-top: 56px; }
+.b-sec-t { font: var(--t2-em); display: flex; align-items: baseline; gap: var(--s3); }
+.b-sec-t .no { font: var(--c1-em); color: var(--blue); letter-spacing: 0.05em; }
+.b-sec-d { font: var(--c1); color: var(--label-3); margin-top: var(--s1); line-height: 1.7; max-width: 760px; }
+.b-grid { display: grid; gap: var(--s4); margin-top: var(--s5); }
+.b-note { font: var(--c1); color: var(--label-3); margin-top: var(--s2); line-height: 1.6; }
+.b-note b { color: var(--label-2); font-weight: 500; }
+.spec { font: var(--c1); color: var(--label-3); line-height: 1.8; }
+.spec code { font-size: 11px; background: var(--fill-1); padding: 1px 5px; border-radius: var(--r-xxs); color: var(--label-2); }
+.shot { border: 0.5px solid var(--sep); border-radius: var(--r-xl); background: var(--bg-secondary);
+  padding: var(--s5); overflow: hidden; }
+.shot.darkstage { background: #0b0b0c; }   /* 桌面舞台(模拟透明卡悬浮其上的桌面) */
+.stage { border-radius: var(--r-lg); padding: var(--s6); position: relative;
+  background:
+    radial-gradient(1200px 500px at 20% -10%, rgba(26,136,255,0.07), transparent 60%),
+    radial-gradient(900px 420px at 85% 110%, rgba(22,196,86,0.05), transparent 60%),
+    #101012; }
+.stage-label { font: var(--c2); color: var(--label-4); position: absolute; top: 10px; left: 14px; letter-spacing: 0.08em; }
+.row { display: flex; gap: var(--s3); align-items: center; flex-wrap: wrap; }
+.col { display: flex; flex-direction: column; gap: var(--s3); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
