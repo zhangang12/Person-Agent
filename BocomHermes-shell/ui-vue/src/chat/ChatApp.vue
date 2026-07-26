@@ -1,20 +1,37 @@
 <script setup lang="ts">
-// chat 页根组件:标题栏 + 对话流 + 输入条;Esc 中断本轮(忙时)。
-// wf/orch/shard 卡不走新页(第二棒接线):给占位说明,不连引擎、不留死路。
+// chat 页根组件:标题栏 + 权限 sticky 摘要钉 + 对话流 + 输入条 + 成果抽屉 + 压缩续聊确认框。
+// Esc 中断本轮(忙时);Y/A/N 权限审批快捷键(输入框聚焦时不抢,高危无 A)。
+// wf/orch/shard 卡不走新页(cardImpl 开关在主进程侧强制 legacy):占位说明兜底,不留死路。
 import { onMounted, onBeforeUnmount } from 'vue'
-import { s, boot, abort } from './store'
+import { s, boot, abort, pendingPerms, replyPerm, compactCore } from './store'
 import TitleBar from './TitleBar.vue'
 import FeedView from './FeedView.vue'
 import ComposerBar from './ComposerBar.vue'
+import ArtDrawer from './ArtDrawer.vue'
+import KDialog from '../components/KDialog.vue'
 
 function onKey(e: KeyboardEvent) {
-  if (e.key === 'Escape' && s.busy) abort()
+  if (e.key === 'Escape' && s.busy) { abort(); return }
+  // Y/A/N:有权限条待批时快捷键批复第一条;输入态(textarea/input/可编辑)不抢字母键
+  if (!pendingPerms.value.length) return
+  const t = e.target as HTMLElement | null
+  if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable)) return
+  const first = pendingPerms.value[0]
+  const k = e.key.toLowerCase()
+  if (k === 'y') replyPerm(first, 'once')
+  else if (k === 'a' && !first.highRisk) replyPerm(first, 'always')   // 高危没有「总是」—— 危险操作不许养成快捷键习惯
+  else if (k === 'n') replyPerm(first, 'reject')
 }
 onMounted(() => {
   document.addEventListener('keydown', onKey)
   boot()
 })
 onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
+
+function scrollToPerm() {
+  const el = document.querySelector('.permbar')
+  if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center' })
+}
 </script>
 
 <template>
@@ -23,11 +40,24 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey))
     <TitleBar />
     <div v-if="s.unsupportedMode" class="unsupported">
       <p>本卡类型（{{ s.unsupportedMode }}）暂未迁移到新对话页。</p>
-      <p class="sub">工作流 / 编排 / 分片卡仍由旧版卡片承载（P2a 第二棒接线）。当前页未连接引擎，可直接关闭。</p>
+      <p class="sub">工作流 / 编排 / 分片卡仍由旧版卡片承载（cardImpl 开关强制 legacy）。当前页未连接引擎，可直接关闭。</p>
     </div>
     <template v-else>
+      <!-- 权限 sticky 摘要钉:批准条被流式顶出视口后,输入框上方仍有一枚钉;点击滚回批准条 -->
+      <button v-if="pendingPerms.length" class="permsticky" @click="scrollToPerm">
+        ⏸ 待批准:{{ pendingPerms[0].tool }}{{ pendingPerms.length > 1 ? '(共 ' + pendingPerms.length + ' 项)' : '' }} —— 引擎在等你
+      </button>
       <FeedView />
       <ComposerBar />
+      <ArtDrawer />
+      <KDialog
+        :open="s.compactAsk"
+        title="压缩续聊"
+        desc="让模型把本段对话总结成「接力摘要」，然后开一段新会话继续 —— 结论、路径、未完成事项都会带过去，上下文占用回到起点。原对话内容会从本卡清空（引擎侧历史仍在，可从卡坞找回）。"
+        confirm-text="压缩并续聊"
+        @update:open="(v) => (s.compactAsk = v)"
+        @confirm="compactCore"
+      />
     </template>
   </div>
 </template>

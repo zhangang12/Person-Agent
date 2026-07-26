@@ -123,10 +123,14 @@ export function spawnChat(p: any = {}) {
   if (p.disp) q.set('disp', p.disp)
   if (p.orch) q.set('orch', '1')
   if (p.wf) q.set('wf', '1')
+  // cardImpl 双轨(P2a):默认 Vue 对话页(./chat.html,与 shell 同目录 dist);legacy 或 wf/orch 未迁移卡 → 旧页
+  let cardImpl = 'vue'
+  try { cardImpl = ((BH()?.getSettings?.() || {}) as any).cardImpl || 'vue' } catch { /* 静默 */ }
+  const useVue = cardImpl !== 'legacy' && !p.wf && !p.orch
   store.chats.push({
     key, sid: p.sid || null, title: p.title || '新会话',
     wf: !!p.wf, busy: false, unread: false, hasWv: true,
-    src: '../card.html?' + q.toString(),
+    src: (useVue ? './chat.html?' : '../card.html?') + q.toString(),
   })
   details.set(key, { wcId: null, ready: false, pending: '', wv: null, cardId: p.id || '' })
   refreshHist()

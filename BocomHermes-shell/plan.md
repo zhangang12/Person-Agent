@@ -1,60 +1,48 @@
-# BocomHermes 桌面主窗口化重构 · plan.md
+# P2a 第二棒 · 工具权限 chips + 上线
 
-> 目标:悬浮球 + 多悬浮卡 → 一体化桌面主窗口(侧栏 + 主工作区 + 状态栏);
-> 悬浮球与自由悬浮卡**退役**;保留唯一例外:从主窗口**钉出单张迷你卡**(盯梢单个会话)。
-> 设计稿:`docs/ui-design/desktop.html`(W0-W5)。
+## 目标
+对话核心剩余部分(工具块/todo卡/权限条/提问卡/标题栏chips/成果抽屉/技能菜单/快捷指令条)+ cardImpl 接线上线(默认 Vue,legacy 可退)。
 
-## 架构决策
+## 阶段
 
-**主窗口 = 新 `ui/shell.html`**,各功能页以 `<webview>`(preload 同一份)收编为视图,
-不重写各页业务逻辑。已验证的两个先例照抄:
+### Stage 1 · 纯函数层 + vitest 契约(先测后码锚定旧行为)
+- `lib/tool.ts`:isTodoTool/asObj/fmtInput/todoModel(☒◐⊘☐+meta N/M)/toolStatus/toolSummary(⎿ N字·X.Xk字)/truncIn(4000)/truncOut(20000)/isWriteEditTool/extractFilePath/artAbs/artRel
+- `lib/ctxchip.ts`:CTX_FALLBACK 兜底表/ctxCap(128k 顶)/估算口径 chars/1.6/**阈值按设计稿 <60 绿、60-80 橙、>80 红(旧页 70/90,报告标注变更)**/<5% 隐藏
+- `lib/perm.ts`:高危判定(复用旧页 DANGER 正则;设计稿新增,旧页无分级,存疑标注)
+- `lib/question.ts`:canSend/summaryOf 纯逻辑
+- 测试:tool.test.ts / ctxchip.test.ts / perm.test.ts(question 并入 perm.test 或单列)
 
-- `src/browser.js:631` — WebContentsView 内嵌 `card.html?embedded=1`(会话卡嵌入可行)
-- `ui/console.html:846-850` — `<webview preload="abs-file-url">` 内嵌 `mailcenter.html?embed=1`
+### Stage 2 · store 扩展
+- 新 FeedItem:ToolItem/TodoItem/PermItem/QuestionItem;upsertTool(同 partID 原地更新、插 curAnswer 前、ctx 记账迁入、write/edit → 成果抽屉)
+- wirePermission/wireQuestion 挂 wireStream 旁;pendingPerms sticky 计数
+- 成果抽屉态:artFiles/lastFinalText/artActivePath
+- ctx chip 数据:modelKey/ctxLimitTokens/realTokens/cacheHit;refreshCtxLimit/pollRealUsage;compactCore(压缩续聊)+ resetConversation
+- verbose(localStorage cardVerbose)、hb(onServeHealth)、activeSkill(submit→cardSend 第三参)
 
-视图映射:
+### Stage 3 · 组件
+- ToolBlock.vue(details 折叠、verbose 联动、⎿ 摘要、截断提示)
+- TodoCard.vue(一等公民卡)
+- PermBar.vue(橙/红;高危无「总是」;Y/A/N 键盘快捷键=设计稿新增)
+- QuestionCard.vue(k-quiz 单/多选/custom/跳过/定格留痕)
+- ArtDrawer.vue(右抽屉:最终结论+文件清单+readFileText 预览)
+- TitleBar.vue 改:model chip+KMenu、ctx chip(点击→KDialog 压缩确认)、hb 灯、verbose 钮、art 钮+badge
+- ComposerBar.vue 改:技能 slash 菜单+技能 chip、快捷指令条(QUICK+查看本次改动+我的记忆弹层)
+- ChatApp.vue 改:perm sticky 条、Y/A/N 全局键、ArtDrawer 挂载
+- chat.css 追加样式(只吃 tokens)
 
-| 主窗口视图 | 承载 | 说明 |
-|---|---|---|
-| 对话(默认) | `card.html?embedded=1&sid=…` | 侧栏会话列表切换;每会话一个 webview,后台保活 |
-| 任务编排 | `dock.html?embed=1` | 牌桌/模板/清单/历史都在 dock |
-| 邮件中心 | `mailcenter.html?embed=1` | 已有 embed 先例 |
-| 设置+知识库 | `settings.html?embed=1` | 旋钮与知识库治理都在 |
-| 内嵌浏览器 | 不开视图,唤起现有 `createWorkspace()` 窗口 | 功率工具,保持独立 |
+### Stage 4 · 接线上线
+- window.js:203 cardImpl 开关(wf/orch/shard 强制 legacy)
+- shell/store.ts:cardImpl 读取 + spawnChat src 选择('./chat.html' vs '../card.html')
 
-钉出/收回:
+### Stage 5 · 验收
+- ui:typecheck / ui:build / ui:test 全绿
+- stub 截图:工具折叠+展开、todo、权限橙/红、提问单/多选、ctx 三态、成果抽屉、模型菜单 → /tmp/chat-p2a2-*.png 目检
+- 真机冒烟:npm start 15s ×2(默认 vue + cardImpl:legacy 回退,测完还原)
+- 7 项既有自测全绿
+- 一个 commit
 
-- 钉出:shell 会话项「钉出」→ IPC `session-pin-out {sid}` → 销毁内嵌 webview(**不 abort 会话**)→ `spawnCard(title, sid)`(cardInit 按 sid 重接,天然接管流式)→ 记录 `S.pinnedWc`
-- 收回:迷你卡 `closed` → 若 `S.pinnedWc` 命中且主窗口活着 → 跳过 abort 清理,通知 shell `session-reattached {sid}` → shell 重建该会话 webview;主窗口已关 → 走原清理链
-- 拖出手势:侧栏会话项 mousedown 拖动 >8px 即视为拖出,新卡出现在光标屏幕坐标
-
-## 关键事实(侦察结论,改造时对照)
-
-- 会话绑定键 = `webContents.id`:`S.sessionByWc / S.sessionInfo`(src/session.js:788-824),webview guest 天然兼容
-- 窗口控制 IPC(`close-self` 等)对 guest **静默失效**(src/window.js:1997-2016),嵌入页的 `#x`/Esc 关窗必须改走 embed 分支
-- glass.css 透明壳假设:`body{padding:24px}` + `.glass` 圆角/阴影(ui/glass.css:111-146),embed 样式开关必须补齐(现在只隐藏按钮,card.html:869-870)
-- 窗口 `closed` 清理链(abort 会话/retire serve/forgetBusy):src/window.js:253-286,视图化后要抽出复用;工作台曾漏复刻踩过坑(src/browser.js:644-664 注释)
-- 主题广播只发 BrowserWindow 顶层(src/window.js:857,1545-1548),guest 收不到 → 改 `webContents.getAllWebContents()`
-- `skills.html` 是无引用死页,**不收编**;console.html(控制台2.0)被 shell 取代后退役
-- 热键改道点:main.js:161-174;托盘菜单:src/window.js:1477-1497;`window-all-closed` 自动重建 orb:main.js:180-185
-
-## 分波实施
-
-- **波1 主窗口骨架**:`ui/shell.html` + `createMainWindow()` + 启动/热键/托盘改道 + 停建 orb;dock/settings 补 embed 分支;embed 样式覆盖
-  验收:`npm start` 出主窗口,四视图可切(邮件/编排/设置活),对话视图能聊,无 orb,自测全绿
-- **波2 会话视图完备**:侧栏会话列表(活动会话+历史)、切换/新建/关闭(清理链抽出复用)、主题广播修 guest、空态
-  验收:多会话并行流式不串、关会话清理正确(无孤儿 serve/卡死状态球)
-- **波3 钉出/收回**:`session-pin-out` / `session-reattach` IPC、迷你卡 closed 改道、拖出手势
-  验收:钉出后流式不断、收回后会话回列表、主窗口关闭时钉出卡退回原清理链
-- **波4 快捷输入与状态栏**:Ctrl+Shift+Space → 聚焦主窗+快捷输入层(回车=新会话带首发消息);状态栏(项目/引擎保活/token/并发);Ctrl+Shift+V 进快捷输入
-  验收:热键全链路通、状态栏数据真
-- **波5 退役与收尾**:删 orb.html/orb-input.html/console.html 及其装配(createOrb/createOrbInput/toggleOrbInput/createConsole)、`window-all-closed` 重建逻辑、托盘残留项;全量自测 + `npm start` 冒烟;git 提交
-  验收:`grep -r orb` 仅剩无害注释;`npm run card:ui:test` 等全绿;提交记录清晰
-
-## 风险 Top 5(侦察原文)
-
-1. 窗口控制 IPC 对 guest 失效 → embed 分支逐一改道(死按钮零容忍)
-2. glass.css 透明壳 → embed 样式开关(padding/radius/shadow/出场动画)
-3. `closed` 清理链复刻不全 → 抽公共函数,钉出/视图关闭都走它
-4. 主题/广播漏 guest → 统一 `webContents.getAllWebContents()`
-5. 双壳口径分裂 → console.html 退役,shell 为唯一主界面
+## 不做(留 P2b)
+- 子 Agent 侧边栏(ev.sub 仍只计数)
+- 命令块「运行」动作(turn target 轮)
+- wf/orch/shard 卡迁移(强制 legacy + unsupportedMode 占位)
+- 状态行 ✻/hang 探针/watchdog/delegate nudge 等 harness 功能

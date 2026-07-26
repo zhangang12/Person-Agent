@@ -250,3 +250,166 @@ html[data-embed="1"] .hl { display: none; }
 .unsupported { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; }
 .unsupported p { font: var(--b1-em); color: var(--label-1); }
 .unsupported .sub { font: var(--c1); color: var(--label-3); font-weight: 400; }
+
+/* ── 工具块(P2a-2:一行式可折叠,verbose 联动;wf 升格高亮) ─────────────────── */
+.toolblk { align-self: stretch; border: 1px solid var(--sep); border-radius: var(--r-md); background: var(--fill-1); overflow: hidden; }
+.toolblk.wf { border-color: var(--blue); }
+.toolblk .tb-hd {
+  display: flex; align-items: center; gap: 7px; padding: 6px 10px; cursor: pointer; user-select: none;
+  font: var(--c1); color: var(--label-2);
+}
+.toolblk .tb-hd:hover { color: var(--label-1); background: var(--fill-2); }
+.toolblk .chev { transition: transform var(--hover-dur) var(--ez-out); flex: none; }
+.toolblk.open .chev { transform: rotate(90deg); }
+.toolblk .tb-name { font: var(--c1-em); color: var(--label-1); font-family: var(--font-mono); }
+.toolblk.wf .tb-name { color: var(--blue); }
+.toolblk .tb-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toolblk .tb-summary { color: var(--label-3); flex: none; }
+.toolblk .tb-state { margin-left: auto; flex: none; font: var(--c2); }
+.toolblk .tb-state.running { color: var(--orange); }
+.toolblk .tb-state.done { color: var(--green); }
+.toolblk .tb-state.err { color: var(--danger); }
+.toolblk .tb-body { border-top: 1px solid var(--sep); padding: 7px 11px; }
+.toolblk .tb-lb { font: var(--c2); color: var(--label-3); margin: 4px 0 2px; }
+.toolblk .tb-body pre {
+  font: var(--md-code); font-size: 12px; color: var(--label-2); white-space: pre-wrap; overflow-wrap: anywhere;
+  max-height: 220px; overflow-y: auto; margin: 2px 0 6px;
+}
+.toolblk .tb-body pre.err { color: var(--danger); }
+
+/* ── todo 一等公民清单卡(不折叠) ─────────────────────────────────────────── */
+.todocard { align-self: stretch; border: 1px solid var(--sep); border-radius: var(--r-md); background: var(--bg-primary); padding: 8px 11px; }
+.todocard .td-hd { display: flex; align-items: baseline; gap: 7px; margin-bottom: 5px; }
+.todocard .td-title { font: var(--c1-em); color: var(--label-1); }
+.todocard .td-meta { font: var(--c2); color: var(--label-3); font-family: var(--font-mono); }
+.todocard .td-updating { font: var(--c2); color: var(--orange); }
+.todocard .td-row { display: flex; gap: 7px; padding: 2px 0; font: var(--b2); color: var(--label-1); }
+.todocard .td-row .td-mark { flex: none; color: var(--label-2); }
+.todocard .td-row.done .td-text { color: var(--label-3); text-decoration: line-through; }
+.todocard .td-row.doing .td-text { color: var(--blue); }
+
+/* ── 权限审批条(常规橙 / 高危红) ──────────────────────────────────────────── */
+.permbar { align-self: stretch; border: 1px solid var(--orange); border-radius: var(--r-md); background: var(--orange-10); padding: 10px 12px; }
+.permbar.high { border-color: var(--danger); background: var(--red-10); }
+.permbar .pb-head { display: flex; align-items: center; gap: 8px; }
+.permbar .pb-tool { font: var(--c1-em); font-family: var(--font-mono); color: var(--orange); }
+.permbar.high .pb-tool { color: var(--danger); }
+.permbar .pb-risk { font: var(--c2); color: var(--danger); border: 1px solid var(--danger); border-radius: var(--r-xxs); padding: 0 5px; }
+.permbar .pb-detail { font: var(--c1); font-family: var(--font-mono); color: var(--label-2); margin-top: 4px; overflow-wrap: anywhere; }
+.permbar .pb-miss { font: var(--c1); color: var(--orange); margin-top: 6px; }
+.permbar .pb-miss pre { margin-top: 4px; font: var(--md-code); font-size: 11.5px; color: var(--label-2); background: var(--bg-primary); border: 1px solid var(--sep); border-radius: var(--r-sm); padding: 6px 9px; white-space: pre-wrap; }
+.permbar .pb-diff { margin-top: 6px; background: var(--bg-primary); border: 1px solid var(--sep); border-radius: var(--r-sm); padding: 6px 9px; max-height: 200px; overflow-y: auto; }
+.permbar .pb-diff div { font: var(--md-code); font-size: 11.5px; white-space: pre-wrap; }
+.permbar .pb-diff .add { color: var(--green); }
+.permbar .pb-diff .del { color: var(--danger); }
+.permbar .pb-acts { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
+.permbar .pb-btn { font: var(--c1); border: 1px solid var(--sep); border-radius: var(--r-sm); background: var(--bg-primary); color: var(--label-1); padding: 4px 13px; cursor: pointer; }
+.permbar .pb-btn.ok { background: var(--brand); border-color: var(--brand); color: var(--brand-text); }
+.permbar .pb-btn.no:hover { border-color: var(--danger); color: var(--danger); }
+.permbar .pb-hint { margin-left: auto; font: var(--c2); color: var(--label-3); }
+/* 待批准 sticky 摘要钉(流式顶走批准条后,输入框上方兜底) */
+.permsticky {
+  flex: none; margin: 6px 12px 0; padding: 6px 12px; text-align: center;
+  font: var(--c1-em); color: var(--orange); background: var(--orange-10);
+  border: 1px solid var(--orange); border-radius: var(--r-md); cursor: pointer; z-index: 7;
+}
+
+/* ── 交互提问卡 ──────────────────────────────────────────────────────────── */
+.qcard { align-self: stretch; border: 1px solid var(--blue); border-radius: var(--r-md); background: var(--blue-10); padding: 10px 12px; }
+.qcard .qc-head { font: var(--c1-em); color: var(--blue); margin-bottom: 7px; }
+.qcard .qc-sec { margin: 8px 0; }
+.qcard .qc-q { font: var(--b2); color: var(--label-1); margin-bottom: 6px; }
+.qcard .qc-tag { font: var(--c2); color: var(--blue); border: 1px solid var(--blue); border-radius: var(--r-xxs); padding: 0 5px; margin-right: 6px; }
+.qcard .qc-opt {
+  display: block; width: 100%; text-align: left; margin: 4px 0; padding: 7px 11px;
+  border: 1px solid var(--sep); border-radius: var(--r-sm); background: var(--bg-primary);
+  font: var(--b2); color: var(--label-1); cursor: pointer;
+}
+.qcard .qc-opt:hover { border-color: var(--blue); }
+.qcard .qc-opt.on { border-color: var(--blue); background: var(--blue-10); }
+.qcard .qc-desc { display: block; font: var(--c1); color: var(--label-3); margin-top: 2px; }
+.qcard .qc-confirm { margin-top: 4px; font: var(--c1); color: var(--blue); border: 1px solid var(--blue); border-radius: var(--r-sm); background: transparent; padding: 3px 12px; cursor: pointer; }
+.qcard .qc-confirm:disabled { opacity: 0.4; cursor: default; }
+.qcard .qc-custom {
+  width: 100%; margin-top: 6px; padding: 7px 10px; border: 1px solid var(--sep); border-radius: var(--r-sm);
+  background: var(--bg-primary); color: var(--label-1); font: var(--b2); outline: none;
+}
+.qcard .qc-custom:focus { border-color: var(--blue); }
+.qcard .qc-skip { margin-top: 8px; font: var(--c1); color: var(--label-2); border: 1px solid var(--sep); border-radius: var(--r-sm); background: transparent; padding: 4px 12px; cursor: pointer; }
+.qcard .qc-skip:hover { border-color: var(--danger); color: var(--danger); }
+.qcard .qc-done { font: var(--c1); color: var(--label-2); }
+
+/* ── 成果抽屉(右侧滑出) ──────────────────────────────────────────────────── */
+.artdrawer {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 300px; z-index: 20;
+  display: flex; flex-direction: column; background: var(--bg-primary);
+  border-left: 1px solid var(--sep); box-shadow: var(--shadow-medium);
+}
+.artdrawer .ad-hd { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--sep); }
+.artdrawer .ad-title { font: var(--b1-em); color: var(--label-1); }
+.artdrawer .ad-cnt { font: var(--c2); color: var(--label-3); }
+.artdrawer .ad-hd .sp { flex: 1; }
+.artdrawer .ad-x { border: none; background: transparent; color: var(--label-3); cursor: pointer; font-size: 13px; padding: 2px 6px; border-radius: var(--r-sm); }
+.artdrawer .ad-x:hover { color: var(--label-1); background: var(--fill-2); }
+.artdrawer .ad-body { flex: 1; overflow-y: auto; padding: 10px 12px; }
+.artdrawer .ad-sec { margin-bottom: 14px; }
+.artdrawer .ad-lb { font: var(--c2); color: var(--label-3); margin-bottom: 6px; }
+.artdrawer .ad-final { font: var(--b2); color: var(--label-1); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow-y: auto; }
+.artdrawer .ad-empty { font: var(--c1); color: var(--label-3); }
+.artdrawer .ad-err { font: var(--c1); color: var(--danger); }
+.artdrawer .ad-file {
+  font: var(--c1); font-family: var(--font-mono); color: var(--blue); cursor: pointer;
+  padding: 4px 7px; border-radius: var(--r-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.artdrawer .ad-file:hover, .artdrawer .ad-file.on { background: var(--blue-10); }
+.artdrawer .ad-preview pre {
+  font: var(--md-code); font-size: 11.5px; color: var(--label-2); white-space: pre-wrap; overflow-wrap: anywhere;
+  max-height: 300px; overflow-y: auto; background: var(--fill-1); border: 1px solid var(--sep); border-radius: var(--r-sm); padding: 8px 10px;
+}
+
+/* ── 标题栏 chips 扩展(ctx 三态 / 可点 chip / 保活灯 / 成果钮) ────────────── */
+.k-chip.clickable { cursor: pointer; }
+.k-chip.clickable:hover { background: var(--fill-3); }
+.k-chip.ctxchip.ok { color: var(--green); }
+.k-chip.ctxchip.warn { color: var(--orange); }
+.k-chip.ctxchip.danger { color: var(--danger); }
+.hb-dot.ok { background: var(--green); }
+.hb-dot.bad { background: var(--danger); }
+.hb-dot.gray { background: var(--label-4); }
+.artbtn { position: relative; }
+.artbtn .artbadge { position: absolute; top: -4px; right: -6px; }
+
+/* ── 快捷指令条 / 技能 chip / slash 菜单 / 记忆弹层 ────────────────────────── */
+.quickbar { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 2px 7px; }
+.qchip {
+  font: var(--c2); color: var(--label-2); background: var(--fill-1); border: 1px solid var(--sep);
+  border-radius: var(--r-full); padding: 2px 10px; cursor: pointer;
+  transition: background var(--hover-dur) var(--ez-out);
+}
+.qchip:hover { background: var(--fill-2); color: var(--label-1); border-color: var(--fill-4); }
+.qchip.go { color: var(--green); border-color: var(--green); }
+.skillchip { color: var(--blue); border-color: var(--blue); }
+.slashmenu {
+  position: absolute; bottom: calc(100% + 6px); left: 0; min-width: 220px; max-width: 320px; z-index: 30;
+  background: var(--bg-primary); border: 1px solid var(--sep); border-radius: var(--r-md);
+  box-shadow: var(--shadow-medium); padding: 4px;
+}
+.slashitem { display: flex; flex-direction: column; padding: 6px 9px; border-radius: var(--r-sm); cursor: pointer; }
+.slashitem:hover { background: var(--fill-1); }
+.slashitem .sl-name { font: var(--b2); color: var(--label-1); }
+.slashitem .sl-desc { font: var(--c2); color: var(--label-3); }
+.mempop {
+  position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+}
+.membox {
+  width: 86%; max-width: 520px; background: var(--bg-primary); border: 1px solid var(--sep);
+  border-radius: var(--r-lg); padding: 13px; display: flex; flex-direction: column; gap: 9px;
+  box-shadow: var(--shadow-medium);
+}
+.membox .memttl { font: var(--b2); font-weight: 600; color: var(--label-1); }
+.membox .memta {
+  height: 150px; resize: vertical; background: var(--fill-1); border: 1px solid var(--sep);
+  border-radius: var(--r-sm); color: var(--label-1); font: var(--b2); padding: 8px; outline: none; line-height: 1.5;
+}
+.membox .memrow { display: flex; gap: 8px; justify-content: flex-end; }

@@ -21,7 +21,7 @@
     "scope:test": "node scripts/writescope-selftest.mjs",
     "lsp:test": "node scripts/lsp-smoke.mjs",
     "forkcheck": "node scripts/fork-capability-probe.mjs",
-    "readspill:test": "node scripts/read-spill-selftest.mjs",
+    "readspill:test": "node scripts/electron-node.cjs scripts/read-spill-selftest.mjs",
     "lspmcp:test": "node scripts/lsp-mcp-selftest.mjs",
     "session:test": "node scripts/session-selftest.mjs",
     "modelroute": "node scripts/model-route-probe.mjs",
@@ -36,9 +36,10 @@
     "bars:e2e": "electron scripts/e2e-bars.mjs",
     "mcp:config": "node mcp/print-config.mjs",
     "ui:dev": "node ui-vue/build.mjs --watch",
-    "ui:build": "node ui-vue/build.mjs",
-    "ui:typecheck": "vue-tsc --noEmit -p ui-vue/tsconfig.json",
-    "ui:test": "vitest run --config ui-vue/vitest.config.ts"
+    "ui:build": "node scripts/electron-node.cjs ui-vue/build.mjs",
+    "ui:typecheck": "node scripts/electron-node.cjs node_modules/vue-tsc/bin/vue-tsc.js --noEmit -p ui-vue/tsconfig.json",
+    "ui:test": "node scripts/electron-node.cjs node_modules/vitest/vitest.mjs run --config ui-vue/vitest.config.ts",
+    "ui:stub": "electron scripts/chat-p2a2-stub.cjs"
   },
   "dependencies": {
     "mammoth": "^1.8.0",
