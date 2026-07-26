@@ -51,7 +51,8 @@ async function delHist(id: string) {
 <template>
   <aside id="side">
     <div id="logo">
-      <svg class="ic s20" viewBox="0 0 24 24" style="fill: currentColor; stroke: none"><path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4L12 3z"/></svg>
+      <!-- 品牌标:桌面版悬浮球同款「动态眼睛」(迷你 orb + 眨眼动画,orb 退役后的品牌延续) -->
+      <span class="miniorb" aria-hidden="true"><span class="meye"></span><span class="meye"></span></span>
       <b>BocomHermes</b>
     </div>
     <button id="newChat" @click="spawnChat({ title: '新会话' })">
@@ -148,6 +149,26 @@ async function delHist(id: string) {
 }
 #logo { display: flex; align-items: center; gap: 8px; padding: 4px 8px 12px; font: var(--b1-em); color: var(--blue); }
 #logo b { color: var(--label-1); font-weight: 600; }
+/* 品牌标:桌面版悬浮球同款「动态眼睛」—— 迷你 orb(深色玻璃+呼吸光晕) + 双眼(4s 眨眼,双眼错峰) */
+.miniorb {
+  flex: none; width: 30px; height: 26px; border-radius: 10px; position: relative;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  background: #0d1020;
+  box-shadow: -6px 1px 12px rgba(0,230,255,.4), 6px -1px 12px rgba(60,80,255,.35), inset -3px 0 8px rgba(0,200,255,.08), inset 3px 0 8px rgba(60,60,255,.06);
+  animation: orb-breathe 3.5s ease-in-out infinite;
+}
+.miniorb .meye {
+  width: 4px; height: 8px; border-radius: 2px; background: #fff;
+  box-shadow: 0 0 5px rgba(255,255,255,.9);
+  transition: all .35s cubic-bezier(.34,1.56,.64,1);
+  animation: meye-blink 4s ease-in-out infinite;
+}
+.miniorb .meye:nth-child(2) { animation-delay: .07s; }
+@keyframes orb-breathe {
+  0%, 100% { box-shadow: -6px 1px 12px rgba(0,230,255,.4), 6px -1px 12px rgba(60,80,255,.35), inset -3px 0 8px rgba(0,200,255,.08), inset 3px 0 8px rgba(60,60,255,.06); }
+  50% { box-shadow: -8px 1px 16px rgba(0,230,255,.6), 8px -1px 16px rgba(60,80,255,.5), inset -4px 0 10px rgba(0,200,255,.14), inset 4px 0 10px rgba(60,60,255,.1); }
+}
+@keyframes meye-blink { 0%, 88%, 100% { transform: scaleY(1); } 94% { transform: scaleY(.08); } }
 #newChat {
   margin: 0 4px 10px; width: calc(100% - 8px); height: 30px; border-radius: var(--r-sm); cursor: pointer;
   background: var(--brand); color: var(--brand-text); font: var(--c1-em);
