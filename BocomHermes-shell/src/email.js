@@ -383,7 +383,8 @@ function extractMessages(resp) {
     const start = m.index + m[0].length
     const raw = resp.slice(start, start + len)
     const uidM = fields.match(/UID\s+(\d+)/i)
-    out.push({ seq, uid: uidM ? parseInt(uidM[1]) : null, raw })
+    const flM = fields.match(/FLAGS\s+\(([^)]*)\)/i)
+    out.push({ seq, uid: uidM ? parseInt(uidM[1]) : null, flags: flM ? flM[1].split(/\s+/).filter(Boolean) : [], raw })
     i = start + len
   }
   return out
@@ -447,8 +448,8 @@ async function fetchUnread(cfg, opts) {
     if (!slice.length) { client.quit(); return { emails: [], nextCursor: null, totalMatched: sorted.length } }
 
     const take = slice.join(',')
-    // BODY.PEEK[] 拿全文(含附件);PEEK 不置 \Seen 标记
-    const fetchResp = await client.send(`UID FETCH ${take} (UID BODY.PEEK[])`)
+    // BODY.PEEK[] 拿全文(含附件);PEEK 不置 \Seen 标记;FLAGS 顺带取已读/未读(列表分层用)
+    const fetchResp = await client.send(`UID FETCH ${take} (UID FLAGS BODY.PEEK[])`)
     client.quit()
 
     const msgs = extractMessages(fetchResp)
@@ -465,6 +466,7 @@ async function fetchUnread(cfg, opts) {
         const attMeta = parsed.attachments.map((a) => ({ filename: a.filename, mime: a.mime, size: a.size }))
         emails.push({
           uid, seq: m.seq, folder,                 // folder:跨文件夹寻址(get_full/reply 回查时知道去哪个文件夹)
+          seen: (m.flags || []).includes('\\Seen'),   // 已读标记(未读列表分层:蓝点+加粗)
           from: parsed.from, subject: parsed.subject, date: parsed.date,
           messageId: parsed.messageId, inReplyTo: parsed.inReplyTo, references: parsed.references,
           text: parsed.text, html: parsed.html,

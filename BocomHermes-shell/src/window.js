@@ -1904,6 +1904,17 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   })
   // 删除工作流记录:卡还开着的一律拒(关卡时注册表会重写 + 重新存档,删了也会复活 —— 必须先关卡);
   // 卡已关 → 摘注册表 + 删存档文件(注册表没有的纯历史存档同此)。id 只跟文件名比对,不拼路径,防注入。
+  // 取消排队:并发位满时排在 S.wfQueue 里的工作流(还没开卡,没有注册表 id)—— 按 goal 精确匹配摘除(设计稿 S5:排队行内 ✕)
+  ipcMain.handle('wf-cancel-queued', (_e, goal) => {
+    const g = String(goal == null ? '' : goal)
+    if (!g || !S.wfQueue) return { ok: false, err: '缺少 goal' }
+    const i = S.wfQueue.findIndex((q) => String(q.goal || '') === g)
+    if (i < 0) return { ok: false, err: '这条已不在队列(可能已开跑或已取消)' }
+    S.wfQueue.splice(i, 1)
+    log('workflow queued item canceled: ' + g.slice(0, 60))
+    try { S.audit && S.audit('workflow', '取消排队工作流', { goal: g.slice(0, 120) }) } catch {}
+    return { ok: true }
+  })
   ipcMain.handle('wf-delete', (_e, id) => {
     try {
       const sid = String(id == null ? '' : id).trim()

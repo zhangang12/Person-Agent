@@ -116,6 +116,17 @@
   .wfst.queued { background: var(--warn-bg); color: var(--warn-txt); }   /* 排队位:并发度满时的等待队列 */
   .wfst.interrupted { background: var(--diff-del-bg); color: var(--diff-del); }   /* 中断:上一步失败/被掐,可点「↻ 续跑」接着跑 */
   .wftodo { color: var(--accent); }   /* todo 迷你进度行:3/5 · 正在:xxx(仅 running 且 todoTotal>0 才渲染) */
+  /* 状态三要素同源(设计稿 S5):圆点(状态色) + 3px 进度条(running 且 todoTotal>0) + 徽章 */
+  .wfcdot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+  .wfcdot.run { background: var(--accent); box-shadow: 0 0 4px var(--accent); }
+  .wfcdot.ok { background: #16c456; }
+  .wfcdot.bad { background: var(--diff-del); }
+  .wfcdot.off { background: var(--txt3); }
+  .wfpbar { display: block; height: 3px; width: 110px; border-radius: 2px; background: var(--fill-1); margin-top: 4px; overflow: hidden; }
+  .wfpbar i { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width .3s; }
+  /* 排队行内 ✕ 撤队 */
+  .wfcancel { position: absolute; top: 6px; right: 7px; border: none; background: transparent; color: var(--txt3); font-size: 11px; cursor: pointer; padding: 2px 5px; border-radius: 6px; }
+  .wfcancel:hover { color: var(--diff-del); background: var(--hover); }
   /* 记录删除:行内 ✕,两步确认(第一次点变"删?",3s 不复原则复位) */
   .wfitem { position: relative; }
   .wfitem .t, .wfitem .meta { padding-right: 24px; }   /* 给 ✕ 让位,别压字 */
@@ -277,7 +288,13 @@
       const el = document.createElement('div'); el.className = 'item wfitem'
       el.innerHTML = '<span class="t"><span class="wfst queued">排队中 #' + (q.position != null ? q.position : '?') + '</span>' + esc(goalTxt.slice(0, 30)) + (goalTxt.length > 30 ? '…' : '') + '</span>'
         + '<span class="meta">' + esc(rel(q.at || Date.now())) + ' 入队</span>'
+        + '<button class="wfcancel" title="取消排队(不开跑了)">✕</button>'
       el.title = '排队中 —— 并发度已满，前面的工作流完成会自动开跑\n' + goalTxt
+      el.querySelector('.wfcancel').addEventListener('click', async (e) => {
+        e.stopPropagation()
+        try { await H.wfCancelQueued(goalTxt) } catch (e2) {}
+        loadWf()
+      })
       wfListEl.appendChild(el)
     }
     for (const w of items) {
@@ -289,8 +306,12 @@
         ? ((w.todoDone | 0) + '/' + w.todoTotal + (w.current ? ' · 正在：' + String(w.current).slice(0, 20) : '')) : ''
       const meta = [w.rounds ? w.rounds + ' 轮' : '', w.elapsedMs ? Math.round(w.elapsedMs / 1000) + 's' : '', w.shards ? w.shards + ' 分片' : '', (w.diff && (w.diff.additions || w.diff.deletions)) ? '+' + w.diff.additions + '/-' + w.diff.deletions : '', w.files ? '产出 ' + w.files : '', rel(w.at || Date.now())].filter(Boolean).join(' · ')
       const el = document.createElement('div'); el.className = 'item wfitem'
-      el.innerHTML = '<span class="t"><span class="wfst ' + esc(w.status) + '">' + stName + '</span>' + esc(w.goal || '工作流') + '</span>'
+      const pct = (w.todoTotal | 0) > 0 ? Math.round(100 * (w.todoDone | 0) / (w.todoTotal | 0)) : -1
+      // 状态三要素同源(设计稿 S5):状态圆点 + 徽章 + 进度条(running 且 todoTotal>0)
+      const dotCls = w.status === 'running' ? 'run' : w.status === 'interrupted' ? 'bad' : w.status === 'done' ? 'ok' : 'off'
+      el.innerHTML = '<span class="t"><i class="wfcdot ' + dotCls + '"></i><span class="wfst ' + esc(w.status) + '">' + stName + '</span>' + esc(w.goal || '工作流') + '</span>'
         + (todoBit ? '<span class="meta wftodo">' + esc(todoBit) + '</span>' : '')
+        + (pct >= 0 ? '<span class="wfpbar"><i style="width:' + pct + '%"></i></span>' : '')
         + '<span class="meta">' + esc(meta) + '</span>'
       el.title = (w.live ? (w.busy ? '运行中 — 点击聚焦卡片' : '空闲中(可能在等你批准计划) — 点击聚焦卡片') : (w.sid ? '卡片已关 — 点击重开完整会话' : '卡片已关 — 点击打开存档')) + (w.status === 'interrupted' ? '\n已中断 — 可点「↻ 续跑」从失败步接着跑' : '') + (w.archive ? '\n' + w.archive : '')
       el.addEventListener('click', async () => { try { await H.wfOpen({ id: w.id, archive: w.archive, sid: w.sid }) } catch (e) {} })

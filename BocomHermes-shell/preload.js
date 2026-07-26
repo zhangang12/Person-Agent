@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   wfList: () => ipcRenderer.invoke('wf-list'),
   wfOpen: (it) => ipcRenderer.invoke('wf-open', it),
   wfDelete: (id) => ipcRenderer.invoke('wf-delete', id),
+  wfCancelQueued: (goal) => ipcRenderer.invoke('wf-cancel-queued', goal),   // 排队中的工作流行内 ✕ 撤队
   wfPlanApproved: () => ipcRenderer.send('wf-plan-approved'),
   wfRunningCount: () => ipcRenderer.invoke('wf-running-count'),   // 编排并发真值(波4 状态栏):{running, max},只读
   shardPop: (id) => ipcRenderer.invoke('shard-pop', id),

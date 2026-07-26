@@ -448,6 +448,7 @@ function openMore(anchor, it){
   const r = anchor.getBoundingClientRect()
   popEl = document.createElement('div'); popEl.className = 'pop'
   popEl.innerHTML = `
+    <button data-m="edit" title="在调试工作台打开步骤编辑器,逐条改录制步骤(选择器/输入值/断言)">编辑步骤</button>
     <button data-m="nc" title="每次跑这个技能前 + 每次页面跳转前清一次浏览器缓存,确保拿到的是最新页面/数据(不影响登录态)">禁用缓存跑 · ${it.noCache ? '<b style="color:var(--accent)">开</b>' : '关'}</button>
     <button data-m="pw">下载后任务编排…</button>
     <button data-m="doc">查看技能文档</button>
@@ -457,6 +458,10 @@ function openMore(anchor, it){
   const pw = popEl.offsetWidth
   popEl.style.left = Math.max(8, Math.min(window.innerWidth - pw - 8, r.right - pw)) + 'px'
   popEl.style.top = Math.min(window.innerHeight - popEl.offsetHeight - 8, r.bottom + 6) + 'px'
+  popEl.querySelector('[data-m="edit"]').addEventListener('click', async () => {
+    closePop()
+    try { await H.browserRecEditSteps(it.id) } catch (e) { toast('打开步骤编辑器失败') }
+  })
   popEl.querySelector('[data-m="nc"]').addEventListener('click', async () => {
     closePop()
     const nv = !it.noCache
