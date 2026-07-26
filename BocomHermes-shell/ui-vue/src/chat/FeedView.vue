@@ -2,14 +2,17 @@
 // 对话流容器:滚动守卫(贴底 ≤80px 才跟随流式;离底弹「最新」)+ 展示层回收占位
 // + 富结果动作分发(wireActions:copy/extlink 内建;open/todo/apply 接桥;run 移交第二棒)。
 import { ref, watch, nextTick, onMounted } from 'vue'
-import { s, visibleItems, addNote, turnToEl } from './store'
+import { s, visibleGroups, addNote, turnToEl } from './store'
+import type { FeedItem, ToolGrp } from './store'
 import { wireActions } from './rich'
 import { DANGER } from './lib/perm'
 import { BH } from './bridge'
 import MessageItem from './MessageItem.vue'
+import ToolGroup from './ToolGroup.vue'
 
 const feedEl = ref<HTMLElement | null>(null)
 const jump = ref(false)
+const asGrp = (g: FeedItem | ToolGrp): ToolGrp => g as ToolGrp
 
 const nearBottom = () => {
   const el = feedEl.value
@@ -30,7 +33,7 @@ function toBottom() {
 
 // 新条目(离散动作)= 强制到底;条目内容变化(流式增量)= 守卫跟随
 let lastLen = 0
-watch(visibleItems, async (list) => {
+watch(visibleGroups, async (list) => {
   const force = list.length !== lastLen
   lastLen = list.length
   await nextTick()
@@ -101,7 +104,10 @@ onMounted(() => {
   <div class="feedwrap">
     <div ref="feedEl" class="feed" @scroll="onScroll">
       <div v-if="s.archived" class="note muted capnote">⋯ 已收纳 {{ s.archived }} 条早期消息(展示层回收,内容没丢 —— 重新打开本卡可从历史恢复)</div>
-      <MessageItem v-for="it in visibleItems" :key="it.id" :item="it" />
+      <template v-for="g in visibleGroups" :key="g.id">
+        <ToolGroup v-if="g.kind === 'toolgrp'" :tools="asGrp(g).tools" />
+        <MessageItem v-else :item="g as FeedItem" />
+      </template>
     </div>
     <button v-show="jump" class="jumpbtn" @click="toBottom">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>最新

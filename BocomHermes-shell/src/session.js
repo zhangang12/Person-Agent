@@ -224,12 +224,39 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
   // 交分片收官兜底判 interrupted,主控按规程拆小重派;预检通过一次即清零。
   // 普通对话卡不设:用户在场看得见黄牌,撞几次他自己会停/会教,别替人掐回合。
   const editMissStreak = new Map()
+  // ── 用户可配权限规则(P2.3 壳层轨):settings.permRules {allow:[],deny:[]},语法 `工具名(通配)`(与 CC 同构重写) ──
+  // deny 先于一切自动放行(分片卡也生效 = 用户红线不分卡型);allow 只在弹框前拦一次 = 少弹框 UX 层。
+  function parsePermRule(rule) {
+    const m = String(rule || '').trim().match(/^([A-Za-z0-9_.-]+)\(([\s\S]*)\)$/)
+    return m ? { tool: m[1].toLowerCase(), pat: m[2].trim() } : null
+  }
+  function permGlobRe(pat) {
+    return new RegExp('^' + String(pat).split('*').map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$')
+  }
+  function matchPermRule(tool, detail, rule) {
+    const r = parsePermRule(rule); if (!r || !r.pat) return false
+    if (String(tool || '').toLowerCase() !== r.tool) return false
+    try { return permGlobRe(r.pat).test(String(detail || '').trim()) } catch { return false }
+  }
+  function permRulesHit(kind, tool, detail) {
+    const rules = (S.settings && S.settings.permRules && S.settings.permRules[kind]) || []
+    for (const r of rules) { if (matchPermRule(tool, detail, r)) return String(r) }
+    return ''
+  }
   function onPermission({ sessionId, requestId, tool, detail }) {
     const si = S.sessionInfo.get(sessionId); if (!si) return
     if (oc.AUTO_ALLOW.has(tool)) { oc.replyPermission(si.serve, sessionId, requestId, 'once'); return }
     // 天枢技能工具族(skill_*):回放接管/断点解析的 MCP 工具,引擎侧已有门禁(如 page_act 仅接管期可执行),
     // 不再叠人工审批 —— 否则 Agent 接管每一步都弹批准框,混合执行没法用。MCP 工具名可能带服务前缀,按含 skill_ 匹配。
     if (/(^|[._-])skill_/.test(String(tool || ''))) { oc.replyPermission(si.serve, sessionId, requestId, 'once'); return }
+    // 用户权限规则 deny(先于一切自动放行,分片卡同样生效):命中即拒 + 卡片留痕
+    const permDenyHit = permRulesHit('deny', tool, detail)
+    if (permDenyHit) {
+      log('权限规则拦截(deny):' + permDenyHit + ' 命中 ' + String(tool) + '(' + String(detail || '').slice(0, 80) + ')')
+      try { S.audit && S.audit('permission', '规则拒绝(deny)', { rule: permDenyHit, tool: String(tool || ''), detail: String(detail || '').slice(0, 200) }) } catch {}
+      try { if (si.wc && !si.wc.isDestroyed()) si.wc.send('card-note', { text: '权限规则拦截(deny)：' + permDenyHit + ' —— 已拒绝 ' + tool, tone: 'muted' }) } catch {}
+      oc.replyPermission(si.serve, sessionId, requestId, 'reject'); return
+    }
     // 多层派发分片卡:无人值守(按主控已批准的方案跑),权限请求自动放行 —— 否则 task 子 Agent/写文档都卡在看不见的批准框上,
     // 子 Agent 永远起不来(实测病灶)。范围限本卡会话,关卡即失效;全程工具日志留痕。
     if (S.shardWc && si.wc && S.shardWc.has(si.wc.id)) {
@@ -287,6 +314,9 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
       oc.replyPermission(si.serve, sessionId, requestId, 'once'); return
     }
     if (!si.wc || si.wc.isDestroyed()) { oc.replyPermission(si.serve, sessionId, requestId, 'reject'); return }
+    // 用户权限规则 allow(少弹框 UX 层):命中即放行一次,不再弹批准框(红线在前的 deny 已先判)
+    const permAllowHit = permRulesHit('allow', tool, detail)
+    if (permAllowHit) { log('权限规则放行(allow):' + permAllowHit + ' 命中 ' + String(tool)); oc.replyPermission(si.serve, sessionId, requestId, 'once'); return }
     S.pendingPerm.set(requestId, sessionId)
     S.pendingPerm.set(requestId + ':meta', { tool, detail: detail || '' })   // 供审计留痕(批准/拒绝了什么)
     // edit/write 类:尽力带 diff 预览 + 编辑预检(批准前看见"要改成什么样";oldString 未命中还要亮黄牌);取不到不挡路,照样弹
@@ -986,6 +1016,35 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
       } catch {}
     }, hookLive ? 5000 : 1200) }
     const stopPoll = () => { if (poll) { clearInterval(poll); poll = null } }
+    // ── 子 Agent 实况轮询:这台 serve 的 /event 不推子会话 message 事件(子 Agent 侧边栏曾整波空窗 —— 用户实测"启动几十秒没记录")。
+    //    回合期间每 1.5s 轮询【直子会话】(parentID=本会话)的消息 parts,映射后以 subagent 事件喂同一个 onText(渲染层按 partID 幂等去重);
+    //    子会话清单每 ~6s 经 listSessions 刷新(新派生的子 Agent 至多晚 6s 进栏,标题晚到也在这里改名)。
+    const childSeen = new Map()   // childSid → title(本回合已发现的直子会话)
+    let childLastList = 0, childPoll = null
+    const pollChildren = async () => {
+      const si2 = S.sessionInfo.get(sessionId); if (!si2 || !si2.wc || si2.wc.isDestroyed()) return
+      const now = Date.now()
+      if (now - childLastList > 6000) {
+        childLastList = now
+        const all = await oc.listSessions(si2.serve)
+        for (const c of all || []) {
+          if (!c || !c.id || c.parentID !== sessionId) continue
+          const t = String(c.title || '')
+          if (!childSeen.has(c.id) || (t && childSeen.get(c.id) !== t)) childSeen.set(c.id, t || '子agent')
+        }
+      }
+      for (const [cid, ctitle] of childSeen) {
+        let list = null
+        try { list = await oc.getRawMessages(si2.serve, cid) } catch {}
+        if (!list) continue
+        for (const p of mapRawTurnParts(list)) {
+          if (p.kind === 'tool') onText({ sessionId, role: 'assistant', kind: 'tool', text: p.text, partID: p.partID, status: p.status, toolInput: p.input, toolOutput: p.output, toolTitle: p.title, toolError: p.error, subagent: true, agentId: cid, agentName: ctitle })
+          else onText({ sessionId, role: 'assistant', kind: p.kind, text: p.text, partID: p.partID, subagent: true, agentId: cid, agentName: ctitle })
+        }
+      }
+    }
+    const startChildPoll = () => { if (childPoll) return; childPoll = setInterval(() => { pollChildren().catch(() => {}) }, 1500) }
+    const stopChildPoll = () => { if (childPoll) { clearInterval(childPoll); childPoll = null } }
     const onRaw = (list) => {   // oc 新版 hook:原始消息列表直达 → 同构映射喂 onText;首火后轮询降 5s
       try {
         if (!hookLive) { hookLive = true; if (poll) { stopPoll(); startPoll() } }
@@ -993,6 +1052,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
       } catch {}
     }
     startPoll()
+    startChildPoll()   // 子 Agent 实况轮询(/event 不推子会话 message 事件,侧边栏靠它填)
     try {
       const out = await oc.sendMessage(si.serve, sessionId, msg, model, fileArr, onNote, { onRawMessages: onRaw })
       // 手动停止标记(opencode.js consumeAbortFlag,按形状防御调用):本轮被用户中止 → 卡内留一行灰字交代截断原因。
@@ -1034,7 +1094,11 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
       if (/ECONNREFUSED|ECONNRESET|socket hang up|ENOTFOUND|EPIPE|fetch failed/i.test(m))
         throw new Error('引擎连接中断（serve 可能已退出）。关掉这张卡重开即可（已自动准备重启 serve）。')
       throw err
-    } finally { stopPoll(); turnBusy.delete(sessionId) }
+    } finally {
+      stopPoll(); stopChildPoll(); turnBusy.delete(sessionId)
+      // 回合收尾再扫一遍子会话:最后一个 tick 之后落盘的子 Agent 产出/工具终态也补进侧边栏(不留差一口气的终态)
+      try { await pollChildren() } catch {}
+    }
   })
 
   // 模型选择:列出可用模型 + 设置本卡模型(每个模块各自选)

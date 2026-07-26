@@ -213,6 +213,25 @@ export const s = reactive({
 /** 可见条目(回收占位之后) */
 export const visibleItems = computed(() => s.items.slice(s.archived))
 
+// ── 工具连排归组(展示层):连续 tool 条目 ≥2 折成一条「组合条」(N 次调用 · 名×次数 · 当前/出错/完成),
+// 点开才看逐条记录 —— 一排细条刷屏曾把对话流挤得没辨识度(用户实测"缩到一块");单条工具仍原地渲染(task 跳转 affordance 保留)。
+export interface ToolGrp { kind: 'toolgrp'; id: string; tools: ToolItem[] }
+export const visibleGroups = computed<(FeedItem | ToolGrp)[]>(() => {
+  const out: (FeedItem | ToolGrp)[] = []
+  let cur: ToolItem[] = []
+  const flush = () => {
+    if (cur.length >= 2) out.push({ kind: 'toolgrp', id: 'tg:' + (cur[0].partID || cur[0].id), tools: cur })
+    else if (cur.length === 1) out.push(cur[0])
+    cur = []
+  }
+  for (const it of visibleItems.value) {
+    if (it.kind === 'tool') { cur.push(it as ToolItem); continue }
+    flush(); out.push(it)
+  }
+  flush()
+  return out
+})
+
 /** 待批准权限(feed 里的 perm 条;sticky 摘要钉 = 首个工具名 + 总数,对齐旧页 pendingPerms) */
 export const pendingPerms = computed(() => s.items.filter((i): i is PermItem => i.kind === 'perm'))
 
@@ -538,6 +557,20 @@ function subAgent(id: string, name?: string): SubAgent {
       if (a.name === name) { subIdx.set(id, a); return a }
     }
   }
+  // 真身领养占位:子等会话 id 晚于占位到、占位名是兜底「子任务」(taskDesc 没拿到,截图实测双行)——
+  // 最老的占位改嫁成真身(同 turn 内派出顺序一致,FIFO 配对);旧 ph key 留在 subIdx 当别名,
+  // task 块的 subJump('ph:partID') 与 subAgentDone 不失效;snapshotSubAgents 按 Set 去重。
+  if (!id.startsWith('ph:')) {
+    const ph = s.subAgents.find((a) => a.id.startsWith('ph:'))
+    if (ph) {
+      const oldId = ph.id
+      subIdx.set(id, ph)
+      if (name && name !== '子agent') ph.name = name
+      if (s.subActiveId === oldId) s.subActiveId = id
+      ph.id = id
+      return ph
+    }
+  }
   const a: SubAgent = {
     id, name: name || '子agent', count: 0, reads: 0, t0: Date.now(), doneAt: 0, done: false, err: false,
     tools: [], toolIdx: new Map(), reasonParts: new Map(), outParts: new Map(), reason: '', outHtml: '',
@@ -604,7 +637,7 @@ export function subRunningCount(): number { let n = 0; for (const a of s.subAgen
 /** 清场前拍轮次快照(只留概要,上限 20 轮;历史轮只读,实时窗格永远属本轮) */
 function snapshotSubAgents(): void {
   if (!subIdx.size) return
-  const items = [...subIdx.values()].map((a) => ({
+  const items = [...new Set(subIdx.values())].map((a) => ({   // Set 去重:占位改嫁真身后 subIdx 留了 ph 别名,同一本体两个键
     name: a.name, count: a.count, ms: Math.max(0, (a.done ? a.doneAt : Date.now()) - a.t0), err: a.err, reads: a.reads,
   }))
   saSnaps.push({ round: turnN, items })
@@ -922,6 +955,7 @@ function handoffDue(): boolean {   // 交棒优先于一切轮末催办:水位�
   return s.wfMode && !!s.ctxLimitTokens && ctxPctVal(s.ctxRealTokens, s.ctxUsedChars, s.ctxLimitTokens) >= knobNum('ctxHandoffPct', 0.55)
 }
 function maybeAutoCompact(): void {
+  compactClock++   // 轮末节拍:本函数每轮末调一次,熔断冷却按它数
   if (!s.wfMode || s.busy || !s.ctxLimitTokens) return
   let handoff = 0.55, maxN = 5
   try {
@@ -931,8 +965,12 @@ function maybeAutoCompact(): void {
   } catch { /* 静默 */ }
   const pct = ctxPctVal(s.ctxRealTokens, s.ctxUsedChars, s.ctxLimitTokens)
   if (pct < handoff) return
+  if (compactFailStreak >= 2) {   // 连败熔断:停自动重试转人工(只贴一次;手动/自动成功即复位)
+    if (!compactFailNoted) { compactFailNoted = true; addNote('交棒连续失败 2 次，已停止自动重试——请点上下文 chip 手动压缩或检查模型状态') }
+    return
+  }
+  if (compactFailSeq >= 0 && compactClock - compactFailSeq < 2) return   // 失败冷却:隔一个轮末再试
   if (s.autoCompactN >= maxN) return   // 到顶转人工(ctx chip 手动压)
-  s.autoCompactN++
   compactCore({ wf: true, auto: true })
 }
 
@@ -1192,14 +1230,18 @@ export function resetConversation(): void {
     wdCurFiles = new Set(); wdRounds.length = 0; wdWarned = false; wdEscLoops = 0; wdWarnSet = null; wdWarnTurn = -1; s.wdBanner = false
   }
 }
+// 交棒熔断(借鉴 CC autoCompact consecutiveFailures,依据 借鉴清单 A1):成功复位、失败不耗棒次、
+// 连败 2 次停自动重试转人工、失败隔一个轮末再试(冷却按 maybeAutoCompact 的轮末节拍数)。台账见 docs/项目记忆/弱模型行为台账.md
+let compactFailStreak = 0, compactFailSeq = -1, compactClock = 0, compactFailNoted = false
 export async function compactCore(opts?: { wf?: boolean; auto?: boolean }): Promise<boolean> {
   const wf = !!(opts && opts.wf), auto = !!(opts && opts.auto)
-  if (s.busy) { addNote('正在回答中，等这轮结束再压缩'); return false }
-  addNote(auto ? '到达主动交棒水位,接力给下一棒主 Agent(第 ' + s.autoCompactN + ' 棒):正在写交接单…' : '压缩续聊:正在让模型总结本段对话…')
+  if (s.busy) { addNote('正在回答中，等这轮结束再压缩'); return false }   // 忙线拒绝不算失败(不计熔断)
+  addNote(auto ? '到达主动交棒水位,接力给下一棒主 Agent(第 ' + (s.autoCompactN + 1) + ' 棒):正在写交接单…' : '压缩续聊:正在让模型总结本段对话…')
+  const oldSid = s.sessionId   // 逃生舱 transcript 属于旧会话(reinit 后换新号)
   const ok = await turn(wf ? SUM_PROMPT_WF : SUM_PROMPT_CHAT)
   const lastAi = [...s.items].reverse().find((i): i is AiItem => i.kind === 'ai' && !!(i as AiItem).raw)
   const summary = ok && lastAi ? String(lastAi!.raw || '') : ''
-  if (!summary.trim()) { addNote('压缩失败：没拿到摘要，继续用原会话（可稍后重试）'); return false }
+  if (!summary.trim()) { compactFailStreak++; compactFailSeq = compactClock; addNote('压缩失败：没拿到摘要，继续用原会话（可稍后重试）'); return false }
   try {
     const r = await BH()!.cardReinit({ dir: s.dir, carryCtx: summary, shard: s.shardMode || undefined })
     resetConversation()
@@ -1209,15 +1251,19 @@ export async function compactCore(opts?: { wf?: boolean; auto?: boolean }): Prom
     draftKey = draftKeyOf(s.sessionId)
     meter.bump(summary.length); s.ctxUsedChars = meter.usedChars
     s.items.push({ id: nextId(), kind: 'reason', body: summary, open: false, title: '接力摘要（已随新会话注入）' })
+    compactFailStreak = 0; compactFailNoted = false   // 成功复位(手动 chip 压成功同样复位)
     if (auto) {
+      s.autoCompactN++   // 棒次只计成功(失败不耗额度)
+      let resume = RESUME_MSG
+      try { const txp = await (BH() as any)?.transcriptPath?.(oldSid); if (txp) resume += '上一棒完整记录见：' + txp + '，需要细节可回查。' } catch { /* 静默 */ }
       addNote('已交棒:下一棒主 Agent 带着交接单上阵(全新 128k),继续执行未完成步骤')
-      await turn(RESUME_MSG)
+      await turn(resume)
     } else {
       addNote('已压缩续聊：新会话就绪，摘要已注入，直接继续提问即可。')
       drain()
     }
     return true
-  } catch (e: any) { addNote('开新会话失败：' + ((e && e.message) || e) + '（原会话不受影响）'); return false }
+  } catch (e: any) { compactFailStreak++; compactFailSeq = compactClock; addNote('开新会话失败：' + ((e && e.message) || e) + '（原会话不受影响）'); return false }
 }
 
 // ── 启动引导(cardInit 生命周期) ───────────────────────────────────────────

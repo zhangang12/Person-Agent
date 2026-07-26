@@ -501,6 +501,24 @@ html[data-embed="1"] .hl { display: none; }
 .rbtn-ghost.danger { color: var(--danger); border-color: var(--danger); }
 .toolblk .tb-hd.jumpable { color: var(--blue); }
 
+/* ── 工具组合条(连续 tool ≥2 折叠成一条;点开看逐条) ─────────────────────── */
+.toolgrp { align-self: stretch; border: 1px solid var(--sep); border-radius: var(--r-md); background: var(--fill-1); overflow: hidden; }
+.toolgrp .tg-hd {
+  display: flex; align-items: center; gap: 7px; padding: 6px 10px; cursor: pointer; user-select: none;
+  font: var(--c1); color: var(--label-2);
+}
+.toolgrp .tg-hd:hover { color: var(--label-1); background: var(--fill-2); }
+.toolgrp .chev { transition: transform var(--hover-dur) var(--ez-out); flex: none; }
+.toolgrp.open .chev { transform: rotate(90deg); }
+.toolgrp .tg-count { font: var(--c1-em); color: var(--label-1); flex: none; }
+.toolgrp .tg-names { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--label-3); font-family: var(--font-mono); }
+.toolgrp .tg-hd .sp { flex: 1; }
+.toolgrp .tg-st { flex: none; font: var(--c2); max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toolgrp .tg-st.running { color: var(--orange); }
+.toolgrp .tg-st.done { color: var(--green); }
+.toolgrp .tg-st.err { color: var(--danger); }
+.toolgrp .tg-body { border-top: 1px solid var(--sep); padding: 6px 8px; display: flex; flex-direction: column; gap: 6px; }
+
 /* ── 工作流条(规划闸提示 + 自动批准开关) ─────────────────────────────────── */
 .wfbar {
   flex: none; display: flex; align-items: center; gap: 9px; margin: 7px 12px 0;
