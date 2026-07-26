@@ -96,8 +96,8 @@ async function launch(strictSteps: string[] | null) {
   if (!isWf && !strictSteps && openPreview()) return   // pipeline 多步先预览
   launching.value = true
   try {
-    // 落盘要求随描述注入(编排哲学:一切中间成果写文档落盘;路径用户可选,不再写死 docs/)
-    const full = v + '\n【落盘要求】最终产出文档写到「' + outDir.value + '」;中间过程文档(分析/核对/临时稿)写到「' + wipDir.value + '」。'
+    // 落盘要求(仅任务编排):产出/中间过程路径用户可选,随描述注入;动态工作流不注入(主控自会按主题落 docs/<主题>/)
+    const full = isWf ? v : (v + '\n【落盘要求】最终产出文档写到「' + outDir.value + '」;中间过程文档(分析/核对/临时稿)写到「' + wipDir.value + '」。')
     const payload: any = { title: v.slice(0, 24), msg: full, body: full, disp: v.slice(0, 60), files: [], mode: isWf ? 'wf' : 'pipeline' }
     if (!isWf && strictSteps && strictSteps.length) { payload.steps = strictSteps; payload.strict = true }
     await BH()?.startConversation?.(payload)
@@ -188,8 +188,8 @@ async function op(w: any, act: string) {
       <button class="go" :disabled="!goal.trim() || launching" @click="launch(null)">{{ launching ? '…' : '➤' }}</button>
     </div>
     <div v-if="launchErr" class="errline">{{ launchErr }}</div>
-    <!-- 落盘路径:产出文档 / 中间过程文档(点 chip 选目录,记住偏好;发起时随描述注入落盘要求) -->
-    <div class="pathrow">
+    <!-- 落盘路径(仅任务编排):产出文档 / 中间过程文档(点 chip 选目录,记住偏好;发起时随描述注入落盘要求) -->
+    <div v-if="!isWf" class="pathrow">
       <button class="pathchip" title="最终产出文档落盘目录(点击选择)" @click="pickOutDir">📄 产出:{{ outDir }}</button>
       <button class="pathchip" title="中间过程文档(分析/核对/临时稿)落盘目录(点击选择)" @click="pickWipDir">🧪 中间过程:{{ wipDir }}</button>
     </div>
