@@ -115,6 +115,10 @@ async function delHist(id: string) {
       任务编排
       <KBadge v-if="store.wf.running" type="orange" class="nb">{{ store.wf.running }}</KBadge>
     </button>
+    <button class="nav-item" :class="{ on: store.view === 'wf' }" @click="showView('wf')">
+      <svg class="ic s16" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="m8 7.5 2.5 8M16 7.5l-2.5 8M8.5 6h7"/></svg>
+      动态工作流
+    </button>
     <button class="nav-item" :class="{ on: store.view === 'mail' }" @click="showView('mail')">
       <svg class="ic s16" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 8 9 5.5L21 8"/></svg>
       邮件中心

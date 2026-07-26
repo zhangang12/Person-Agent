@@ -1,18 +1,28 @@
 <script setup lang="ts">
 // 任务编排页(从 legacy dock 抽出):只做一件事 —— 组合 SKILL 与内置能力,串成多步任务链开跑。
-// 不放「动态工作流/自动」(那是主控多层派发与单卡自判的活,入口在对话里);本页纯 pipeline 语义:
-// 技能积木 + 内置能力积木 → 拼描述 → 多步自动出步骤预览(可删可排序) → 智能(编排 Agent 自走)或
-// 严格(主进程逐步下发,失败即停)开跑;下方是排队位 + 工作流列表 + 详情双栏。
+// ?mode=pipe(默认,技能串接)/ ?mode=wf(动态工作流:复杂目标 → 主控预检拆片并行;模板 chips 引导)。
+// 两形态共享:排队位 + 工作流列表 + 详情双栏(列表按形态过滤:pipe 只看编排,wf 看工作流/主控)。
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 
 const BH = (): any => (window as any).BocomHermes
+const pageMode = (new URLSearchParams(location.search).get('mode') === 'wf') ? 'wf' : 'pipe'
+const isWf = pageMode === 'wf'
+const pageTitle = isWf ? '动态工作流' : '任务编排'
+const pageSub = isWf ? '复杂目标 → 主控预检路由:装得下派单卡,装不下拆多片并行干' : '组合技能与能力,串成多步任务链'
 
-// ── 发起区:目标 + 技能积木 + 内置能力积木 ──
+// ── 发起区:目标 + 积木(wf=模板 / pipe=技能+内置能力) ──
 const goal = ref('')
 const projName = ref('')
-// 录制的技能(组合 SKILL 的主角):skillsList() 拿到名字,点一下拼「跑技能「名」」进描述
+// wf 模板(动态工作流引导:探索成文/评审/排查,goalPrefix 预置)
+const wfTpls = ref<{ id?: string; name?: string; hint?: string; goalPrefix?: string }[]>([])
+async function loadWfTpls() {
+  if (!isWf) return
+  try { wfTpls.value = (await BH()?.wfTemplates?.()) || [] } catch { /* 静默 */ }
+}
+// pipe 积木:录制的技能 + 内置能力
 const skills = ref<{ id?: string; name?: string; title?: string }[]>([])
 async function loadSkills() {
+  if (isWf) return
   try { skills.value = (await BH()?.skillsList?.()) || [] } catch { /* 静默 */ }
 }
 function applySkill(sk: { id?: string; name?: string; title?: string }) {
@@ -49,7 +59,7 @@ function moveStep(i: number, d: number) {
   const t = steps.value[i]; steps.value[i] = steps.value[j]; steps.value[j] = t
 }
 
-// 发起(纯 pipeline):payload={title,msg,body,disp,files,mode:'pipeline'};严格模式带 steps
+// 发起:pipe → mode:'pipeline'(严格带 steps);wf → mode:'wf'(主控多层,不用步骤预览)
 const launching = ref(false)
 const launchErr = ref('')
 async function launch(strictSteps: string[] | null) {
@@ -60,13 +70,13 @@ async function launch(strictSteps: string[] | null) {
   try {
     const st = await BH()?.orchToolsStatus?.()
     const miss = (st && Array.isArray(st.missing)) ? st.missing : []
-    if (miss.length) { launchErr.value = '缺编排工具：' + miss.join('、') + ' —— 完整重启引擎让它带上任务编排工具，再开跑'; return }
+    if (miss.length) { launchErr.value = '缺编排工具：' + miss.join('、') + ' —— 完整重启引擎让它带上编排工具，再开跑'; return }
   } catch { /* 静默:体检通道缺席不挡路 */ }
-  if (!strictSteps && openPreview()) return   // 多步先预览
+  if (!isWf && !strictSteps && openPreview()) return   // pipeline 多步先预览
   launching.value = true
   try {
-    const payload: any = { title: v.slice(0, 24), msg: v, body: v, disp: v.slice(0, 60), files: [], mode: 'pipeline' }
-    if (strictSteps && strictSteps.length) { payload.steps = strictSteps; payload.strict = true }
+    const payload: any = { title: v.slice(0, 24), msg: v, body: v, disp: v.slice(0, 60), files: [], mode: isWf ? 'wf' : 'pipeline' }
+    if (!isWf && strictSteps && strictSteps.length) { payload.steps = strictSteps; payload.strict = true }
     await BH()?.startConversation?.(payload)
     goal.value = ''; steps.value = []; previewOpen.value = false
     setTimeout(loadWf, 800)
@@ -83,9 +93,11 @@ let timer: ReturnType<typeof setInterval> | null = null
 async function loadWf() {
   try {
     const r = await BH()?.wfList?.()
-    const list = (r && r.items) || []
+    let list = (r && r.items) || []
+    // 列表按形态过滤:pipe 只看任务编排;wf 看动态工作流/主控多层(分片不进面板,注册表本来就不含)
+    list = list.filter((x: any) => isWf ? x.kind !== 'pipeline' : x.kind === 'pipeline')
     items.value = list
-    queued.value = (r && r.queued) || []
+    queued.value = isWf ? [] : ((r && r.queued) || [])   // 排队位只在编排形态显示(wf 队列语义在主控卡)
     // 选中项跟随刷新(没有选中默认选第一条 running)
     if (sel.value) { const hit = list.find((x: any) => (x.id || x.archive) === (sel.value.id || sel.value.archive)); sel.value = hit || null }
     if (!sel.value) { const run = list.find((x: any) => x.status === 'running'); if (run) sel.value = run }
@@ -93,7 +105,7 @@ async function loadWf() {
 }
 onMounted(async () => {
   try { projName.value = (await BH()?.getProject?.()) || '' } catch { /* 静默 */ }
-  loadSkills()
+  loadSkills(); loadWfTpls()
   loadWf()
   timer = setInterval(loadWf, 3000)
 })
@@ -124,8 +136,8 @@ async function op(w: any, act: string) {
 <template>
   <div id="orch">
     <header class="hd">
-      <span class="ttl">任务编排</span>
-      <span class="sub">组合技能与能力,串成多步任务链</span>
+      <span class="ttl">{{ pageTitle }}</span>
+      <span class="sub">{{ pageSub }}</span>
       <span class="sp"></span>
       <span class="proj" :title="projName">📁 {{ projName || '未选目录' }}</span>
       <button class="mini" title="刷新" @click="loadWf">↻</button>
@@ -133,12 +145,15 @@ async function op(w: any, act: string) {
 
     <!-- 发起区 -->
     <div class="launch">
-      <textarea v-model="goal" rows="2" placeholder="串一条任务链,如:运行技能「XX导出」,然后核对导出数据,然后把异常项发邮件给张三(多步会自动出步骤预览)" @keydown.enter.exact.prevent="launch(null)"></textarea>
+      <textarea v-model="goal" rows="2" :placeholder="isWf ? '描述一个复杂目标(主控先预检:单卡装得下派单卡,装不下拆多片并行)…' : '串一条任务链,如:运行技能「XX导出」,然后核对导出数据,然后把异常项发邮件给张三(多步会自动出步骤预览)'" @keydown.enter.exact.prevent="launch(null)"></textarea>
       <button class="go" :disabled="!goal.trim() || launching" @click="launch(null)">{{ launching ? '…' : '➤' }}</button>
     </div>
     <div v-if="launchErr" class="errline">{{ launchErr }}</div>
-    <!-- 积木区:你的技能 + 内置能力,点一下拼进描述 -->
-    <div class="tpls">
+    <!-- 积木区:wf=引导模板;pipe=你的技能 + 内置能力 -->
+    <div v-if="isWf && wfTpls.length" class="tpls">
+      <button v-for="t in wfTpls" :key="t.id || t.name" class="tpl" :title="t.hint + '\n目标前缀:' + (t.goalPrefix || '')" @click="goal = (t.goalPrefix || '')">{{ t.name }}</button>
+    </div>
+    <div v-else-if="!isWf" class="tpls">
       <button v-for="sk in skills" :key="sk.id || sk.name" class="tpl skill" :title="'拼「运行技能『' + (sk.name || sk.title || sk.id) + '』」进描述'" @click="applySkill(sk)">🎬 {{ sk.name || sk.title || sk.id }}</button>
       <button v-for="b in BUILTINS" :key="b.n" class="tpl" :title="b.t + '\n点一下拼进描述(自然语言短语)'" @click="applyPhrase(b.p)">{{ b.n }}</button>
     </div>

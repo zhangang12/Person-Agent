@@ -16,10 +16,11 @@ const toast = useToast()
 // webview preload 必须是绝对 file URL:本页在 ui/dist/,旧页在 ui/,preload 在仓库根
 export const PRELOAD_URL = new URL('../../preload.js', location.href).href
 
-export type ViewName = 'chat' | 'orch' | 'mail' | 'settings' | 'kb' | 'browser' | 'skills'
+export type ViewName = 'chat' | 'orch' | 'wf' | 'mail' | 'settings' | 'kb' | 'browser' | 'skills'
 // 视图 webview 懒创建且保活(切走只是隐藏);相对路径:ui/dist/shell.html → ui/*.html
 const VIEW_SRC: Record<string, string> = {
-  orch: './orch.html?embed=1',   // 任务编排(ui-vue 重写,从 legacy dock.html 抽出)
+  orch: './orch.html?embed=1&mode=pipe',   // 任务编排(技能串接)
+  wf: './orch.html?embed=1&mode=wf',       // 动态工作流(同页组件 wf 形态:复杂目标/模板/主控多层)
   mail: '../mailcenter.html?embed=1',
   settings: '../settings.html?embed=1',
   kb: '../knowledge.html?embed=1',   // 项目知识库(独立视图,从设置页抽出)
@@ -88,7 +89,7 @@ export function showView(view: string) {
     return
   }
   try { BH()?.browserEmbed?.(false) } catch (e) { /* 静默 */ }   // 切走即隐藏(工作台保活,回来原样)
-  const v = (['chat', 'orch', 'mail', 'settings', 'kb', 'skills'].includes(view) ? view : 'chat') as ViewName
+  const v = (['chat', 'orch', 'wf', 'mail', 'settings', 'kb', 'skills'].includes(view) ? view : 'chat') as ViewName
   store.view = v
   if (v !== 'chat' && !store.visited.includes(v)) store.visited.push(v)
 }
