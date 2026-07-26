@@ -5,9 +5,10 @@
 // ⚠ 阈值变更(设计稿优先,用户已拍板):旧页 70/90 两段变色 → 设计稿 <60% 绿 / 60-80% 橙 / >80% 红。
 //   <5% 隐藏是旧页既有行为(设计稿未提,保留 —— 起步空会话不占标题栏)。
 
-// serve 不报 limit.context 时的型号兜底表(按 modelID 小写子串匹配,保守取公开标称值;旧页原表)
+// serve 不报 limit.context 时的型号兜底表(按 modelID 小写子串匹配,保守取公开标称值)
+// DeepSeek V4 = 128K(V2/V3 的 64k 已过时,实测 V4 Pro 误标 64k 被用户抓出);128k 口径硬顶见 ctxCap
 export const CTX_FALLBACK: Array<[string, number]> = [
-  ['claude', 200000], ['gpt-4', 128000], ['gpt-3.5', 16000], ['deepseek', 64000],
+  ['claude', 200000], ['gpt-4', 128000], ['gpt-3.5', 16000], ['deepseek', 128000],
   ['qwen', 131072], ['glm', 128000], ['kimi', 131072], ['llama', 128000],
 ]
 export function ctxFallbackFor(key: unknown): number {
