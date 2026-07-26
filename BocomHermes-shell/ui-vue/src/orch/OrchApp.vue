@@ -13,6 +13,12 @@ const pageSub = isWf ? '复杂目标 → 主控预检路由:装得下派单卡,�
 // ── 发起区:目标 + 积木(wf=模板 / pipe=技能+内置能力) ──
 const goal = ref('')
 const projName = ref('')
+async function pickProj() {   // 项目路径切换(全局默认仓;发起的工作流对它说话)
+  try {
+    const p = await BH()?.pickProject?.()
+    if (p) projName.value = p
+  } catch { /* 静默 */ }
+}
 // wf 模板(动态工作流引导:探索成文/评审/排查,goalPrefix 预置)
 const wfTpls = ref<{ id?: string; name?: string; hint?: string; goalPrefix?: string }[]>([])
 async function loadWfTpls() {
@@ -139,7 +145,7 @@ async function op(w: any, act: string) {
       <span class="ttl">{{ pageTitle }}</span>
       <span class="sub">{{ pageSub }}</span>
       <span class="sp"></span>
-      <span class="proj" :title="projName">📁 {{ projName || '未选目录' }}</span>
+      <span class="proj pick" :title="'工作目录:' + (projName || '未选目录') + '(点击切换 —— 动态工作流对它说话)'" @click="pickProj">📁 {{ projName || '未选目录' }}</span>
       <button class="mini" title="刷新" @click="loadWf">↻</button>
     </header>
 

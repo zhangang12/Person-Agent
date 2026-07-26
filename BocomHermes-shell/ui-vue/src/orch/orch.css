@@ -12,6 +12,8 @@ html[data-embed="1"], html[data-embed="1"] body { background: var(--bg-primary);
 .seg button { min-width: 62px; height: 28px; padding: 0 12px; border: none; border-radius: var(--r-sm); background: transparent; color: var(--label-1); font: var(--b2); cursor: pointer; }
 .seg button.on { background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); }
 .proj { font: var(--c1); color: var(--label-3); font-family: var(--font-mono); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj.pick { cursor: pointer; color: var(--label-2); background: var(--fill-2); border-radius: var(--r-full); padding: 2px 9px; }
+.proj.pick:hover { color: var(--blue); background: var(--blue-10); }
 .mini { border: 0.5px solid var(--sep); background: transparent; color: var(--label-2); border-radius: var(--r-sm); padding: 3px 9px; cursor: pointer; }
 .mini:hover { color: var(--blue); border-color: var(--blue); }
 
