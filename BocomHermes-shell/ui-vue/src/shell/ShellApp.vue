@@ -12,6 +12,7 @@ import TitleBar from './TitleBar.vue'
 import SideBar from './SideBar.vue'
 import StatusBar from './StatusBar.vue'
 import QuickInput from './QuickInput.vue'
+import CtxPanel from './CtxPanel.vue'
 import { store, PRELOAD_URL, bindWv, spawnChat, closeChat, wireShell, viewSrc } from './store'
 
 onMounted(() => { wireShell() })
@@ -34,29 +35,32 @@ function onConfirmClose() {
       <SideBar />
 
       <main id="main">
-        <!-- 对话视图:每会话一个 webview 保活(切走仅隐藏) -->
+        <!-- 对话视图:每会话一个 webview 保活(切走仅隐藏);右栏 = W1 上下文面板(可收起) -->
         <section class="view" :class="{ on: store.view === 'chat' }">
-          <div v-if="!store.chats.length" id="chatEmpty">
-            <div class="eg">
-              试试:「月度结息金额和核心系统对不上,帮我看下 <code>InterestCalc.monthly()</code> 的逻辑」
+          <div class="chatcol">
+            <div v-if="!store.chats.length" id="chatEmpty">
+              <div class="eg">
+                试试:「月度结息金额和核心系统对不上,帮我看下 <code>InterestCalc.monthly()</code> 的逻辑」
+              </div>
+              <div class="shortcuts">
+                <KChip class="sc">粘贴截图提问 ⌃⇧S</KChip>
+                <KChip class="sc">带入剪贴板 ⌃⇧V</KChip>
+              </div>
+              <KButton class="big" @click="spawnChat({ title: '新会话' })">
+                <svg class="ic" style="width: 14px; height: 14px; stroke-width: 2.4" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                新建对话
+              </KButton>
             </div>
-            <div class="shortcuts">
-              <KChip class="sc">粘贴截图提问 ⌃⇧S</KChip>
-              <KChip class="sc">带入剪贴板 ⌃⇧V</KChip>
-            </div>
-            <KButton class="big" @click="spawnChat({ title: '新会话' })">
-              <svg class="ic" style="width: 14px; height: 14px; stroke-width: 2.4" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-              新建对话
-            </KButton>
+            <webview
+              v-for="c in wvChats" :key="c.key"
+              :src="c.src"
+              :preload="PRELOAD_URL"
+              class="chat-wv"
+              :style="{ display: store.view === 'chat' && c.key === store.activeKey ? 'flex' : 'none' }"
+              :ref="(el: any) => bindWv(c.key, el)"
+            ></webview>
           </div>
-          <webview
-            v-for="c in wvChats" :key="c.key"
-            :src="c.src"
-            :preload="PRELOAD_URL"
-            class="chat-wv"
-            :style="{ display: store.view === 'chat' && c.key === store.activeKey ? 'flex' : 'none' }"
-            :ref="(el: any) => bindWv(c.key, el)"
-          ></webview>
+          <CtxPanel />
         </section>
 
         <!-- 编排 / 邮件 / 设置视图:webview 懒创建且保活 -->
@@ -103,6 +107,7 @@ body { padding: 0; }
 #main { min-width: 0; min-height: 0; position: relative; }
 .view { position: absolute; inset: 0; display: none; flex-direction: column; }
 .view.on { display: flex; }
+.chatcol { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
 .chat-wv { flex: 1; min-height: 0; display: flex; border: none; }
 
 /* 对话空态(设计稿空态契约:可照抄的例句 + 快捷键入口) */

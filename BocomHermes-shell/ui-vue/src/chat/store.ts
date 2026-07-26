@@ -1057,12 +1057,25 @@ export async function refreshCtxLimit(): Promise<void> {
   let capMax = 128000
   try { capMax = Math.floor(+((((BH()?.getSettings?.() || {}) as any).knobs || {}).ctxLimitMax)) || 128000 } catch { /* 静默 */ }
   s.ctxLimitTokens = ctxCap(limit, capMax)
+  emitCtxToHost()
 }
 export async function pollRealUsage(): Promise<void> {
   try {
     const u = await BH()?.cardUsage?.()
     s.ctxRealTokens = u && u.tokens ? u.tokens : null
     s.ctxCacheHit = u && typeof (u as any).cacheHit === 'number' ? (u as any).cacheHit : null
+  } catch { /* 静默 */ }
+  emitCtxToHost()
+}
+/** ctx/模型回写宿主 shell(状态栏真值;顶层窗静默) */
+function emitCtxToHost(): void {
+  try {
+    BH()?.chatCtxEmit?.({
+      tokens: s.ctxRealTokens != null ? s.ctxRealTokens : Math.round(s.ctxUsedChars / 1.6),
+      limit: s.ctxLimitTokens || 0,
+      real: s.ctxRealTokens != null,
+      model: s.modelLabel || '',
+    })
   } catch { /* 静默 */ }
 }
 /** 模型菜单数据源(60s 缓存,与 refreshCtxLimit 共用一份) */

@@ -20,6 +20,19 @@ const engText = computed(() => {
   if (st.state === 'down') return '引擎失连'
   return '未连接'
 })
+// ctx 真值(chat-ctx 回写,与 activeKey 对齐才显示):12.3k/128k + 模型;real=false 时 ~ 前缀=估算
+const ctxText = computed(() => {
+  const c = store.chatCtx
+  if (!c || !c.key || c.key !== store.activeKey || !c.limit) return ''
+  const k = (n: number) => (n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n))
+  return (c.real ? '' : '~') + k(c.tokens) + '/' + k(c.limit)
+})
+const ctxModel = computed(() => (store.chatCtx && store.chatCtx.key === store.activeKey ? store.chatCtx.model : ''))
+const ctxTip = computed(() => {
+  const c = store.chatCtx
+  if (!c || !c.limit) return ''
+  return '本会话上下文 ' + Math.round((c.tokens / c.limit) * 100) + '%（' + (c.real ? 'serve 实测' : '字符估算') + (c.model ? ' · ' + c.model : '') + '）'
+})
 </script>
 
 <template>
@@ -30,7 +43,13 @@ const engText = computed(() => {
         {{ store.projName }}
       </span>
     </KTooltip>
+    <KTooltip :content="'当前项目目录的 git 分支(10s 轮询)'" placement="top">
+      <span v-if="store.gitBranch" id="sbGit">⎇ {{ store.gitBranch }}</span>
+    </KTooltip>
     <span class="sp"></span>
+    <KTooltip :content="ctxTip" placement="top">
+      <span v-if="ctxText" id="sbCtx">⏱ {{ ctxText }}<span v-if="ctxModel" class="ctxm"> · {{ ctxModel }}</span></span>
+    </KTooltip>
     <KTooltip content="引擎保活(主进程心跳聚合推送;初始探测拿不到即未连接)" placement="top">
       <span id="sbEng" :class="{ ok: store.engine.state === 'ok' }"><span class="dot"></span>{{ engText }}</span>
     </KTooltip>
@@ -56,4 +75,7 @@ const engText = computed(() => {
 #sbEng.ok .dot { background: var(--green); }
 #sbEng.ok { color: var(--label-2); }
 #sbSess .busyN { color: var(--blue); font-weight: 600; }
+#sbGit { color: var(--label-2); font-family: var(--font-mono); }
+#sbCtx { font-family: var(--font-mono); color: var(--label-2); }
+#sbCtx .ctxm { color: var(--label-3); }
 </style>

@@ -53,6 +53,10 @@ export const store = reactive({
   quick: { open: false, text: '' },
   confirmCloseKey: '',                // 运行中会话关闭确认闸(KDialog)
   draggingKey: '',                    // 拖出手势态(条目半透明)
+  /** 活动会话的 ctx 真值(chat-ctx 回写):{key, tokens, limit, real, model};key 与 activeKey 对不上就忽略 */
+  chatCtx: null as { key: string; tokens: number; limit: number; real: boolean; model: string } | null,
+  /** 当前项目目录的 git 分支(git-branch IPC,10s 轮询;非 git 仓 = '') */
+  gitBranch: '',
 })
 
 const details = new Map<string, ChatDetail>()
@@ -154,6 +158,11 @@ export function bindWv(key: string, el: any) {
     if (d.pending) { const t = d.pending; d.pending = ''; fillChat(t) }
   })
   el.addEventListener('ipc-message', (ev: any) => {   // guest 经 sendToHost 回写绑定(cardBoundEmit)
+    if (ev.channel === 'chat-ctx') {   // ctx 用量/模型回写(chatCtxEmit)→ 状态栏真值
+      const m = ev.args && ev.args[0]
+      if (m) store.chatCtx = { key, tokens: +m.tokens || 0, limit: +m.limit || 0, real: !!m.real, model: String(m.model || '') }
+      return
+    }
     if (ev.channel !== 'card-bound') return
     const m = ev.args && ev.args[0]
     if (!m) return
@@ -317,6 +326,16 @@ function startWfPoll() { if (wfTimer) return; pollWf(); wfTimer = setInterval(po
 function stopWfPoll() { if (wfTimer) { clearInterval(wfTimer); wfTimer = null } }
 document.addEventListener('visibilitychange', () => { if (document.hidden) stopWfPoll(); else startWfPoll() })
 
+// ── git 分支(git-branch IPC):10s 轮询 + 项目切换即刷;非 git 仓 → '' ──
+let gitTimer: ReturnType<typeof setInterval> | null = null
+export async function pollGitBranch() {
+  try {
+    const r = await BH()?.gitBranch?.()
+    store.gitBranch = (r && r.branch) || ''
+  } catch (e) { /* 静默 */ }
+}
+function startGitPoll() { if (gitTimer) return; pollGitBranch(); gitTimer = setInterval(pollGitBranch, 10000) }
+
 // ── 装配:项目目录 / 主题 / 收养 / 主进程广播 / 引擎探测(一窗一次)──
 let wired = false
 export function wireShell() {
@@ -331,6 +350,7 @@ export function wireShell() {
     store.projName = name || (dir ? dir.split(/[\\/]/).pop() : '未选目录')
     store.projDir = dir
   } catch (e) { /* 静默 */ }
+  startGitPoll()   // 状态栏 ⎇ 分支(10s 轮询)
   // 主题:浅色单主题(锁定);广播恒为 light,幂等
   bh?.onTheme?.(() => { document.documentElement.dataset.theme = 'light' })
 

@@ -45,6 +45,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   sessionPinOut: (arg) => ipcRenderer.invoke('session-pin-out', arg || {}),   // 钉出(波3):内嵌会话 → 独立迷你卡(真窗口盯梢);arg={sid, x?, y?}
   onSessionReattached: (cb) => ipcRenderer.on('session-reattached', (_e, p) => cb(p)),   // 收回(波3):钉出窗关闭 → 会话回主窗口侧栏 {sid}
   cardBoundEmit: (meta) => { try { ipcRenderer.sendToHost('card-bound', meta || {}) } catch (e) {} },   // webview guest → 宿主 shell 回写绑定;顶层窗调用静默吞掉
+  chatCtxEmit: (ctx) => { try { ipcRenderer.sendToHost('chat-ctx', ctx || {}) } catch (e) {} },   // guest → 宿主:ctx 用量/模型回写(状态栏真值);顶层窗静默
   getHistory: () => ipcRenderer.sendSync('get-history'),
   openHistory: (sid, title) => ipcRenderer.invoke('open-history', { sid, title }),
   clearHistory: () => ipcRenderer.invoke('clear-history'),
@@ -56,6 +57,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   wfOpen: (it) => ipcRenderer.invoke('wf-open', it),
   wfDelete: (id) => ipcRenderer.invoke('wf-delete', id),
   wfCancelQueued: (goal) => ipcRenderer.invoke('wf-cancel-queued', goal),   // 排队中的工作流行内 ✕ 撤队
+  gitBranch: () => ipcRenderer.invoke('git-branch'),   // 当前项目目录的 git 分支(状态栏 ⎇)
   wfPlanApproved: () => ipcRenderer.send('wf-plan-approved'),
   wfRunningCount: () => ipcRenderer.invoke('wf-running-count'),   // 编排并发真值(波4 状态栏):{running, max},只读
   shardPop: (id) => ipcRenderer.invoke('shard-pop', id),

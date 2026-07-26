@@ -1906,6 +1906,15 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   })
   // 删除工作流记录:卡还开着的一律拒(关卡时注册表会重写 + 重新存档,删了也会复活 —— 必须先关卡);
   // 卡已关 → 摘注册表 + 删存档文件(注册表没有的纯历史存档同此)。id 只跟文件名比对,不拼路径,防注入。
+  // 当前项目目录的 git 分支(状态栏 ⎇;非 git 仓/拿不到 → '')
+  ipcMain.handle('git-branch', () => {
+    const dir = S.settings.projectDir || ''
+    if (!dir) return { branch: '' }
+    try {
+      const b = require('child_process').execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: dir, timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim()
+      return { branch: b === 'HEAD' ? '(detached)' : b }
+    } catch { return { branch: '' } }
+  })
   // 取消排队:并发位满时排在 S.wfQueue 里的工作流(还没开卡,没有注册表 id)—— 按 goal 精确匹配摘除(设计稿 S5:排队行内 ✕)
   ipcMain.handle('wf-cancel-queued', (_e, goal) => {
     const g = String(goal == null ? '' : goal)

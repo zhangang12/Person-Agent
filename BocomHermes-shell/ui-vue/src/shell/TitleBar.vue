@@ -18,11 +18,14 @@ const chipText = computed(() => {
   return '引擎未连接'
 })
 const chipTip = '引擎连接状态(保活心跳推送,与状态栏引擎灯同源)'
+// 视图感知标题(设计稿 desktop W1-W4:标题栏显示当前视图名)
+const viewTitle = computed(() => ({ chat: '对话', orch: '任务编排', mail: '邮件', settings: '设置' } as Record<string, string>)[store.view] || '')
 </script>
 
 <template>
   <header id="tbar" :class="{ mac: isMac }">
     <span class="tt">BocomHermes</span>
+    <span v-if="viewTitle" class="vtt">{{ viewTitle }}</span>
     <span class="sp"></span>
     <KTooltip :content="chipTip" placement="bottom">
       <span class="chip" :class="{ ok: store.engine.state === 'ok' }">
@@ -40,6 +43,7 @@ const chipTip = '引擎连接状态(保活心跳推送,与状态栏引擎灯同�
 }
 #tbar.mac { padding-left: 82px; }   /* mac 红绿灯 hiddenInset 占位 */
 .tt { font-size: 13px; font-weight: 600; color: var(--label-2); }
+.vtt { font-size: 11px; color: var(--label-3); background: var(--fill-2); border-radius: var(--r-full); padding: 2px 9px; }
 .sp { flex: 1; }
 .chip {
   display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px;
