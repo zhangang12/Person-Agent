@@ -30,7 +30,6 @@ function onMenu(c: ChatEntry, key: string) {
   if (key === 'pin') pinChat(c.key)
   else if (key === 'close') closeChat(c.key)
 }
-function openSkillCenter() { try { BH()?.openSkillCenter?.() } catch (e) { /* 静默 */ } }
 function histTitle(h: { title?: string; project?: string }) { return (h.title || '') + (h.project ? ' · ' + h.project : '') }
 // 历史单条删除:行内 ✕ 两步确认(第一次变「删?」,3s 未确认复位;只摘索引,引擎侧会话不动)
 const histDelArm = ref('')
@@ -125,7 +124,7 @@ async function delHist(id: string) {
     </button>
 
     <div class="lab">资源</div>
-    <button class="nav-item" @click="openSkillCenter">
+    <button class="nav-item" :class="{ on: store.view === 'skills' }" @click="showView('skills')">
       <svg class="ic s16" viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>
       技能中心
     </button>

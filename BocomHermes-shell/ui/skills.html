@@ -5,10 +5,13 @@
 <title>录制与回放</title>
 <!-- 主题已锁定浅色:启动脚本恒得 'light',避免首帧闪烁 -->
 <script>try { document.documentElement.dataset.theme = window.BocomHermes.getTheme() || 'light' } catch (e) { document.documentElement.dataset.theme = 'light' }</script>
+<script>(function(){try{if(new URLSearchParams(location.search).has('embed'))document.documentElement.dataset.embed='1'}catch(e){}})()</script>
 <link rel="stylesheet" href="glass.css">
 <style>
 /* 「🎬 录制与回放」中心 —— Codex Record & Replay 式一条流:录一遍 → 自动整理成技能 → 一键复用/批量跑。
    颜色全部消费 glass.css 的设计令牌(浅色单主题,事实源 docs/ui-design);语义色(录制红/成功/警告)按需保持稳定。 */
+/* 嵌入主窗口(?embed=1):窗控(最小化/关闭)归主窗口,藏掉 */
+html[data-embed="1"] .tbar .wbtn { display: none; }
 :root{
   --bg:var(--glass-bg); --panel:var(--composer-bg); --float:var(--ai-bg);
   --line:var(--glass-border); --line2:var(--composer-border);

@@ -63,8 +63,8 @@ function onConfirmClose() {
           <CtxPanel />
         </section>
 
-        <!-- 编排 / 邮件 / 设置 / 知识库视图:webview 懒创建且保活(设置视图登记元素引用备用) -->
-        <section v-for="v in (['orch', 'mail', 'settings', 'kb'] as const)" :key="v" class="view" :class="{ on: store.view === v }">
+        <!-- 编排 / 邮件 / 设置 / 知识库 / 技能中心视图:webview 懒创建且保活 -->
+        <section v-for="v in (['orch', 'mail', 'settings', 'kb', 'skills'] as const)" :key="v" class="view" :class="{ on: store.view === v }">
           <webview
             v-if="store.visited.includes(v)"
             :src="viewSrc(v)"
