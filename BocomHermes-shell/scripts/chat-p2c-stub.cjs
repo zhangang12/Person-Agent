@@ -98,6 +98,31 @@ app.whenReady().then(async () => {
     assert('产出兜底提醒', await hasNote(win, '尚无落盘产出'))
     await shot(win, 'chat-p2c-produce')
   }
+  // ── 场景6:规划闸倒计时(knobs.approvalTimeoutMin=0.03 ≈1.8s → 自动开跑) ──
+  {
+    const win = await mkWin({ wf: '1', __knobs: JSON.stringify({ approvalTimeoutMin: 0.03 }) })
+    await ev(win, `__emit('stream', { kind:'tool', text:'todowrite', partID:'cd1', status:'completed', input: JSON.stringify({ todos: [
+      { content: '第一步', status: 'in_progress' }, { content: '第二步', status: 'pending' },
+    ] }) })`)
+    await sendText(win, '按方案来')
+    await sleep(1300)
+    assert('倒计时文案出现', await ev(win, `!!document.querySelector('.wfbar .wf-cd')`))
+    await sleep(2200)   // 倒计时到期
+    assert('倒计时自动批准', await ev(win, `window.__flag('planApproved') === true`))
+    await shot(win, 'chat-p2c-plancountdown')
+  }
+  // ── 场景7:todo 提醒兜底(knobs.todoNudgeRounds=1:N 轮没动 todo → 下条消息尾附提醒) ──
+  {
+    const win = await mkWin({ wf: '1', __knobs: JSON.stringify({ todoNudgeRounds: 1 }) })
+    await ev(win, `__emit('stream', { kind:'tool', text:'todowrite', partID:'tn1', status:'completed', input: JSON.stringify({ todos: [
+      { content: '第一步', status: 'completed' }, { content: '第二步', status: 'pending' },
+    ] }) })`)
+    await sendText(win, '继续干')          // 这轮更新 turnN,todo 仍未再动
+    await sleep(1200)
+    await sendText(win, '再来一轮')        // 本轮发出时 turnN-wfTodoLastTurn ≥ 1 → 尾部附提醒
+    await sleep(800)
+    assert('消息尾部附 todo 提醒', await ev(win, `window.__flag('sendTexts').some(t => t.includes('todo 清单已多轮未更新'))`))
+  }
   for (const w of wins) { try { w.destroy() } catch {} }
   console.log(bad ? '❌ 有失败(见上)' : '✅ P2c stub 全过,无渲染错误')
   app.exit(bad ? 1 : 0)

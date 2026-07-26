@@ -511,3 +511,18 @@ html[data-embed="1"] .hl { display: none; }
 .statusline .sl-time { font-family: var(--font-mono); color: var(--label-3); flex: none; }
 .statusline .sl-esc { margin-left: auto; font: var(--c2); color: var(--label-3); flex: none; }
 .statusline.ok { color: var(--green); }
+
+/* ── 规划闸倒计时(超时自动开跑) / 看门狗第二级横幅 ────────────────────────── */
+.wfbar .wf-cd { font: var(--c2); color: var(--label-3); font-family: var(--font-mono); }
+.wfbar .wf-cdx { font: var(--c2); color: var(--label-3); background: transparent; border: none; cursor: pointer; text-decoration: underline; padding: 0 2px; }
+.wfbar .wf-cdx:hover { color: var(--danger); }
+.wdbanner {
+  flex: none; display: flex; align-items: center; gap: 9px; margin: 7px 12px 0;
+  padding: 8px 12px; border: 1px solid var(--danger); border-radius: var(--r-md);
+  background: var(--red-10); font: var(--c1-em); color: var(--danger);
+}
+.wdbanner button {
+  flex: none; font: var(--c1); border: 1px solid var(--sep); border-radius: var(--r-sm);
+  background: var(--bg-primary); color: var(--label-1); padding: 3px 12px; cursor: pointer;
+}
+.wdbanner .wd-x:hover { border-color: var(--danger); color: var(--danger); }

@@ -4,17 +4,21 @@
 'use strict'
 const { contextBridge } = require('electron')
 const cbs = {}
-const flags = { planApproved: false, sendN: 0 }
+const flags = { planApproved: false, sendN: 0, lastSend: '', sendTexts: [] }
 // ctx 三态场景用:URL query __tokens 传用量(配合 listModels 的 100k 上限);preload 在渲染进程,env 不可控,走 query 最稳
 const TOKENS = Math.floor(+((new URLSearchParams(location.search)).get('__tokens'))) || 0
 contextBridge.exposeInMainWorld('BocomHermes', {
   getTheme: () => 'dark',
   onTheme: () => {},
-  getSettings: () => ({}),
+  getSettings: () => {   // query __knobs={"k":v} 传旋钮(规划倒计时/todo提醒兜底等场景)
+    try { const k = JSON.parse((new URLSearchParams(location.search)).get('__knobs') || '{}'); return { knobs: k } } catch { return {} }
+  },
   getHistory: () => [],
   cardInit: async () => ({ sessionId: 'stub-sid', project: 'demo-repo', dir: '/tmp/demo', model: { providerID: 'm', modelID: 'mimo-v2', name: 'MiMo V2 Free' }, reattached: false, messages: [], running: false }),
   cardSend: async (text) => {
     flags.sendN++
+    flags.lastSend = String(text || '')
+    flags.sendTexts.push(String(text || ''))
     if (/__slow__/.test(String(text))) {   // 慢轮(状态行/hang 探针场景):2.5s 才回
       await new Promise((r) => setTimeout(r, 2500))
       return '慢回答'

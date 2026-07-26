@@ -158,9 +158,10 @@ export const s = reactive({
   wfMode: false,
   orchMode: false,
   shardMode: false,
-  /** 规划闸:true=方案已批(wf-plan-approved 已报主进程);planAsk=待批提示条可见 */
+  /** 规划闸:true=方案已批(wf-plan-approved 已报主进程);planAsk=待批提示条可见;planAutoLeft=倒计时秒(0=无) */
   planApproved: false,
   planAsk: false,
+  planAutoLeft: 0,
   /** 自动批准(仅 wf 卡,用户显式开启):权限请求自动放行 once 并留痕;关卡即失效 */
   wfAutoAllow: false,
   /** 主控卡分片进度(shard-progress 推送):{id, goal, status, round};shardView=就地渲染某片的镜像会话(''=主区域) */
@@ -171,6 +172,8 @@ export const s = reactive({
   /** 状态行(P2c harness):忙时实时显示【正在跑什么 + Esc 中断】;aborting=已按 Esc 等引擎收尾 */
   runAct: '思考中',
   aborting: false,
+  /** 看门狗第二级横幅(绕圈提醒后仍不纠偏):带【中止本轮/知道了】,判死权给人 */
+  wdBanner: false,
   /** cardInit 成功后恢复出来的草稿(ComposerBar watch 消费) */
   restoredDraft: '',
   /** ctx 估算用量(标题栏 chip 数据源之一) */
@@ -401,7 +404,7 @@ let wdCurFiles = new Set<string>()
 const wdRounds: { turn: number; files: Set<string> }[] = []
 let wdWarned = false, wdEscLoops = 0
 let wdWarnSet: Set<string> | null = null, wdWarnTurn = -1
-let wfTodoDoneTurn = -1, wdBannerShown = false
+let wfTodoDoneTurn = -1, wfTodoLastTurn = -1
 // 委派驱动/防停/产出兜底运行时态
 let delegatedSeen = false, delegateNudged = false
 let contNudgeN = 0, contLastOpen = -1
@@ -483,6 +486,7 @@ function upsertTodo(partID: string, ev: StreamEvent, st: ToolState): void {
   const model = todoModel(ev.input)
   if (model) {
     wfSawTodo = true   // 规划闸原料:见过 todowrite(方案已列);出完成项 = 已在执行(主控第一轮"预检"打勾不算)
+    wfTodoLastTurn = turnN   // todo 提醒兜底:最近更新轮次(连着 N 轮没动 → 下条消息尾附提醒)
     if (model.doneN > 0) { if (!s.orchMode) wfExecSeen = true; wfTodoDoneTurn = turnN }   // 看门狗判进展也用这个
     // 防停/委派驱动原料:最近一次 todo 的未完项与总数
     try {
@@ -616,6 +620,7 @@ export async function turn(text: string, files?: any[] | null): Promise<boolean>
   s.subAgents = []; subIdx.clear(); s.subActiveId = ''; subClosedThisTurn = false; s.subRound = 'cur'
   turnN++
   s.planAsk = false   // 新一轮开跑即撤规划闸提示(用户在调整方案,轮末若仍待批会重挂)
+  clearPlanTimers()   // 撤条必清倒计时(泄漏/二次注入防线)
   lastStreamAt = Date.now(); hangNag90 = hangNag300 = false   // hang 探针复位(新一轮重新计)
   s.aborting = false
   runningTools.clear(); paintRunAct()   // 状态行:新一轮从"思考中"起
@@ -722,7 +727,12 @@ export function submit(text: string, atts: { kind: string; name: string; path?: 
   const docRefs = atts.filter((a) => a.kind === 'doc').map((a) => '- ' + a.path + '（' + a.name + '）').join('\n')
   const docNote = docRefs ? '【用户拖入了文档，需要时用 read_document 工具读取其内容】\n' + docRefs : ''
   const images = atts.filter((a) => a.kind === 'image').map((a) => ({ mime: a.mime, url: a.dataUrl, filename: a.name }))
-  const full = [docNote, v].filter(Boolean).join('\n\n')
+  let full = [docNote, v].filter(Boolean).join('\n\n')
+  // todo 提醒兜底(wf 卡,knobs.todoNudgeRounds 默认 3):连着 N 轮没动 todo 且还有未完项 →
+  // 本条消息尾部附一行提醒(对齐 Claude Code harness 的 task 提醒;只随消息进 serve,气泡不显示)
+  if (s.wfMode && latestOpenTodos.length && turnN - wfTodoLastTurn >= knobNum('todoNudgeRounds', 3)) {
+    full += '\n(系统提醒:todo 清单已多轮未更新,还有 ' + latestOpenTodos.length + ' 项未完成:「' + latestOpenTodos.slice(0, 3).join('、') + '」—— 请先用 todowrite 如实更新各项状态,再继续推进。)'
+  }
   const dispText = disp || (v || (images.length ? '(图片)' : '(文档)')) + (atts.length ? ' · 附件 ' + atts.length : '')   // card-inject:用户气泡看 disp,引擎收全文
   const el = addUser(dispText)
   if (s.busy || !s.ready) {
@@ -793,16 +803,47 @@ export function toggleWfAutoAllow(): void {
 
 // ── 规划闸(wf/orch,旧页 1153 平移):方案(todowrite)出了但没实质执行 → 待批提示;分片自动批 ──
 const APPROVE_MSG = '批准方案。请按你刚才的计划用编辑工具完成修改;改完调 repro_assert/repro_self_review 登记,再简要总结改了什么。我改完后会自动用 git diff 把改动展示给我看。'
+// 超时自动开跑(knobs.approvalTimeoutMin,分钟;默认 0=永不 —— 产品拍板的保守默认):
+// 倒计时双计时器(点火+秒级刷新文案),撤闸/新轮/手动批/取消必须两个都清 —— 防泄漏,更防闸死后二次注入。
+let planAutoTimer: ReturnType<typeof setTimeout> | null = null
+let planAutoTick: ReturnType<typeof setInterval> | null = null
+function clearPlanTimers(): void {
+  if (planAutoTimer) { clearTimeout(planAutoTimer); planAutoTimer = null }
+  if (planAutoTick) { clearInterval(planAutoTick); planAutoTick = null }
+  s.planAutoLeft = 0
+}
+/** 取消倒计时自动批准(只拆引信,闸本身还在,仍可手动批) */
+export function cancelPlanAuto(): void {
+  clearPlanTimers()
+  addNote('已取消自动开跑 —— 计划仍待批准,手动点【批准方案 → 改】或输入调整意见')
+}
+function armPlanAuto(): void {
+  clearPlanTimers()
+  const min = knobNum('approvalTimeoutMin', 0)
+  if (min <= 0) return
+  const endAt = Date.now() + min * 60000
+  const paint = () => { s.planAutoLeft = Math.max(0, Math.round((endAt - Date.now()) / 1000)) }
+  paint()
+  planAutoTick = setInterval(paint, 1000)
+  planAutoTimer = setTimeout(() => { clearPlanTimers(); approvePlan(true) }, min * 60000)
+}
 function maybePlanGate(): void {
   if (!(s.wfMode || s.orchMode) || s.planApproved) return
   if (s.shardMode) { approvePlan(true); return }   // 分片卡:拆分方案主控卡已批,静默自动开跑
-  if (wfSawTodo && !wfExecSeen) s.planAsk = true
+  if (wfSawTodo && !wfExecSeen) { if (!s.planAsk) { s.planAsk = true; armPlanAuto() } return }
+  // 模型已实质执行(没守"首轮只规划")→ 闸没意义:撤闸并注入继续指令(只埋闸不吭声会让守规矩等批准的模型软死锁,实测)
+  if (wfExecSeen) {
+    s.planApproved = true; s.planAsk = false; clearPlanTimers()
+    try { BH()?.wfPlanApproved?.() } catch { /* 静默 */ }
+    addNote('模型已开始实质执行 —— 计划批准闸已自动跳过(已通知它继续,不用等批准)')
+    turn('(系统提醒:你已提前开始实质执行,计划批准闸已自动跳过 —— 不用等批准,请继续按当前计划执行直至总目标完成;执行中保持 todo 勾选可见。)')
+  }
 }
 export function approvePlan(auto?: boolean): void {
   if (s.planApproved) return
-  s.planApproved = true; s.planAsk = false
+  s.planApproved = true; s.planAsk = false; clearPlanTimers()
   try { BH()?.wfPlanApproved?.() } catch { /* 静默 */ }   // relay 层放行 run_workflow 派发
-  addNote(auto ? '✅ 分片自动批准开跑(拆分方案主控已批)' : '✅ 已批准,开始执行')
+  addNote(auto ? '✅ 倒计时到期,自动批准开跑' : (s.shardMode ? '✅ 分片自动批准开跑(拆分方案主控已批)' : '✅ 已批准,开始执行'))
   submit(APPROVE_MSG, [])
 }
 
@@ -891,9 +932,8 @@ function wdCheck(): void {
         addNote('看门狗：绕圈提醒后仍未纠偏，分片无人值守 → 自动中止本轮（壳层按 aborted 判 interrupted 收官）')
         try { BH()?.cardAbort?.() } catch { /* 静默 */ }
         wdWarned = false; wdEscLoops = 0; wdWarnSet = null
-      } else if (!wdBannerShown) {
-        wdBannerShown = true
-        addNote('⚠ 可能在绕圈：连续多轮反复读同一批文件、计划无进展（已提醒仍未纠偏）。判死权在你 —— 可按 Esc 中止本轮。', { retry: false })
+      } else {
+        s.wdBanner = true   // 第二级:醒目横幅+【中止本轮/知道了】(判死权给人;ChatApp 渲染)
       }
     }
   } else { wdWarned = false; wdEscLoops = 0; wdWarnSet = null }   // 读了不同的文件 = 换策略了,复位
@@ -902,7 +942,7 @@ function wdCheck(): void {
 // ── 委派驱动(harness,旧页 1061-1078):复杂任务主 Agent 一直单干 = 必走歪路 ──
 // todo ≥3 步 且 已实质干活 且 ≥2 轮 且 从未派过 task → wf 自动注入派子 Agent 规程;普通卡给可见建议。每任务只催一次。
 function maybeDelegateNudge(): void {
-  if (delegatedSeen || delegateNudged || handoffDue()) return
+  if (s.busy || delegatedSeen || delegateNudged || handoffDue()) return   // busy 闸:同一轮末链里已有注入开跑了,下轮末再催(防并发回合撞 answerParts)
   if (latestTodoTotal < 3 || turnN < 2) return
   if (!wdRounds.length && !wfExecSeen) return
   delegateNudged = true
@@ -916,7 +956,7 @@ function maybeDelegateNudge(): void {
 // ── 长任务防停(旧页 1082-1103):todo 还有未完项就催它继续 ──
 // wf 自动注入"继续"(停下=链死);普通卡出可见「继续执行」按钮。连催 3 次且无进展 → 停催转人工;未完项变少即复位。
 function maybeContinueNudge(): void {
-  if (handoffDue()) return
+  if (s.busy || handoffDue()) return   // busy 闸:轮末链里已有注入开跑(规划旁路/委派/交棒),下轮末再催
   const open = latestOpenTodos
   if (!open.length) { contNudgeN = 0; contLastOpen = -1; return }
   if (contLastOpen >= 0 && open.length < contLastOpen) contNudgeN = 0
@@ -931,7 +971,7 @@ function maybeContinueNudge(): void {
 }
 // ── 产出兜底(wf 卡,规程第 7 条):todo 全勾却零落盘产出 → 注入补 MD 提醒(一次) ──
 function maybeWfProduceNag(): void {
-  if (!s.wfMode || wfProduceNag || handoffDue() || !latestTodoTotal) return
+  if (!s.wfMode || s.busy || wfProduceNag || handoffDue() || !latestTodoTotal) return
   if (latestOpenTodos.length) return   // 还有未完项,不算"快完成"
   if (s.artFiles.length) return
   wfProduceNag = true
@@ -1060,7 +1100,7 @@ export function resetConversation(): void {
   ctxNag = false   // 水位提醒复位:上下文已回起点,下次涨回 90% 要允许再提醒
   delegateNudged = false; contNudgeN = 0; contLastOpen = -1; wfProduceNag = false
   if (!s.shardMode) {   // 看门狗账本清零(分片不清:跨棒绕圈正是分片死循环的典型形态,账本跨棒连续才抓得到)
-    wdCurFiles = new Set(); wdRounds.length = 0; wdWarned = false; wdEscLoops = 0; wdWarnSet = null; wdWarnTurn = -1; wdBannerShown = false
+    wdCurFiles = new Set(); wdRounds.length = 0; wdWarned = false; wdEscLoops = 0; wdWarnSet = null; wdWarnTurn = -1; s.wdBanner = false
   }
 }
 export async function compactCore(opts?: { wf?: boolean; auto?: boolean }): Promise<boolean> {

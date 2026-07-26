@@ -46,13 +46,17 @@ BocomHermes-shell/
 │   ├── card-cleanup.js # 卡关闭清理链(波3 独立成可测模块):abort 会话/退休孤儿 serve/forgetBusy/
 │   │                  #   钉出 detach 降级/orch 级联;窗口 closed 与主窗视图关闭都走它
 ├── ui/                # 全部窗口页面（原生 HTML，脚本内联）：shell.html(桌面主窗口=唯一主界面:侧栏+
-│                      #   对话/任务编排/邮件/设置四视图+快捷输入层+状态栏)、card.html(会话卡,~117KB)、
+│                      #   对话/任务编排/邮件/设置四视图+快捷输入层+状态栏)、card.html(会话卡,~117KB,
+│                      #   已全部迁移至 ui/dist/chat.html,仅作 cardImpl:"legacy" 回退保留)、
 │                      #   browser.html(~115KB)、dock.html(编排视图页)、mailcenter.html、skills.html、
 │                      #   settings.html、glass.css(浅色单主题设计令牌,令牌值事实源 docs/ui-design/design.css)等
-├── ui-vue/            # Vue 迁移工作区(P0 已落地)：Vite+Vue3+TS,shell/lab 两入口,src/components/ 是
+├── ui-vue/            # Vue 迁移工作区(P0-P2c 已全部落地)：Vite+Vue3+TS,shell/chat/lab 三入口;
+│                      #   src/chat/ = 会话卡全量 Vue 重写(消息流/工具块/权限/提问/成果抽屉/子 Agent 侧边栏/
+│                      #   命令块运行/wf·orch·shard 卡/状态行/hang 探针/看门狗/三催),src/components/ 是
 │                      #   设计令牌组件库(KButton/KToggle/KDialog/KToaster 等 14 件,契约值见 docs/ui-design/);
-│                      #   `npm run ui:build` 全内联单文件构建,`ui:dev` 监听,`ui:typecheck` vue-tsc 零错误门槛
-├── ui/dist/           # ui-vue 构建产物(shell.html/lab.html,全内联零外链),随库入库——内网发包机
+│                      #   `npm run ui:build` 全内联单文件构建,`ui:dev` 监听,`ui:typecheck` vue-tsc 零错误门槛,
+│                      #   `ui:test` vitest 契约,`ui:stub` stub 截图验收(scripts/chat-p2*-stub.cjs)
+├── ui/dist/           # ui-vue 构建产物(shell.html/chat.html/lab.html,全内联零外链),随库入库——内网发包机
 │                      #   不一定有构建环境,electron-builder files 白名单 "ui/**/*" 已直接覆盖
 ├── mcp/               # 9 个本地 stdio MCP server(ESM,零依赖,打包时 asarUnpack)：
 │                      #   browser-mcp(浏览器自动化+技能回放)、httpcap-mcp、repro-mcp(复现取证)、

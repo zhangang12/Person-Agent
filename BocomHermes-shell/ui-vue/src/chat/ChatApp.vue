@@ -53,6 +53,12 @@ function scrollToPerm() {
       </button>
       <WfBar />
       <ShardPanel />
+      <!-- 看门狗第二级横幅(绕圈提醒后仍不纠偏):判死权给人 —— 中止本轮 / 知道了 -->
+      <div v-if="s.wdBanner" class="wdbanner">
+        <span>⚠ 可能在绕圈：连续多轮反复读同一批文件、计划无进展（已提醒仍未纠偏）。判死权在你 ——</span>
+        <button class="wd-x" @click="abort(); s.wdBanner = false">中止本轮</button>
+        <button class="wd-ok" @click="s.wdBanner = false">知道了</button>
+      </div>
       <FeedView />
       <StatusLine />
       <ComposerBar />
