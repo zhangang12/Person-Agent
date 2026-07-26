@@ -71,16 +71,6 @@ function commitEdit() {
       @keydown.enter="commitEdit" @keydown.esc="editing = false" @blur="commitEdit"
     >
     <span v-else class="k-title" title="点击改名" @click="startEdit"><span v-if="s.done" class="done-tick">✓</span>{{ s.title }}</span>
-const call = (fn: 'closeSelf' | 'minimizeSelf' | 'toggleMaximize') => {
-  try { (BH() as any)?.[fn]?.() } catch { /* 静默 */ }
-}
-</script>
-
-<template>
-  <div class="k-hd">
-    <span class="k-grip" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" style="fill:currentColor;stroke:none"><circle cx="8" cy="6" r="1.1"/><circle cx="8" cy="12" r="1.1"/><circle cx="8" cy="18" r="1.1"/><circle cx="13" cy="6" r="1.1"/><circle cx="13" cy="12" r="1.1"/><circle cx="13" cy="18" r="1.1"/></svg></span>
-    <span class="dot" :style="tintStyle" aria-hidden="true"></span>
-    <span class="k-title"><span v-if="s.done" class="done-tick">✓</span>{{ s.title }}</span>
     <span v-if="s.project" class="k-dir projchip" :title="'点击切换本卡对话的代码仓库 · ' + (s.dir || '')" @click="pickProject">📁 {{ s.project }}</span>
     <span class="sp"></span>
     <KMenu :items="modelItems" placement="bottom-end" @select="onModelSelect" @update:open="(v) => v && loadModels()">
