@@ -16,7 +16,7 @@ const toast = useToast()
 // webview preload 必须是绝对 file URL:本页在 ui/dist/,旧页在 ui/,preload 在仓库根
 export const PRELOAD_URL = new URL('../../preload.js', location.href).href
 
-export type ViewName = 'chat' | 'orch' | 'mail' | 'settings' | 'kb'
+export type ViewName = 'chat' | 'orch' | 'mail' | 'settings' | 'kb' | 'browser'
 // 视图 webview 懒创建且保活(切走只是隐藏);相对路径:ui/dist/shell.html → ui/*.html
 const VIEW_SRC: Record<string, string> = {
   orch: '../dock.html?embed=1',
@@ -80,10 +80,13 @@ function removeEntry(key: string) {
 
 // ── 视图切换(同时只显一个;webview 懒创建且保活)──
 export function showView(view: string) {
-  if (view === 'browser') {   // 内嵌浏览器:不开视图,唤起现有工作台窗(功率工具保持独立)
-    try { BH()?.openBrowser?.() } catch (e) { /* 静默 */ }
+  if (view === 'browser') {
+    // 内嵌浏览器:工作台 = shell 主窗口的嵌入式子窗(覆盖内容区),不再独立出窗
+    try { BH()?.browserEmbed?.(true) } catch (e) { /* 静默 */ }
+    store.view = 'browser' as ViewName
     return
   }
+  try { BH()?.browserEmbed?.(false) } catch (e) { /* 静默 */ }   // 切走即隐藏(工作台保活,回来原样)
   const v = (['chat', 'orch', 'mail', 'settings', 'kb'].includes(view) ? view : 'chat') as ViewName
   store.view = v
   if (v !== 'chat' && !store.visited.includes(v)) store.visited.push(v)

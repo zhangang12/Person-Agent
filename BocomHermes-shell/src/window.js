@@ -2311,6 +2311,25 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   // ── 浏览器 IPC ───────────────────────────────────────────────────────────
   const brWC = () => { const t = brActive(); return t && !t.view.webContents.isDestroyed() ? t.view.webContents : null }
   ipcMain.handle('open-browser', (_e, url) => createWorkspace(url))
+  // ── 内嵌浏览器收编(波6):工作台作为 shell 主窗口的【嵌入式子窗】——挂父窗、跟随布局、随视图显隐 ──
+  // 方案:不重写 browser.js 视图引擎(WebContentsView 绑死独立窗),把工作台窗改造成 mainWin 的 child window,
+  // 位置 = 主窗口内容区(228px 侧栏以右、38px 标题栏以下、28px 状态栏以上);shell 视图切走即 hide(状态全保活)。
+  function embedRegion() {
+    const b = S.mainWin.getBounds()
+    return { x: b.x + 228, y: b.y + 38, width: Math.max(520, b.width - 228), height: Math.max(360, b.height - 38 - 28) }
+  }
+  function embedWorkspaceShow() {
+    if (!S.mainWin || S.mainWin.isDestroyed()) { createWorkspace(); return }   // 主窗口不在 → 回退独立窗(老行为)
+    if (S.browser.win && !S.browser.win.isDestroyed() && !S.browser.embedded) { try { S.browser.win.close() } catch {} }   // 已有独立窗 → 换成嵌入式(罕见路径,tabs 重来)
+    if (!(S.browser.win && !S.browser.win.isDestroyed())) createWorkspace('', { embedded: true })
+    const w = S.browser.win
+    if (w && !w.isDestroyed()) { w.setBounds(embedRegion()); w.show() }
+  }
+  function embedWorkspaceHide() {
+    const w = S.browser.win
+    if (w && !w.isDestroyed() && S.browser.embedded) w.hide()
+  }
+  ipcMain.handle('browser-embed', (_e, show) => { if (show) embedWorkspaceShow(); else embedWorkspaceHide() })
   ipcMain.handle('open-skill-center', () => createSkillCenter())   // 「🎬 录制回放」入口(托盘/热键)
   // 分隔条拖动：start=临时分离内容视图让 chrome 独占鼠标事件；end=落定宽度并复位视图
   ipcMain.on('browser-split', (_e, arg) => {

@@ -166,6 +166,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   // 内嵌浏览器
   openBrowser:          (url) => ipcRenderer.invoke('open-browser', url),
   openSkillCenter:      ()    => ipcRenderer.invoke('open-skill-center'),   // 「🎬 录制回放」入口
+  browserEmbed: (show) => ipcRenderer.invoke('browser-embed', !!show),   // 内嵌浏览器收编:嵌入式子窗随主窗视图显隐
   browserNavigate:      (url) => ipcRenderer.invoke('browser-navigate', url),
   browserMenuOverlay:   (on)  => ipcRenderer.send('browser-menu-overlay', !!on),
   browserSettingsOverlay: (on) => ipcRenderer.send('browser-settings-overlay', !!on),

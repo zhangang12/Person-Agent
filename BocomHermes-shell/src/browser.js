@@ -613,7 +613,11 @@ module.exports = function initBrowser(ctx) {
   function createWorkspace(initialUrl, opts) {
     const b = S.browser
     const openSkills = !!(opts && opts.skills)
-    if (b.win && !b.win.isDestroyed()) { b.win.focus(); if (initialUrl) newTab(initialUrl); if (openSkills) { try { b.win.webContents.send('ws-open-skills') } catch {} } return }
+    const embedded = !!(opts && opts.embedded)   // 嵌入式:作为 shell 主窗口的子窗(挂父窗/跟随布局/close 改 hide)
+    if (b.win && !b.win.isDestroyed()) {
+      if (embedded && !b.embedded) { try { b.win.close() } catch {} }   // 已有独立窗,要嵌入式 → 关掉重建
+      else { b.win.focus(); if (initialUrl) newTab(initialUrl); if (openSkills) { try { b.win.webContents.send('ws-open-skills') } catch {} } return }
+    }
     const win = new BrowserWindow({
       width: 1500, height: 940, minWidth: 1040, minHeight: 620,
       title: openSkills ? 'BocomHermes · 录制回放工作台' : 'BocomHermes · 调试工作台',
@@ -623,9 +627,27 @@ module.exports = function initBrowser(ctx) {
       autoHideMenuBar: true,
       backgroundColor: '#f3f4f7',
       webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false },
+      // 嵌入式:挂 shell 主窗口为父窗(macOS 子窗随父窗移动/隐藏/关闭),无边框,不进任务栏
+      ...(embedded ? { parent: S.mainWin, frame: false, skipTaskbar: true, show: false } : {}),
     })
     b.win = win; b.tabs = []; b.activeId = null; b.consoleH = 0; b.seq = 0
     b.mode = 'workspace'; b.leftW = 460; b._dragging = false
+    b.embedded = embedded
+    if (embedded) {
+      // 跟随主窗口布局(内容区 = 228 侧栏以右、38 标题栏以下、28 状态栏以上)
+      const region = () => {
+        try {
+          const r = S.mainWin.getBounds()
+          return { x: r.x + 228, y: r.y + 38, width: Math.max(520, r.width - 228), height: Math.max(360, r.height - 38 - 28) }
+        } catch { return null }
+      }
+      const follow = () => { const rg = region(); if (rg && !win.isDestroyed() && win.isVisible()) win.setBounds(rg) }
+      try { S.mainWin.on('resize', follow); S.mainWin.on('move', follow) } catch {}
+      const rg = region(); if (rg) win.setBounds(rg)
+      win.once('ready-to-show', () => { try { win.show() } catch {} })
+      // 嵌入式:点 X 不销毁,只隐藏(浏览器标签/控制台状态全保活;再进「内嵌浏览器」视图原地回来)
+      win.on('close', (ev) => { if (!app.isQuitting) { ev.preventDefault(); try { win.hide() } catch {} } })
+    }
 
     // 左侧 Agent 会话 = 一个加载 card.html 的 WebContentsView（embedded 模式：隐藏自带窗口控件）
     const cardView = new WebContentsView({ webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false } })
@@ -658,7 +680,7 @@ module.exports = function initBrowser(ctx) {
         try { if (oc.retireIfOrphan(oldServe, inUseBases)) log('workspace closed: serve ' + oldServe.base + ' 已退休(无会话引用)') } catch {}
       }
       if (wcId != null) forgetBusy(wcId)   // 关工作台即清"忙",避免托盘提示卡在"运行中"
-      S.browser = { win: null, tabs: [], activeId: null, consoleH: 0, seq: 0, mode: 'standalone', leftW: 0, cardView: null, cardWcId: null, _dragging: false }
+      S.browser = { win: null, tabs: [], activeId: null, consoleH: 0, seq: 0, mode: 'standalone', leftW: 0, cardView: null, cardWcId: null, _dragging: false, embedded: false }
     })
     win.webContents.once('did-finish-load', () => {
       win.webContents.send('browser-split-set', b.leftW)
