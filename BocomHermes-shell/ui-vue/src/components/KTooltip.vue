@@ -32,8 +32,11 @@ function computePos() {
   if (!el) return
   const r = el.getBoundingClientRect()
   const GAP = 8 // 触发器边缘到箭头尖的间距
-  if (props.placement === 'top') pos.value = { x: r.left + r.width / 2, y: r.top - GAP }
-  else if (props.placement === 'bottom') pos.value = { x: r.left + r.width / 2, y: r.bottom + GAP }
+  // 视口钳制:触发器贴右/左边缘时,fixed+translate(-50%) 会把气泡挤到窗口外被裁成竖条(实测)——
+  // 钳在 [130, innerWidth-130](max-width 240 的一半+边距),保证气泡完整;箭头仍指触发器中心方向。
+  const clampX = (x: number) => Math.max(130, Math.min(window.innerWidth - 130, x))
+  if (props.placement === 'top') pos.value = { x: clampX(r.left + r.width / 2), y: r.top - GAP }
+  else if (props.placement === 'bottom') pos.value = { x: clampX(r.left + r.width / 2), y: r.bottom + GAP }
   else if (props.placement === 'left') pos.value = { x: r.left - GAP, y: r.top + r.height / 2 }
   else pos.value = { x: r.right + GAP, y: r.top + r.height / 2 }
 }
