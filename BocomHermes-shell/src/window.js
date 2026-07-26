@@ -827,8 +827,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // 「🎬 录制与回放」= 带 Agent 工作流面板的工作台(方案 B):不再是独立窗,直接进「调试工作台」
   // (左 Agent 卡片 + 右浏览器 + 底部技能条),这样录制/回放时 Agent 的整理/解析/自愈全程可见。
   function createSkillCenter() { createWorkspace('', { skills: true }) }
-  // 事件中继:工作台窗(S.browser.win)与 Agent 卡片都在同一窗口体系,skillsNotify 直接推给工作台壳
-  function skillsNotify(ch, d) { const w = S.browser && S.browser.win; if (w && !w.isDestroyed()) { try { w.webContents.send(ch, d || {}) } catch {} } }
+  // 事件中继:工作台 chrome(宿主模式=主窗上的 chrome 视图;standalone=工作台窗)统一经 chromeSend 推
+  function skillsNotify(ch, d) { try { chromeSend(ch, d || {}) } catch {} }
 
   // ── 面板 / 托盘 ─────────────────────────────────────────────────────────────
   function openSettings() {
@@ -889,7 +889,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // 必须在 initRecorder 之前构造:后者构造时即读取返回的 brActive(const,非提升)。
   // 录制钩子 wireRecToTab/brSendRecCount 是后定义但已提升的 function,按引用注入。
   // 浏览器 IPC / brWC / 调试分诊层仍留在本文件,消费下面解构出的函数。
-  const { brActive, newTab, closeTab, activateTab, brSetDevice, brRotateDevice, brZoom, brLayout, brSendTabs, sendNetSnapshot, attachDbg, detachDbg, normalizeUrl, brScreenshot, brNetBody, brPickElement, brEval, createBrowser, createWorkspace } = initBrowser({ S, session, log, path, fs, app, BrowserWindow, WebContentsView, oc, forgetBusy, wireRecToTab, brSendRecCount, cdpConsoleLevel, fmtRO, fmtException })
+  const { brActive, newTab, closeTab, activateTab, brSetDevice, brRotateDevice, brZoom, brLayout, brSendTabs, sendNetSnapshot, attachDbg, detachDbg, normalizeUrl, brScreenshot, brNetBody, brPickElement, brEval, createBrowser, createWorkspace, createShellBrowser, shellBrowserVisible, chromeSend } = initBrowser({ S, session, log, path, fs, app, BrowserWindow, WebContentsView, oc, forgetBusy, wireRecToTab, brSendRecCount, cdpConsoleLevel, fmtRO, fmtException })
 
   // 【解析链②·文件总线】回放暂停步 ↔ Agent 的通信(设计:docs/技能系统-意图执行与Agent解析链设计.md 第 4 节):
   // 主进程写 req(userData/resolves/<gateId>.json)+ card-inject 通知工作台 Agent;
@@ -1429,7 +1429,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       const disp = `验证完成 · ${rep.pass ? '✓ PASS' : (statusKind === 'suspicious' ? 'SUSPICIOUS' : '✗ FAIL')}\n(回放 ${replay.stepReport.length}/${rec.events.length} 步;修复前 ${snap.errs.length}/${snap.bad.length} → 修复后 ${replay.after.errs.length}/${replay.after.bad.length}${hitSummary})`
       // 同步推一份卡片到浏览器壳 UI,用户在右下角一眼看到结论而不用翻 agent 对话流
       if (b.win && !b.win.isDestroyed()) {
-        b.win.webContents.send('wf-verify-result', {
+        chromeSend('wf-verify-result', {
           kind: statusKind, verdict: rep.verdict, fullText: rep.text,
           summary: `回放 ${replay.stepReport.length}/${rec.events.length} 步 · 修复前 ${snap.errs.length}报错/${snap.bad.length}异常 → 修复后 ${replay.after.errs.length}/${replay.after.bad.length}${hitSummary}`,
         })
@@ -2323,25 +2323,13 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   // ── 浏览器 IPC ───────────────────────────────────────────────────────────
   const brWC = () => { const t = brActive(); return t && !t.view.webContents.isDestroyed() ? t.view.webContents : null }
   ipcMain.handle('open-browser', (_e, url) => createWorkspace(url))
-  // ── 内嵌浏览器收编(波6):工作台作为 shell 主窗口的【嵌入式子窗】——挂父窗、跟随布局、随视图显隐 ──
-  // 方案:不重写 browser.js 视图引擎(WebContentsView 绑死独立窗),把工作台窗改造成 mainWin 的 child window,
-  // 位置 = 主窗口内容区(228px 侧栏以右、38px 标题栏以下、28px 状态栏以上);shell 视图切走即 hide(状态全保活)。
-  function embedRegion() {
-    const b = S.mainWin.getBounds()
-    return { x: b.x + 228, y: b.y + 38, width: Math.max(520, b.width - 228), height: Math.max(360, b.height - 38 - 28) }
-  }
-  function embedWorkspaceShow() {
-    if (!S.mainWin || S.mainWin.isDestroyed()) { createWorkspace(); return }   // 主窗口不在 → 回退独立窗(老行为)
-    if (S.browser.win && !S.browser.win.isDestroyed() && !S.browser.embedded) { try { S.browser.win.close() } catch {} }   // 已有独立窗 → 换成嵌入式(罕见路径,tabs 重来)
-    if (!(S.browser.win && !S.browser.win.isDestroyed())) createWorkspace('', { embedded: true })
-    const w = S.browser.win
-    if (w && !w.isDestroyed()) { w.setBounds(embedRegion()); w.show() }
-  }
-  function embedWorkspaceHide() {
-    const w = S.browser.win
-    if (w && !w.isDestroyed() && S.browser.embedded) w.hide()
-  }
-  ipcMain.handle('browser-embed', (_e, show) => { if (show) embedWorkspaceShow(); else embedWorkspaceHide() })
+  // ── 内嵌浏览器(波7 · 真重构):浏览器 chrome/页面视图挂进主窗口(不再是跟随的嵌入式子窗) ──
+  ipcMain.handle('browser-embed', (_e, show) => {
+    if (show) {
+      if (!S.browser.shellHost) createShellBrowser()
+      else shellBrowserVisible(true)
+    } else shellBrowserVisible(false)
+  })
   ipcMain.handle('open-skill-center', () => createSkillCenter())   // 「🎬 录制回放」入口(托盘/热键)
   // 分隔条拖动：start=临时分离内容视图让 chrome 独占鼠标事件；end=落定宽度并复位视图
   ipcMain.on('browser-split', (_e, arg) => {
@@ -2359,7 +2347,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       if (b.cardView) { try { b.win.contentView.addChildView(b.cardView) } catch {} }
       const t = brActive(); if (t) { try { b.win.contentView.addChildView(t.view) } catch {} }
       brLayout()
-      if (!b.win.isDestroyed()) b.win.webContents.send('browser-split-set', b.leftW)
+      if (!b.win.isDestroyed()) chromeSend('browser-split-set', b.leftW)
     }
   })
   ipcMain.handle('browser-navigate', (_e, url) => { const wc = brWC(); const u = normalizeUrl(url); if (wc && u) wc.loadURL(u) })
@@ -2388,7 +2376,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     const b = S.browser
     if (!b.rec) return
     const payload = { n: b.rec.events.length }
-    if (b.win && !b.win.isDestroyed()) b.win.webContents.send('browser-rec-count', payload)
+    if (b.win && !b.win.isDestroyed()) chromeSend('browser-rec-count', payload)
     skillsNotify('browser-rec-count', payload)   // 「录制与回放」中心的实况条同步跳数
   }
 
@@ -2486,7 +2474,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     const r = S.browser.rec
     if (!r || !r.active) return { ok: false, error: '没有进行中的录制' }
     r.active = false
-    if (S.browser.win && !S.browser.win.isDestroyed()) S.browser.win.webContents.send('browser-rec-count', { n: r.events.length, done: true })   // 收徽标
+    chromeSend('browser-rec-count', { n: r.events.length, done: true })   // 收徽标(宿主/独立两路统一)
     skillsNotify('browser-rec-count', { n: r.events.length, done: true })   // 「录制与回放」中心同步收实况条
     if (r.cleanups) for (const fn of r.cleanups) { try { fn() } catch {} }
     // 把页面里的 flag 关掉(监听仍在,只是不再 emit);顺手收掉防抖里还没吐出来的最后一个输入。
@@ -2585,11 +2573,12 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       if (u) await sleep(1500)   // 让起始页加载完,录制脚本注入/健康自检才有落点
     } else {
       if (u) { const wc = brWC(); const nu = normalizeUrl(u); if (wc && nu) { wc.loadURL(nu); await sleep(1500) } }
-      if (S.browser.win && !S.browser.win.isDestroyed()) S.browser.win.focus()
+      if (S.browser.shellHost) shellBrowserVisible(true)
+      else if (S.browser.win && !S.browser.win.isDestroyed()) S.browser.win.focus()
     }
     const r = await recStart()
     // 浏览器壳的录制按钮/徽标同步进入录制态(recStart 只管引擎;徽标本会随首个计数事件出现,按钮态要显式推)
-    if (r && r.ok && S.browser.win && !S.browser.win.isDestroyed()) S.browser.win.webContents.send('browser-rec-ui', { on: true })
+    if (r && r.ok) chromeSend('browser-rec-ui', { on: true })
     return r
   })
   // 停止:浏览器窗还在 → 让它走自己的停录流(弹"保存为技能"卡,用户就在那给技能起名);窗没了才直接停
@@ -3089,7 +3078,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       refreshSkillArtifacts(j2)
       try { fs.writeFileSync(path.join(recDir(), String(id).replace(/[^\w.-]/g, '') + '.json'), JSON.stringify(j2, null, 2)) } catch (e) { log('refine 写盘失败: ' + e.message); return }
       log('skill refine 应用: ' + id + ' → ' + applied.join('/'))
-      if (b.win && !b.win.isDestroyed()) b.win.webContents.send('browser-skill-refined', { id, title: j2.title || id, applied })
+      if (b.win && !b.win.isDestroyed()) chromeSend('browser-skill-refined', { id, title: j2.title || id, applied })
       skillsNotify('browser-skill-refined', { id, title: j2.title || id, applied })
       skillsNotify('skills-changed')
     } finally { _refining.delete(id) }

@@ -22,6 +22,30 @@ module.exports = function initBrowser(ctx) {
     tablet:  { label: '平板 834',  w: 834, h: 1112, dpr: 2, touch: true  },
   }
 
+  // ── 宿主层(波7 · 内嵌浏览器真重构)───────────────────────────────────────────────
+  // 两种宿主:standalone=独立工作台窗(b.win 是 BrowserWindow);shellHost=主窗口嵌入(b.win=S.mainWin,
+  // chrome 是挂在主窗上的 WebContentsView)。所有视图挂接/消息经这两个访问器,下文不再直接碰 b.win。
+  const hostWin = () => (S.browser.shellHost && S.mainWin && !S.mainWin.isDestroyed()) ? S.mainWin : S.browser.win
+  const chromeWc = () => S.browser.shellHost
+    ? (S.browser.chromeView && !S.browser.chromeView.webContents.isDestroyed() ? S.browser.chromeView.webContents : null)
+    : (S.browser.win && !S.browser.win.isDestroyed() ? S.browser.win.webContents : null)
+  function chromeSend(ch, payload) {
+    try {
+      const wc = chromeWc()
+      if (wc && !wc.isDestroyed()) wc.send(ch, payload)
+    } catch {}
+  }
+  // 浏览器页面区(原点+尺寸):standalone=窗口内容区(0,0 起);shellHost=主窗内容区(228 侧栏右/38 标题栏下/28 状态栏上)
+  function layoutRegion() {
+    if (S.browser.shellHost && S.mainWin && !S.mainWin.isDestroyed()) {
+      const [cw, ch] = S.mainWin.getContentSize()
+      return { x: 228, y: 38, w: Math.max(0, cw - 228), h: Math.max(0, ch - 38 - 28) }
+    }
+    const w = S.browser.win
+    if (w && !w.isDestroyed()) { const [cw, ch] = w.getContentSize(); return { x: 0, y: 0, w: cw, h: ch } }
+    return null
+  }
+
   function normalizeUrl(url) {
     url = String(url || '').trim()
     if (!url) return ''
@@ -37,35 +61,42 @@ module.exports = function initBrowser(ctx) {
 
   function brLayout() {
     const b = S.browser
-    if (!b.win || b.win.isDestroyed()) return
-    const [cw, ch] = b.win.getContentSize()
-    const leftW = b.leftW || 0                 // 工作台模式：左侧 Agent 会话占的宽度
+    const rg = layoutRegion(); if (!rg) return
+    if (b.shellHost && !b.shellVisible) {   // 宿主模式且视图被切走:全部压 0 高度(页面 JS 照跑,回来原样)
+      if (b.chromeView) { try { b.chromeView.setBounds({ x: rg.x, y: rg.y, width: rg.w, height: 0 }) } catch {} }
+      if (b.cardView) { try { b.cardView.setBounds({ x: rg.x, y: rg.y, width: rg.w, height: 0 }) } catch {} }
+      const t = brActive(); if (t) { try { t.view.setBounds({ x: rg.x, y: rg.y, width: rg.w, height: 0 }) } catch {} }
+      return
+    }
+    if (b.chromeView) { try { b.chromeView.setBounds({ x: rg.x, y: rg.y, width: rg.w, height: rg.h }) } catch {} }
+    const cw = rg.w, ch = rg.h
+    const leftW = b.leftW || 0                 // 工作台模式:左侧 Agent 会话占的宽度
     const G = leftW ? SPLIT_GUTTER : 0
     const skillH = b.mode === 'workspace' ? BR_SKILLBAR_H : 0   // 工作台底部技能控制条(HTML chrome 层)—— 原生视图给它让出高度
-    if (b.cardView && !b._dragging) { try { b.cardView.setBounds({ x: 0, y: 0, width: Math.max(0, leftW), height: Math.max(0, ch - skillH) }) } catch {} }
+    if (b.cardView && !b._dragging) { try { b.cardView.setBounds({ x: rg.x, y: rg.y, width: Math.max(0, leftW), height: Math.max(0, ch - skillH) }) } catch {} }
     const tab = brActive(); if (!tab) return
-    if (b._dragging) return                     // 拖动分隔条时内容视图临时分离，跳过布局
-    const rx = leftW + G                         // 右侧浏览器内容区左边界
+    if (b._dragging) return                     // 拖动分隔条时内容视图临时分离,跳过布局
+    const rx = rg.x + leftW + G                  // 右侧浏览器内容区左边界
     // ⋯ 更多菜单 / 设置抽屉 / 通用 chrome 浮层(技能库/验证卡)打开 → 网页层从右让出一条,否则原生层会盖住 HTML 浮层
     const menuW = Math.max(b.settingsOpen ? 360 : 0, b.menuOpen ? 248 : 0, b.chromeOverlayW | 0)
-    const rw = Math.max(0, cw - rx - menuW)
+    const rw = Math.max(0, cw - leftW - G - menuW)
     const areaH = Math.max(0, ch - BR_TOP_H - b.consoleH - skillH)
     // 模态卡(保存技能/填参数)打开 → 页面视图高度压 0 整体让位(页面 JS 仍在跑),关闭时恢复
-    if (b.modalOpen) { tab.view.setBounds({ x: rx, y: BR_TOP_H, width: rw, height: 0 }); return }
+    if (b.modalOpen) { tab.view.setBounds({ x: rx, y: rg.y + BR_TOP_H, width: rw, height: 0 }); return }
     const d = tab.device
     if (d && d.w) {
       const dw = Math.min(d.w, rw)
       const dh = d.h ? Math.min(d.h, areaH) : areaH
-      tab.view.setBounds({ x: rx + Math.round((rw - dw) / 2), y: BR_TOP_H, width: dw, height: dh })
+      tab.view.setBounds({ x: rx + Math.round((rw - dw) / 2), y: rg.y + BR_TOP_H, width: dw, height: dh })
     } else {
-      tab.view.setBounds({ x: rx, y: BR_TOP_H, width: rw, height: areaH })
+      tab.view.setBounds({ x: rx, y: rg.y + BR_TOP_H, width: rw, height: areaH })
     }
   }
 
   function brSendTabs() {
     const b = S.browser
     if (!b.win || b.win.isDestroyed()) return
-    b.win.webContents.send('browser-tabs', {
+    chromeSend('browser-tabs', {
       tabs: b.tabs.map(t => ({ id: t.id, title: t.title, loading: t.loading, favicon: t.favicon || '' })),
       activeId: b.activeId,
     })
@@ -75,7 +106,7 @@ module.exports = function initBrowser(ctx) {
     const b = S.browser
     if (!b.win || b.win.isDestroyed() || tab.id !== b.activeId) return
     const dkey = tab.deviceKey || 'desktop'   // #6 用显式 key,不再靠对象身份反查(brRotateDevice 克隆后会失配 → 误报 desktop)
-    b.win.webContents.send('browser-nav', {
+    chromeSend('browser-nav', {
       url: tab.view.webContents.getURL(),
       canBack: tab.view.webContents.canGoBack(),
       canForward: tab.view.webContents.canGoForward(),
@@ -224,7 +255,7 @@ module.exports = function initBrowser(ctx) {
     wc.on('did-finish-load', () => { try { wc.setZoomFactor(tab.zoom || 1) } catch {} })   // 无条件以 tab.zoom 为准:Chromium 会按 origin 记忆缩放,只在 !=1 时重应用会漏掉"目标 origin 记忆了非 1 缩放"的情况
     wc.on('found-in-page', (_e, r) => {
       if (tab.id === b.activeId && b.win && !b.win.isDestroyed())
-        b.win.webContents.send('browser-find-result', { active: r.activeMatchOrdinal, matches: r.matches })
+        chromeSend('browser-find-result', { active: r.activeMatchOrdinal, matches: r.matches })
     })
     wc.setWindowOpenHandler(({ url }) => { newTab(url); return { action: 'deny' } })
 
@@ -238,8 +269,8 @@ module.exports = function initBrowser(ctx) {
         tab.console = []; tab.errN = 0; tab.warnN = 0
         if (tab.id === b.activeId && b.win && !b.win.isDestroyed()) {
           sendNetSnapshot(tab)
-          b.win.webContents.send('browser-console-snapshot', { entries: [], errN: 0, warnN: 0 })
-          b.win.webContents.send('browser-badge', { errN: 0, warnN: 0 })
+          chromeSend('browser-console-snapshot', { entries: [], errN: 0, warnN: 0 })
+          chromeSend('browser-badge', { errN: 0, warnN: 0 })
         }
       }
     })
@@ -266,8 +297,8 @@ module.exports = function initBrowser(ctx) {
       if (k === 't') handle(() => newTab(''))
       else if (k === 'w') handle(() => closeTab(b.activeId))
       else if (k === 'r') handle(() => wc.reload())
-      else if (k === 'l') handle(() => b.win.webContents.send('browser-focus-url'))
-      else if (k === 'f') handle(() => b.win.webContents.send('browser-open-find'))
+      else if (k === 'l') handle(() => chromeSend('browser-focus-url'))
+      else if (k === 'f') handle(() => chromeSend('browser-open-find'))
       else if (k === '=' || k === '+') handle(() => brZoom('in'))
       else if (k === '-') handle(() => brZoom('out'))
       else if (k === '0') handle(() => brZoom('reset'))
@@ -280,12 +311,12 @@ module.exports = function initBrowser(ctx) {
   function netSend(tab, kind, rec) {
     const b = S.browser
     if (!b.win || b.win.isDestroyed() || tab.id !== b.activeId) return
-    b.win.webContents.send('browser-net-add', { kind, rec: slimRec(rec) })
+    chromeSend('browser-net-add', { kind, rec: slimRec(rec) })
   }
   function sendNetSnapshot(tab) {
     const b = S.browser
     if (!b.win || b.win.isDestroyed() || tab.id !== b.activeId) return   // #3 只刷当前活动标签,防后台标签(如关其 DevTools)覆盖面板
-    b.win.webContents.send('browser-net-snapshot', { items: tab.net.map(slimRec) })
+    chromeSend('browser-net-snapshot', { items: tab.net.map(slimRec) })
   }
   // ── 富控制台：把 CDP RemoteObject 格式化成可读文本（对象/数组预览 + 异常堆栈）──
   // 控制台格式化（cdpConsoleLevel/fmtRO/fmtException）搬进 ./cdp-format 纯函数模块,见文件顶部 require。
@@ -315,8 +346,8 @@ module.exports = function initBrowser(ctx) {
     if (entry.level === 3) tab.errN++; else if (entry.level === 2) tab.warnN++
     const b = S.browser
     if (tab.id === b.activeId && b.win && !b.win.isDestroyed()) {
-      b.win.webContents.send('browser-console-add', entry)
-      b.win.webContents.send('browser-badge', { errN: tab.errN, warnN: tab.warnN })
+      chromeSend('browser-console-add', entry)
+      chromeSend('browser-badge', { errN: tab.errN, warnN: tab.warnN })
     }
   }
 
@@ -427,7 +458,7 @@ module.exports = function initBrowser(ctx) {
       doLoad()
     }
     // 空白新标签：键盘焦点交给外壳地址栏(而非 newtab 页里的搜索框)，否则用户敲完第一次回车会落到页面空框里 → 看着像"跳回首页"
-    if (!u) setTimeout(() => { if (b.win && !b.win.isDestroyed() && b.activeId === id) b.win.webContents.send('browser-focus-url') }, 60)
+    if (!u) setTimeout(() => { if (b.win && !b.win.isDestroyed() && b.activeId === id) chromeSend('browser-focus-url') }, 60)
     return tab
   }
 
@@ -436,14 +467,14 @@ module.exports = function initBrowser(ctx) {
     if (!b.win || b.win.isDestroyed()) return
     const tab = b.tabs.find(t => t.id === id); if (!tab) return
     const prev = brActive()
-    if (prev && prev.id !== id) { try { b.win.contentView.removeChildView(prev.view) } catch {} }
+    if (prev && prev.id !== id) { try { hostWin().contentView.removeChildView(prev.view) } catch {} }
     b.activeId = id
-    try { b.win.contentView.addChildView(tab.view) } catch {}
+    try { hostWin().contentView.addChildView(tab.view) } catch {}
     brLayout()
     brSendTabs()
     brSendNav(tab)
     // 切换标签 → 重发该标签的控制台 + 网络快照
-    b.win.webContents.send('browser-console-snapshot', { entries: tab.console, errN: tab.errN, warnN: tab.warnN })
+    chromeSend('browser-console-snapshot', { entries: tab.console, errN: tab.errN, warnN: tab.warnN })
     sendNetSnapshot(tab)
   }
 
@@ -452,11 +483,11 @@ module.exports = function initBrowser(ctx) {
     const idx = b.tabs.findIndex(t => t.id === id); if (idx === -1) return
     const tab = b.tabs[idx]
     const wasActive = b.activeId === id
-    try { b.win.contentView.removeChildView(tab.view) } catch {}
+    try { hostWin().contentView.removeChildView(tab.view) } catch {}
     try { tab.view.webContents.debugger.detach() } catch {}
     try { tab.view.webContents.destroy() } catch {}
     b.tabs.splice(idx, 1)
-    if (b.tabs.length === 0) { if (b.mode === 'workspace') { newTab(''); return } b.win.close(); return }
+    if (b.tabs.length === 0) { if (b.mode === 'workspace' || b.shellHost) { newTab(''); return } b.win.close(); return }
     if (wasActive) activateTab(b.tabs[Math.min(idx, b.tabs.length - 1)].id)
     else brSendTabs()
   }
@@ -580,6 +611,7 @@ module.exports = function initBrowser(ctx) {
 
   function createBrowser(initialUrl) {
     const b = S.browser
+    if (b.shellHost) { shellBrowserVisible(true); if (initialUrl) newTab(initialUrl); return }   // 宿主模式:不开新窗,亮出宿主视图
     if (b.win && !b.win.isDestroyed()) {
       b.win.focus()
       if (initialUrl) newTab(initialUrl)
@@ -613,10 +645,11 @@ module.exports = function initBrowser(ctx) {
   function createWorkspace(initialUrl, opts) {
     const b = S.browser
     const openSkills = !!(opts && opts.skills)
-    const embedded = !!(opts && opts.embedded)   // 嵌入式:作为 shell 主窗口的子窗(挂父窗/跟随布局/close 改 hide)
+    if (b.shellHost) { shellBrowserVisible(true); if (initialUrl) newTab(initialUrl); if (openSkills) { try { chromeSend('ws-open-skills') } catch {} } return }   // 宿主模式:不开新窗
+    const embedded = !!(opts && opts.embedded)   // 嵌入式(旧方案,已废弃保留回退):作为主窗子窗跟随
     if (b.win && !b.win.isDestroyed()) {
       if (embedded && !b.embedded) { try { b.win.close() } catch {} }   // 已有独立窗,要嵌入式 → 关掉重建
-      else { b.win.focus(); if (initialUrl) newTab(initialUrl); if (openSkills) { try { b.win.webContents.send('ws-open-skills') } catch {} } return }
+      else { b.win.focus(); if (initialUrl) newTab(initialUrl); if (openSkills) { try { chromeSend('ws-open-skills') } catch {} } return }
     }
     const win = new BrowserWindow({
       width: 1500, height: 940, minWidth: 1040, minHeight: 620,
@@ -691,5 +724,44 @@ module.exports = function initBrowser(ctx) {
     })
   }
 
-  return { brActive, newTab, closeTab, activateTab, brSetDevice, brRotateDevice, brZoom, brLayout, brSendTabs, sendNetSnapshot, attachDbg, detachDbg, normalizeUrl, brScreenshot, brNetBody, brPickElement, brEval, createBrowser, createWorkspace }
+  // ── 宿主模式(波7 · 内嵌浏览器真重构):浏览器 chrome + 页面视图全部挂进 shell 主窗口 ──
+  // chrome = 一个 WebContentsView(加载 browser.html?workspace=1),与标签页视图同为 mainWin.contentView
+  // 的子视图,位置由 layoutRegion 统一算(228 侧栏右 / 38 标题栏下 / 28 状态栏上)。不再是"跟随的嵌入式子窗"。
+  function createShellBrowser() {
+    const b = S.browser
+    if (!S.mainWin || S.mainWin.isDestroyed()) { createWorkspace(); return }   // 主窗不在 → 回退独立工作台(老路径)
+    if (b.shellHost && b.chromeView) { b.shellVisible = true; brLayout(); return }   // 已建:亮出即可(不递归)
+    if (b.win && !b.win.isDestroyed() && !b.shellHost) { try { b.win.close() } catch {} }   // 有独立/嵌入式窗 → 换宿主(tabs 重来)
+    b.shellHost = true; b.embedded = false; b.shellVisible = true
+    b.win = S.mainWin; b.tabs = []; b.activeId = null; b.consoleH = 0; b.seq = 0
+    b.mode = 'workspace'; b.leftW = 460; b._dragging = false
+    // 浏览器 chrome(标签栏/工具栏/控制台/技能条):挂主窗的 WebContentsView
+    const chrome = new WebContentsView({ webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false } })
+    b.chromeView = chrome
+    S.mainWin.contentView.addChildView(chrome)
+    chrome.webContents.loadFile(path.join(__dirname, '..', 'ui', 'browser.html'), { query: { workspace: '1' } })
+    // 左侧 Agent 会话卡(工作台分栏):同挂主窗
+    const cardView = new WebContentsView({ webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false } })
+    b.cardView = cardView; b.cardWcId = cardView.webContents.id
+    S.mainWin.contentView.addChildView(cardView)
+    cardView.webContents.loadFile(path.join(__dirname, '..', 'ui', 'card.html'), { query: { embedded: '1', title: '调试助手' } })
+    // 主窗尺寸变化 → 重排(chrome/卡片/页面一起;layoutRegion 现读现算)
+    const onResize = () => { brLayout(); if (!S.mainWin.isDestroyed()) chromeSend('browser-split-set', b.leftW) }
+    S.mainWin.on('resize', onResize)
+    chrome.webContents.once('did-finish-load', () => {
+      chromeSend('browser-split-set', b.leftW)
+      brLayout()
+      newTab('')
+    })
+    log('browser: shell host mode on (chrome + tabs attached to mainWin)')
+  }
+  // 宿主视图显隐:切到「内嵌浏览器」= show;切走 = 全部压 0 高度(页面 JS 照跑,状态全保活,回来原样)
+  function shellBrowserVisible(on) {
+    const b = S.browser
+    if (!b.shellHost) return
+    b.shellVisible = !!on
+    brLayout()   // visible=true 正常排布;false → brLayout 的隐藏分支统一压 0
+  }
+
+  return { brActive, newTab, closeTab, activateTab, brSetDevice, brRotateDevice, brZoom, brLayout, brSendTabs, sendNetSnapshot, attachDbg, detachDbg, normalizeUrl, brScreenshot, brNetBody, brPickElement, brEval, createBrowser, createWorkspace, createShellBrowser, shellBrowserVisible, chromeSend }
 }
