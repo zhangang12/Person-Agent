@@ -445,7 +445,7 @@ html[data-embed="1"] .hl { display: none; }
 
 /* ── 子 Agent 侧边栏(P2b:右抽屉;清单+窗格,扇出自动滑出) ──────────────────── */
 .subrail {
-  position: absolute; top: 41px; right: 0; bottom: 0; width: 340px; z-index: 21;
+  position: absolute; top: 41px; right: 0; bottom: 0; width: min(560px, 46%); z-index: 21;
   display: flex; flex-direction: column; background: var(--bg-primary);
   border-left: 1px solid var(--sep); box-shadow: var(--shadow-medium);
 }
@@ -457,7 +457,7 @@ html[data-embed="1"] .hl { display: none; }
 .sr-x { border: none; background: transparent; color: var(--label-3); cursor: pointer; font-size: 13px; padding: 2px 6px; border-radius: var(--r-sm); }
 .sr-x:hover { color: var(--label-1); background: var(--fill-2); }
 .sr-body { flex: 1; display: flex; min-height: 0; }
-.sr-list { width: 128px; flex: none; overflow-y: auto; border-right: 1px solid var(--sep); padding: 6px; }
+.sr-list { width: 150px; flex: none; overflow-y: auto; border-right: 1px solid var(--sep); padding: 6px; }
 .sr-item {
   display: block; width: 100%; text-align: left; border: 1px solid transparent; border-radius: var(--r-sm);
   background: transparent; padding: 6px 8px; cursor: pointer; margin-bottom: 3px;
