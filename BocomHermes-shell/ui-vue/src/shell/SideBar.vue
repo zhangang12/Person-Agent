@@ -8,13 +8,11 @@
   任务编排角标 = 运行中工作流数(真数据,wf-running-count 轮询,与状态栏同源)。
 -->
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { KBadge, KMenu, KSkeleton, KSpinner } from '../components'
 import type { KMenuItem } from '../components'
-import { store, dotColor, showView, spawnChat, closeChat, pinChat, sessMouseDown, sessClick, refreshHist } from './store'
+import { store, dotColor, showView, spawnChat, closeChat, pinChat, sessMouseDown, sessClick } from './store'
 import type { ChatEntry } from './store'
-
-const BH = (): any => (window as any).BocomHermes
 
 const projTag = computed(() => (store.projName !== '未选目录' ? ' · ' + store.projName : ''))
 
@@ -29,22 +27,6 @@ function menuItems(c: ChatEntry): KMenuItem[] {
 function onMenu(c: ChatEntry, key: string) {
   if (key === 'pin') pinChat(c.key)
   else if (key === 'close') closeChat(c.key)
-}
-function histTitle(h: { title?: string; project?: string }) { return (h.title || '') + (h.project ? ' · ' + h.project : '') }
-// 历史单条删除:行内 ✕ 两步确认(第一次变「删?」,3s 未确认复位;只摘索引,引擎侧会话不动)
-const histDelArm = ref('')
-let histArmTimer: ReturnType<typeof setTimeout> | null = null
-async function delHist(id: string) {
-  if (histDelArm.value !== id) {
-    histDelArm.value = id
-    if (histArmTimer) clearTimeout(histArmTimer)
-    histArmTimer = setTimeout(() => { histDelArm.value = '' }, 3000)
-    return
-  }
-  if (histArmTimer) { clearTimeout(histArmTimer); histArmTimer = null }
-  histDelArm.value = ''
-  try { await BH()?.historyDelete?.(id) } catch (e) { /* 静默 */ }
-  refreshHist()
 }
 </script>
 
@@ -89,20 +71,7 @@ async function delHist(id: string) {
         <button class="x" title="关闭会话" @click.stop="closeChat(c.key)">×</button>
       </div>
 
-      <div v-if="store.histItems.length" class="lab">历史</div>
-      <div
-        v-for="h in store.histItems" :key="h.id"
-        class="sess hist"
-        @click="spawnChat({ sid: h.id, title: h.title })"
-      >
-        <span class="dot" style="background: var(--label-3)"></span>
-        <span class="t" :title="histTitle(h)">{{ h.title || '对话' }}</span>
-        <button
-          class="x hx" :class="{ arm: histDelArm === h.id }"
-          :title="histDelArm === h.id ? '再点一次确认删除' : '删除这条历史(只删索引,不影响引擎侧会话)'"
-          @click.stop="delHist(h.id)"
-        >{{ histDelArm === h.id ? '删?' : '×' }}</button>
-      </div>
+      <!-- 历史区已撤(用户拍板:与会话区功能重复;历史续接在 任务编排/动态工作流 详情与卡坞里) -->
     </div>
 
     <div class="lab">导航</div>
