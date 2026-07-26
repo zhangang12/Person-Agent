@@ -9,8 +9,15 @@ import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { store } from './store'
 
 const BH = (): any => (window as any).BocomHermes
-const open = ref(localStorage.getItem('shell.ctxpanel') !== '0')
-watch(open, (v) => { try { localStorage.setItem('shell.ctxpanel', v ? '1' : '0') } catch { /* 静默 */ } })
+// 默认收起:普通对话下它只有"暂无+重复信息"(用户实测突兀);手动开合的偏好照旧记忆;
+// 从没手动选过(stored=null)且当前会话出现工作流进展(wfItem)时,自动展开一次 —— 有内容才挣这块地。
+const stored = localStorage.getItem('shell.ctxpanel')
+const open = ref(stored === '1')
+let manual = stored !== null
+watch(open, (v) => {
+  manual = true
+  try { localStorage.setItem('shell.ctxpanel', v ? '1' : '0') } catch { /* 静默 */ }
+})
 
 const chat = computed(() => store.chats.find((c) => c.key === store.activeKey) || null)
 const ctx = computed(() => (store.chatCtx && store.chatCtx.key === store.activeKey ? store.chatCtx : null))
@@ -45,6 +52,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => { if (timer) clearInterval(timer); if (knTimer) clearInterval(knTimer) })
 watch([() => store.activeKey, open], () => { poll(); pollKn() })
+watch(wfItem, (w) => { if (w && !manual) open.value = true })   // 有真进展才自动展开(没手动选过开合时)
 
 const stPill = (w: any) => w.status === 'running' ? (w.busy ? '进行中' : '待操作') : w.status === 'done' ? '已完成' : w.status === 'interrupted' ? '中断' : '存档'
 const pct = (w: any) => (w.todoTotal > 0 ? Math.round((100 * (w.todoDone || 0)) / w.todoTotal) : -1)
