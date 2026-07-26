@@ -29,6 +29,13 @@ html[data-embed="1"], html[data-embed="1"] body { background: var(--bg-primary);
 }
 .launch .go:disabled { opacity: 0.4; cursor: default; }
 .errline { flex: none; font: var(--c1); color: var(--danger); background: var(--red-10); border: 0.5px solid var(--danger); border-radius: var(--r-sm); padding: 6px 11px; }
+.pathrow { flex: none; display: flex; gap: 6px; flex-wrap: wrap; }
+.pathchip {
+  font: var(--c1); font-family: var(--font-mono); color: var(--label-2); background: var(--fill-1);
+  border: 0.5px solid var(--sep); border-radius: var(--r-full); padding: 3px 11px; cursor: pointer;
+  max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pathchip:hover { color: var(--blue); border-color: var(--blue); }
 .tpls { flex: none; display: flex; gap: 6px; flex-wrap: wrap; }
 .tpl { font: var(--c1); color: var(--label-2); background: var(--fill-1); border: 0.5px solid var(--sep); border-radius: var(--r-full); padding: 3px 11px; cursor: pointer; }
 .tpl:hover { color: var(--blue); border-color: var(--blue); }

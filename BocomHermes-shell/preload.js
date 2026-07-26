@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   // 项目目录
   getProject: () => ipcRenderer.sendSync('get-project'),
   pickProject: () => ipcRenderer.invoke('pick-project'),
+  pickDir: (arg) => ipcRenderer.invoke('pick-dir', arg || {}),   // 通用目录选择(无副作用,产出/中间过程落盘路径用)
   setProjectDir: (dir) => ipcRenderer.invoke('set-project-dir', dir),
   pickBackend: () => ipcRenderer.invoke('pick-backend'),
   clearBackend: () => ipcRenderer.invoke('clear-backend'),

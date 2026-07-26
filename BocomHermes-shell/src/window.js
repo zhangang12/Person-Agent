@@ -2323,6 +2323,13 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   // ── 浏览器 IPC ───────────────────────────────────────────────────────────
   const brWC = () => { const t = brActive(); return t && !t.view.webContents.isDestroyed() ? t.view.webContents : null }
   ipcMain.handle('open-browser', (_e, url) => createWorkspace(url))
+  // 通用目录选择(无副作用,只返回路径):编排页选「产出文档/中间过程文档」落盘路径用;pickProject 会动全局,不能复用
+  ipcMain.handle('pick-dir', async (_e, arg) => {
+    const title = (arg && arg.title) || '选择目录'
+    const defaultPath = (arg && arg.defaultPath) || S.settings.projectDir || undefined
+    const r = await dialog.showOpenDialog({ title, defaultPath, properties: ['openDirectory', 'createDirectory'] })
+    return { canceled: r.canceled, dir: r.canceled ? '' : (r.filePaths[0] || '') }
+  })
   // ── 内嵌浏览器(波7 · 真重构):浏览器 chrome/页面视图挂进主窗口(不再是跟随的嵌入式子窗) ──
   ipcMain.handle('browser-embed', (_e, show) => {
     if (show) {

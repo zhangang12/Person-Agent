@@ -13,6 +13,21 @@ const pageSub = isWf ? '复杂目标 → 主控预检路由:装得下派单卡,�
 // ── 发起区:目标 + 积木(wf=模板 / pipe=技能+内置能力) ──
 const goal = ref('')
 const projName = ref('')
+// 落盘路径(发起时拼进描述的【落盘要求】:产出文档/中间过程文档;localStorage 记住偏好)
+const outDir = ref(localStorage.getItem('orch.outDir') || 'docs/pipeline/')
+const wipDir = ref(localStorage.getItem('orch.wipDir') || 'docs/_wip/')
+async function pickOutDir() {
+  try {
+    const r = await BH()?.pickDir?.({ title: '选择【产出文档】落盘目录', defaultPath: outDir.value })
+    if (r && !r.canceled && r.dir) { outDir.value = r.dir; localStorage.setItem('orch.outDir', r.dir) }
+  } catch { /* 静默 */ }
+}
+async function pickWipDir() {
+  try {
+    const r = await BH()?.pickDir?.({ title: '选择【中间过程文档】落盘目录', defaultPath: wipDir.value })
+    if (r && !r.canceled && r.dir) { wipDir.value = r.dir; localStorage.setItem('orch.wipDir', r.dir) }
+  } catch { /* 静默 */ }
+}
 async function pickProj() {   // 项目路径切换(全局默认仓;发起的工作流对它说话)
   try {
     const p = await BH()?.pickProject?.()
@@ -81,7 +96,9 @@ async function launch(strictSteps: string[] | null) {
   if (!isWf && !strictSteps && openPreview()) return   // pipeline 多步先预览
   launching.value = true
   try {
-    const payload: any = { title: v.slice(0, 24), msg: v, body: v, disp: v.slice(0, 60), files: [], mode: isWf ? 'wf' : 'pipeline' }
+    // 落盘要求随描述注入(编排哲学:一切中间成果写文档落盘;路径用户可选,不再写死 docs/)
+    const full = v + '\n【落盘要求】最终产出文档写到「' + outDir.value + '」;中间过程文档(分析/核对/临时稿)写到「' + wipDir.value + '」。'
+    const payload: any = { title: v.slice(0, 24), msg: full, body: full, disp: v.slice(0, 60), files: [], mode: isWf ? 'wf' : 'pipeline' }
     if (!isWf && strictSteps && strictSteps.length) { payload.steps = strictSteps; payload.strict = true }
     await BH()?.startConversation?.(payload)
     goal.value = ''; steps.value = []; previewOpen.value = false
@@ -155,6 +172,11 @@ async function op(w: any, act: string) {
       <button class="go" :disabled="!goal.trim() || launching" @click="launch(null)">{{ launching ? '…' : '➤' }}</button>
     </div>
     <div v-if="launchErr" class="errline">{{ launchErr }}</div>
+    <!-- 落盘路径:产出文档 / 中间过程文档(点 chip 选目录,记住偏好;发起时随描述注入落盘要求) -->
+    <div class="pathrow">
+      <button class="pathchip" title="最终产出文档落盘目录(点击选择)" @click="pickOutDir">📄 产出:{{ outDir }}</button>
+      <button class="pathchip" title="中间过程文档(分析/核对/临时稿)落盘目录(点击选择)" @click="pickWipDir">🧪 中间过程:{{ wipDir }}</button>
+    </div>
     <!-- 积木区:wf=引导模板;pipe=你的技能 + 内置能力 -->
     <div v-if="isWf && wfTpls.length" class="tpls">
       <button v-for="t in wfTpls" :key="t.id || t.name" class="tpl" :title="t.hint + '\n目标前缀:' + (t.goalPrefix || '')" @click="goal = (t.goalPrefix || '')">{{ t.name }}</button>
