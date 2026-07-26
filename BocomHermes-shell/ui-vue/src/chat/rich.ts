@@ -165,7 +165,10 @@ export function renderMarkdown(md: string): string {
     }
     const hm = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/)
     if (hm) { const lv = Math.min(hm[1].length, 4); html += '<h' + lv + '>' + inline(hm[2]) + '</h' + lv + '>'; i++; continue }
-    if (/^\s*([-*_])\1\1+\s*$/.test(line)) { html += '<hr>'; i++; continue }
+    if (/^\s*([-*_])\1\1+\s*$/.test(line)) {   // 分隔线:模型爱连发一排(尤其收尾段),去重只留一条,别把对话流刷成一叠细线
+      if (!html.endsWith('<hr>')) html += '<hr>'
+      i++; continue
+    }
     if (/^\s*[-*+]\s+/.test(line)) {
       const it: string[] = []
       while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) {

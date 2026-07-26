@@ -35,4 +35,9 @@ describe('renderMarkdown · 转义信任边界(用例2 语义)', () => {
     expect(html).toContain('<ul><li>甲</li><li>乙</li></ul>')
     expect(html).toContain('<blockquote>')
   })
+  it('连发分隔线去重(模型收尾段爱刷一排 ---,只留一条)', () => {
+    const html = renderMarkdown('过程:\n\n---\n\n---\n\n---\n\n---\n\n完。')
+    expect(html.match(/<hr>/g) || []).toHaveLength(1)
+    expect(html).toContain('完。')
+  })
 })
