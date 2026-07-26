@@ -9,13 +9,13 @@ import { BH } from './bridge'
 import KMenu from '../components/KMenu.vue'
 import KBadge from '../components/KBadge.vue'
 
-// 会话色点:按 session 哈希取 hue(与旧页 applyCardTint 同算法),多卡并行一眼区分
-const tintHue = computed(() => {
+// 会话色点:按 session 哈希取 4 色轮换(blue/green/orange/purple,设计稿 S2/interactions §4),多卡并行一眼区分
+const TINTS = ['#1783ff', '#16c456', '#ff9500', '#985ffb']
+const tintStyle = computed(() => {
   let h = 0
-  for (const c of String(s.sessionId || '')) h = (h * 31 + c.charCodeAt(0)) % 360
-  return h
+  for (const c of String(s.sessionId || '')) h = (h * 31 + c.charCodeAt(0)) >>> 0
+  return { background: TINTS[h % TINTS.length] }
 })
-const tintStyle = computed(() => ({ background: `hsl(${tintHue.value} 70% 48%)` }))
 
 // ── 模型菜单(chip → KMenu;60s 缓存走 store.listModels) ──
 const modelItems = ref<{ key: string; label: string; checked?: boolean }[]>([])

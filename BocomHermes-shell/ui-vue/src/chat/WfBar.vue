@@ -18,8 +18,9 @@ const fmtLeft = (sec: number) => Math.floor(sec / 60) + ':' + String(sec % 60).p
       </template>
     </template>
     <span class="sp"></span>
-    <button v-if="s.wfMode" class="wf-auto" :class="{ on: s.wfAutoAllow }" title="本工作流的写/执行权限请求自动放行(工具日志留痕)" @click="toggleWfAutoAllow">
-      🤝 自动批准{{ s.wfAutoAllow ? '·开' : '' }}
-    </button>
+    <span v-if="s.wfMode" class="wf-tglrow" title="本工作流的写/执行权限请求自动放行(工具日志留痕)">
+      <span class="wf-tgllb">批准后自动放行写操作</span>
+      <span class="tgl" :class="{ on: s.wfAutoAllow }" @click="toggleWfAutoAllow"></span>
+    </span>
   </div>
 </template>

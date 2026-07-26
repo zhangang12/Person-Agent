@@ -70,6 +70,8 @@ export interface ToolItem extends BaseItem {
   isWf: boolean            // run_workflow 高亮"升格"
   askNoted: boolean        // ask/elicit 兜底提示只挂一次
   taskChild?: string       // task/delegate_task 的真子会话 id(点工具块跳子 Agent 窗格)
+  t0?: number              // 创建时刻(运行中起点;终态结算耗时 —— 设计稿 S2 工具行「做了什么、多久」)
+  ms?: number              // 耗时毫秒(终态结算一次)
 }
 /** todowrite 清单卡:一等公民(不折叠);model=null 时整卡隐藏(不留空白块) */
 export interface TodoItem extends BaseItem {
@@ -454,13 +456,14 @@ function upsertToolEvent(ev: StreamEvent): void {
     it = insertBeforeAnswer<ToolItem>({
       id: nextId(), kind: 'tool', partID, name: toolLabel(name), title: '', status: '',
       state: 'running', inStr: '', outStr: '', hasErr: false, summary: '',
-      open: s.verbose, isWf: /^run_workflow$/i.test(name), askNoted: false,
+      open: s.verbose, isWf: /^run_workflow$/i.test(name), askNoted: false, t0: Date.now(),
     })
     if (toolItems.size > 500) toolItems.clear()   // 防御:长跑会话 Map 无界(清掉只影响后续原地更新,重建不丢终态)
     toolItems.set(partID, it)
   }
   it.status = String(ev.status || '')
   it.state = st
+  if (st !== 'running' && !it.ms && it.t0) it.ms = Date.now() - it.t0   // 耗时:首个终态事件结算一次
   if (ev.title) it.title = String(ev.title).slice(0, 120)
   const inFull = fmtInput(ev.input)
   if (inFull) { const t = truncIn(inFull); it.inStr = t.text + (t.tip ? '\n' + t.tip : '') }
@@ -534,7 +537,7 @@ function upsertSubAgentEvent(ev: StreamEvent): void {
     if (!t) {
       t = {
         id: nextId(), kind: 'tool', partID: partID || ('_' + a.tools.length), name: toolLabel(ev.text), title: '', status: '',
-        state: 'running', inStr: '', outStr: '', hasErr: false, summary: '', open: s.verbose, isWf: false, askNoted: false,
+        state: 'running', inStr: '', outStr: '', hasErr: false, summary: '', open: s.verbose, isWf: false, askNoted: false, t0: Date.now(),
       }
       a.tools.push(t)
       const proxy = a.tools[a.tools.length - 1]
@@ -543,6 +546,7 @@ function upsertSubAgentEvent(ev: StreamEvent): void {
     }
     t.status = String(ev.status || '')
     t.state = toolState(t.status)
+    if (t.state !== 'running' && !t.ms && t.t0) t.ms = Date.now() - t.t0
     if (ev.title) t.title = String(ev.title).slice(0, 120)
     const inFull = fmtInput(ev.input)
     if (inFull) { const x = truncIn(inFull); t.inStr = x.text + (x.tip ? '\n' + x.tip : '') }

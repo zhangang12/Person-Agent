@@ -31,10 +31,11 @@ function onRegen(e: MouseEvent) {
   <div class="msg-a" :class="{ aborted: item.status === 'aborted', err: item.status === 'error' }">
     <!-- 收尾/回放:全量渲一次 + 长代码折叠 -->
     <div v-if="item.finalHtml" class="md final-md" v-html="item.finalHtml" v-fold-code></div>
-    <!-- 流式中:冻结段(keyed + v-memo:props 不变子树跳过补丁,节点不重写) + 尾巴区(每帧重渲) + 占位符 -->
+    <!-- 流式中:冻结段(keyed + v-memo:props 不变子树跳过补丁,节点不重写) + 尾巴区(每帧重渲) + 光标 + 占位符 -->
     <template v-else-if="item.status === 'streaming'">
       <span v-for="seg in item.segs" :key="seg.id" v-memo="[seg.html]" class="frozen-seg md" v-html="seg.html"></span>
       <div v-if="item.tail" class="md tail-md" v-html="tailHtml"></div>
+      <span class="streamcursor" aria-hidden="true"></span>
       <div v-if="!item.segs.length && !item.tail" class="ph">{{ item.plainText || '思考中…' }}</div>
     </template>
     <!-- 纯文案态:出错 / 空答 / 只有思考 / boot 占位 -->

@@ -84,7 +84,7 @@ app.whenReady().then(async () => {
   // ── 场景4:wf 自动批准(开关开 → 权限事件自动 once,不出批准条) ──
   {
     const win = await mkWin({ wf: '1' })
-    await ev(win, `document.querySelector('.wfbar .wf-auto').click()`)
+    await ev(win, `document.querySelector('.wfbar .tgl').click()`)
     await sleep(300)
     await ev(win, `__emit('permission', { requestId: 'aq1', tool: 'write', detail: 'src/x.ts' })`)
     await sleep(500)

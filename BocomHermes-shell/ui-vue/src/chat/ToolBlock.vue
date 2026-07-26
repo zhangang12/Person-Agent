@@ -23,6 +23,7 @@ function onHead() {
       <span class="tb-name">{{ item.name }}</span>
       <span v-if="item.title" class="tb-title">{{ item.title }}</span>
       <span v-if="item.summary" class="tb-summary">{{ item.summary }}</span>
+      <span v-if="item.ms != null" class="tb-ms">{{ item.ms < 1000 ? item.ms + 'ms' : (item.ms / 1000).toFixed(1) + 's' }}</span>
       <span class="tb-state" :class="item.state">{{ stateText[item.state] }}</span>
     </div>
     <div v-if="item.open" class="tb-body">

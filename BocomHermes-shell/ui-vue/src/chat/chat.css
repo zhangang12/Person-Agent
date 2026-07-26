@@ -277,16 +277,30 @@ html[data-embed="1"] .hl { display: none; }
 }
 .toolblk .tb-body pre.err { color: var(--danger); }
 
-/* ── todo 一等公民清单卡(不折叠) ─────────────────────────────────────────── */
+/* ── todo 一等公民清单卡(不折叠,设计稿 S4 三态圆点) ──────────────────────── */
 .todocard { align-self: stretch; border: 1px solid var(--sep); border-radius: var(--r-md); background: var(--bg-primary); padding: 8px 11px; }
 .todocard .td-hd { display: flex; align-items: baseline; gap: 7px; margin-bottom: 5px; }
 .todocard .td-title { font: var(--c1-em); color: var(--label-1); }
 .todocard .td-meta { font: var(--c2); color: var(--label-3); font-family: var(--font-mono); }
 .todocard .td-updating { font: var(--c2); color: var(--orange); }
-.todocard .td-row { display: flex; gap: 7px; padding: 2px 0; font: var(--b2); color: var(--label-1); }
-.todocard .td-row .td-mark { flex: none; color: var(--label-2); }
+.todocard .td-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font: var(--b2); color: var(--label-1); }
+.todocard .td-text { flex: 1; min-width: 0; }
+.todocard .td-doing { flex: none; font: var(--c1); color: var(--blue); }
 .todocard .td-row.done .td-text { color: var(--label-3); text-decoration: line-through; }
-.todocard .td-row.doing .td-text { color: var(--blue); }
+/* 三态圆点(16px):完成=绿实底白勾;进行=蓝环+呼吸点;待办=f4 描边环 */
+.todocard .td-dot { flex: none; width: 16px; height: 16px; border-radius: 50%; position: relative; }
+.todocard .td-dot.done { background: var(--green); }
+.todocard .td-dot.done::after {
+  content: ''; position: absolute; left: 4.5px; top: 4px; width: 4px; height: 7px;
+  border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+.todocard .td-dot.doing { border: 1.5px solid var(--blue); }
+.todocard .td-dot.doing::after {
+  content: ''; position: absolute; inset: 3px; border-radius: 50%; background: var(--blue);
+  animation: td-pulse 1.2s var(--ez-inout, ease-in-out) infinite;
+}
+@keyframes td-pulse { 0%, 100% { opacity: 0.25 } 50% { opacity: 1 } }
+.todocard .td-dot:not(.done):not(.doing) { border: 1.5px solid var(--fill-4); }
 
 /* ── 权限审批条(常规橙 / 高危红) ──────────────────────────────────────────── */
 .permbar { align-self: stretch; border: 1px solid var(--orange); border-radius: var(--r-md); background: var(--orange-10); padding: 10px 12px; }
@@ -526,3 +540,19 @@ html[data-embed="1"] .hl { display: none; }
   background: var(--bg-primary); color: var(--label-1); padding: 3px 12px; cursor: pointer;
 }
 .wdbanner .wd-x:hover { border-color: var(--danger); color: var(--danger); }
+
+/* ── 设计稿对齐补齐(P2d 审计 G1/G3/G6):工具耗时 / 流式块光标 / toggle 开关 ── */
+.toolblk .tb-ms { flex: none; font: var(--c2); color: var(--label-3); font-family: var(--font-mono); }
+/* 流式光标:8×16 块,1.06s steps(1) 闪烁,labels.primary —— 不用 spinner 顶替文本光标(S3 契约) */
+.streamcursor {
+  display: inline-block; width: 8px; height: 16px; margin-left: 2px; vertical-align: -2px;
+  background: var(--label-1); animation: cur-blink 1.06s steps(1) infinite;
+}
+@keyframes cur-blink { 0%, 49% { opacity: 1 } 50%, 100% { opacity: 0 } }
+/* toggle 开关(toggle.md 契约:32×18 轨道、14px 正圆滑块、on 态轨道 = labels.primary) */
+.tgl { position: relative; width: 32px; height: 18px; border-radius: var(--r-full); background: var(--fill-3); transition: background-color 200ms ease; flex: none; cursor: pointer; }
+.tgl::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform 200ms var(--ez-out); }
+.tgl.on { background: var(--label-1); }
+.tgl.on::after { transform: translateX(14px); }
+.wf-tglrow { display: inline-flex; align-items: center; gap: 8px; }
+.wf-tglrow .wf-tgllb { font: var(--c1); color: var(--label-2); }
