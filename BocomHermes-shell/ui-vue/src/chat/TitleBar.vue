@@ -3,7 +3,7 @@
 // ctx chip:<5% 隐藏;<60% 绿 / 60-80% 橙 / >80% 红(设计稿口径);点击 = 压缩续聊确认(KDialog 挂 ChatApp)。
 // embedded 模式:去窗口控件(宿主窗口的系统边框负责)。
 import { ref, computed } from 'vue'
-import { s, toggleVerbose, listModels, setModel } from './store'
+import { s, toggleVerbose, listModels, setModel, subToggle, subRunningCount } from './store'
 import { ctxPctVal, ctxLevel, ctxChipText, ctxChipTitle } from './lib/ctxchip'
 import { BH } from './bridge'
 import KMenu from '../components/KMenu.vue'
@@ -61,6 +61,10 @@ const call = (fn: 'closeSelf' | 'minimizeSelf' | 'toggleMaximize') => {
     <span v-if="ctxLv !== 'hidden'" class="k-chip ctxchip clickable" :class="ctxLv" :title="ctxTitle" @click="s.compactAsk = true">{{ ctxText }}</span>
     <button class="ibtn" :class="{ on: s.verbose }" title="过程详情(verbose):工具块自动展开入参/结果" aria-label="过程详情" @click="toggleVerbose">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+    </button>
+    <button v-if="s.subAgents.length" class="ibtn artbtn" :class="{ on: s.subOpen }" title="子 Agent:点任意一个看它的思考 / 工具 / 产出全程" aria-label="子 Agent" @click="subToggle()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a8 8 0 0 1 16 0v1"/></svg>
+      <KBadge v-if="subRunningCount()" type="green" class="artbadge">{{ subRunningCount() }}</KBadge>
     </button>
     <button class="ibtn artbtn" :class="{ on: s.artOpen }" title="成果抽屉:最终结论 + 产出文件" aria-label="成果抽屉" @click="s.artOpen = !s.artOpen">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg>

@@ -200,11 +200,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       S.wfRegistry.set(reg.id, reg); S.wfCardByWc.set(wcId, reg)
       if (S.wfRegistry.size > 50) { const k = S.wfRegistry.keys().next().value; S.wfRegistry.delete(k) }
     }
-    // cardImpl 双轨(P2a):默认 Vue 版(ui/dist/chat.html);settings.json 置 "cardImpl":"legacy" 回退旧页。
-    // wf/orch/shard 卡未迁移(留 P2b)→ 强制旧页;构建产物缺失(没跑过 ui:build)也自动回退,不留死路。
+    // cardImpl 双轨(P2a/P2b):默认 Vue 版(ui/dist/chat.html,wf/orch/shard 已于 P2b-3 迁移);
+    // settings.json 置 "cardImpl":"legacy" 回退旧页;构建产物缺失(没跑过 ui:build)也自动回退,不留死路。
     const vueChat = path.join(__dirname, '..', 'ui', 'dist', 'chat.html')
-    const useVueChat = ((S.settings && S.settings.cardImpl) || 'vue') !== 'legacy'
-      && !query.wf && !query.orch && !query.shard && fs.existsSync(vueChat)
+    const useVueChat = ((S.settings && S.settings.cardImpl) || 'vue') !== 'legacy' && fs.existsSync(vueChat)
     win.loadFile(useVueChat ? vueChat : path.join(__dirname, '..', 'ui', 'card.html'), { query })
     if (inactive) {   // 不抢焦:加载完 showInactive 亮相(可见但不夺焦点、不闪屏)
       win.webContents.once('did-finish-load', () => { try { if (!win.isDestroyed()) win.showInactive() } catch {} })

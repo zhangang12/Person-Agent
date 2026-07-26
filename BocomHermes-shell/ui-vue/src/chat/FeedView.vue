@@ -2,8 +2,9 @@
 // 对话流容器:滚动守卫(贴底 ≤80px 才跟随流式;离底弹「最新」)+ 展示层回收占位
 // + 富结果动作分发(wireActions:copy/extlink 内建;open/todo/apply 接桥;run 移交第二棒)。
 import { ref, watch, nextTick, onMounted } from 'vue'
-import { s, visibleItems, addNote } from './store'
+import { s, visibleItems, addNote, turnToEl } from './store'
 import { wireActions } from './rich'
+import { DANGER } from './lib/perm'
 import { BH } from './bridge'
 import MessageItem from './MessageItem.vue'
 
@@ -69,8 +70,29 @@ onMounted(() => {
           addNote('应用出错：' + ((e && e.message) || e))
         }
       },
-      // run(命令块重跑):依赖 turn(text, target) 的 target 轮 —— 移交第二棒(见 store.ts HANDOFF)
-    })
+      // run(命令块重跑,P2b):破坏性命令客户端二次确认(最终仍走 bash 权限条,这里只防误触);
+      // 输出渲染进块下 details.rout(target 轮,不占新气泡),重跑刷新输出
+      run: async ({ raw }, btn) => {
+        if (s.busy) return
+        const b = btn as HTMLButtonElement
+        if (DANGER.test(raw) && b.dataset.armed !== '1') {
+          const o = b.textContent; b.dataset.armed = '1'; b.textContent = '危险·再点确认'; b.classList.add('danger')
+          setTimeout(() => { if (b.dataset.armed === '1') { b.dataset.armed = ''; b.textContent = o; b.classList.remove('danger') } }, 4000)
+          return
+        }
+        b.dataset.armed = ''; b.classList.remove('danger')
+        const orig = b.innerHTML; b.textContent = '运行中…'; b.disabled = true
+        const blk = b.closest('.rblk')
+        if (!blk) { b.innerHTML = orig; b.disabled = false; return }
+        const old = blk.querySelector(':scope > .rout'); if (old) old.remove()
+        const out = document.createElement('details'); out.className = 'rout'; out.open = true
+        out.innerHTML = '<summary>输出</summary><div class="ai routbody md"></div>'
+        blk.appendChild(out)
+        const body = out.querySelector('.routbody') as HTMLElement
+        const ok = await turnToEl('请运行下面这条命令并把输出原样返回：\n\n```bash\n' + raw + '\n```', body)
+        if (ok) { b.textContent = '已运行 ✓'; b.classList.add('done') }
+        else { b.innerHTML = orig; b.disabled = false }
+      },    })
   }
 })
 </script>

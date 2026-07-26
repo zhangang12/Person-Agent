@@ -4,6 +4,7 @@
 'use strict'
 const { contextBridge } = require('electron')
 const cbs = {}
+const flags = { planApproved: false }
 // ctx 三态场景用:URL query __tokens 传用量(配合 listModels 的 100k 上限);preload 在渲染进程,env 不可控,走 query 最稳
 const TOKENS = Math.floor(+((new URLSearchParams(location.search)).get('__tokens'))) || 0
 contextBridge.exposeInMainWorld('BocomHermes', {
@@ -13,6 +14,15 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   getHistory: () => [],
   cardInit: async () => ({ sessionId: 'stub-sid', project: 'demo-repo', dir: '/tmp/demo', model: { providerID: 'm', modelID: 'mimo-v2', name: 'MiMo V2 Free' }, reattached: false, messages: [], running: false }),
   cardSend: async (text) => {
+    if (/请运行下面这条命令/.test(String(text))) {   // 命令块「运行」target 轮:流式给输出
+      if (cbs.stream) cbs.stream({ kind: 'text', text: 'total 42\n-rw-r--r--  demo.ts', partID: 'run1' })
+      return 'total 42\n-rw-r--r--  demo.ts'
+    }
+    if (/__runcmd__/.test(String(text))) {   // 先让 AI 产出带 bash 命令块的回答(点「运行」的前置)
+      const md = '先看这条命令:\n\n```bash\nls -la | wc -l\n```\n\n点运行试试。'
+      if (cbs.stream) cbs.stream({ kind: 'text', text: md, partID: 'a1' })
+      return md
+    }
     if (cbs.stream) {
       cbs.stream({ kind: 'reasoning', text: '先分析用户意图,再组织回答结构…', partID: 'r1' })
       cbs.stream({ kind: 'text', text: '好的,这是**加粗**、`行内代码` 与列表:\n\n- 甲\n- 乙', partID: 'a1' })
@@ -32,6 +42,9 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   onPermission: (cb) => { cbs.permission = cb },
   onQuestion: (cb) => { cbs.question = cb },
   onServeHealth: (cb) => { cbs.hb = cb; setTimeout(() => cb({ ok: true, port: 4096 }), 400) },
+  onCardInject: (cb) => { cbs.inject = cb },
+  onShardProgress: (cb) => { cbs.shardProgress = cb },
+  wfPlanApproved: () => { flags.planApproved = true },
   permissionReply: () => {},
   questionReply: async () => ({ ok: true }),
   questionReject: async () => ({ ok: true }),
@@ -48,3 +61,4 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   getDropPath: () => '',
 })
 contextBridge.exposeInMainWorld('__emit', (kind, payload) => { const cb = cbs[kind]; if (cb) cb(payload) })
+contextBridge.exposeInMainWorld('__flag', (name) => flags[name])

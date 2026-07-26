@@ -8,6 +8,9 @@ import TitleBar from './TitleBar.vue'
 import FeedView from './FeedView.vue'
 import ComposerBar from './ComposerBar.vue'
 import ArtDrawer from './ArtDrawer.vue'
+import SubAgentRail from './SubAgentRail.vue'
+import WfBar from './WfBar.vue'
+import ShardPanel from './ShardPanel.vue'
 import KDialog from '../components/KDialog.vue'
 
 function onKey(e: KeyboardEvent) {
@@ -47,9 +50,12 @@ function scrollToPerm() {
       <button v-if="pendingPerms.length" class="permsticky" @click="scrollToPerm">
         ⏸ 待批准:{{ pendingPerms[0].tool }}{{ pendingPerms.length > 1 ? '(共 ' + pendingPerms.length + ' 项)' : '' }} —— 引擎在等你
       </button>
+      <WfBar />
+      <ShardPanel />
       <FeedView />
       <ComposerBar />
       <ArtDrawer />
+      <SubAgentRail />
       <KDialog
         :open="s.compactAsk"
         title="压缩续聊"
