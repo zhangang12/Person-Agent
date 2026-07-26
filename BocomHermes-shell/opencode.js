@@ -1011,10 +1011,23 @@ async function restartServe(info, handlers, log) {
 // 周期性 GET /global/health 刷所有 serve 端口(4096-4110),把 idle 计时按住,serve 不空闲自杀。
 // 纯保活:只发请求(带超时,不卡循环),返回与否都不管;不判死、不重启、不自启 —— 那些交给 ensureServe 用时处理。
 // 保活心跳:POST /heartbeat(无请求体),返回 true 或 {"success":true} 即成功。返回报文细节供日志展示。
+// 兼容:公网 opencode(1.18.x)的 /heartbeat 返回 200+HTML 页面(形状对不上)—— 形状失败时
+// 回退 GET /global/health 做权威判定(它返回 {"healthy":true}),不再把活 serve 误判成"失连"。
 function sendHeartbeat(base, ms = 4000) {
   const t0 = Date.now()
   return new Promise((resolve) => {
     let done = false; const fin = (o) => { if (!done) { done = true; resolve(o) } }
+    const getJson = (path, cb) => {
+      let u; try { u = new URL(base + path) } catch { return cb(null) }
+      const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname, method: 'GET', timeout: ms }, (res) => {
+        let txt = ''; res.setEncoding('utf8')
+        res.on('data', (c) => { txt += c })
+        res.on('end', () => { let j = null; try { j = JSON.parse((txt || '').trim()) } catch {} cb({ status: res.statusCode || 0, json: j }) })
+      })
+      req.on('timeout', () => { try { req.destroy() } catch {} ; cb(null) })
+      req.on('error', () => cb(null))
+      req.end()
+    }
     let u; try { u = new URL(base + '/heartbeat') } catch { return fin({ healthy: false, status: 0, body: '(无效地址)', ms: 0 }) }
     const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname, method: 'POST', timeout: ms, headers: { 'content-length': 0 } }, (res) => {
       let txt = ''; res.setEncoding('utf8')
@@ -1025,7 +1038,13 @@ function sendHeartbeat(base, ms = 4000) {
         try { const j = JSON.parse(s); ok = j === true || (j && j.success === true) }   // true / {"success":true}
         catch { ok = s === 'true' }
         if (!ok && !s && res.statusCode >= 200 && res.statusCode < 300) ok = true        // 2xx 空 body 兜底算成功
-        fin({ healthy: ok, status: res.statusCode || 0, body: s.slice(0, 200), ms: Date.now() - t0 })
+        if (ok) return fin({ healthy: true, status: res.statusCode || 0, body: s.slice(0, 200), ms: Date.now() - t0 })
+        // 形状对不上(公网 opencode 返回 HTML)→ 回退 /global/health 权威判定,别冤枉活 serve
+        getJson('/global/health', (g) => {
+          if (g && g.status >= 200 && g.status < 300 && g.json && g.json.healthy === true)
+            return fin({ healthy: true, status: res.statusCode || 0, body: '(heartbeat 形状异,global/health 证活)', ms: Date.now() - t0 })
+          fin({ healthy: false, status: res.statusCode || 0, body: s.slice(0, 200), ms: Date.now() - t0 })
+        })
       })
     })
     req.on('timeout', () => { try { req.destroy() } catch {} ; fin({ healthy: false, status: 0, body: '(超时 ' + ms + 'ms)', ms: Date.now() - t0 }) })
