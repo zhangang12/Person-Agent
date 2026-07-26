@@ -1011,7 +1011,8 @@ export async function sendQuestion(it: QuestionItem): Promise<void> {
   if (it.sent || !quizCanSend(it.answers, it.questions)) return
   it.sent = true
   try {
-    const r = await BH()?.questionReply?.(it.requestId, it.answers)
+    // 响应式代理过不了 IPC 结构化克隆(实测 "An object could not be cloned")—— 剥成纯数组再发
+    const r = await BH()?.questionReply?.(it.requestId, it.answers.map((a) => (Array.isArray(a) ? [...a] : a)))
     it.doneText = (r && r.ok) ? quizSummary(it.answers) : ('⚠ 回答没送达:' + ((r && r.err) || '未知错误') + '(可直接把答复打在输入框发出)')
   } catch (e: any) { it.doneText = '⚠ 回答没送达:' + ((e && e.message) || e) }
 }

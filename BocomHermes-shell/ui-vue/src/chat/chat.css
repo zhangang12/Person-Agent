@@ -328,29 +328,44 @@ html[data-embed="1"] .hl { display: none; }
   border: 1px solid var(--orange); border-radius: var(--r-md); cursor: pointer; z-index: 7;
 }
 
-/* ── 交互提问卡 ──────────────────────────────────────────────────────────── */
+/* ── 交互提问卡(S3 向导式:一问一屏,radio/checkbox + 确认/上一问) ──────────── */
 .qcard { align-self: stretch; border: 1px solid var(--blue); border-radius: var(--r-md); background: var(--blue-10); padding: 10px 12px; }
-.qcard .qc-head { font: var(--c1-em); color: var(--blue); margin-bottom: 7px; }
-.qcard .qc-sec { margin: 8px 0; }
-.qcard .qc-q { font: var(--b2); color: var(--label-1); margin-bottom: 6px; }
+.qcard .qc-head { font: var(--c1-em); color: var(--blue); margin-bottom: 8px; display: flex; align-items: baseline; gap: 8px; }
+.qcard .qc-head .qc-n { margin-left: auto; font: var(--c1); color: var(--label-3); }
+.qcard .qc-q { font: var(--b2); color: var(--label-1); margin-bottom: 7px; }
 .qcard .qc-tag { font: var(--c2); color: var(--blue); border: 1px solid var(--blue); border-radius: var(--r-xxs); padding: 0 5px; margin-right: 6px; }
 .qcard .qc-opt {
-  display: block; width: 100%; text-align: left; margin: 4px 0; padding: 7px 11px;
-  border: 1px solid var(--sep); border-radius: var(--r-sm); background: var(--bg-primary);
+  display: flex; align-items: flex-start; gap: 8px; width: 100%; text-align: left; margin: 4px 0; padding: 7px 11px;
+  border: 0.5px solid var(--sep); border-radius: var(--r-sm); background: var(--bg-primary);
   font: var(--b2); color: var(--label-1); cursor: pointer;
 }
 .qcard .qc-opt:hover { border-color: var(--blue); }
 .qcard .qc-opt.on { border-color: var(--blue); background: var(--blue-10); }
+.qcard .qc-mark { flex: none; width: 16px; height: 16px; margin-top: 1px; position: relative; }
+.qcard .qc-mark.rad { border: 1.5px solid var(--fill-4); border-radius: 50%; }
+.qcard .qc-opt.on .qc-mark.rad { border-color: var(--blue); }
+.qcard .qc-opt.on .qc-mark.rad::after { content: ''; position: absolute; inset: 3px; border-radius: 50%; background: var(--blue); }
+.qcard .qc-mark.chk { border: 1.5px solid var(--fill-4); border-radius: 4px; }
+.qcard .qc-opt.on .qc-mark.chk { background: var(--blue); border-color: var(--blue); }
+.qcard .qc-opt.on .qc-mark.chk::after {
+  content: ''; position: absolute; left: 4.5px; top: 3.5px; width: 4px; height: 7px;
+  border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+.qcard .qc-lb { flex: 1; min-width: 0; }
 .qcard .qc-desc { display: block; font: var(--c1); color: var(--label-3); margin-top: 2px; }
-.qcard .qc-confirm { margin-top: 4px; font: var(--c1); color: var(--blue); border: 1px solid var(--blue); border-radius: var(--r-sm); background: transparent; padding: 3px 12px; cursor: pointer; }
-.qcard .qc-confirm:disabled { opacity: 0.4; cursor: default; }
 .qcard .qc-custom {
   width: 100%; margin-top: 6px; padding: 7px 10px; border: 1px solid var(--sep); border-radius: var(--r-sm);
   background: var(--bg-primary); color: var(--label-1); font: var(--b2); outline: none;
 }
 .qcard .qc-custom:focus { border-color: var(--blue); }
-.qcard .qc-skip { margin-top: 8px; font: var(--c1); color: var(--label-2); border: 1px solid var(--sep); border-radius: var(--r-sm); background: transparent; padding: 4px 12px; cursor: pointer; }
-.qcard .qc-skip:hover { border-color: var(--danger); color: var(--danger); }
+.qcard .qc-acts { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.qcard .qc-acts .sp { flex: 1; }
+.qcard .qc-btn { font: var(--c1-em); border-radius: var(--r-sm); padding: 4px 13px; cursor: pointer; border: 1px solid var(--sep); background: var(--bg-primary); color: var(--label-1); }
+.qcard .qc-btn.pri { background: var(--brand); border-color: var(--brand); color: var(--brand-text); }
+.qcard .qc-btn.pri:disabled { opacity: 0.4; cursor: default; }
+.qcard .qc-btn.ghost { color: var(--label-2); }
+.qcard .qc-btn.link { border: none; background: transparent; color: var(--label-3); }
+.qcard .qc-btn.link:hover { color: var(--danger); }
 .qcard .qc-done { font: var(--c1); color: var(--label-2); }
 
 /* ── 成果抽屉(右侧滑出) ──────────────────────────────────────────────────── */
