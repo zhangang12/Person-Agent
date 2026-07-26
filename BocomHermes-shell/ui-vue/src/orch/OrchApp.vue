@@ -212,7 +212,7 @@ async function op(w: any, act: string) {
       <span class="sp"></span>
       <span class="proj pick" :title="'工作目录:' + (projName || '未选目录') + '(点击切换 —— 动态工作流对它说话)'" @click="pickProj">📁 {{ projName || '未选目录' }}</span>
       <KMenu :items="modelItems" placement="bottom-end" @select="onModelSelect" @update:open="(v) => v && loadModels()">
-        <span class="proj pick" :title="'发起用模型:' + modelLabel + '(点击切换 —— 主控卡与分片派发链整条都用它;默认模型 = 引擎当前配置)'">🧠 {{ modelLabel }}</span>
+        <span class="proj pick" :title="'发起用模型:' + modelLabel + '(点击切换 —— 主控卡与分片派发链整条都用它;默认模型 = 引擎当前配置)'">{{ modelLabel }}</span>
       </KMenu>
       <button class="mini danger" :class="{ arm: stopArm }" :title="stopArm ? '再点一次确认:中止所有运行中的工作流并清空排队' : '全部停止(中止 running + 清排队)'" @click="stopAll">{{ stopArm ? '确认停止?' : '■ 全部停止' }}</button>
       <button class="mini" title="刷新" @click="loadWf">↻</button>
