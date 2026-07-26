@@ -11,6 +11,7 @@ const props = defineProps<{ item: ToolItem }>()
 watch(() => s.verbose, (v) => { if (v) props.item.open = true })
 const stateText = { running: '运行中…', done: '完成', err: '出错' } as const
 function onHead() {
+  if (props.item.isTask) { subJump(props.item.taskChild || ('ph:' + props.item.partID)); return }
   if (props.item.taskChild) { subJump(props.item.taskChild); return }
   props.item.open = !props.item.open
 }

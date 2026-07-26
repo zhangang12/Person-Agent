@@ -70,6 +70,7 @@ export interface ToolItem extends BaseItem {
   isWf: boolean            // run_workflow 高亮"升格"
   askNoted: boolean        // ask/elicit 兜底提示只挂一次
   taskChild?: string       // task/delegate_task 的真子会话 id(点工具块跳子 Agent 窗格)
+  isTask?: boolean         // 委派工具(task/delegate_task):点块跳窗格(taskChild 或占位 ph:partID)
   t0?: number              // 创建时刻(运行中起点;终态结算耗时 —— 设计稿 S2 工具行「做了什么、多久」)
   ms?: number              // 耗时毫秒(终态结算一次)
 }
@@ -479,10 +480,17 @@ function upsertToolEvent(ev: StreamEvent): void {
   it.summary = toolSummary(it.status, outFull)
   // ask/elicit 无应答通道:兜底提示一块卡只挂一次(对齐旧页)
   if (isAskTool(name) && !it.askNoted) { it.askNoted = true; addNote('模型发起了提问,但这个工具没有应答通道 —— 请直接在输入框回复它的问题') }
-  // 委派工具(task/delegate_task):记 taskChild(点工具块跳子 Agent 窗格);终态勾掉对应子 Agent
+  // 委派工具(task/delegate_task):记 taskChild(点工具块跳子 Agent 窗格);终态勾掉对应子 Agent。
+  // 子等会话 id 提不到(serve 形状各异,实测)→ 立刻建占位条目:侧边栏必须有得看,不能空等(用户实测"点不进去看")
   if (/^(task|delegate_task)$/i.test(name)) {
+    it.isTask = true   // 委派工具:点块跳子 Agent 窗格(taskChild 或占位 ph:partID)
     it.taskChild = String(ev.taskChild || '')
-    if (it.taskChild && st !== 'running') subAgentDone(it.taskChild, st === 'err', String(ev.taskDesc || ''))
+    if (it.taskChild) {
+      if (st !== 'running') subAgentDone(it.taskChild, st === 'err', String(ev.taskDesc || ''))
+    } else {
+      const ph = subAgent('ph:' + partID, String(ev.taskDesc || ev.title || '子任务'))
+      if (st !== 'running') subAgentDone(ph.id, st === 'err')
+    }
   }
   // write/edit 落盘 → 成果抽屉(完成且无错才收;对齐旧页与 session.js wfFiles 口径)
   if (isWriteEditTool(name) && st === 'done' && !it.hasErr) {
@@ -523,6 +531,13 @@ const READ_TOOL = /^(read|grep|glob|list|ls|find|tree)$/i
 function subAgent(id: string, name?: string): SubAgent {
   const hit = subIdx.get(id)
   if (hit) { if (name && name !== '子agent') hit.name = name; return hit }
+  // 名字归并:task 工具先建了占位(id=ph:partID,子等会话 id 后到时)或子事件先建(id=ses_*,task 后到)——
+  // 同名按一条算,别出"占位+真身"两行(实测:等 id 失败时用户看不到任何子 Agent 活动)
+  if (name) {
+    for (const a of s.subAgents) {
+      if (a.name === name) { subIdx.set(id, a); return a }
+    }
+  }
   const a: SubAgent = {
     id, name: name || '子agent', count: 0, reads: 0, t0: Date.now(), doneAt: 0, done: false, err: false,
     tools: [], toolIdx: new Map(), reasonParts: new Map(), outParts: new Map(), reason: '', outHtml: '',
@@ -530,7 +545,7 @@ function subAgent(id: string, name?: string): SubAgent {
   s.subAgents.push(a)
   const proxy = s.subAgents[s.subAgents.length - 1]   // 响应式铁律:索引存数组里的代理 —— 存原对象改属性不触发更新(实测:subAgentDone 勾不掉)
   subIdx.set(id, proxy)
-  s.subActiveId = id                 // 新子 Agent 自动成为当前窗格
+  s.subActiveId = proxy.id                 // 新子 Agent 自动成为当前窗格
   if (!subClosedThisTurn) s.subOpen = true   // fan-out 必须被看见(本轮没被手动关过就自动滑出)
   return proxy
 }

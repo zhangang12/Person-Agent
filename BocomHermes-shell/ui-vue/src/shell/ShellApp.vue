@@ -12,7 +12,6 @@ import TitleBar from './TitleBar.vue'
 import SideBar from './SideBar.vue'
 import StatusBar from './StatusBar.vue'
 import QuickInput from './QuickInput.vue'
-import CtxPanel from './CtxPanel.vue'
 import { store, PRELOAD_URL, bindWv, spawnChat, closeChat, wireShell, viewSrc, viewWv } from './store'
 
 onMounted(() => { wireShell() })
@@ -60,7 +59,6 @@ function onConfirmClose() {
               :ref="(el: any) => bindWv(c.key, el)"
             ></webview>
           </div>
-          <CtxPanel />
         </section>
 
         <!-- 编排 / 动态工作流 / 邮件 / 设置 / 知识库 / 技能中心视图:webview 懒创建且保活 -->
