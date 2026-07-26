@@ -132,18 +132,29 @@ html[data-embed="1"] .hl { display: none; }
 .md h1, .md h2, .md h3, .md h4 { margin: 12px 0 6px; font-weight: 600; line-height: 1.4; }
 .md h1 { font-size: 19px; } .md h2 { font-size: 17px; } .md h3 { font-size: 16px; } .md h4 { font-size: 15px; }
 .md h1:first-child, .md h2:first-child, .md h3:first-child { margin-top: 2px; }
+/* 标题层级配色:主标带蓝色 accent 条,二级加细分隔线(读长报告时分层不累) */
+.md h2 { padding-left: 8px; border-left: 3px solid var(--blue); }
+.md h1 { padding-bottom: 5px; border-bottom: 0.5px solid var(--sep); }
 .md ul, .md ol { margin: 4px 0 8px; padding-left: 22px; }
 .md li { margin: 2px 0; }
-.md blockquote { margin: 6px 0; padding: 2px 10px; border-left: 3px solid var(--fill-3); color: var(--label-2); }
+.md li::marker { color: var(--blue); }
+.md blockquote { margin: 6px 0; padding: 2px 10px; border-left: 3px solid var(--blue); color: var(--label-2); background: var(--blue-10); border-radius: 0 var(--r-xxs) var(--r-xxs) 0; }
 .md hr { border: none; border-top: 1px solid var(--sep); margin: 10px 0; }
-.md code { font: var(--md-code); font-size: 13px; background: var(--fill-2); border-radius: var(--r-xxs); padding: 1px 5px; }
-.md pre code { background: none; padding: 0; }
+.md code { font: var(--md-code); font-size: 13px; color: var(--blue); background: var(--blue-10); border-radius: var(--r-xxs); padding: 1px 5px; }
+.md pre code { background: none; padding: 0; color: var(--label-1); }
 .md table { border-collapse: collapse; margin: 6px 0 10px; font: var(--b2); }
 .md th, .md td { border: 1px solid var(--sep); padding: 4px 10px; text-align: left; }
 .md th { background: var(--fill-1); font-weight: 600; }
 .md a { color: var(--blue); text-decoration: none; }
 .md a:hover { text-decoration: underline; }
 .md .floc { font-family: var(--font-mono); font-size: 13px; }
+/* 语法高亮(design.css syntax 色板) */
+.md .tk-k { color: var(--syn-kw); font-weight: 600; }
+.md .tk-s { color: var(--syn-str); }
+.md .tk-c { color: var(--syn-cmt); font-style: italic; }
+.md .tk-f { color: var(--syn-fn); }
+.md .tk-v { color: var(--syn-var); }
+.md .tk-n { color: var(--syn-num); }
 
 /* 富结果块(diff/命令/代码):fill-1 底 + radius.md(S2 工具行同款语汇) */
 .rblk { margin: 8px 0; border: 1px solid var(--sep); border-radius: var(--r-md); overflow: hidden; background: var(--bg-primary); }

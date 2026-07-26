@@ -83,13 +83,56 @@ function renderDiff(code: string) {
     + actBtn('applyall', '全部应用', true) + actBtn('copyall', '复制全部') + '</span></div>'
   return '<div class="rdiffset">' + bar + files.map(renderOneDiff).join('') + '</div>'
 }
+// ---- 轻量语法高亮(消费 design.css 的 syntax 色板:kw/str/cmt/fn/var/num,不用任何外库)----
+// 一遍主正则分词:注释(按语言)// 或 # → 字符串 → 数字 → 标识符(关键词/函数名/普通),逐段 esc 后包 span。
+const KW: Record<string, string> = {
+  js: 'const|let|var|function|return|if|else|for|while|do|break|continue|switch|case|default|try|catch|finally|throw|new|class|extends|super|this|null|undefined|true|false|typeof|instanceof|in|of|async|await|yield|static|import|from|export|delete|void',
+  java: 'public|private|protected|static|final|class|interface|extends|implements|new|return|if|else|for|while|do|break|continue|switch|case|default|try|catch|finally|throw|throws|this|super|null|true|false|void|int|long|double|float|boolean|char|byte|short|import|package|synchronized|volatile|abstract|enum|instanceof',
+  py: 'def|class|return|if|elif|else|for|while|break|continue|pass|try|except|finally|raise|import|from|as|with|lambda|None|True|False|and|or|not|in|is|global|nonlocal|yield|async|await|print|self',
+  sql: 'SELECT|FROM|WHERE|AND|OR|NOT|IN|IS|NULL|JOIN|LEFT|RIGHT|INNER|OUTER|ON|GROUP|BY|ORDER|LIMIT|OFFSET|INSERT|INTO|VALUES|UPDATE|SET|DELETE|CREATE|TABLE|ALTER|DROP|INDEX|AS|DISTINCT|COUNT|SUM|AVG|MAX|MIN|CASE|WHEN|THEN|ELSE|END|UNION|ALL|DESC|ASC|LIKE|BETWEEN|EXISTS|HAVING',
+  sh: 'if|then|else|elif|fi|for|in|do|done|while|until|case|esac|function|return|local|export|echo|cd|set|unset|shift|exit|source|eval|exec|readonly|declare',
+}
+function langKey(lang: string): string {
+  if (/^(js|jsx|ts|tsx|javascript|typescript|mjs|cjs|vue|json)$/.test(lang)) return 'js'
+  if (/^(java|kt|kotlin|scala|go|rs|rust|c|cpp|cc|cs|csharp)$/.test(lang)) return 'java'
+  if (/^(py|python)$/.test(lang)) return 'py'
+  if (/^(sql|mysql|plsql|obsql)$/.test(lang)) return 'sql'
+  if (/^(sh|bash|zsh|shell|cmd|bat|powershell|ps1)$/.test(lang)) return 'sh'
+  return ''
+}
+export function hlCode(code: string, lang: string): string {
+  const key = langKey(lang)
+  // 注释形状:c 系 // /* */;py/sh/yaml/toml 用 #
+  const cmtSrc = /^(py|python|sh|bash|zsh|shell|yaml|yml|toml|ini|conf)$/.test(lang) ? '#[^\\n]*' : '\\/\\/[^\\n]*|\\/\\*[\\s\\S]*?\\*\\/'
+  const master = new RegExp(
+    '(' + cmtSrc + ')'
+    + '|(' + "'(?:[^'\\\\\\n]|\\\\.)*'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|`(?:[^`\\\\]|\\\\.)*`" + ')'
+    + '|(\\b\\d[\\d_]*(?:\\.[\\d_]+)?(?:[eE][+-]?\\d+)?[lLf]?\b)'
+    + '|([A-Za-z_$][\\w$.]*)', 'g')
+  const kwRe = key ? new RegExp('^(?:' + KW[key] + ')$') : null
+  let out = '', last = 0, m: RegExpExecArray | null
+  while ((m = master.exec(code))) {
+    out += esc(code.slice(last, m.index))
+    const [, c, s, n, w] = m
+    if (c) out += '<span class="tk-c">' + esc(c) + '</span>'
+    else if (s) out += '<span class="tk-s">' + esc(s) + '</span>'
+    else if (n) out += '<span class="tk-n">' + esc(n) + '</span>'
+    else if (w) {
+      if (kwRe && kwRe.test(w)) out += '<span class="tk-k">' + esc(w) + '</span>'
+      else if (/^\s*\(/.test(code.slice(m.index + w.length, m.index + w.length + 2))) out += '<span class="tk-f">' + esc(w) + '</span>'
+      else out += '<span class="tk-v">' + esc(w) + '</span>'
+    }
+    last = m.index + m[0].length
+  }
+  return out + esc(code.slice(last))
+}
 function renderCmd(code: string, lang: string) {
   const acts = actBtn('run', '运行', true) + actBtn('copy', '复制')
-  return '<div class="rblk" data-type="cmd">' + head(lang || 'bash', '', acts) + '<pre class="rbody"><code>' + esc(code) + '</code></pre></div>'
+  return '<div class="rblk" data-type="cmd">' + head(lang || 'bash', '', acts) + '<pre class="rbody"><code>' + hlCode(code, lang) + '</code></pre></div>'
 }
 function renderCode(code: string, lang: string) {
   const acts = actBtn('copy', '复制')
-  return '<div class="rblk" data-type="code">' + head(lang || 'code', '', acts) + '<pre class="rbody"><code>' + esc(code) + '</code></pre></div>'
+  return '<div class="rblk" data-type="code">' + head(lang || 'code', '', acts) + '<pre class="rbody"><code>' + hlCode(code, lang) + '</code></pre></div>'
 }
 function renderBlock(lang: string, code: string) {
   if (isDiff(lang, code)) return renderDiff(code)

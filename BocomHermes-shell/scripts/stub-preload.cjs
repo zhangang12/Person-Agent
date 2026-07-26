@@ -23,6 +23,11 @@ contextBridge.exposeInMainWorld('BocomHermes', {
       await new Promise((r) => setTimeout(r, 2500))
       return '慢回答'
     }
+    if (/__hl__/.test(String(text))) {   // 富排版目检(语法高亮/标题/引用/表格)
+      const md = '## 分析报告\n\n问题定位如下：\n\n```js\n// 计算利息(30/360 口径)\nconst days = 30 * months\nfunction interest(p, rate) {\n  return p * rate * days / 360\n}\nconst total = interest(100000, 0.05)\n```\n\n> 注意：跨月分段时 2 月会少算 1-2 天。\n\n```sql\nSELECT project_code, SUM(amount) AS total\nFROM interest_accrued\nWHERE biz_date BETWEEN \'2026-01-01\' AND \'2026-03-31\'\nGROUP BY project_code\nORDER BY total DESC\nLIMIT 20\n```\n\n- 当前实现按 **30/360** 折算\n- 核心系统按 `实际天数/365` 计息\n\n| 口径 | 结果 |\n|---|---|\n| 30/360 | 1250.00 |\n| ACT/365 | 1267.12 |'
+      if (cbs.stream) cbs.stream({ kind: 'text', text: md, partID: 'a1' })
+      return md
+    }
     if (/请运行下面这条命令/.test(String(text))) {   // 命令块「运行」target 轮:流式给输出
       if (cbs.stream) cbs.stream({ kind: 'text', text: 'total 42\n-rw-r--r--  demo.ts', partID: 'run1' })
       return 'total 42\n-rw-r--r--  demo.ts'
