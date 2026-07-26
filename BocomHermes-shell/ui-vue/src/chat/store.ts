@@ -776,6 +776,22 @@ export function saveDraft(value: string): void {
   if (draftKey) draftSave(localStorage, draftKey, value)
 }
 
+// ── 系统灰字条(card-note:注入背景/拦停/多模态切换等过程提示) ───────────────
+let noteWired = false
+export function wireCardNote(): void {
+  if (noteWired) return
+  noteWired = true
+  try {
+    BH()?.onCardNote?.((p: any) => {
+      if (!p || !p.text) return
+      addNote(String(p.text))
+      // 首条注入背景(记忆/项目背景/知识,常有几 KB)也计入 ctx 估算 —— 以前只算用户可见部分,估算系统性偏低
+      const m = String(p.text).match(/已随首条消息注入背景.*?（(\d+) 字）/)
+      if (m) { meter.bump(+m[1] || 0); s.ctxUsedChars = meter.usedChars }
+    })
+  } catch { /* 静默 */ }
+}
+
 // ── 权限审批条(第二棒):feed 内 PermItem(答完移除)+ pendingPerms 计数(sticky 摘要钉) ──
 let permWired = false
 export function wirePermission(): void {
@@ -1204,6 +1220,7 @@ function replayMessages(list: any[]): void {
 
 export async function boot(): Promise<void> {
   wireStream()
+  wireCardNote()       // 系统灰字条 + 注入背景计入 ctx 估算(此前整组没接,提示丢失且估算偏低)
   wirePermission()     // 权限审批条(feed PermItem + sticky 计数;wf 自动批准分支)
   wireQuestion()       // 交互提问卡(单/多选/custom/跳过)
   wireServeHealth()    // 标题栏保活灯
