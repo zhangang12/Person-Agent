@@ -59,7 +59,17 @@ function scrollToPerm() {
         <button class="wd-x" @click="abort(); s.wdBanner = false">中止本轮</button>
         <button class="wd-ok" @click="s.wdBanner = false">知道了</button>
       </div>
-      <FeedView />
+      <!-- 新会话空态(设计稿空态契约:给一个可照抄的例句 + 快捷键入口,而不是一片空白) -->
+      <div v-if="!s.items.length && s.ready && !s.busy" class="chatempty">
+        <div class="ce-eg">试试:「帮我分析这个项目的结构，产出一份架构说明文档」</div>
+        <div class="ce-tips">
+          <span class="ce-chip">Enter 发送</span>
+          <span class="ce-chip">/ 作答技能</span>
+          <span class="ce-chip">⌃⇧S 截图提问</span>
+          <span class="ce-chip">⌃⇧V 带入剪贴板</span>
+        </div>
+      </div>
+      <FeedView v-show="s.items.length || !s.ready || s.busy" />
       <StatusLine />
       <ComposerBar />
       <ArtDrawer />

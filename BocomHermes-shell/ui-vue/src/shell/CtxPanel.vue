@@ -56,10 +56,11 @@ const pct = (w: any) => (w.todoTotal > 0 ? Math.round((100 * (w.todoDone || 0)) 
     <div class="rp-sec">
       <div class="rp-lb">会话</div>
       <div class="rp-title">{{ chat ? chat.title : '未选择会话' }}</div>
-      <div v-if="ctx && ctx.limit" class="rp-ctx">
+      <div v-if="ctx && ctx.limit && ctx.tokens > 0" class="rp-ctx">
         <div class="rp-bar"><i :style="{ width: ctxPct + '%' }"></i></div>
         <div class="rp-ctxt">上下文 {{ fmtK(ctx.tokens) }}/{{ fmtK(ctx.limit) }}<template v-if="ctx.model"> · {{ ctx.model }}</template></div>
       </div>
+      <div v-else-if="ctx && ctx.model" class="rp-dim">{{ ctx.model }}</div>
       <div v-else class="rp-dim">暂无用量数据</div>
     </div>
     <div class="rp-sec">
