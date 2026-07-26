@@ -177,6 +177,8 @@
   .empty .big { font-size: 28px; opacity: .45; }
   /* 嵌入主窗口(?embed=1):自带窗控(min/max/x)由主窗口负责,藏掉;close-self 对 webview guest 本就静默失效,这里直接不出按钮 */
   html[data-embed="1"] .hd .hbtn { display: none; }
+  /* 嵌入态只展示任务编排:「最近会话」区隐藏(会话管理在主窗口侧栏,这里不是卡坞全量) */
+  html[data-embed="1"] .seclbl.for-list, html[data-embed="1"] #list { display: none !important; }
 </style>
 </head>
 <body>
@@ -263,7 +265,7 @@
       <div id="wfDetail" class="wfdetail"><div class="wfd-empty">点左侧一条工作流看详情</div></div>
     </div>
 
-    <div class="seclbl">最近会话 · 点一条续接 <span class="sp"></span><button id="clear" class="clr nodrag">清空</button></div>
+    <div class="seclbl for-list">最近会话 · 点一条续接 <span class="sp"></span><button id="clear" class="clr nodrag">清空</button></div>
     <div id="list" class="list nodrag"></div>
   </div>
 </div>
