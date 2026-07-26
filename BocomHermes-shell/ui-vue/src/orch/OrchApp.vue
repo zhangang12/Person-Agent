@@ -1,24 +1,25 @@
 <script setup lang="ts">
-// 任务编排页(从 legacy dock.html 抽出):发起区(模式/目标/模板/步骤预览)+ 工作流列表 + 详情双栏。
-// 数据全部走既有 IPC(startConversation 发起;wf-list 3s 轮询;wfOpen/Delete/CancelQueued/pipelineRetry;
-// wfTemplates/pipelineTpl*)。发起链路语义与 dock 对齐:mode ∈ auto(Agent 自判)/pipeline(单执行体顺序链)/wf(主控多层)。
+// 任务编排页(从 legacy dock 抽出):只做一件事 —— 组合 SKILL 与内置能力,串成多步任务链开跑。
+// 不放「动态工作流/自动」(那是主控多层派发与单卡自判的活,入口在对话里);本页纯 pipeline 语义:
+// 技能积木 + 内置能力积木 → 拼描述 → 多步自动出步骤预览(可删可排序) → 智能(编排 Agent 自走)或
+// 严格(主进程逐步下发,失败即停)开跑;下方是排队位 + 工作流列表 + 详情双栏。
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 
 const BH = (): any => (window as any).BocomHermes
 
-// ── 发起区:模式 seg(auto / pipeline / wf) ──
-type Mode = 'auto' | 'pipeline' | 'wf'
-const mode = ref<Mode>('auto')
-const MODES: { id: Mode; label: string; tip: string }[] = [
-  { id: 'auto', label: '自动', tip: 'Agent 自判要不要升格成工作流' },
-  { id: 'pipeline', label: '任务编排', tip: '单执行体按描述顺序走业务链(导出→核对→发邮件…)' },
-  { id: 'wf', label: '动态工作流', tip: '主控预检路由:单卡装得下派单卡,装不下拆多片并行干' },
-]
+// ── 发起区:目标 + 技能积木 + 内置能力积木 ──
 const goal = ref('')
 const projName = ref('')
+// 录制的技能(组合 SKILL 的主角):skillsList() 拿到名字,点一下拼「跑技能「名」」进描述
+const skills = ref<{ id?: string; name?: string; title?: string }[]>([])
+async function loadSkills() {
+  try { skills.value = (await BH()?.skillsList?.()) || [] } catch { /* 静默 */ }
+}
+function applySkill(sk: { id?: string; name?: string; title?: string }) {
+  applyPhrase('运行技能「' + (sk.name || sk.title || sk.id || '') + '」')
+}
 
-// 模板 chips:wf → wfTemplates;pipeline → BUILTINS 短语积木
-const wfTpls = ref<{ id?: string; name?: string; hint?: string; goalPrefix?: string }[]>([])
+// 内置能力积木(自然语言短语,拼进描述)
 const BUILTINS = [
   { n: '读文档', p: '读取导出的文件核对数据', t: '读 Excel/CSV/Word/PDF 为文本(doc_read)' },
   { n: '发邮件', p: '把结果整理成邮件发给 〈收件人邮箱〉', t: '经发件箱缓发,可撤销(mail_send)' },
@@ -30,12 +31,8 @@ const BUILTINS = [
 function applyPhrase(p: string) {
   goal.value = goal.value ? goal.value.replace(/[，。；;\s]+$/, '') + '，然后' + p : p
 }
-async function loadTpls() {
-  if (mode.value !== 'wf' || wfTpls.value.length) return
-  try { wfTpls.value = (await BH()?.wfTemplates?.()) || [] } catch { /* 静默 */ }
-}
 
-// 步骤预览(pipeline 且多步:按 ，然后/→/；/; 切分,可删可排序)
+// 步骤预览(多步:按 ，然后/→/；/; 切分,可删可排序)
 const steps = ref<string[]>([])
 const previewOpen = ref(false)
 function splitSteps(text: string): string[] {
@@ -52,26 +49,24 @@ function moveStep(i: number, d: number) {
   const t = steps.value[i]; steps.value[i] = steps.value[j]; steps.value[j] = t
 }
 
-// 发起(与 dock reallyGo 同契约):payload={title,msg,body,disp,files,mode};pipeline 严格模式带 steps
+// 发起(纯 pipeline):payload={title,msg,body,disp,files,mode:'pipeline'};严格模式带 steps
 const launching = ref(false)
 const launchErr = ref('')
 async function launch(strictSteps: string[] | null) {
   const v = goal.value.trim()
   if (!v || launching.value) return
   launchErr.value = ''
-  // 编排工具体检(pipeline/wf 才需要):缺工具不开空卡
-  if (mode.value !== 'auto') {
-    try {
-      const st = await BH()?.orchToolsStatus?.()
-      const miss = (st && Array.isArray(st.missing)) ? st.missing : []
-      if (miss.length) { launchErr.value = '缺编排工具：' + miss.join('、') + ' —— 完整重启引擎让它带上任务编排工具，再开跑'; return }
-    } catch { /* 静默:体检通道缺席不挡路 */ }
-  }
-  if (mode.value === 'pipeline' && !strictSteps && openPreview()) return   // 多步先预览
+  // 编排工具体检:缺工具不开空卡
+  try {
+    const st = await BH()?.orchToolsStatus?.()
+    const miss = (st && Array.isArray(st.missing)) ? st.missing : []
+    if (miss.length) { launchErr.value = '缺编排工具：' + miss.join('、') + ' —— 完整重启引擎让它带上任务编排工具，再开跑'; return }
+  } catch { /* 静默:体检通道缺席不挡路 */ }
+  if (!strictSteps && openPreview()) return   // 多步先预览
   launching.value = true
   try {
-    const payload: any = { title: v.slice(0, 24), msg: v, body: v, disp: v.slice(0, 60), files: [], mode: mode.value }
-    if (mode.value === 'pipeline' && strictSteps && strictSteps.length) { payload.steps = strictSteps; payload.strict = true }
+    const payload: any = { title: v.slice(0, 24), msg: v, body: v, disp: v.slice(0, 60), files: [], mode: 'pipeline' }
+    if (strictSteps && strictSteps.length) { payload.steps = strictSteps; payload.strict = true }
     await BH()?.startConversation?.(payload)
     goal.value = ''; steps.value = []; previewOpen.value = false
     setTimeout(loadWf, 800)
@@ -98,6 +93,7 @@ async function loadWf() {
 }
 onMounted(async () => {
   try { projName.value = (await BH()?.getProject?.()) || '' } catch { /* 静默 */ }
+  loadSkills()
   loadWf()
   timer = setInterval(loadWf, 3000)
 })
@@ -129,9 +125,7 @@ async function op(w: any, act: string) {
   <div id="orch">
     <header class="hd">
       <span class="ttl">任务编排</span>
-      <div class="seg">
-        <button v-for="m in MODES" :key="m.id" :class="{ on: mode === m.id }" :title="m.tip" @click="mode = m.id; loadTpls()">{{ m.label }}</button>
-      </div>
+      <span class="sub">组合技能与能力,串成多步任务链</span>
       <span class="sp"></span>
       <span class="proj" :title="projName">📁 {{ projName || '未选目录' }}</span>
       <button class="mini" title="刷新" @click="loadWf">↻</button>
@@ -139,15 +133,13 @@ async function op(w: any, act: string) {
 
     <!-- 发起区 -->
     <div class="launch">
-      <textarea v-model="goal" rows="2" :placeholder="mode === 'wf' ? '描述一个复杂目标(主控先预检,超线拆多片并行)…' : mode === 'pipeline' ? '描述一条业务链,如:跑技能「XX导出」,然后核对导出数据,然后把异常项发邮件给张三' : '想让 Agent 做什么?'" @keydown.enter.exact.prevent="launch(null)"></textarea>
+      <textarea v-model="goal" rows="2" placeholder="串一条任务链,如:运行技能「XX导出」,然后核对导出数据,然后把异常项发邮件给张三(多步会自动出步骤预览)" @keydown.enter.exact.prevent="launch(null)"></textarea>
       <button class="go" :disabled="!goal.trim() || launching" @click="launch(null)">{{ launching ? '…' : '➤' }}</button>
     </div>
     <div v-if="launchErr" class="errline">{{ launchErr }}</div>
-    <!-- 模板区:wf=模板 chips;pipeline=短语积木 -->
-    <div v-if="mode === 'wf' && wfTpls.length" class="tpls">
-      <button v-for="t in wfTpls" :key="t.id || t.name" class="tpl" :title="t.hint" @click="goal = (t.goalPrefix || '')">{{ t.name }}</button>
-    </div>
-    <div v-else-if="mode === 'pipeline'" class="tpls">
+    <!-- 积木区:你的技能 + 内置能力,点一下拼进描述 -->
+    <div class="tpls">
+      <button v-for="sk in skills" :key="sk.id || sk.name" class="tpl skill" :title="'拼「运行技能『' + (sk.name || sk.title || sk.id) + '』」进描述'" @click="applySkill(sk)">🎬 {{ sk.name || sk.title || sk.id }}</button>
       <button v-for="b in BUILTINS" :key="b.n" class="tpl" :title="b.t + '\n点一下拼进描述(自然语言短语)'" @click="applyPhrase(b.p)">{{ b.n }}</button>
     </div>
     <!-- 步骤预览(pipeline 多步:可删可排序,智能/严格开跑) -->
