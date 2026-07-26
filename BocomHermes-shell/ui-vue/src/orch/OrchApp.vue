@@ -2,7 +2,8 @@
 // 任务编排页(从 legacy dock 抽出):只做一件事 —— 组合 SKILL 与内置能力,串成多步任务链开跑。
 // ?mode=pipe(默认,技能串接)/ ?mode=wf(动态工作流:复杂目标 → 主控预检拆片并行;模板 chips 引导)。
 // 两形态共享:排队位 + 工作流列表 + 详情双栏(列表按形态过滤:pipe 只看编排,wf 看工作流/主控)。
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import KMenu from '../components/KMenu.vue'
 
 const BH = (): any => (window as any).BocomHermes
 const pageMode = (new URLSearchParams(location.search).get('mode') === 'wf') ? 'wf' : 'pipe'
@@ -33,6 +34,37 @@ async function pickProj() {   // 项目路径切换(全局默认仓;发起的工
     const p = await BH()?.pickProject?.()
     if (p) projName.value = p
   } catch { /* 静默 */ }
+}
+// ── 发起模型(两形态通用):'' = serve 默认;localStorage 记住偏好;发起时随 payload.model 进主进程注册表,
+//    主控卡与分片派发链整条同待(window.js spawnWorkflow 继承) ──
+const modelItems = ref<{ key: string; label: string; checked?: boolean }[]>([])
+const modelKey = ref(localStorage.getItem('orch.modelKey') || '')
+const modelLabel = computed(() => {
+  if (!modelKey.value) return '默认模型'
+  const hit = modelItems.value.find((m) => m.key === modelKey.value)
+  return (hit && hit.label) || String(modelKey.value.split('/').pop() || modelKey.value)
+})
+async function loadModels() {   // 借在跑的健康 serve 列模型(主进程不为此白起引擎);打开菜单时刷新
+  try {
+    const r = await BH()?.listModels?.()
+    const arr = Array.isArray(r) ? r : ((r && r.models) || [])
+    modelItems.value = [
+      { key: '', label: '默认模型', checked: !modelKey.value },
+      ...arr.map((m: any) => ({ key: m.providerID + '/' + m.modelID, label: m.name || (m.providerID + '/' + m.modelID), checked: (m.providerID + '/' + m.modelID) === modelKey.value })),
+    ]
+  } catch { /* 静默 */ }
+}
+function onModelSelect(key: string) {
+  modelKey.value = key
+  localStorage.setItem('orch.modelKey', key)
+  modelItems.value = modelItems.value.map((m) => ({ ...m, checked: m.key === key }))
+}
+function modelPayload() {   // 发起载荷:null = serve 默认(不带 model 字段)
+  if (!modelKey.value) return null
+  const providerID = modelKey.value.split('/')[0] || ''
+  const modelID = modelKey.value.slice(providerID.length + 1)
+  if (!modelID) return null
+  return { providerID, modelID, name: modelLabel.value }
 }
 // wf 模板(动态工作流引导:探索成文/评审/排查,goalPrefix 预置)
 const wfTpls = ref<{ id?: string; name?: string; hint?: string; goalPrefix?: string }[]>([])
@@ -99,6 +131,7 @@ async function launch(strictSteps: string[] | null) {
     // 落盘要求(仅任务编排):产出/中间过程路径用户可选,随描述注入;动态工作流不注入(主控自会按主题落 docs/<主题>/)
     const full = isWf ? v : (v + '\n【落盘要求】最终产出文档写到「' + outDir.value + '」;中间过程文档(分析/核对/临时稿)写到「' + wipDir.value + '」。')
     const payload: any = { title: v.slice(0, 24), msg: full, body: full, disp: v.slice(0, 60), files: [], mode: isWf ? 'wf' : 'pipeline' }
+    const mp = modelPayload(); if (mp) payload.model = mp   // 发起时选定模型:注册表随卡走,主控/分片整条链继承
     if (!isWf && strictSteps && strictSteps.length) { payload.steps = strictSteps; payload.strict = true }
     await BH()?.startConversation?.(payload)
     goal.value = ''; steps.value = []; previewOpen.value = false
@@ -128,7 +161,7 @@ async function loadWf() {
 }
 onMounted(async () => {
   try { projName.value = (await BH()?.getProject?.()) || '' } catch { /* 静默 */ }
-  loadSkills(); loadWfTpls()
+  loadSkills(); loadWfTpls(); loadModels()
   loadWf()
   timer = setInterval(loadWf, 3000)
 })
@@ -178,6 +211,9 @@ async function op(w: any, act: string) {
       <span class="sub">{{ pageSub }}</span>
       <span class="sp"></span>
       <span class="proj pick" :title="'工作目录:' + (projName || '未选目录') + '(点击切换 —— 动态工作流对它说话)'" @click="pickProj">📁 {{ projName || '未选目录' }}</span>
+      <KMenu :items="modelItems" placement="bottom-end" @select="onModelSelect" @update:open="(v) => v && loadModels()">
+        <span class="proj pick" :title="'发起用模型:' + modelLabel + '(点击切换 —— 主控卡与分片派发链整条都用它;默认模型 = 引擎当前配置)'">🧠 {{ modelLabel }}</span>
+      </KMenu>
       <button class="mini danger" :class="{ arm: stopArm }" :title="stopArm ? '再点一次确认:中止所有运行中的工作流并清空排队' : '全部停止(中止 running + 清排队)'" @click="stopAll">{{ stopArm ? '确认停止?' : '■ 全部停止' }}</button>
       <button class="mini" title="刷新" @click="loadWf">↻</button>
     </header>

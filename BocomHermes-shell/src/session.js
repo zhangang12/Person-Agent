@@ -77,8 +77,21 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
       + '① 按需精读,不通读整个模块——单次 read ≤400 行(带 offset/limit),grep 先收窄路径与类型;深读大片文件用 task 派子 Agent(它有独立 128k)。'
       + '② task / delegate_task 指令只写目标+文件路径+边界+回报格式,【严禁】贴文件原文/大段代码——不是限字数,是禁止把文档内容搬进上下文(塞原文超 2 万字壳层直接拦停该子 Agent);用 delegate_task 必须显式传 load_skills,不需要技能就传 []。'
       + '③ 子 Agent 结论一律落盘成文档,回报只给一句话+路径(字数不限,内容住文档里,谁要用谁去读);要整理结论也派子 Agent 读文档接力归纳,别自己全读。</上下文纪律>\n'
+      // 弱模型双向纪律(P1.3,2026-07-26,依据 external/claude-code-提示词工程借鉴.md §1.2/§3):不粉饰也不许防御性打折;
+      // 委派回报三不(直接用/不偷看/不编造);系统提醒元定义(防把注入提醒误归因于当前文件/工具输出)。
+      // 提示词改动纪律:小步单变量、两周观测期,台账见 docs/项目记忆/弱模型行为台账.md
+      + '<如实汇报>做成了什么、没做成什么照实说：跑过验证再说"完成"；没法验证就明说"还没验证"；失败贴原始输出，不许粉饰成成功；确认通过的也直说，不要防御性打折扣。</如实汇报>\n'
+      + '<委派回报纪律>子 Agent 回报后直接用它的结论；不要偷看子 Agent 的中间过程（会把噪音灌进你的上下文）；它没回报的内容不要编造。</委派回报纪律>\n'
+      + '<系统提醒说明>会话中卡片注入的提醒文字是系统侧提醒，与你正在读的文件内容、工具输出无关，按提醒本身行事即可。</系统提醒说明>\n'
+    // 技能摘要常驻(P1.4,借鉴 CC skill frontmatter 摘要常驻思想):模型先知道"有哪些技能可用",正文仍按需注入(全文预算见 card-send)
+    let skillLines = ''
+    try {
+      const sks = loadSkills()
+      if (sks.length) skillLines = '可用技能（说"用XX技能"即启用，启用后会注入该技能全文）：\n' + sks.map((s) => '- 技能「' + s.name + '」：' + (s.desc || '（无描述）')).join('\n') + '\n'
+      if (skillLines.length > 800) skillLines = skillLines.slice(0, 800) + '\n（技能清单过长已截断）\n'
+    } catch {}
     const body = parts.length ? ('\n以下是本项目的说明文档,供参考:\n\n' + parts.join('\n\n---\n\n')) : ''
-    return `<项目背景>\n${anchor}${discipline}${body}</项目背景>\n\n`
+    return `<项目背景>\n${anchor}${discipline}${body}${skillLines}</项目背景>\n\n`
   }
 
   // 项目级知识库(任务尾蒸馏的落点,src/knowledge.js):按工作目录匹配,新卡首条消息随背景注入。
@@ -705,6 +718,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
   const TX_MAX = 2 * 1024 * 1024
   const txDir = () => path.join(require('electron').app.getPath('userData'), 'transcripts')
   const txFile = (sid) => path.join(txDir(), String(sid).replace(/[^\w-]/g, '_') + '.jsonl')
+  ipcMain.handle('transcript-path', (e, sid) => { try { return sid ? txFile(sid) : '' } catch { return '' } })   // 交棒逃生舱:上一棒 transcript 落盘路径(随续命消息注入给下一棒)
   const txCount = new Map()   // sid → 已落盘的消息条数(增量游标)
   function appendTranscript(sid, msgs) {
     if (!sid || !Array.isArray(msgs) || !msgs.length) return
@@ -763,7 +777,12 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     const si = S.sessionInfo.get(sid); if (!si) return null
     const mw = S.modelByWc.get(wcId)
     if (mw !== undefined) si.model = mw
-    else { const h = S.history.find((x) => x.id === sid); if (h && h.model) si.model = h.model }   // 卡坞续接:恢复当初那张卡选的模型
+    else {
+      // 发起时选定的模型(编排页发起/主控分片继承):注册表随卡走,优先级高于历史 —— 新卡还没有历史,老卡以卡内手选(modelByWc)为准
+      const reg = S.wfCardByWc && S.wfCardByWc.get(wcId)
+      if (reg && reg.model) si.model = reg.model
+      else { const h = S.history.find((x) => x.id === sid); if (h && h.model) si.model = h.model }   // 卡坞续接:恢复当初那张卡选的模型
+    }
     return si.model || S.settings.model || null
   }
   // 卡片↔会话登记(每次建/换会话都过这里):
@@ -927,8 +946,9 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
       try { if (!e.sender.isDestroyed()) e.sender.send('card-note', { text: '已随首条消息注入背景：' + (seg.join(' + ') || '项目背景') + '（' + ctxPrefix.length + ' 字）', tone: 'muted' }) } catch {}
     }
     // 作答技能：选中的技能把方法论指令静默预置到用户原文前（用户气泡仍显示原文）
+    // 全文预算(P1.4):技能是注入侧最后一个无预算口子,超 4000 字截尾并标注(memory.md 截尾同款)
     let skillPrefix = ''
-    if (skill) { const sk = loadSkills().find((s) => s.id === skill); if (sk) { skillPrefix = '<作答技能:' + sk.name + '>\n' + sk.body + '\n</作答技能>\n\n'; log('inject skill 「' + sk.name + '」(' + sk.body.length + ' chars) for ' + sessionId) } }
+    if (skill) { const sk = loadSkills().find((s) => s.id === skill); if (sk) { const skBody = sk.body.length > 4000 ? sk.body.slice(0, 4000) + '\n（技能正文过长已截断，完整版见 skills 目录）' : sk.body; skillPrefix = '<作答技能:' + sk.name + '>\n' + skBody + '\n</作答技能>\n\n'; log('inject skill 「' + sk.name + '」(' + skBody.length + ' chars) for ' + sessionId) } }
     const msg = ctxPrefix + skillPrefix + (text || '')
     S.sentPrompt.set(sessionId, msg); S.streamBuf.delete(sessionId)   // 存【实际发出的全文】(含注入前缀):回显过滤比对的是 serve 收到的东西 —— 只存原文的话,带前缀的回显漏网,整坨背景提示词会打进对话流
     touchHistory(sessionId)

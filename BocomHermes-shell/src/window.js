@@ -150,6 +150,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         S.wfRegistry = S.wfRegistry || new Map(); S.wfCardByWc = S.wfCardByWc || new Map()
         const reg = { id: String(id), wcId: null, kind: wfKindE, goal: disp || title || '', status: 'running', round: 0, rounds: 0, at: Date.now(), archive: null, final: '', todos: null, files: [], actions: [], dir: S.settings.projectDir || '', elapsedMs: 0 }
         if (wfKindE === 'orch') reg.planApproved = false   // 规划闸壳层状态位(同真窗口路径)
+        if (opts && opts.model) reg.model = opts.model   // 发起时选定的模型(编排页):随注册表走,replayModel/session-bind 取;分片继承也读它
         S.wfRegistry.set(reg.id, reg)
         if (S.wfRegistry.size > 50) { const k = S.wfRegistry.keys().next().value; S.wfRegistry.delete(k) }
       }
@@ -218,6 +219,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       S.wfRegistry = S.wfRegistry || new Map(); S.wfCardByWc = S.wfCardByWc || new Map()
       const reg = { id: String(id), wcId, kind: wfKind, goal: disp || title || '', status: 'running', round: 0, rounds: 0, at: Date.now(), archive: null, final: '', todos: null, files: [], actions: [], dir: S.settings.projectDir || '', elapsedMs: 0 }
       if (wfKind === 'orch') reg.planApproved = false   // 主控规划闸壳层状态位:用户在卡片点【开始执行】后置 true(wf-plan-approved),relay /orch/run 据此拦未批派发
+      if (opts && opts.model) reg.model = opts.model   // 发起时选定的模型(编排页):随注册表走,replayModel 取;分片继承也读它
       S.wfRegistry.set(reg.id, reg); S.wfCardByWc.set(wcId, reg)
       if (S.wfRegistry.size > 50) { const k = S.wfRegistry.keys().next().value; S.wfRegistry.delete(k) }
     }
@@ -356,7 +358,16 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     // msg=系统规程+目标(发给 serve);disp=目标(用户气泡只显示目标,规程不露)。返回卡 id,与旧签名兼容。
     // 主控的分片/索引棒 → 隐藏卡:不开窗,会话经 session.js 镜像回流到主控卡主区域(shard 视图);
     // 自动过规划闸 + 权限自动放行(无人值守);进度经 pushShardProgress 聚合进主控卡
-    const id = spawnCard('工作流 · ' + g.slice(0, 20), null, workflowSystemPrompt(dir, S.settings.backendDir || '') + '\n\n【总目标】\n' + g, g, parentOrch ? { wf: true, shard: true, hidden: true } : { flash: true, wf: true })
+    // 分片继承主控的发起模型(编排页选定):整条派发链同一个大脑;排队出队重走本函数时会重新查,注册表还在就丢不了
+    let shardModel = null
+    if (parentOrch) {
+      try {
+        const oref = S.orchByTag && S.orchByTag.get(parentOrch)
+        const oreg = oref && S.wfRegistry && S.wfRegistry.get(String(oref.id))
+        shardModel = (oreg && oreg.model) || null
+      } catch {}
+    }
+    const id = spawnCard('工作流 · ' + g.slice(0, 20), null, workflowSystemPrompt(dir, S.settings.backendDir || '') + '\n\n【总目标】\n' + g, g, parentOrch ? { wf: true, shard: true, hidden: true, model: shardModel } : { flash: true, wf: true })
     if (parentOrch) { try { const reg = S.wfRegistry && S.wfRegistry.get(String(id)); if (reg) { reg.parentOrch = parentOrch; reg.writeScope = writescope.parseWriteScope(g); reg.contract = writescope.parseContract(g); if (reg.writeScope.length) log('shard ' + reg.id + ' 写归属: ' + reg.writeScope.join(', ')); if (reg.contract.length) log('shard ' + reg.id + ' 契约签名 ' + reg.contract.length + ' 个(收官核对)'); pushShardProgress(parentOrch) } } catch {} }
     return id
   }
@@ -410,13 +421,14 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       }
     } catch {}
   }, 60000)
-  function spawnOrchestrator(goal) {
+  function spawnOrchestrator(goal, opts) {
     const g = String(goal || '').trim() || '未命名主控'
     const tag = 'OC-' + Math.random().toString(36).slice(2, 6)
     S.orchByTag = S.orchByTag || new Map()
     const dir = S.settings.projectDir || ''
     // 递归已硬禁(relay /orch/run-orch 拦:带已有 [orch:TAG] 的 goal 直接拒)—— 层级只到"主控→分片→task 子 Agent"
-    const id = spawnCard('主控 · ' + g.slice(0, 20), null, orchestratorSystemPrompt(dir, S.settings.backendDir || '', tag) + '\n\n【总目标】\n' + g, g, { flash: true, wf: true, orch: true })
+    // opts.model:编排页发起时选定的模型 → 注册表随卡走,分片派发生效链同待(spawnWorkflow 继承)
+    const id = spawnCard('主控 · ' + g.slice(0, 20), null, orchestratorSystemPrompt(dir, S.settings.backendDir || '', tag) + '\n\n【总目标】\n' + g, g, { flash: true, wf: true, orch: true, model: (opts && opts.model) || null })
     S.orchByTag.set(tag, { id: String(id), at: Date.now() })
     if (S.orchByTag.size > 20) { const k = S.orchByTag.keys().next().value; S.orchByTag.delete(k) }
     log('orchestrator spawned (tag ' + tag + ', card ' + JSON.stringify(id) + '): ' + g.slice(0, 60))
@@ -1633,7 +1645,10 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   const STRICT_PREFIX = '<任务编排·严格模式>\n本次编排按【固定步骤链】逐步下发:每轮只执行当前下发的这一步并汇报结果,不要提前做后续步骤、不要追问后续步骤,做完等下一步自动下发。若某步失败,明说「失败」及原因(会停止下发后续步骤)。\n</任务编排·严格模式>\n'
   ipcMain.handle('start-conversation', (_e, payload) => {
     const { title, msg, disp, files, mode } = payload || {}
-    if (mode === 'wf' || mode === 'orch') { const r = spawnOrchestrator(msg || title || ''); return { id: r && r.id } }   // 动态工作流=多层派发:主控预检路由(单卡装得下单卡、装不下拆多层+索引收口);图片暂不支持
+    // 发起时选定模型(编排页模型 chip):{providerID,modelID,name} —— 随注册表走(session.js replayModel 取),主控派分片整条链继承
+    const pm = payload && payload.model
+    const launchModel = (pm && pm.modelID) ? { providerID: String(pm.providerID || ''), modelID: String(pm.modelID), name: String(pm.name || pm.modelID) } : null
+    if (mode === 'wf' || mode === 'orch') { const r = spawnOrchestrator(msg || title || '', { model: launchModel }); return { id: r && r.id } }   // 动态工作流=多层派发:主控预检路由(单卡装得下单卡、装不下拆多层+索引收口);图片暂不支持
     if (mode === 'pipeline') {
       const body = msg || title || ''
       // 扩展:{steps, strict, files} —— strict=true 且 steps 非空进【严格模式】:开卡只发 steps[0]+严格规程前缀,
@@ -1641,7 +1656,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       const steps = Array.isArray(payload && payload.steps) ? payload.steps.map((s) => String(s == null ? '' : s).trim()).filter(Boolean).slice(0, 20) : []
       const strict = !!(payload && payload.strict) && steps.length > 0
       const first = strict ? (PIPELINE_RULES + STRICT_PREFIX + '【第 1/' + steps.length + ' 步】\n' + steps[0]) : (PIPELINE_RULES + body)
-      const id = spawnCard('任务编排 · ' + String(disp || body).slice(0, 18), null, first, disp || body, { flash: true, pipeline: true })
+      const id = spawnCard('任务编排 · ' + String(disp || body).slice(0, 18), null, first, disp || body, { flash: true, pipeline: true, model: launchModel })
       if (strict) { const reg = S.wfRegistry && S.wfRegistry.get(String(id)); if (reg) { reg.strictSteps = steps; reg.strictIdx = 1 } }
       if (Array.isArray(files) && files.length) { S.cardFiles = S.cardFiles || new Map(); S.cardFiles.set(String(id), files) }
       return { id }
@@ -2050,6 +2065,13 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       reg.wcId = a.wcId
       S.wfCardByWc = S.wfCardByWc || new Map(); S.wfCardByWc.set(a.wcId, reg)
       const sid0 = S.sessionByWc.get(a.wcId); if (sid0 && !reg.sid) reg.sid = sid0
+      // 发起时选定的模型(reg.model):card-init 可能早于本绑定跑完(replayModel 那时还查不到注册表),在绑定点补进
+      // sessionInfo + 历史;modelByWc 已有值 = 用户在卡内手选过,不盖
+      if (reg.model && (!S.modelByWc || S.modelByWc.get(a.wcId) === undefined)) {
+        const si0 = sid0 && S.sessionInfo && S.sessionInfo.get(sid0)
+        if (si0 && !si0.model) si0.model = reg.model
+        if (sid0) { const h0 = S.history.find((x) => x.id === sid0); if (h0 && !h0.model) { h0.model = reg.model; try { touchHistory(sid0) } catch {} } }
+      }
     }
     return { ok: true }
   })
