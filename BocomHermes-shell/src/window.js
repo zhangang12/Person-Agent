@@ -1820,10 +1820,12 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       const shardN = tag ? regs.filter((x) => x.parentOrch === tag).length : 0   // 主控条目带分片数(面板好认"这是一次多层派发")
       out.push({
         id: r.id, goal: r.goal, status: r.status, kind: r.kind || 'workflow', rounds: r.rounds, elapsedMs: r.elapsedMs,
-        files: (r.files || []).length, at: r.at, archive: r.archive || '', shards: shardN || undefined, sid: r.sid || '',
+        files: (r.files || []).length, fileList: (r.files || []).slice(0, 50), at: r.at, archive: r.archive || '', shards: shardN || undefined, sid: r.sid || '',
         diff: r.diff || null,   // session.diff 权威账本:增删行/文件数(编码模式的改动证据)
+        planApproved: r.kind === 'orch' ? (r.planApproved !== false) : undefined,   // 主控规划闸状态位(批准闸横幅据此亮「去批准」)
         live: !!(S.wfCardByWc && S.wfCardByWc.has(r.wcId)), busy: !!(S.isCardBusy && S.isCardBusy(r.wcId)),
         todoDone: doneN, todoTotal: todos.length, current: cur ? String((cur && (cur.content || cur.text || cur.title)) || '') : '',
+        todos: todos.map((t) => ({ text: String((t && (t.content || t.text || t.title)) || ''), status: String((t && t.status) || '') })).slice(0, 30),
         actions: (Array.isArray(r.actions) ? r.actions : []).map((a) => ({ kind: a.kind, label: a.label, detail: a.detail })),
       })
     }

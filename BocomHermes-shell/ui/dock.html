@@ -138,6 +138,34 @@
   .wfretry:hover { color: var(--accent); border-color: var(--accent); background: var(--hover); }
   .wfitem.hasretry .t, .wfitem.hasretry .meta { padding-right: 84px; }   /* 续跑+✕ 两颗钮一起让位,别压字 */
 
+  /* ── W2 左列表右详情双栏 ── */
+  .wfsplit { display: flex; gap: 9px; min-height: 0; }
+  .wfsplit .wflist { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px; overflow-y: auto; }
+  .wfdetail { width: 280px; flex: none; border: .5px solid var(--composer-border); border-radius: 11px; padding: 10px 12px; overflow-y: auto; align-self: flex-start; max-height: 100%; }
+  .wfd-empty { font-size: 11.5px; color: var(--txt3); text-align: center; padding: 24px 8px; }
+  .wfd-goal { font-size: 13px; font-weight: 600; color: var(--txt); line-height: 1.5; }
+  .wfd-meta { font-size: 10.5px; color: var(--txt3); margin-top: 4px; font-family: monospace; }
+  .wfd-ops { display: flex; flex-wrap: wrap; gap: 6px; margin: 9px 0 4px; }
+  .wfd-op { font-size: 11px; color: var(--txt2); background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 8px; padding: 4px 11px; cursor: pointer; }
+  .wfd-op:hover { color: var(--accent); border-color: var(--accent); }
+  .wfd-op.danger:hover { color: var(--diff-del); border-color: var(--diff-del); }
+  .wfd-sec { margin-top: 10px; border-top: .5px dashed var(--composer-border); padding-top: 8px; }
+  .wfd-lb { font-size: 10.5px; color: var(--txt3); margin-bottom: 6px; }
+  .wfd-todo { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--txt); padding: 2px 0; }
+  .wfd-todo i { flex: none; width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--composer-border); }
+  .wfd-todo.done { color: var(--txt3); text-decoration: line-through; }
+  .wfd-todo.done i { background: var(--green); border-color: var(--green); }
+  .wfd-todo.doing i { border-color: var(--accent); }
+  .wfd-file { font-size: 11px; font-family: monospace; color: var(--accent); padding: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wfd-act { font-size: 11px; color: var(--txt2); padding: 2px 0; font-family: monospace; }
+  .wfd-act b { color: var(--accent); font-weight: 500; }
+  .wfd-ad { color: var(--txt3); }
+  .wfd-gate { border: 1px solid var(--warn-txt, var(--accent)); border-radius: 10px; background: var(--warn-bg, var(--composer-bg)); padding: 9px 11px; margin-bottom: 10px; }
+  .wfd-gt { font-size: 12px; font-weight: 600; color: var(--warn-txt, var(--accent)); }
+  .wfd-gd { font-size: 11px; color: var(--txt2); margin: 4px 0 8px; line-height: 1.5; }
+  .wfd-gbtn { font-size: 11.5px; font-weight: 600; color: var(--send-fg); background: var(--brand); border: none; border-radius: 8px; padding: 5px 14px; cursor: pointer; }
+  .wfitem.sel { border-color: var(--accent) !important; background: var(--hover); }
+
   .list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; padding-right: 2px; }
   .list::-webkit-scrollbar { width: 7px; } .list::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
   .item { text-align: left; background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 12px; padding: 10px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 5px; transition: border-color .15s; }
@@ -228,8 +256,12 @@
       </div>
     </div>
 
-    <div class="seclbl" id="wfLbl" hidden>工作流 / 编排 · 点一条聚焦卡片 / 重开会话<span class="sp"></span><button id="wfRefresh" class="clr nodrag">刷新</button></div>
-    <div id="wfList" class="wflist nodrag" hidden></div>
+    <div class="seclbl" id="wfLbl" hidden>工作流 / 编排 · 点一条看详情<span class="sp"></span><button id="wfRefresh" class="clr nodrag">刷新</button></div>
+    <!-- W2 左列表右详情双栏:点行 → 右侧详情(批准闸横幅/todo 清单/产出文件/动作流水/操作) -->
+    <div id="wfSplit" class="wfsplit nodrag" hidden>
+      <div id="wfList" class="wflist"></div>
+      <div id="wfDetail" class="wfdetail"><div class="wfd-empty">点左侧一条工作流看详情</div></div>
+    </div>
 
     <div class="seclbl">最近会话 · 点一条续接 <span class="sp"></span><button id="clear" class="clr nodrag">清空</button></div>
     <div id="list" class="list nodrag"></div>
@@ -273,13 +305,57 @@
 
   // ── 工作流面板:现行(注册表,进行中置顶)+ 历史存档;点活卡聚焦、点历史开存档。4s 自刷(状态很轻) ──
   const wfLbl = $('wfLbl'), wfListEl = $('wfList')
+  // ── W2 详情双栏:点行 → 右侧详情(批准闸横幅/todo 清单/产出文件/动作流水/操作) ──
+  let wfSelKey = ''
+  function selectWf(w, el) {
+    wfSelKey = String(w.id || w.archive || '')
+    for (const x of wfListEl.querySelectorAll('.wfitem')) x.classList.remove('sel')
+    el.classList.add('sel')
+    renderWfDetail(w)
+  }
+  function renderWfDetail(w) {
+    const d = $('wfDetail')
+    const stTxt = w.status === 'running' ? (w.busy ? '进行中' : '待操作') : w.status === 'done' ? '已完成' : w.status === 'interrupted' ? '中断' : '存档'
+    const kindTxt = w.kind === 'orch' ? '主控·多层派发' : w.kind === 'pipeline' ? '任务编排' : '工作流'
+    // 批准闸横幅:主控卡方案待批(planApproved===false 且还在跑)→ 决策点横幅置顶(去批准=聚焦到主控卡)
+    const gate = (w.kind === 'orch' && w.planApproved === false && w.status === 'running')
+      ? '<div class="wfd-gate"><div class="wfd-gt">⚡ 批准闸 · 拆分方案待批准</div><div class="wfd-gd">主控卡已出拆分方案,批准后各分片才会开跑。</div><button class="wfd-gbtn" data-act="approve">去批准</button></div>' : ''
+    const todos = (w.todos || [])
+    const todoHtml = todos.length
+      ? '<div class="wfd-sec"><div class="wfd-lb">任务清单 ' + (w.todoDone | 0) + '/' + (w.todoTotal | 0) + '</div>' + todos.map((t) => {
+          const done = /complet/i.test(t.status || ''), doing = /progress|doing/i.test(t.status || '')
+          return '<div class="wfd-todo' + (done ? ' done' : doing ? ' doing' : '') + '"><i></i>' + esc(t.text) + '</div>'
+        }).join('') + '</div>' : ''
+    const files = (w.fileList || [])
+    const fileHtml = files.length
+      ? '<div class="wfd-sec"><div class="wfd-lb">产出文件</div>' + files.map((f) => '<div class="wfd-file" title="' + esc(f) + '">' + esc(String(f).split(/[\\/]/).slice(-2).join('/')) + '</div>').join('') + '</div>' : ''
+    const acts = (w.actions || [])
+    const actHtml = acts.length
+      ? '<div class="wfd-sec"><div class="wfd-lb">动作流水</div>' + acts.slice(-12).reverse().map((a) => '<div class="wfd-act"><b>' + esc(a.kind || '·') + '</b> ' + esc(a.label || '') + (a.detail ? '<span class="wfd-ad"> — ' + esc(a.detail) + '</span>' : '') + '</div>').join('') + '</div>' : ''
+    const meta = [kindTxt, stTxt, w.rounds ? w.rounds + ' 轮' : '', w.elapsedMs ? Math.round(w.elapsedMs / 1000) + 's' : '', w.shards ? w.shards + ' 分片' : '', (w.diff && (w.diff.additions || w.diff.deletions)) ? '+' + w.diff.additions + '/-' + w.diff.deletions : '', rel(w.at || Date.now())].filter(Boolean).join(' · ')
+    const ops = []
+    if (w.live || w.sid || w.archive) ops.push('<button class="wfd-op" data-act="open">' + (w.live ? '聚焦卡片' : (w.sid ? '重开会话' : '打开存档')) + '</button>')
+    if ((w.status === 'running' || w.status === 'interrupted') && w.kind === 'pipeline') ops.push('<button class="wfd-op" data-act="retry">↻ 从失败步续跑</button>')
+    ops.push('<button class="wfd-op danger" data-act="del">删除</button>')
+    d.innerHTML = gate
+      + '<div class="wfd-goal">' + esc(w.goal || '工作流') + '</div>'
+      + '<div class="wfd-meta">' + esc(meta) + '</div>'
+      + '<div class="wfd-ops">' + ops.join('') + '</div>'
+      + todoHtml + fileHtml + actHtml
+    d.querySelectorAll('.wfd-op, .wfd-gbtn').forEach((b) => b.addEventListener('click', async () => {
+      const act = b.dataset.act
+      if (act === 'del') { try { await H.wfDelete(w.id) } catch (e) {} wfSelKey = ''; d.innerHTML = '<div class="wfd-empty">点左侧一条工作流看详情</div>'; renderWf(); return }
+      if (act === 'retry') { b.disabled = true; try { await H.pipelineRetry(w.id) } catch (e) {} b.disabled = false; return }
+      try { await H.wfOpen({ id: w.id, archive: w.archive, sid: w.sid }) } catch (e) {}   // open / approve 都是聚焦到卡
+    }))
+  }
   async function renderWf() {
     // 契约:旧=数组(只有工作流);新=对象带 queued 排队位([{goal,position,at}])。两种形态都接住,缺席静默。
     let r = null
     try { r = await H.wfList() } catch (e) {}
     const items = Array.isArray(r) ? r : ((r && (r.items || r.list)) || [])
     const queued = (!Array.isArray(r) && r && Array.isArray(r.queued)) ? r.queued : []
-    wfLbl.hidden = wfListEl.hidden = !items.length && !queued.length
+    wfLbl.hidden = $('wfSplit').hidden = !items.length && !queued.length
     if (!items.length && !queued.length) return
     wfListEl.innerHTML = ''
     // 排队位:并发度满时等待中的工作流(徽章风格与 running/done/archived 一致);无 queued 不显示
@@ -293,7 +369,7 @@
       el.querySelector('.wfcancel').addEventListener('click', async (e) => {
         e.stopPropagation()
         try { await H.wfCancelQueued(goalTxt) } catch (e2) {}
-        loadWf()
+        renderWf()
       })
       wfListEl.appendChild(el)
     }
@@ -313,8 +389,8 @@
         + (todoBit ? '<span class="meta wftodo">' + esc(todoBit) + '</span>' : '')
         + (pct >= 0 ? '<span class="wfpbar"><i style="width:' + pct + '%"></i></span>' : '')
         + '<span class="meta">' + esc(meta) + '</span>'
-      el.title = (w.live ? (w.busy ? '运行中 — 点击聚焦卡片' : '空闲中(可能在等你批准计划) — 点击聚焦卡片') : (w.sid ? '卡片已关 — 点击重开完整会话' : '卡片已关 — 点击打开存档')) + (w.status === 'interrupted' ? '\n已中断 — 可点「↻ 续跑」从失败步接着跑' : '') + (w.archive ? '\n' + w.archive : '')
-      el.addEventListener('click', async () => { try { await H.wfOpen({ id: w.id, archive: w.archive, sid: w.sid }) } catch (e) {} })
+      el.title = (w.live ? (w.busy ? '运行中 — 点击查看详情' : '空闲中(可能在等你批准计划) — 点击查看详情') : (w.sid ? '卡片已关 — 点击查看详情,可重开完整会话' : '卡片已关 — 点击查看详情,可打开存档')) + (w.status === 'interrupted' ? '\n已中断 — 可点「↻ 续跑」从失败步接着跑' : '') + (w.archive ? '\n' + w.archive : '')
+      el.addEventListener('click', () => selectWf(w, el))
       // T4 从失败步续跑:running/interrupted 的编排项亮「↻ 续跑」小钮;pipelineRetry 通道缺席不亮
       if ((w.status === 'running' || w.status === 'interrupted') && w.kind === 'pipeline' && typeof H.pipelineRetry === 'function') {
         el.classList.add('hasretry')
