@@ -499,3 +499,15 @@ html[data-embed="1"] .hl { display: none; }
 .shardpanel .sp-tool .st.ok { color: var(--green); }
 .shardpanel .sp-tool .st.bad { color: var(--danger); }
 .shardpanel .sp-text { font-size: 13px; margin: 4px 0; }
+
+/* ── 状态行(P2c harness:✻ 正在跑什么 + 已耗时 + Esc 中断;完成短显) ────────── */
+.statusline {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 4px 16px 0; font: var(--c1); color: var(--label-2);
+}
+.statusline .sl-spin { color: var(--blue); animation: sl-rot 1s linear infinite; }
+@keyframes sl-rot { to { transform: rotate(360deg) } }
+.statusline .sl-main { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.statusline .sl-time { font-family: var(--font-mono); color: var(--label-3); flex: none; }
+.statusline .sl-esc { margin-left: auto; font: var(--c2); color: var(--label-3); flex: none; }
+.statusline.ok { color: var(--green); }

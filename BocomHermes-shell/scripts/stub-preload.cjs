@@ -4,7 +4,7 @@
 'use strict'
 const { contextBridge } = require('electron')
 const cbs = {}
-const flags = { planApproved: false }
+const flags = { planApproved: false, sendN: 0 }
 // ctx 三态场景用:URL query __tokens 传用量(配合 listModels 的 100k 上限);preload 在渲染进程,env 不可控,走 query 最稳
 const TOKENS = Math.floor(+((new URLSearchParams(location.search)).get('__tokens'))) || 0
 contextBridge.exposeInMainWorld('BocomHermes', {
@@ -14,6 +14,11 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   getHistory: () => [],
   cardInit: async () => ({ sessionId: 'stub-sid', project: 'demo-repo', dir: '/tmp/demo', model: { providerID: 'm', modelID: 'mimo-v2', name: 'MiMo V2 Free' }, reattached: false, messages: [], running: false }),
   cardSend: async (text) => {
+    flags.sendN++
+    if (/__slow__/.test(String(text))) {   // 慢轮(状态行/hang 探针场景):2.5s 才回
+      await new Promise((r) => setTimeout(r, 2500))
+      return '慢回答'
+    }
     if (/请运行下面这条命令/.test(String(text))) {   // 命令块「运行」target 轮:流式给输出
       if (cbs.stream) cbs.stream({ kind: 'text', text: 'total 42\n-rw-r--r--  demo.ts', partID: 'run1' })
       return 'total 42\n-rw-r--r--  demo.ts'

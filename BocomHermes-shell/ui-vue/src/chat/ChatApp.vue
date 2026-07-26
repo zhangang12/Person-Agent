@@ -11,6 +11,7 @@ import ArtDrawer from './ArtDrawer.vue'
 import SubAgentRail from './SubAgentRail.vue'
 import WfBar from './WfBar.vue'
 import ShardPanel from './ShardPanel.vue'
+import StatusLine from './StatusLine.vue'
 import KDialog from '../components/KDialog.vue'
 
 function onKey(e: KeyboardEvent) {
@@ -53,6 +54,7 @@ function scrollToPerm() {
       <WfBar />
       <ShardPanel />
       <FeedView />
+      <StatusLine />
       <ComposerBar />
       <ArtDrawer />
       <SubAgentRail />

@@ -31,3 +31,18 @@ P2a-2 留尾的三项全部落地,对话页(ui-vue chat)与 legacy card.html 功
 ## 仍不做(后续棒)
 - 状态行 ✻/hang 探针/watchdog 绕圈检测/delegate nudge 等 harness 功能(legacy 卡仍有,迁移需单独评估)
 - 分片视图只看镜像;shard-pop 弹窗细看仍走 shardFocus IPC
+
+---
+
+# P2c · harness 四件套迁移(已完成)
+
+## 落点(全部对齐 legacy card.html 行为,不再依赖旧卡)
+- **状态行 ✻**:StatusLine.vue —— 忙时【✻ 正在跑什么(runningTools 登记,工具名+标题)+ 已耗时 + Esc 中断】,完成短显 ✓ Ns(3.5s 隐);已按 Esc =「正在停止…」(store.aborting)
+- **hang 探针**:任何流事件打点 lastStreamAt;忙碌期 15s 一拍 —— 90s 静默提示(长考/挂死),5min 升级(建议 Esc 重试);新一轮复位
+- **进展型看门狗**(仅 wf 卡):轮末结算读文件集合,连续 N 轮(默认 3)重合 ≥0.7 且 todo 无进展 → 注入绕圈提醒(带总目标背诵);再绕 M 轮(默认 2)→ 横幅判死权给人;分片无人值守 → 自动中止。账本压缩即清,分片跨棒连续
+- **三催**:委派驱动(todo ≥3 + 已干活 + ≥2 轮 + 未派 task → wf 注入派子 Agent 规程/普通卡可见建议,每任务一次)、长任务防停(todo 未完 → wf 自动连催 ≤3 无进展转人工/普通卡「继续执行」)、产出兜底(wf 全勾零落盘 → 补 MD 提醒一次);交棒优先闸(handoffDue 时全静默);普通卡 ctx ≥90% 提醒一次
+
+## 验收
+- scripts/chat-p2c-stub.cjs 五场景 stub 全过(状态行/看门狗/委派/防停连催/产出兜底)→ /tmp/chat-p2c-*.png 目检
+- ui:typecheck 零错误 / ui:test 78 例 / ui:build / 既有自测全绿
+- 至此 legacy card.html 的全部功能性行为已迁移完毕,card.html 仅作 cardImpl=legacy 回退保留
