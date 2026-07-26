@@ -16,12 +16,13 @@ const toast = useToast()
 // webview preload 必须是绝对 file URL:本页在 ui/dist/,旧页在 ui/,preload 在仓库根
 export const PRELOAD_URL = new URL('../../preload.js', location.href).href
 
-export type ViewName = 'chat' | 'orch' | 'mail' | 'settings'
+export type ViewName = 'chat' | 'orch' | 'mail' | 'settings' | 'kb'
 // 视图 webview 懒创建且保活(切走只是隐藏);相对路径:ui/dist/shell.html → ui/*.html
 const VIEW_SRC: Record<string, string> = {
   orch: '../dock.html?embed=1',
   mail: '../mailcenter.html?embed=1',
   settings: '../settings.html?embed=1',
+  kb: '../knowledge.html?embed=1',   // 项目知识库(独立视图,从设置页抽出)
 }
 
 export interface ChatEntry {
@@ -83,23 +84,14 @@ export function showView(view: string) {
     try { BH()?.openBrowser?.() } catch (e) { /* 静默 */ }
     return
   }
-  if (view === 'kb') { gotoSettingsTab('knowledge'); return }   // 知识库入口直达设置的「项目知识库」页签(深链,不再丢到设置首页)
-  const v = (['chat', 'orch', 'mail', 'settings'].includes(view) ? view : 'chat') as ViewName
+  const v = (['chat', 'orch', 'mail', 'settings', 'kb'].includes(view) ? view : 'chat') as ViewName
   store.view = v
   if (v !== 'chat' && !store.visited.includes(v)) store.visited.push(v)
 }
 export function viewSrc(v: ViewName) { return VIEW_SRC[v] || '' }
 
-// 视图 webview 元素引用(ShellApp ref 回调登记):深链切页签用(settings.__setTab)
+// 视图 webview 元素引用(ShellApp ref 回调登记,备用)
 export const viewWv: Record<string, any> = {}
-/** 深链到设置视图的某个页签:webview 未就绪就挂起等 dom-ready(settings.html 暴露 window.__setTab) */
-export function gotoSettingsTab(tab: string) {
-  showView('settings')
-  const apply = () => { try { viewWv.settings && viewWv.settings.executeJavaScript("window.__setTab && window.__setTab('" + tab + "')") } catch (e) { /* 静默 */ } }
-  const el = viewWv.settings
-  if (el && el.__kbReady) { apply(); return }
-  if (el) el.addEventListener('dom-ready', () => { el.__kbReady = true; apply() }, { once: true })
-}
 
 // ── 历史区:最近 8 条(排除活动 sid 与钉出 sid),点击 = 带 sid 重开 ──
 export function refreshHist() {

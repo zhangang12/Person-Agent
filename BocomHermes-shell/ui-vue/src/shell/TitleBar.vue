@@ -19,7 +19,7 @@ const chipText = computed(() => {
 })
 const chipTip = '引擎连接状态(保活心跳推送,与状态栏引擎灯同源)'
 // 视图感知标题(设计稿 desktop W1-W4:标题栏显示当前视图名)
-const viewTitle = computed(() => ({ chat: '对话', orch: '任务编排', mail: '邮件', settings: '设置' } as Record<string, string>)[store.view] || '')
+const viewTitle = computed(() => ({ chat: '对话', orch: '任务编排', mail: '邮件', settings: '设置', kb: '项目知识库' } as Record<string, string>)[store.view] || '')
 </script>
 
 <template>
