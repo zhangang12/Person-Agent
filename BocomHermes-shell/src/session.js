@@ -339,9 +339,11 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
   function onQuestion({ sessionId, requestId, questions, v2, serve }) {
     const si = S.sessionInfo.get(sessionId)
     if (!si || !si.wc || si.wc.isDestroyed() || (si.tag && si.tag.scope)) {
+      log('question ' + requestId + ' 自动拒答:' + (!si ? '会话无主' : si.wc && si.wc.isDestroyed() ? '卡已毁' : 'scope 窗口'))
       try { oc.rejectQuestion((si && si.serve) || serve, sessionId, requestId, v2) } catch {}
       return
     }
+    log('question ' + requestId + ' → 弹到卡片 (会话 ' + String(sessionId).slice(0, 24) + ', ' + (questions || []).length + ' 问)')
     S.pendingQuestion.set(requestId, { sessionId, v2: !!v2, serve: si.serve || serve })
     si.wc.send('question-request', { requestId, questions: questions || [] })
   }

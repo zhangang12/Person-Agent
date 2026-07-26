@@ -11,7 +11,7 @@ const fmtLeft = (sec: number) => Math.floor(sec / 60) + ':' + String(sec % 60).p
   <div v-if="(s.wfMode || s.orchMode) && (s.planAsk || s.wfMode)" class="wfbar">
     <template v-if="s.planAsk">
       <span class="wf-ask">方案待批准 —— 检查任务清单,没问题就开跑</span>
-      <button class="wf-go" @click="approvePlan()">✓ 批准方案 → 改</button>
+      <button class="wf-go" @click="approvePlan()">开始执行</button>
       <template v-if="s.planAutoLeft > 0">
         <span class="wf-cd">{{ fmtLeft(s.planAutoLeft) }} 后自动开跑</span>
         <button class="wf-cdx" title="取消倒计时自动批准(仍可手动批准)" @click="cancelPlanAuto">取消自动</button>

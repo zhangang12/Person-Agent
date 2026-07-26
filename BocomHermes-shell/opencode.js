@@ -916,11 +916,14 @@ function dispatch(ev, onPermission, onText, info, onQuestion, onChildSession, on
   // 没有应答通道时(会话无主/通道未接)才自动 reject 兜底 —— 不拒就是挂死(实测卡 88s 等用户 Esc)。
   // v2 事件(question.v2.asked)走 /api/ 前缀端点;旧 serve 无此端点会 404,rejectQuestion 里 catch 打日志即可。
   if (type === 'question.asked' || type === 'question.v2.asked') {
-    const requestId = p.id ?? p.requestID ?? p.questionID
+    // requestId 字段名各家不一(id/requestID/questionID/requestId/question.id)——提不到就静默吞掉,
+    // 工具端会一直干等(实测:52s+ 无卡、回合挂死),必须兜底拒答并把形状打进日志
+    const requestId = p.id ?? p.requestID ?? p.questionID ?? p.requestId ?? p.questionId ?? (p.question && (p.question.id || p.question.requestID))
     const r = route(p.sessionID ?? p.sessionId)
     const v2 = type.includes('v2')
     if (requestId && onQuestion) onQuestion({ sessionId: r.sessionId, requestId, questions: Array.isArray(p.questions) ? p.questions : [], v2, serve: info })
     else if (info && requestId) rejectQuestion(info, p.sessionID ?? p.sessionId, requestId, v2)
+    else console.error('question.asked 但提不到 requestId,payload keys=' + Object.keys(p || {}).join(','), JSON.stringify(p).slice(0, 300))
     return
   }
   // message.updated:assistant 消息元数据(含 tokens 用量)—— 真实 token 计量的 SSE 来源。

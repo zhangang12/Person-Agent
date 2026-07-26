@@ -295,7 +295,11 @@ function flushStream(): void {
         ai.segs = []; ai.frozenLen = 0; ai.tail = st.rest
       } else {
         if (plan.newSeg) {
-          ai.segs.push({ id: nextId(), html: renderMarkdown(plan.newSeg) })
+          // 分隔线跨段去重:冻结段各自独立渲染(每段一次 renderMarkdown),连发 --- 被切成多段时
+          // 每段都出一条 <hr> 叠成一摞(实测);新段是纯 <hr> 且上一段也是 → 跳过
+          const html = renderMarkdown(plan.newSeg)
+          const lastIsHr = ai.segs.length > 0 && ai.segs[ai.segs.length - 1].html === '<hr>'
+          if (!(html === '<hr>' && lastIsHr)) ai.segs.push({ id: nextId(), html })
           ai.frozenLen = plan.cut
         }
         ai.tail = plan.tail
