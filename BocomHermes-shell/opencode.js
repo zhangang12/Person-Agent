@@ -528,8 +528,22 @@ async function sendMessage(info, sessionId, text, model, files, onNote, opts = {
     body.providerID = model.providerID; body.modelID = model.modelID
   }
   try {
-    const direct = extractText(await api(info.base, 'POST', `/session/${sessionId}/message`, body))
-    return direct || await waitAssistantText(info, sessionId, undefined, undefined, opts)   // 空 body（流式版 serve）→ 轮询等完成
+    // 停止慢的根:serve 把 POST 阻塞到生成自然收尾才回,用户点「停止」后 /abort 也喊不醒它 → 卡片"正在停止"干等 90s+(实测)。
+    // 解法:POST 与 abort 哨兵赛跑 —— 本卡一旦 abort,~0.4s 内赛跑输给哨兵,转去"宽限 ~3s 收半截"快收,不再陪 POST 傻等。
+    const abortWatch = new Promise((res) => {
+      const iv = setInterval(() => { if (abortedSince(sessionId, tSend)) { clearInterval(iv); res('__aborted__') } }, 400)
+    })
+    const direct = await Promise.race([api(info.base, 'POST', `/session/${sessionId}/message`, body), abortWatch])
+    if (direct === '__aborted__') {
+      markStopped(sessionId)   // 一次性"已手动停止"标记(契约①,上层给回合标)
+      await sleep(2800)        // 宽限收尾文本落消息(与 waitAssistantText 的 C7 快收同口径)
+      try {
+        const raw = await api(info.base, 'GET', `/session/${sessionId}/message`)
+        const list = Array.isArray(raw) ? raw : (raw && raw.data) || []
+        return pickTurnText(list).text || ''
+      } catch { return '' }
+    }
+    return extractText(direct) || await waitAssistantText(info, sessionId, undefined, undefined, opts)   // 空 body（流式版 serve）→ 轮询等完成
   } catch (e) {
     // serve 的 zod 校验不认我们的模型字段形状(4xx)→ 去掉模型重发一次并让用户看见,
     // 而不是整条消息发不出去;其它错误原样上抛
