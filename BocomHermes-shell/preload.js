@@ -150,6 +150,8 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   smtpTest:  () => ipcRenderer.invoke('smtp-test'),
   openMailCenter: (tab) => ipcRenderer.invoke('open-mail-center', tab),
   mailList: (opts) => ipcRenderer.invoke('mail-list', opts),
+  mailCompose: (a) => ipcRenderer.invoke('mail-compose', a),       // 写邮件(新写进发件箱队列,软撤回窗口可撤)
+  mailSentFolder: () => ipcRenderer.invoke('mail-sent-folder'),   // 已发送文件夹名探测(各邮局叫法不一)
   mailMarkRead: (ids) => ipcRenderer.invoke('mail-mark-read', ids),
   mailArchive: (ids) => ipcRenderer.invoke('mail-archive', ids),
   // 发件箱(发信安全闸门)

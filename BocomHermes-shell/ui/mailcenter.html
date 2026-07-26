@@ -137,6 +137,24 @@
   .mail-act:hover { color: var(--txt); border-color: var(--accent); }
   .mail-act:disabled { opacity: .6; cursor: default; }
   .mail-full { white-space: pre-wrap; background: var(--composer-bg); border-left: 2px solid var(--accent); padding: 7px 10px; margin-top: 5px; border-radius: 0 6px 6px 0; font-size: 11.5px; color: var(--txt2); line-height: 1.55; max-height: 240px; overflow: auto; }
+  .imapchip { flex: none; font-size: 10.5px; padding: 2px 9px; border-radius: 999px; border: .5px solid var(--composer-border); color: var(--txt3); cursor: pointer; }
+  .imapchip.ok { color: var(--green); border-color: var(--green); }
+  .imapchip.bad { color: var(--diff-del); border-color: var(--diff-del); }
+  /* 文件夹侧栏(设计稿 S7 三栏之左栏) */
+  .frail { width: 76px; flex: none; display: flex; flex-direction: column; gap: 3px; padding: 7px 6px; border-right: .5px solid var(--composer-border); }
+  .fitem { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 2px; border: none; background: transparent; color: var(--txt2); font-size: 10.5px; border-radius: 8px; cursor: pointer; font-family: var(--font); }
+  .fitem .fi-ic { font-size: 15px; }
+  .fitem:hover { background: var(--hover); color: var(--txt); }
+  .fitem.on { background: var(--composer-bg); color: var(--accent); font-weight: 600; }
+  /* 撰写弹层 */
+  .cmpovl { position: absolute; inset: 0; z-index: 60; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.3); border-radius: 14px; }
+  .cmpovl.show { display: flex; }
+  .cmpbox { width: 88%; max-width: 560px; background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 12px; padding: 13px; display: flex; flex-direction: column; gap: 7px; box-shadow: 0 10px 34px rgba(0,0,0,.28); }
+  .cmpbox .ct { font-size: 13px; font-weight: 600; color: var(--txt); }
+  .cmpbox .in { width: 100%; }
+  .cmpbox textarea.in { min-height: 130px; resize: vertical; line-height: 1.55; }
+  .cmpbox .row { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+  .cmpbox .ch { font-size: 11px; color: var(--txt3); margin-right: auto; }
 </style>
 </head>
 <body>
@@ -152,12 +170,19 @@
         <button id="tabSettings">设置</button>
       </div>
       <span class="sp"></span>
-      <button id="btnSummary" class="tbtn primary nodrag" title="让 AI 整理今天的邮件">今日摘要</button>
+      <span id="imapChip" class="imapchip" title="IMAP 连接状态(点击重测)">…</span>
+      <button id="btnCompose" class="tbtn primary nodrag" title="写新邮件(进发件箱,延迟内可撤销)">✎ 写邮件</button>
+      <button id="btnSummary" class="tbtn nodrag" title="让 AI 整理今天的邮件">今日摘要</button>
       <button id="x" class="hbtn nodrag" title="关闭"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
 
     <!-- ── 收件箱 ── -->
     <div id="viewInbox" class="nodrag">
+      <!-- 文件夹侧栏(设计稿 S7:收件箱/已发送;账户设置=顶部「设置」tab) -->
+      <div class="frail">
+        <button class="fitem on" data-folder="INBOX"><span class="fi-ic">📥</span>收件箱</button>
+        <button class="fitem" data-folder="Sent"><span class="fi-ic">📤</span>已发送</button>
+      </div>
       <div class="col-list">
         <div class="lbar">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--txt3);flex:none"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
@@ -226,6 +251,18 @@
     </div>
   </div>
 
+  <!-- ── 撰写弹层(写邮件 → 进发件箱,软撤回窗口可撤) ── -->
+  <div id="cmpOvl" class="cmpovl">
+    <div class="cmpbox">
+      <div class="ct">写邮件</div>
+      <input id="cmpTo" class="in" placeholder="收件人(多个用逗号分隔)" spellcheck="false" />
+      <input id="cmpCc" class="in" placeholder="抄送(可空)" spellcheck="false" />
+      <input id="cmpSubject" class="in" placeholder="主题" spellcheck="false" />
+      <textarea id="cmpText" class="in" placeholder="正文…"></textarea>
+      <div class="row"><span class="ch">先进发件箱,延迟内可撤回(秒数在邮件中心设置里调)</span><button id="cmpCancel" class="chip2">取消</button><button id="cmpSend" class="chip2" style="font-weight:600">进发件箱</button></div>
+    </div>
+  </div>
+
   <!-- ── 发件箱闸门(压底常驻条,设计稿 S7/W3):有待发件时全 tab 可见 ——
        撤回=主按钮(安全动作最高权重),立即发送次级;倒计时进度条 + 秒数,点「N 条待审」跳发件箱 tab ── -->
   <div id="gatebar" class="nodrag" hidden>
@@ -279,13 +316,61 @@
   // ── 收件箱列表（默认拉最近 30 天全部邮件，支持多选后批量 AI 摘要）──
   let inboxLoaded = false, onlyUnread = false, loading = false, emails = [], curMsgId = null
   let currentTab = 'inbox', nextCursor = null, totalMatched = 0, lastLoadAt = 0   // 分页游标 / 命中总数 / 上次加载时刻(自动刷新节流)
+  let curFolder = 'INBOX'   // 文件夹侧栏:INBOX=收件箱;已发送=探测到的 Sent 名(各邮局不一)
   const selected = new Set()   // 多选的 messageId
+  // 文件夹侧栏:切换 → 清空列表态重拉;已发送的文件名探测一次缓存(各邮局叫法不一)
+  let sentFolderName = ''
+  document.querySelectorAll('.fitem').forEach((b) => b.addEventListener('click', async () => {
+    const want = b.dataset.folder
+    if (want === 'Sent' && !sentFolderName) {
+      try { const r = await H.mailSentFolder(); sentFolderName = (r && r.folder) || 'Sent' } catch { sentFolderName = 'Sent' }
+    }
+    const next = want === 'Sent' ? (sentFolderName || 'Sent') : 'INBOX'
+    if (next === curFolder) return
+    curFolder = next
+    document.querySelectorAll('.fitem').forEach((x) => x.classList.toggle('on', x === b))
+    selected.clear(); curMsgId = null
+    $('chipUnread').style.display = curFolder === 'INBOX' ? '' : 'none'   // 未读筛选只对收件箱有意义
+    loadInbox()
+  }))
+  // IMAP 状态 chip:启动测一次,点亮/点红;点击手动重测
+  async function testImap(silent) {
+    const c = $('imapChip')
+    if (!silent) { c.textContent = '…'; c.className = 'imapchip' }
+    try {
+      const r = await H.emailTest()
+      const ok = !!(r && (r.ok === true || r.ok === undefined && !r.error))
+      c.textContent = ok ? 'IMAP 已连接' : 'IMAP 异常'
+      c.className = 'imapchip ' + (ok ? 'ok' : 'bad')
+      c.title = ok ? '收件服务器连接正常' : ('连接失败:' + ((r && (r.error || r.err)) || '未知错误') + '(点击重测)')
+    } catch (e) { c.textContent = 'IMAP 未配置'; c.className = 'imapchip bad'; c.title = '去「设置」填收件服务器(点击重测)' }
+  }
+  $('imapChip').addEventListener('click', () => testImap(false))
+  testImap(true)
+  // 写邮件:撰写弹层 → mail-compose 进发件箱(软撤回窗口可撤)
+  $('btnCompose').addEventListener('click', () => { $('cmpOvl').classList.add('show'); $('cmpTo').focus() })
+  $('cmpCancel').addEventListener('click', () => $('cmpOvl').classList.remove('show'))
+  $('cmpOvl').addEventListener('click', (e) => { if (e.target === $('cmpOvl')) $('cmpOvl').classList.remove('show') })
+  $('cmpSend').addEventListener('click', async () => {
+    const to = $('cmpTo').value.trim()
+    if (!to) { $('cmpTo').focus(); return }
+    const btn = $('cmpSend'); btn.disabled = true; btn.textContent = '送入…'
+    try {
+      await H.mailCompose({ to: to.split(/[,;；\s]+/).filter(Boolean), cc: $('cmpCc').value.split(/[,;；\s]+/).filter(Boolean), subject: $('cmpSubject').value.trim(), text: $('cmpText').value })
+      $('cmpOvl').classList.remove('show')
+      $('cmpTo').value = $('cmpCc').value = $('cmpSubject').value = $('cmpText').value = ''
+      loadOutbox()   // 闸门条/发件箱即时亮
+    } catch (e) { alert('进发件箱失败：' + ((e && e.message) || e)) }
+    btn.disabled = false; btn.textContent = '进发件箱'
+  })
   async function loadInbox() {
     if (loading) return
     loading = true; inboxLoaded = true; lastLoadAt = Date.now()
     $('mlist').innerHTML = '<div class="empty">加载中… <span class="spin"></span></div>'
     try {
-      const r = await H.mailList({ onlyUnseen: onlyUnread, days: onlyUnread ? 7 : 30, limit: 80, cursor: 0 })
+      // 文件夹侧栏:已发送走实时拉(缓存只存 INBOX);收件箱未读筛选同旧
+      const sent = curFolder !== 'INBOX'
+      const r = await H.mailList({ onlyUnseen: sent ? false : onlyUnread, live: sent, folder: curFolder, days: onlyUnread && !sent ? 7 : 30, limit: 80, cursor: 0 })
       if (!r || r.ok === false) throw new Error((r && r.error) || '拉取失败')
       emails = r.emails || []
       nextCursor = (r.nextCursor != null) ? r.nextCursor : null
@@ -302,7 +387,8 @@
     loading = true; lastLoadAt = Date.now()
     const btn = $('loadMore'); if (btn) { btn.textContent = '加载中…'; btn.disabled = true }
     try {
-      const r = await H.mailList({ onlyUnseen: onlyUnread, days: onlyUnread ? 7 : 30, limit: 80, cursor: nextCursor })
+      const sent = curFolder !== 'INBOX'
+      const r = await H.mailList({ onlyUnseen: sent ? false : onlyUnread, live: sent, folder: curFolder, days: onlyUnread && !sent ? 7 : 30, limit: 80, cursor: nextCursor })
       if (r && r.ok !== false) {
         emails = emails.concat(r.emails || [])
         nextCursor = (r.nextCursor != null) ? r.nextCursor : null

@@ -64,6 +64,11 @@
   .kn-edit textarea.in { resize: vertical; min-height: 54px; font-family: var(--font); }
   /* 嵌入主窗口(?embed=1):关闭钮归主窗口,藏掉 */
   html[data-embed="1"] .hd .hbtn { display: none; }
+  /* 页签(设计稿 S8/W4:通用/智能体/项目知识库 三段) */
+  .stabs { display: inline-flex; gap: 2px; background: var(--composer-bg); border: 1px solid var(--composer-border); border-radius: 9px; padding: 2px; margin-left: 12px; }
+  .stabs button { border: none; background: transparent; color: var(--txt2); font-size: 12px; padding: 4px 13px; border-radius: 7px; cursor: pointer; font-family: var(--font); }
+  .stabs button.on { background: var(--brand); color: var(--send-fg); font-weight: 600; }
+  .hd .sp { flex: 1; }
 </style>
 </head>
 <body>
@@ -72,6 +77,12 @@
   <div class="set">
     <div class="hd">
       <span class="ttl">设置</span>
+      <div class="stabs nodrag">
+        <button data-stab="general" class="on">通用</button>
+        <button data-stab="agent">智能体</button>
+        <button data-stab="knowledge">项目知识库</button>
+      </div>
+      <span class="sp"></span>
       <button id="x" class="hbtn nodrag" title="关闭" aria-label="关闭"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <div class="body nodrag">
@@ -190,6 +201,29 @@
   const $ = (id) => document.getElementById(id)
   let cur = {}
   try { cur = window.BocomHermes.getSettings() || {} } catch (e) {}
+
+  // ── 页签(设计稿 S8/W4:通用/智能体/项目知识库 三段):按分组标签归位,不改正文结构 ──
+  ;(function initTabs() {
+    const MAP = [
+      [/^(主题|编辑器命令|serve 二进制|修复流程|邮件|OceanBase|注册 MCP)/, 'general'],
+      [/^(智能体旋钮|当前项目目录|后端代码仓库)/, 'agent'],
+      [/^(项目知识库)/, 'knowledge'],
+    ]
+    const flds = [...document.querySelectorAll('.body > .fld')]
+    for (const f of flds) {
+      const t = (f.querySelector('.lbl') || {}).textContent || ''
+      const hit = MAP.find(([re]) => re.test(t.trim()))
+      f.dataset.stab = hit ? hit[1] : 'general'   // 未命名的进通用(保存按钮区/警告条不受影响 —— 它们不是 .fld 分组)
+    }
+    const paint = (tab) => {
+      for (const f of flds) f.style.display = (f.dataset.stab === tab) ? '' : 'none'
+      document.querySelectorAll('.stabs button').forEach((b) => b.classList.toggle('on', b.dataset.stab === tab))
+      // 保存按钮区只对「通用/智能体」可见(知识库条目自带行内动作,不走整页保存)
+      const ft = document.querySelector('.set .ft'); if (ft) ft.style.display = tab === 'knowledge' ? 'none' : ''
+    }
+    document.querySelectorAll('.stabs button').forEach((b) => b.addEventListener('click', () => paint(b.dataset.stab)))
+    paint('general')
+  })()
 
   // 主题已锁定浅色(set-theme 幂等);只保留广播落地,不再提供切换控件
   window.BocomHermes.onTheme(() => { document.documentElement.dataset.theme = 'light' })
@@ -425,16 +459,23 @@
     ops.append(ed, del); el.appendChild(ops)
     return el
   }
-  function openKnEdit(itemEl, e) {
+  function openKnEdit(itemEl, e, opts) {
     if (itemEl.querySelector('.kn-edit')) return   // 已在编辑态
+    const restoring = !!(opts && opts.restore)
     const box = document.createElement('div'); box.className = 'kn-edit'
+    if (restoring) {
+      const tip = document.createElement('div'); tip.style.cssText = 'font-size:11.5px;color:var(--accent)'
+      tip.textContent = '恢复隔离条目:确认或修正锚点后保存 —— 保存即自动复检,锚点有效就回到绿标重新注入。'
+      box.appendChild(tip)
+    }
     const ta = document.createElement('textarea'); ta.className = 'in'; ta.value = e.text || e.raw || ''
     const sc = document.createElement('input'); sc.className = 'in'; sc.value = e.scene || ''; sc.placeholder = '场景（可选）'
     const an = document.createElement('input'); an.className = 'in'; an.value = (Array.isArray(e.anchors) ? e.anchors : []).join(', '); an.placeholder = '锚点，逗号分隔（可选）'
     const row = document.createElement('div'); row.className = 'row'
-    const ok = document.createElement('button'); ok.className = 'chip'; ok.textContent = '保存'
+    const ok = document.createElement('button'); ok.className = 'chip'; ok.textContent = restoring ? '保存并复检' : '保存'
     const no = document.createElement('button'); no.className = 'chip'; no.textContent = '取消'
     row.append(ok, no); box.append(ta, sc, an, row); itemEl.appendChild(box)
+    if (restoring) an.focus()
     ok.addEventListener('click', async () => {
       if (typeof window.BocomHermes.knowledgeEdit !== 'function') return
       const patch = {
@@ -443,7 +484,8 @@
         anchors: an.value.split(/[,，;；\n]/).map((s) => s.trim()).filter(Boolean),
       }
       try { await window.BocomHermes.knowledgeEdit(knSel.value, e.index, patch) } catch (e2) {}
-      loadKnowledge()
+      await loadKnowledge()
+      if (restoring) knAuditBtn.click()   // 恢复场景:保存完自动复检,绿了就是真恢复
     })
     no.addEventListener('click', () => box.remove())
   }
@@ -476,6 +518,17 @@
         rl.style.color = a.status === 'red' ? 'var(--diff-del)' : 'var(--warn-txt)'
         rl.textContent = (a.status === 'red' ? '⛔ ' : '⚠ ') + reasons.join('；')
       } else if (rl) rl.remove()
+      // 「恢复」动作(设计稿 S8:隔离是保护不是删除):红标条目行内亮恢复 → 修正锚点保存即恢复并自动复检
+      const ops = child.querySelector('.kn-ops')
+      if (ops && a.status === 'red' && !ops.querySelector('.kn-restore')) {
+        const idx = +child.dataset.index
+        const e = knEntries.find((x) => x.index === idx)
+        const rs = document.createElement('button'); rs.className = 'chip kn-restore'; rs.textContent = '恢复'
+        rs.title = '锚点已失效被隔离 —— 修正锚点(或确认无误)后保存即恢复,并自动复检'
+        rs.style.color = 'var(--accent)'
+        rs.addEventListener('click', () => { if (e) openKnEdit(child, e, { restore: true }) })
+        ops.insertBefore(rs, ops.firstChild)
+      }
     }
     if (r.stats) paintKnStats(r.stats.total, r.stats)
   })

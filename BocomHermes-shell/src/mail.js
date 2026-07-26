@@ -122,7 +122,7 @@ module.exports = function initMail(ctx) {
             for (const em of r.emails) {
               if (!em.messageId) continue
               mailCache.put(app.getPath('userData'), em)
-              S.mailCache.set(em.messageId, { messageId: em.messageId, uid: em.uid, folder: em.folder || 'INBOX', from: em.from, subject: em.subject, date: em.date, attCount: (em.attachments || []).length, savedAt: Date.now() })
+              S.mailCache.set(em.messageId, { messageId: em.messageId, uid: em.uid, folder: em.folder || 'INBOX', seen: em.seen !== false, from: em.from, subject: em.subject, date: em.date, attCount: (em.attachments || []).length, savedAt: Date.now() })
             }
             // 缓存最近一次结果,给 todo 回填邮件元信息用 / mail_get_full 快速命中
             S.mailLastBatch = { ts: Date.now(), emails: r.emails }
@@ -502,7 +502,7 @@ module.exports = function initMail(ctx) {
         for (const em of (r.emails || [])) {
           if (em.error || !em.messageId) continue
           const isNew = !S.mailCache.has(em.messageId)
-          S.mailCache.set(em.messageId, { messageId: em.messageId, uid: em.uid, folder: em.folder || 'INBOX', from: em.from, subject: em.subject, date: em.date, attCount: (em.attachments || []).length, savedAt: Date.now() })
+          S.mailCache.set(em.messageId, { messageId: em.messageId, uid: em.uid, folder: em.folder || 'INBOX', seen: em.seen !== false, from: em.from, subject: em.subject, date: em.date, attCount: (em.attachments || []).length, savedAt: Date.now() })
           if (isNew) { mailCache.put(userData, em); added++; try { maybeSuggestMeeting(em) } catch {} }   // 磁盘只追加新的(不重复 append 撑大 jsonl);会议识别只对新邮件
         }
         if (r.nextCursor == null) break
@@ -588,6 +588,37 @@ module.exports = function initMail(ctx) {
     return await email.archiveMessages(imap, Array.isArray(msgIds) ? msgIds : [msgIds], imap.archiveFolder || 'Archive')
   })
   // 邮件中心收件箱列表：复用 fetchUnread，只回摘要字段（不带正文/附件二进制）
+  // 写邮件(新写,非回复):校验 → 进发件箱队列(软撤回窗口可撤)—— 与 relay /mail/send 同逻辑,给 mailcenter 撰写框用
+  ipcMain.handle('mail-compose', async (_e, a) => {
+    const cfg = S.effectiveSmtp(); if (!cfg) throw new Error('SMTP 未配置（去邮件中心「设置」填写发件服务器）')
+    const arg = a || {}
+    const to = Array.isArray(arg.to) ? arg.to : String(arg.to || '').split(/[,;；\s]+/).filter(Boolean)
+    const allRcpt = [...to, ...(Array.isArray(arg.cc) ? arg.cc : [])].filter(Boolean)
+    if (!to.length) throw new Error('至少填一个收件人')
+    const bad = badRecipients(allRcpt); if (bad.length) throw new Error('收件人格式不对：' + bad.join(', '))
+    const hold = outboxHold()
+    const msg = { to, cc: arg.cc || [], subject: String(arg.subject || ''), text: String(arg.text || ''), html: arg.html || '' }
+    const q = S.outbox.enqueue({ kind: 'send', msg, holdSeconds: hold, meta: { to: to.join(', '), subject: msg.subject || '(无主题)', attCount: 0 } })
+    afterEnqueue(hold)
+    try { S.audit && S.audit('mail', '新写邮件进发件箱', { to: to.join(', ').slice(0, 120), subject: msg.subject.slice(0, 80), holdSeconds: hold }) } catch {}
+    return { ok: true, id: q.id, sendAt: q.sendAt, holdSeconds: hold }
+  })
+  // 已发送文件夹名探测(各邮局叫法不一:Sent / Sent Items / 已发送 / Sent Messages;LIST 返回里找,找不到退回 Sent)
+  ipcMain.handle('mail-sent-folder', async () => {
+    const imap = S.settings.imap
+    if (!imap || !imap.host) return { folder: 'Sent' }
+    try {
+      const folders = await email.listFolders(imap)
+      const names = (Array.isArray(folders) ? folders : []).map((f) => String((f && (f.name || f)) || ''))
+      const lower = names.map((n) => n.toLowerCase())
+      for (const cand of ['sent items', 'sent', '已发送', 'sent messages', 'sent mail']) {
+        const i = lower.findIndex((n) => n === cand || n.endsWith('/' + cand) || n.endsWith('.' + cand))
+        if (i >= 0) return { folder: names[i] }
+      }
+      const fuzzy = names.find((n) => /sent|发送/i.test(n))
+      return { folder: fuzzy || 'Sent' }
+    } catch { return { folder: 'Sent' } }
+  })
   ipcMain.handle('mail-list', async (_e, opts) => {
     const imap = S.settings.imap
     if (!imap || !imap.host || !imap.user || !imap.passEncrypted) throw new Error('IMAP 未配置（去「设置」填写收件服务器）')
@@ -607,6 +638,7 @@ module.exports = function initMail(ctx) {
         emails: (r.emails || []).filter((e) => !e.error).map((e) => ({
           from: e.from || '', subject: e.subject || '', date: e.date || '',
           messageId: e.messageId || '', attachments: (e.attachments || []).length,
+          seen: e.seen !== false,   // FLAGS 已读标记(未读分层;老缓存条目无此字段按已读)
           preview: (e.bodySummary || e.body || '').replace(/\s+/g, ' ').slice(0, 300),
         })),
       }
@@ -623,7 +655,7 @@ module.exports = function initMail(ctx) {
       ok: true, cached: true, syncedAt: lastSyncAt,
       totalMatched: all.length,
       nextCursor: all.length > cursor + limit ? cursor + limit : null,
-      emails: page.map((m) => ({ from: m.from || '', subject: m.subject || '', date: m.date || '', messageId: m.messageId || '', attachments: m.attCount || 0, preview: '' })),
+      emails: page.map((m) => ({ from: m.from || '', subject: m.subject || '', date: m.date || '', messageId: m.messageId || '', attachments: m.attCount || 0, seen: m.seen !== false, preview: '' })),
     }
   })
   return { effectiveSmtp, effectiveOb, startIdleWatcher }
