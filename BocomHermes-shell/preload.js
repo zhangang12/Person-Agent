@@ -60,6 +60,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   wfOpen: (it) => ipcRenderer.invoke('wf-open', it),
   wfDelete: (id) => ipcRenderer.invoke('wf-delete', id),
   wfCancelQueued: (goal) => ipcRenderer.invoke('wf-cancel-queued', goal),   // 排队中的工作流行内 ✕ 撤队
+  wfStopAll: () => ipcRenderer.invoke('wf-stop-all'),   // 全部停止(全局中断:中止 running + 清排队)
   gitBranch: () => ipcRenderer.invoke('git-branch'),   // 当前项目目录的 git 分支(状态栏 ⎇)
   wfPlanApproved: () => ipcRenderer.send('wf-plan-approved'),
   wfRunningCount: () => ipcRenderer.invoke('wf-running-count'),   // 编排并发真值(波4 状态栏):{running, max},只读
@@ -78,7 +79,8 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   onCardNote: (cb) => ipcRenderer.on('card-note', (_e, p) => cb(p)),
   onShardProgress: (cb) => ipcRenderer.on('shard-progress', (_e, p) => cb(p)),   // 多层派发:主控卡收分片进度(静默分片卡的聚合状态)
   shardFocus: (id) => ipcRenderer.invoke('shard-focus', id),                     // 点分片进度块 → 把那张大隐藏卡拉到台前细看
-  cardSend: (text, files, skill) => ipcRenderer.invoke('card-send', { text, files: files || [], skill: skill || null }),
+  // files/skill 经 JSON 深克隆去代理:Vue 响应式对象过不了 IPC 结构化克隆(实测"An object could not be cloned"整条回合报废),一律剥平
+  cardSend: (text, files, skill) => ipcRenderer.invoke('card-send', { text: String(text == null ? '' : text), files: JSON.parse(JSON.stringify(files || [])), skill: skill ? String(skill) : null }),
   skillsList: () => ipcRenderer.invoke('skills-list'),
   skillsOpenDir: () => ipcRenderer.invoke('skills-open-dir'),
   cardReinit: (opts) => ipcRenderer.invoke('card-reinit', opts || {}),

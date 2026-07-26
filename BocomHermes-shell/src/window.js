@@ -1936,6 +1936,24 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       return { branch: b === 'HEAD' ? '(detached)' : b }
     } catch { return { branch: '' } }
   })
+  // 全部停止(用户要的"全局中断"):中止所有 running 工作流的回合 + 清空排队位;状态标 interrupted 留痕
+  ipcMain.handle('wf-stop-all', () => {
+    let stopped = 0, queued = 0
+    if (S.wfQueue && S.wfQueue.length) { queued = S.wfQueue.length; S.wfQueue.length = 0 }
+    for (const reg of (S.wfRegistry ? [...S.wfRegistry.values()] : [])) {
+      if (reg.status !== 'running') continue
+      try {
+        const sid = reg.wcId != null ? S.sessionByWc.get(reg.wcId) : (reg.sid || '')
+        const si = sid && S.sessionInfo.get(sid)
+        if (si) { try { oc.abort(si.serve, sid) } catch {} ; stopped++ }
+        reg.status = 'interrupted'; reg.aborted = true
+        try { S.wfArchive(reg) } catch {}
+      } catch {}
+    }
+    log('wf stop-all: aborted ' + stopped + ' running, cleared queue ' + queued)
+    try { S.audit && S.audit('workflow', '全部停止', { stopped, queued }) } catch {}
+    return { stopped, queued }
+  })
   // 取消排队:并发位满时排在 S.wfQueue 里的工作流(还没开卡,没有注册表 id)—— 按 goal 精确匹配摘除(设计稿 S5:排队行内 ✕)
   ipcMain.handle('wf-cancel-queued', (_e, goal) => {
     const g = String(goal == null ? '' : goal)

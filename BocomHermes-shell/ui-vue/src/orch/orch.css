@@ -16,6 +16,9 @@ html[data-embed="1"], html[data-embed="1"] body { background: var(--bg-primary);
 .proj.pick:hover { color: var(--blue); background: var(--blue-10); }
 .mini { border: 0.5px solid var(--sep); background: transparent; color: var(--label-2); border-radius: var(--r-sm); padding: 3px 9px; cursor: pointer; }
 .mini:hover { color: var(--blue); border-color: var(--blue); }
+.mini.danger { color: var(--danger); }
+.mini.danger:hover { border-color: var(--danger); }
+.mini.danger.arm { background: var(--red-10); border-color: var(--danger); font-weight: 600; }
 
 .launch { flex: none; display: flex; gap: 9px; }
 .launch textarea {

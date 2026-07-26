@@ -135,6 +135,21 @@ onMounted(async () => {
 onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 
 const stText = (w: any) => w.status === 'running' ? (w.busy ? '进行中' : '待操作') : w.status === 'done' ? '已完成' : w.status === 'interrupted' ? '中断' : '存档'
+// 全部停止(全局中断):中止所有 running + 清排队;两步确认防误触
+const stopArm = ref(false)
+let stopArmTimer: ReturnType<typeof setTimeout> | null = null
+async function stopAll() {
+  if (!stopArm.value) {
+    stopArm.value = true
+    if (stopArmTimer) clearTimeout(stopArmTimer)
+    stopArmTimer = setTimeout(() => { stopArm.value = false }, 3000)
+    return
+  }
+  if (stopArmTimer) { clearTimeout(stopArmTimer); stopArmTimer = null }
+  stopArm.value = false
+  try { await BH()?.wfStopAll?.() } catch { /* 静默 */ }
+  setTimeout(loadWf, 500)
+}
 const kindText = (w: any) => w.kind === 'orch' ? '主控·多层派发' : w.kind === 'pipeline' ? '任务编排' : '工作流'
 const pctOf = (w: any) => (w.todoTotal > 0 ? Math.round((100 * (w.todoDone || 0)) / w.todoTotal) : -1)
 const rel = (ts: number) => {
@@ -163,6 +178,7 @@ async function op(w: any, act: string) {
       <span class="sub">{{ pageSub }}</span>
       <span class="sp"></span>
       <span class="proj pick" :title="'工作目录:' + (projName || '未选目录') + '(点击切换 —— 动态工作流对它说话)'" @click="pickProj">📁 {{ projName || '未选目录' }}</span>
+      <button class="mini danger" :class="{ arm: stopArm }" :title="stopArm ? '再点一次确认:中止所有运行中的工作流并清空排队' : '全部停止(中止 running + 清排队)'" @click="stopAll">{{ stopArm ? '确认停止?' : '■ 全部停止' }}</button>
       <button class="mini" title="刷新" @click="loadWf">↻</button>
     </header>
 
