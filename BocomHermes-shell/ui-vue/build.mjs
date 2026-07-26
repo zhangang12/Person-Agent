@@ -13,7 +13,7 @@ import fs from 'node:fs'
 const dir = path.dirname(fileURLToPath(import.meta.url))
 const outDir = path.resolve(dir, '..', 'ui', 'dist')
 const configFile = path.resolve(dir, 'vite.config.ts')
-const PAGES = ['shell', 'lab']
+const PAGES = ['shell', 'lab', 'chat']
 const watch = process.argv.includes('--watch')
 
 fs.rmSync(outDir, { recursive: true, force: true })   // 统一清理一次

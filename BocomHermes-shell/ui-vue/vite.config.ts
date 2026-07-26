@@ -1,6 +1,6 @@
 // ui-vue 构建配置(Vite 6 + Vue3 + TS)
 // 要点:
-//  - MPA 两页:shell(主窗口,P1 重写) / lab(组件实验室,活样式 guide)
+//  - MPA 三页:shell(主窗口,P1 重写) / lab(组件实验室,活样式 guide) / chat(对话卡,P2a 重写)
 //  - vite-plugin-singlefile 把 JS/CSS 全部内联进单个 html:
 //    Electron file:// 对 ES module 的 import fetch 有 CORS 限制,内联后单 html
 //    零外部请求,file:// 直开可行,webview 内嵌也可行(铁律:数据不出网,禁运行时外链)
@@ -16,7 +16,7 @@ import vue from '@vitejs/plugin-vue'
 import { viteSingleFile } from 'vite-plugin-singlefile'
 
 const dir = path.dirname(fileURLToPath(import.meta.url))
-const page = process.env.UI_PAGE || 'shell'   // shell | lab
+const page = process.env.UI_PAGE || 'shell'   // shell | lab | chat
 
 export default defineConfig({
   root: dir,
