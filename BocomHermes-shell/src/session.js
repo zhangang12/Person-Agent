@@ -1054,7 +1054,10 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     startPoll()
     startChildPoll()   // 子 Agent 实况轮询(/event 不推子会话 message 事件,侧边栏靠它填)
     try {
-      const out = await oc.sendMessage(si.serve, sessionId, msg, model, fileArr, onNote, { onRawMessages: onRaw })
+      // P3.4:knobs.promptAsync truthy → 走 prompt_async 发送通道(POST 立即返回不挂起等回合;fork 无端点 404 自动回落,见 opencode.js)
+      const sendOpts = { onRawMessages: onRaw }
+      try { if (S.settings && S.settings.knobs && S.settings.knobs.promptAsync) sendOpts.promptAsync = true } catch {}
+      const out = await oc.sendMessage(si.serve, sessionId, msg, model, fileArr, onNote, sendOpts)
       // 手动停止标记(opencode.js consumeAbortFlag,按形状防御调用):本轮被用户中止 → 卡内留一行灰字交代截断原因。
       // 标记同时透传给 wfTurnDone(snap.aborted):分片收官兜底据此判 interrupted 而不是 done(曾被中止≠干完)。
       let abortedFlag = false
@@ -1096,6 +1099,16 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
       throw err
     } finally {
       stopPoll(); stopChildPoll(); turnBusy.delete(sessionId)
+      // P3.3 todo 权威数据源:serve 的 GET /session/:id/todo 比解析 todowrite 工具入参可靠(弱模型参数畸形会漏判)。
+      // fire-and-forget:仅 wf 卡打;返回非空数组才覆盖注册表,空/异常一律不动(保留现有工具入参学习兜底);
+      // oc 缺该函数(老版本)也可选链安全跳过。全程 try/catch,绝不阻塞回合收尾。
+      try {
+        if (S.wfTodos && typeof oc.getSessionTodo === 'function' && si.serve && si.wc && S.wfCardByWc && S.wfCardByWc.has(si.wc.id)) {
+          oc.getSessionTodo(si.serve, sessionId).then((todos) => {
+            try { if (Array.isArray(todos) && todos.length) S.wfTodos(si.wc.id, todos) } catch {}
+          }).catch(() => {})
+        }
+      } catch {}
       // 回合收尾再扫一遍子会话:最后一个 tick 之后落盘的子 Agent 产出/工具终态也补进侧边栏(不留差一口气的终态)
       try { await pollChildren() } catch {}
     }

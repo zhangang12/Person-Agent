@@ -10,6 +10,8 @@
 //   · POST 在飞断开自愈：先探本次消息是否已落 serve，已落转轮询继续等，未落才上抛
 //   · SSE 断线重连补偿：强刷会话树 + 补摘最新 tokens；streamUp/streamAt 供上层三态健康灯
 //   · 模型 4xx 黑名单：被 serve 拒过的 (base,modelID) 后续直接改默认模型，省一次必败往返
+//   · children/todo 权威数据源(P3.3)：回合收尾 GET 子会话清单/todo 补学习，404 记 Set 熔断（fork 缺端点不每回合白打）
+//   · prompt_async 发送通道(P3.4，knob 门控默认关)：POST 立即返回不挂起等回合，在飞断开天然免疫；404 熔断回落原路径
 const { spawn } = require('child_process')
 const net = require('net')
 const http = require('http')
@@ -505,7 +507,12 @@ async function waitAssistantText(info, sessionId, maxMs = 1800000, idleMs = 6000
   const why = Date.now() - t0 >= maxMs ? '超过绝对上限 ' + Math.round(maxMs / 60000) + ' 分钟' : '连续 ' + Math.round(idleMs / 60000) + ' 分钟无任何进展'
   throw new Error('等待回复超时(' + why + ',serve 未产出任何文本' + (lastErr ? ';最后一次取消息失败:' + (lastErr.message || lastErr) : '') + ')')
 }
-// opts(可选):{ onRawMessages(list):每拍全量消息回调(契约③,P1); onModelFallback(reason):命中模型黑名单时告知上层一句话(C5) }
+// opts(可选):{ onRawMessages(list):每拍全量消息回调(契约③,P1); onModelFallback(reason):命中模型黑名单时告知上层一句话(C5);
+//   promptAsync:走 prompt_async 发送通道(P3.4,knob 门控默认关) }
+// P3.4 prompt_async 通道:POST /session/:id/prompt_async 立即返回(不挂起等回合),回合回收复用下方 waitAssistantText 轮询 ——
+// R4 类"POST 在飞断开"问题天然免疫(请求一闪即回,没有长挂起的 POST 可断)。fork 无该端点 → 404 记 Set 熔断,
+// 本次与后续都回落原 POST /message 路径(404=请求没到业务层,重发不重复);原路径上的自愈/快收等现有行为一律不动。
+const promptAsyncUnsupported = new Set()   // base → prompt_async 404 熔断
 async function sendMessage(info, sessionId, text, model, files, onNote, opts = {}) {
   const tSend = Date.now()   // 本次发送起点:降级/快收的"被中止"判断都只认【这之后】的 abort,不吃历史账
   const parts = []
@@ -528,6 +535,21 @@ async function sendMessage(info, sessionId, text, model, files, onNote, opts = {
     body.providerID = model.providerID; body.modelID = model.modelID
   }
   try {
+    // P3.4 prompt_async 分支(knob 门控,默认关):catch 只包 POST 本身 —— 404 熔断后落原路径;非 404 原样上抛
+    // (下方 R4 探针照常自愈)。posted 之后的等待异常不进这个 catch,绝不会因 wait 失败而重发灌双份。
+    if (opts && opts.promptAsync && !promptAsyncUnsupported.has(info.base)) {
+      let posted = false
+      try { await api(info.base, 'POST', `/session/${sessionId}/prompt_async`, body); posted = true }
+      catch (e2) {
+        if (!is404(e2)) throw e2
+        if (promptAsyncUnsupported.size > 100) promptAsyncUnsupported.clear()   // 粗粒度防涨(仿 childToParent)
+        promptAsyncUnsupported.add(info.base)
+      }
+      if (posted) {
+        getSessionChildren(info.base, sessionId).catch(() => {})   // P3.3 调用点A:回合收尾补一记子会话权威清单
+        return await waitAssistantText(info, sessionId, undefined, undefined, opts)   // 回合回收复用现有轮询(含 C7 abort 快收)
+      }
+    }
     // 停止慢的根:serve 把 POST 阻塞到生成自然收尾才回,用户点「停止」后 /abort 也喊不醒它 → 卡片"正在停止"干等 90s+(实测)。
     // 解法:POST 与 abort 哨兵赛跑 —— 本卡一旦 abort,~0.4s 内赛跑输给哨兵,转去"宽限 ~3s 收半截"快收,不再陪 POST 傻等。
     const abortWatch = new Promise((res) => {
@@ -543,7 +565,9 @@ async function sendMessage(info, sessionId, text, model, files, onNote, opts = {
         return pickTurnText(list).text || ''
       } catch { return '' }
     }
-    return extractText(direct) || await waitAssistantText(info, sessionId, undefined, undefined, opts)   // 空 body（流式版 serve）→ 轮询等完成
+    const out = extractText(direct) || await waitAssistantText(info, sessionId, undefined, undefined, opts)   // 空 body（流式版 serve）→ 轮询等完成
+    getSessionChildren(info.base, sessionId).catch(() => {})   // P3.3 调用点A:回合成功收尾补一记子会话权威清单(子 Agent 路由不依赖 SSE 早发;fire-and-forget)
+    return out
   } catch (e) {
     // serve 的 zod 校验不认我们的模型字段形状(4xx)→ 去掉模型重发一次并让用户看见,
     // 而不是整条消息发不出去;其它错误原样上抛
@@ -557,7 +581,13 @@ async function sendMessage(info, sessionId, text, model, files, onNote, opts = {
     }
     // R4 POST 在飞断开(连接被掐/进程重启等):请求可能已到 serve 只是响应没回来 —— 先探最后一条 user 是否就是本次内容,
     // 已落 → 转轮询继续等(无缝恢复,不重复发);未落 → 才上抛让上层重试。
-    try { if (await lastUserMatches(info, sessionId, text, tSend)) return await waitAssistantText(info, sessionId, undefined, undefined, opts) } catch {}
+    try {
+      if (await lastUserMatches(info, sessionId, text, tSend)) {
+        const out = await waitAssistantText(info, sessionId, undefined, undefined, opts)
+        getSessionChildren(info.base, sessionId).catch(() => {})   // P3.3:断线自愈收尾同样补一记(fire-and-forget,async 调用本身不会同步抛)
+        return out
+      }
+    } catch {}
     throw e
   }
 }
@@ -637,6 +667,41 @@ async function listSessions(info) {
 // 原始消息(看门狗判据要 tool 状态/time;getMessages 是归一化的,只剩 role/text)
 async function getRawMessages(info, sid) {
   try { const r = await api(info.base, 'GET', `/session/${sid}/message`); return Array.isArray(r) ? r : (r && r.data) || [] } catch { return [] }
+}
+// ── P3.3 children/todo 权威数据源(带 404 熔断回落)──────────────────────────────
+// SDK 有而内网 fork 可能没有的两个端点。404 一次记 Set 熔断:之后该 base 直接返回 [] 不再发请求
+// (fork 缺端点时每回合打一次是纯浪费);其它异常同样吞掉返回 [](权威源只是加分项,绝不能拖垮回合)。
+const unsupportedChildren = new Set()   // base → /session/:id/children 404 熔断
+const unsupportedTodo = new Set()       // base → /session/:id/todo 404 熔断
+const is404 = (e) => /->\s*404\b/.test(String(e && e.message || ''))   // api 错误形如 "GET /session/x -> 404: ..."
+// 子会话权威清单:成功且有数组(兼容 {data} 包装)→ 对每个带 id 的子会话 noteChild 登记
+// (子 Agent 路由不再依赖 SSE 事件是否早发);返回数组。第一参容忍传 info 对象(session.js 惯例)或 base 串。
+async function getSessionChildren(base, sid) {
+  base = (base && base.base) || base
+  if (!base || !sid || unsupportedChildren.has(base)) return []
+  try {
+    const r = await api(base, 'GET', `/session/${sid}/children`)
+    const arr = Array.isArray(r) ? r : (r && r.data)
+    if (!Array.isArray(arr)) return []
+    for (const c of arr) { if (c && c.id) noteChild(c.id, sid, c.title || (c.info && c.info.title), base) }
+    return arr
+  } catch (e) {
+    if (is404(e)) { if (unsupportedChildren.size > 100) unsupportedChildren.clear(); unsupportedChildren.add(base) }   // 粗粒度防涨(仿 childToParent)
+    return []
+  }
+}
+// serve 权威 todo:返回数组(兼容 {data}/{todos} 包装)或 [];空数组不丢人 —— 调用方据此决定动不动注册表(空/异常一律不动)。
+async function getSessionTodo(base, sid) {
+  base = (base && base.base) || base
+  if (!base || !sid || unsupportedTodo.has(base)) return []
+  try {
+    const r = await api(base, 'GET', `/session/${sid}/todo`)
+    const arr = Array.isArray(r) ? r : (Array.isArray(r && r.data) ? r.data : (r && r.todos))
+    return Array.isArray(arr) ? arr : []
+  } catch (e) {
+    if (is404(e)) { if (unsupportedTodo.size > 100) unsupportedTodo.clear(); unsupportedTodo.add(base) }
+    return []
+  }
 }
 // 「生成挂死」判据(卡死子 Agent 看门狗,判死不判慢):最后一条 assistant 未收尾(time.completed 空)
 // 且没有任何在跑工具 = 模型写答案的调用挂起。实测病灶:子 Agent 探查全做完、写结论的 LLM 调用无声挂死
@@ -1140,7 +1205,7 @@ function anyHealthyServe() {
   return null
 }
 
-module.exports = { ensureServe, createSession, sendMessage, listModels, checkMcp, abort, replyPermission, replyQuestion, rejectQuestion, sessionExists, listSessions, getMessages, getRawMessages, generationStalled, pollTurnParts, getSessionUsage, getStreamState, consumeAbortFlag, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, anyHealthyServe, AUTO_ALLOW,
+module.exports = { ensureServe, createSession, sendMessage, listModels, checkMcp, abort, replyPermission, replyQuestion, rejectQuestion, sessionExists, listSessions, getMessages, getRawMessages, getSessionChildren, getSessionTodo, generationStalled, pollTurnParts, getSessionUsage, getStreamState, consumeAbortFlag, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, anyHealthyServe, AUTO_ALLOW,
   __test: { dispatch, waitAssistantText, extractText, pickTurnText, abortedSince, abortedSids, normalizeMessages, stripInjected, splitThink,
     normDirKey, sameDir, inflight, noteChild, noteModelBlacklist, modelBlacklist, refreshSessionTree, runEventLoop, turnTextCache, stoppedSids, lastUserMatches, noteUsage,
     maps: { pool, baseToEntry, childToParent, childTitle, classifiedSessions, sidBase },

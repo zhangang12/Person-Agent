@@ -20,10 +20,14 @@
  *        因此本文件【有且仅有一个导出】ReadSpillPlugin,加辅助函数一律不导出。
  *
  * 配置(环境变量,读取时机 = 插件初始化;serve 进程环境;均可省):
- *   BOCOMHERMES_READ_SPILL_MAX    阈值(字符),默认 8000;设为 0 或负数 = 关闭插件
+ *   BOCOMHERMES_READ_SPILL_MAX    单次阈值(字符),默认 8000;设为 0 或负数 = 关闭单次闸
  *   BOCOMHERMES_READ_SPILL_HEAD   摘要保留头部行数,默认 40
  *   BOCOMHERMES_READ_SPILL_TOOLS  拦截的工具名(逗号分隔,大小写不敏感),默认 "read,grep,bash"(bash 同拦:模型会用 cat 绕开 read)
  *   BOCOMHERMES_READ_SPILL_DIR    落盘目录,默认 <系统 temp>/bocomhermes-read-spill
+ *   BOCOMHERMES_READ_SPILL_SESSION_MAX  会话累计桶(第二道闸,字符),默认 40000;0 或负数 = 关闭累计桶。
+ *     单次闸管"一次读了个大的",累计桶管"十次 6k 中等输出累计灌爆"(128k 实测病灶):
+ *     每次工具输出都计入该会话总账,累计超线后【该会话后续输出一律外溢】(无论单次多小),
+ *     替代文本引导"grep 定位后分段精读"。计数只增不减(保守),新会话自然新桶;桶表超 500 会话整表清。
  *   (注意:opencode 是 Windows 原生进程,传 Windows 路径如 C:/...,不要传 Git Bash 的 /c/...)
  *
  * 注入哪些依赖:无(零依赖,只用 node 内置模块);ctx 未使用,纯靠环境变量配置,
@@ -69,6 +73,27 @@ function spillIfTooBig(text, cfg) {
   return { file, replacement }
 }
 
+/**
+ * 会话累计桶超线后的外溢:无论单次多小一律落盘,替代文本换"预算线"口径(引导 grep 分段精读,别再全文读)。
+ * @param {string} text 工具原始输出
+ * @param {{spillDir:string, sessionMax:number, sessionID:string, callID:string}} cfg
+ * @param {number} bytes 该会话累计字节(计入本次后)
+ * @returns {{file:string, replacement:string}|null}
+ */
+function spillBudgetLine(text, cfg, bytes) {
+  if (typeof text !== 'string') return null
+  fs.mkdirSync(cfg.spillDir, { recursive: true })
+  const file = path.join(
+    cfg.spillDir,
+    `${safeName(cfg.sessionID)}-${Date.now()}-${safeName(cfg.callID)}.txt`,
+  )
+  fs.writeFileSync(file, text, 'utf8')
+  const replacement =
+    `本会话读取量已到预算线(累计 ${bytes} 字符 > 预算 ${cfg.sessionMax}):完整内容已存 ${file}`
+    + '。请改用 grep 定位后分段精读,不要再全文读取。'
+  return { file, replacement }
+}
+
 /** 读取插件配置(环境变量优先,全部有默认值) */
 function loadConfig() {
   const maxChars = Number(process.env.BOCOMHERMES_READ_SPILL_MAX ?? 8000)
@@ -77,29 +102,45 @@ function loadConfig() {
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
   const spillDir = process.env.BOCOMHERMES_READ_SPILL_DIR
     || path.join(os.tmpdir(), 'bocomhermes-read-spill')
+  const sessionMax = Number(process.env.BOCOMHERMES_READ_SPILL_SESSION_MAX ?? 40000)
   return {
     maxChars: Number.isFinite(maxChars) ? maxChars : 8000,
     headLines: Number.isFinite(headLines) && headLines > 0 ? headLines : 40,
     tools,
     spillDir,
+    sessionMax: Number.isFinite(sessionMax) ? sessionMax : 40000,
   }
 }
 
 /** opencode 插件入口:返回钩子表。本文件唯一导出(约束②)。 */
 export const ReadSpillPlugin = async () => {
   const cfg = loadConfig()
+  const sessionBuckets = new Map()   // 会话累计桶:sessionID → {bytes};只增不减(保守),超 500 会话整表清(与壳层各 Map 防涨同款)
   return {
     'tool.execute.after': async (input, output) => {
       try {
         if (!input || !output) return
         if (!cfg.tools.includes(String(input.tool || '').toLowerCase())) return
-        const hit = spillIfTooBig(output.output, {
-          maxChars: cfg.maxChars,
-          headLines: cfg.headLines,
-          spillDir: cfg.spillDir,
-          sessionID: input.sessionID,
-          callID: input.callID,
-        })
+        const sid = String(input.sessionID || 'anon')
+        const outLen = typeof output.output === 'string' ? output.output.length : 0
+        // 第二道闸:累计超线后一律外溢(无论单次多小);第一道闸:单次超阈值外溢
+        let overLine = false
+        if (cfg.sessionMax > 0 && outLen > 0) {
+          let b = sessionBuckets.get(sid)
+          if (!b) { b = { bytes: 0 }; sessionBuckets.set(sid, b) }
+          if (sessionBuckets.size > 500) sessionBuckets.clear()
+          b.bytes += outLen
+          overLine = b.bytes > cfg.sessionMax
+        }
+        const hit = overLine
+          ? spillBudgetLine(output.output, { spillDir: cfg.spillDir, sessionMax: cfg.sessionMax, sessionID: sid, callID: input.callID }, sessionBuckets.get(sid).bytes)
+          : spillIfTooBig(output.output, {
+            maxChars: cfg.maxChars,
+            headLines: cfg.headLines,
+            spillDir: cfg.spillDir,
+            sessionID: input.sessionID,
+            callID: input.callID,
+          })
         if (!hit) return
         output.output = hit.replacement
         // bash 系工具的 TUI 渲染读 metadata.output 快照(上游 issue #13575),同步替换保持一致
@@ -111,6 +152,7 @@ export const ReadSpillPlugin = async () => {
         if (output.metadata && typeof output.metadata === 'object') {
           output.metadata.spillFile = hit.file
           output.metadata.spillOriginalChars = fs.statSync(hit.file).size
+          if (overLine) output.metadata.spillBudgetLine = true
         }
       } catch {
         // 拦截器绝不能炸掉工具调用本身:任何异常都静默放行原始输出

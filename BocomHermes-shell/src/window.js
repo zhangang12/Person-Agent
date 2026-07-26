@@ -15,6 +15,7 @@ const initMail = require('./mail')
 const initMcpConfig = require('./mcp-config')
 const initLspConfig = require('./lsp-config')   // 内网无外网:随包自带三个 node 系 LSP server,首启自动注册进 opencode 配置
 const initPluginInstall = require('./plugin-install')   // read-spill 插件(read/grep 大输出外溢落盘)拷进 opencode 全局插件目录
+const initIntranetOptimize = require('./intranet-optimize')   // 内网×弱模型静态优化包:tools 瘦身/permission.bash 通配/agent 收口,写配置+PATCH 热应用
 const initBrowser = require('./browser')
 const knowledge = require('./knowledge')   // 项目知识库治理 IPC 用(纯逻辑,落盘/审计在本文件)
 const writescope = require('./writescope')   // 分片写归属(编码模式):goal 解析 + 范围匹配,session.js 的权限硬闸用
@@ -45,6 +46,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     wfConcurrency: 4,             // 工作流并发上限(超限排队)
     taskPromptMax: 20000,         // 委派指令(task/delegate_task)硬上限(字符,128k 口径):只拦"贴原文"级病态指令,精确拦停该子会话
     ctxLimitMax: 128000,          // 水位上限硬顶(128k 口径):serve 报再大的 limit.context 也按此收口,防自动压缩阈值算到真实上限之外
+    promptAsync: 0,               // prompt_async 发送通道（1=开）：POST 不再挂起等回合，R4 类在飞断开问题免疫；内网 fork 无该端点自动回落
   }
   const mergeKnobs = (k) => ({ ...DEFAULT_KNOBS, ...((k && typeof k === 'object') ? k : {}) })
   function loadSettings() {
@@ -1615,6 +1617,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       reqRepos: (S.settings.reqProfile && S.settings.reqProfile.repos) || [],
       planMode: S.settings.planMode !== false,
       knobs: mergeKnobs(S.settings.knobs),   // 阈值旋钮(治理波次):完整 9 键随设置下发,渲染端不必各自兜底
+      permRules: (S.settings.permRules && typeof S.settings.permRules === 'object') ? S.settings.permRules : { allow: [], deny: [] },   // 用户权限规则(P2.3):设置页两个文本域读写
       model: S.settings.model || null,   // 全局默认模型(对话坞设)
       encryptionAvailable: email.encryptionAvailable(),   // false → 密码只能明文落盘,设置面板要红字告警
       outboxHoldSeconds: S.settings.outboxHoldSeconds == null ? 15 : S.settings.outboxHoldSeconds,   // 发信延迟窗(软撤回),0=立即发
@@ -2209,6 +2212,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   // 把自带 8 个本地 MCP server 写进 opencode/bocomcode 配置,整块搬进 ./mcp-config 的 initMcpConfig(ctx)。
   // 启动即确保已注册:缺失/路径过期自动补写(带备份)——否则 Agent 静默没有任何天枢工具(技能解析/自愈/接管全空转)。
   const mcpCfg = initMcpConfig({ app, path, fs, ipcMain, log })
+  initIntranetOptimize({ app, path, fs, ipcMain, log, getPermRules: () => S.settings.permRules, getServeBases: () => [...new Set([...S.sessionInfo.values()].map((si) => si && si.serve && si.serve.base).filter(Boolean))] })
   setTimeout(() => {
     try {
       const r = mcpCfg.autoRegisterIfMissing()
@@ -2259,6 +2263,11 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
         const n = Number(v)
         if (Number.isFinite(n)) S.settings.knobs[k] = n
       }
+    }
+    // 用户权限规则(P2.3 壳层轨):{allow:[],deny:[]} 字符串数组;逐条取字符串截 200 字,各上限 100 条(防脏值)
+    if (patch && patch.permRules && typeof patch.permRules === 'object') {
+      const clean = (a) => (Array.isArray(a) ? a.map((x) => String(x).slice(0, 200).trim()).filter(Boolean).slice(0, 100) : [])
+      S.settings.permRules = { allow: clean(patch.permRules.allow), deny: clean(patch.permRules.deny) }
     }
     if (patch && 'model' in patch) S.settings.model = (patch.model && patch.model.modelID) ? { providerID: patch.model.providerID, modelID: patch.model.modelID, name: patch.model.name } : null   // 全局默认模型(对话坞设;卡片可覆盖)
     if (patch && patch.imap) {

@@ -141,6 +141,16 @@ npm run bars:e2e           # card.html 真 Chromium 渲染 e2e：重放工作流
 - `main.js` 会**过滤 `--user-data-dir`** 浏览器启动参数（会搬走应用数据），不要在 `browserArgs` 里支持它。
 - **LSP 集成（内网无外网）**：`lsp-config.js` 首启把随包三个 node 系 LSP（typescript/vue/pyright）注册进 opencode.jsonc 的 `lsp` 段——command[0]=`process.execPath`（Electron 内嵌 Node，`env.ELECTRON_RUN_AS_NODE=1`），三个包在 `build.asarUnpack`；`settings.lspEnabled=false` 整体关闭；serve spawn 恒设 `OPENCODE_DISABLE_LSP_DOWNLOAD=true`（内置 server 探测不到会联网安装，内网必失败）；fork 的 lsp schema 兼容性待内网实测。
 
+## 提示词改动纪律（内网×弱模型专项，2026-07 整改起生效）
+
+> 依据：`external/claude-code-提示词工程借鉴.md` §8.3/§9.5——CC 的 eval 反复证明弱模型对提示词的服从率对**位置、标题、措辞**极度敏感（行动 cue 标题 3/3 vs 抽象标题 0/3）。
+
+- **小步单变量**：提示词/注入文本改动一次只改一处，合并成一波进观测期（两周），不与其他机制改动混在一起——否则出病灶无法归因。
+- **每条补丁进台账**：落 `docs/项目记忆/弱模型行为台账.md`（病灶/失败样本/落点/依据/观测期/去留）；观测到期写"保留/改写/删除"结论，**无效条款靠观测淘汰**。
+- **提示词长度是一等资源（128k 口径）**：新增注入条款先过"值不值这个上下文"的秤；清单类常驻文本必须有硬预算（技能摘要 ≤800 字、技能全文 ≤4000 字同款风格）。
+- **写法库**：负面指令给可判定颗粒度、禁令附理由、双向纠偏（不粉饰也不许防御性打折）、行动 cue 标题、定量优于定性——模板见提示词借鉴文档 §8，照那个风格写。
+- **纪律注入的位置纪律**：壳层首发注入拼在首条 user 消息（session.js）；serve 系统提示纪律走 context-guard 插件追加在 system 数组**尾部**（保 KV-cache 前缀），不插入、不替换既有元素。
+
 ## 配置与用户数据
 
 运行期数据都在 Electron `userData` 目录：`settings.json`（theme/projectDir/backendDir/serveBin/editorCmd/recentDirs/proxy/browserArgs/smtp 等）、`history.json`、`BocomHermes.log`（3MB 滚动）、`audit.jsonl`、`memory.md`（个人记忆库，注入会话上下文）、`recordings/`（录制与技能 JSON）、`evidence/`（复现取证）。

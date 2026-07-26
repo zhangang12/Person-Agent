@@ -8,7 +8,17 @@
 //   T2 LSP 配置落地:opencode 配置里 lsp.typescript 是否带 env/initialization(壳层 lsp-config 是否写入;
 //      fork 是否真接受了 schema 要看 serve 日志,这里只能验配置面)
 //   T3 serve 健康:起没起来、provider 配没配
+//   T4 experimental.chat.messages.transform 回写:自起隔离 serve(探针插件只在 serve 启动时加载),
+//      插件把含唯一标记的工具结果替换为占位符 → 下一轮问模型看到什么;
+//      模型只见到占位符=钩子+回写都活;模型还能逐字引用原文=未生效
+//   T5 permission.ask 插件 deny:同隔离 serve(项目 opencode.json 配 bash:ask 强制触发权限),
+//      插件对含唯一标记的命令回 deny;命令无执行痕迹=生效;命令真跑了=未生效
+//      (注:公网 opencode 1.18.3 实测二进制中无 permission.ask 触发点,该钩子是"类型已声明、实现未上线")
+//   T6 experimental.chat.system.transform 系统提示注入:插件往系统提示尾部注入唯一标记,
+//      模型能复述=钩子+回写都活(子 Agent 系统提示注入 B2 的前提)
 // 用法: node scripts/fork-capability-probe.mjs [baseURL]   (默认 http://127.0.0.1:4096)
+// 注意:T1 会真实调一次模型(读大文件),内网跑一次约 1-3 分钟;T4/T5 自起隔离 serve 真实调 3 回合,约 3-10 分钟;
+//      隔离 serve 用 bocomcode/opencode(PATH 或 BOCOMHERMES_SERVE_BIN),探针插件放项目级 .opencode/plugin/,用完即删。
 // 注意:T1 会真实调一次模型(读大文件),内网跑一次约 1-3 分钟;临时文件用完即删。
 
 import fs from 'node:fs'
@@ -22,17 +32,20 @@ const PASS = (n, d) => { passN++; console.log('  ✓ ' + n + (d ? ' — ' + d : 
 const WARN = (n, d) => { warnN++; console.log('  ⚠ ' + n + (d ? ' — ' + d : '')) }
 const FAIL = (n, d) => { failN++; console.log('  ✗ ' + n + (d ? ' — ' + d : '')) }
 
-async function api(method, p, body) {
-  const res = await fetch(BASE + p, { method, headers: { 'content-type': 'application/json' }, body: body !== undefined ? JSON.stringify(body) : undefined })
+async function api(method, p, body, base) {
+  const B = base || BASE
+  const res = await fetch(B + p, { method, headers: { 'content-type': 'application/json' }, body: body !== undefined ? JSON.stringify(body) : undefined })
   const text = await res.text()
   let json; try { json = text ? JSON.parse(text) : undefined } catch {}
   return { status: res.status, text, json }
 }
 // 权限自动放行(探针无人值守:模型调 write/bash 触发批准框没人点,回合卡死——实测复现)。听 SSE 的 permission 事件,来了就回 once
-function autoApprovePerms(stop, sid) {
+// onReply:每放行一次回调一次(T5 用——钩子 deny 生效时权限事件根本不该到达 SSE)
+function autoApprovePerms(stop, sid, base, onReply) {
+  const B = base || BASE
   ;(async () => {
     try {
-      const res = await fetch(BASE + '/event')
+      const res = await fetch(B + '/event')
       const rd = res.body.getReader(); const dec = new TextDecoder(); let buf = ''
       while (!stop.done) {
         const { value, done } = await rd.read()
@@ -50,8 +63,9 @@ function autoApprovePerms(stop, sid) {
               const p = (evt && evt.properties) || {}
               const rid = p.requestID ?? p.id ?? p.permissionID ?? p.permissionId
               if (!rid) continue
-              const r1 = await api('POST', '/permission/' + rid + '/reply', { reply: 'once' })
-              if (r1.status >= 400) await api('POST', '/session/' + sid + '/permissions/' + rid, { reply: 'once' })   // 老端点兜底
+              const r1 = await api('POST', '/permission/' + rid + '/reply', { reply: 'once' }, B)
+              if (r1.status >= 400) await api('POST', '/session/' + sid + '/permissions/' + rid, { reply: 'once' }, B)   // 老端点兜底
+              if (onReply) onReply()
               console.log('  (权限放行 ' + String(rid).slice(0, 16) + '…)')
             } catch {}
           }
@@ -63,9 +77,11 @@ function autoApprovePerms(stop, sid) {
 }
 // 长回合用 http.request(实测:electron-as-node 的 undici fetch 在分钟级长响应上会 fetch failed,http 模块稳)
 import http from 'node:http'
-function apiLong(p, body, timeoutMs) {
+import { spawn } from 'node:child_process'
+function apiLong(p, body, timeoutMs, base) {
+  const B = base || BASE
   return new Promise((resolve, reject) => {
-    const u = new URL(BASE + p)
+    const u = new URL(B + p)
     const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search, method: 'POST', headers: { 'content-type': 'application/json' }, timeout: timeoutMs || 300000 }, (res) => {
       let text = ''
       res.on('data', (c) => { text += c })
@@ -76,6 +92,69 @@ function apiLong(p, body, timeoutMs) {
     if (body !== undefined) req.write(JSON.stringify(body))
     req.end()
   })
+}
+
+// ── T4/T5 探针:experimental 钩子(experimental.chat.messages.transform 回写 / permission.ask deny) ──
+// 探针插件源码(写到隔离 serve 的项目级 .opencode/plugin/ —— 只在那个 serve 的 cwd 下生效,不碰用户全局配置)
+function probePluginSource() {
+  return '// T4/T5 探针插件(fork-capability-probe 自动生成,用完即删)\n'
+    + 'import fs from "node:fs"\n'
+    + 'import path from "node:path"\n'
+    + 'const DIR = process.env.T4_PROBE_DIR || ""\n'
+    + 'const LOG = path.join(DIR, "probe-log.jsonl")\n'
+    + 'const log = (o) => { try { fs.appendFileSync(LOG, JSON.stringify({ t: Date.now(), ...o }) + "\\n") } catch {} }\n'
+    + 'export default async function () {\n'
+    + '  return {\n'
+    + '    "experimental.chat.messages.transform": async (input, output) => {\n'
+    + '      let replaced = 0\n'
+    + '      for (const m of (output && output.messages) || []) {\n'
+    + '        for (const p of (m && m.parts) || []) {\n'
+    + '          if (!p || p.type !== "tool") continue\n'
+    + '          if (p.state && typeof p.state.output === "string" && p.state.output.includes("T4-ORIGINAL-")) { p.state.output = "[T4-PROBE-MARKER 工具结果已被探针替换]"; replaced++ }\n'
+    + '          else if (typeof p.output === "string" && p.output.includes("T4-ORIGINAL-")) { p.output = "[T4-PROBE-MARKER 工具结果已被探针替换]"; replaced++ }\n'
+    + '        }\n'
+    + '      }\n'
+    + '      log({ hook: "messages.transform", replaced })\n'
+    + '    },\n'
+    + '    "permission.ask": async (input, output) => {\n'
+    + '      const s = JSON.stringify(input || {})\n'
+    + '      log({ hook: "permission.ask", input: s.slice(0, 400) })\n'
+    + '      if (s.includes("T5-RAN-") && output) output.status = "deny"\n'
+    + '    },\n'
+    + '    "experimental.chat.system.transform": async (input, output) => {\n'
+    + '      const mark = process.env.T6_MARKER || ""\n'
+    + '      if (mark && output && Array.isArray(output.system) && !output.system.some((s) => String(s).includes(mark))) output.system.push("注入测试标记:" + mark)\n'
+    + '      log({ hook: "system.transform", sysLen: (output && output.system && output.system.length) || -1 })\n'
+    + '    },\n'
+    + '  }\n'
+    + '}\n'
+}
+async function waitServeUp(proc, port, ms) {
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    if (proc.exitCode !== null) return false
+    try { const r = await fetch('http://127.0.0.1:' + port + '/global/health'); if (r.status === 200) return true } catch {}
+    await new Promise((r) => setTimeout(r, 1500))
+  }
+  return false
+}
+function readProbeLog(dir) { try { return fs.readFileSync(path.join(dir, 'probe-log.jsonl'), 'utf8') } catch { return '' } }
+function normMsgs(json) { return (json && (Array.isArray(json) ? json : (json.messages || json.data))) || [] }
+function assistantTexts(msgs) {
+  let t = ''
+  for (const m of msgs) {
+    const role = (m.info && m.info.role) || m.role || (m.data && m.data.info && m.data.info.role) || ''
+    if (role !== 'assistant') continue
+    for (const p of (m.parts || (m.data && m.data.parts) || [])) if (p && p.type === 'text') t += String(p.text || '') + '\n'
+  }
+  return t
+}
+function toolOutputs(msgs) {
+  let t = ''
+  for (const m of msgs) for (const p of (m.parts || (m.data && m.data.parts) || [])) {
+    if (p && p.type === 'tool') t += String((p.state && p.state.output) || p.output || '') + '\n'
+  }
+  return t
 }
 
 async function main() {
@@ -155,6 +234,97 @@ async function main() {
     }
   } catch (e) { FAIL('T1 执行', e.message) }
   finally { try { if (sid) await api('DELETE', '/session/' + sid) } catch {}; try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch {} }
+
+  console.log('\n[T4/T5] experimental 钩子(messages.transform 回写 / permission.ask deny,自起隔离 serve)')
+  const t4Dir = path.join(os.tmpdir(), 'bocomhermes-t4t5-probe')
+  let proc = null, sid2 = null
+  try {
+    fs.rmSync(t4Dir, { recursive: true, force: true })
+    fs.mkdirSync(path.join(t4Dir, '.opencode', 'plugin'), { recursive: true })
+    fs.writeFileSync(path.join(t4Dir, '.opencode', 'plugin', 't4t5-probe.js'), probePluginSource())
+    fs.writeFileSync(path.join(t4Dir, 'opencode.json'), JSON.stringify({ permission: { bash: 'ask' } }, null, 2))
+    const RAND = Math.random().toString(36).slice(2, 8)
+    const ORIG = 'T4-ORIGINAL-' + RAND, RAN = 'T5-RAN-' + RAND
+    const t4File = path.join(t4Dir, 't4file.txt').replace(/\\/g, '/')
+    fs.writeFileSync(t4File, ORIG + '\n' + Array.from({ length: 20 }, (_, i) => '第' + (i + 2) + '行 探针填充数据 ' + 'x'.repeat(30)).join('\n'))
+    // 起隔离 serve(bocomcode/opencode 依次试;探针插件只在 serve 启动时加载,所以必须新起)
+    let port = 0, lastErr = ''
+    const bins = [process.env.BOCOMHERMES_SERVE_BIN, 'bocomcode', 'opencode'].filter(Boolean)
+    outer: for (const bin of bins) {
+      for (const p of [4699, 4700, 4701]) {
+        const pr = spawn(bin, ['serve', '--port', String(p), '--hostname', '127.0.0.1'], {
+          cwd: t4Dir, env: { ...process.env, BOCOMCODE_TERMINAL: '0', CI: '1', NO_COLOR: '1', TERM: 'dumb', T4_PROBE_DIR: t4Dir, T6_MARKER: 'T6-MARKER-' + RAND },
+          stdio: 'ignore', windowsHide: true,
+        })
+        const crashed = await new Promise((res) => { pr.once('error', () => res(true)); setTimeout(() => res(false), 2500) })
+        if (crashed) { lastErr = bin + ' 不在 PATH 或启动即崩'; try { pr.kill() } catch {}; continue outer }
+        if (await waitServeUp(pr, p, 25000)) { proc = pr; port = p; break outer }
+        try { pr.kill() } catch {}
+      }
+    }
+    if (!proc) FAIL('T4/T5 探针 serve', lastErr + ' —— 跳过 T4/T5(不影响 T1-T3 结论)')
+    else {
+      const B2 = 'http://127.0.0.1:' + port
+      console.log('  (隔离 serve 已起 @' + port + ',用完即杀;真实调 3 回合模型,最长 ~10 分钟)')
+      const r = await api('POST', '/session', { title: 't4t5-probe', directory: t4Dir }, B2)
+      sid2 = r.json && (r.json.id || (r.json.data && r.json.data.id) || (r.json.info && r.json.info.id))
+      if (!sid2) FAIL('POST /session(隔离 serve)', 'status=' + r.status)
+      else {
+        let permReplies = 0
+        const stop2 = { done: false }
+        autoApprovePerms(stop2, sid2, B2, () => permReplies++)
+        // T4 turn1:读带唯一标记的文件,只答"已读取"(若模型复述原文会污染判定,靠 leaked 兜底)
+        await apiLong('/session/' + sid2 + '/message', { parts: [{ type: 'text', text: '【只允许用 read 工具】读取文件 ' + t4File + ' ,然后只回答两个字:已读取。不要引用文件内容,不要总结,不要解释。' }] }, 300000, B2)
+        const g1 = await api('GET', '/session/' + sid2 + '/message', undefined, B2)
+        const leaked = assistantTexts(normMsgs(g1.json)).includes(ORIG)
+        // T4 turn2:问它看到的工具输出 —— transform 生效则原文已不在请求里,模型只能复述占位符
+        await apiLong('/session/' + sid2 + '/message', { parts: [{ type: 'text', text: '你上一轮用 read 工具读到的内容,现在显示为什么?原样复述你看到的工具输出文字(如果看到的是占位符,就复述占位符)。不要猜测,不要编造。' }] }, 300000, B2)
+        const g2 = await api('GET', '/session/' + sid2 + '/message', undefined, B2)
+        const a2 = assistantTexts(normMsgs(g2.json))
+        const log1 = readProbeLog(t4Dir)
+        if (a2.includes('T4-PROBE-MARKER')) PASS('T4 messages.transform 回写', '模型只见到占位符 —— 钩子触发且回写生效')
+        else if (a2.includes(ORIG) && !leaked) FAIL('T4 messages.transform 回写', '模型仍能逐字引用原文 —— 钩子未生效(fork 未保留/回写无效)')
+        else if (leaked) WARN('T4 无法判定', '模型 turn1 复述了原文污染判定 —— 换个更强势的 prompt 重跑')
+        else if (/"replaced":[1-9]/.test(log1)) WARN('T4 存疑', '钩子日志显示已替换,但模型回答既无占位符也无原文(弱模型答非所问) —— 人工看 transcript 复核')
+        else FAIL('T4 钩子未触发', '探针插件无 transform 日志 —— fork 未保留该钩子或插件未被加载(检查 .opencode/plugin 扫描)')
+        // T5:让模型 echo 唯一标记;插件 permission.ask 应直接 deny(事件不到 SSE、命令无输出)
+        console.log('\n[T5] permission.ask 插件 deny')
+        await apiLong('/session/' + sid2 + '/message', { parts: [{ type: 'text', text: '【只允许用 bash 工具】执行命令: echo ' + RAN + ' ,然后把输出原样复述一遍。' }] }, 300000, B2)
+        stop2.done = true
+        const g3 = await api('GET', '/session/' + sid2 + '/message', undefined, B2)
+        const ranOut = toolOutputs(normMsgs(g3.json)).includes(RAN)
+        const log2 = readProbeLog(t4Dir)
+        const askFired = log2.includes('permission.ask') && log2.includes(RAN)
+        if (ranOut) {
+          if (askFired) FAIL('T5 permission.ask', '钩子已触发但 deny 未生效(命令仍执行) —— fork 回写无效')
+          else if (permReplies > 0) FAIL('T5 permission.ask', '权限事件到达 SSE 并被自动放行 —— 插件 deny 未生效(钩子未保留?)')
+          else WARN('T5 无法判定', '命令直接执行且未触发权限询问 —— 项目 opencode.json 的 permission.bash=ask 未生效,查 fork 配置面')
+        } else {
+          if (askFired) PASS('T5 permission.ask deny', '命令被插件拦截,工具输出无执行痕迹')
+          else WARN('T5 无法判定', '模型没执行 bash(也没触发权限) —— 模型行为,重跑或换 prompt')
+        }
+        // T6:experimental.chat.system.transform —— 插件往系统提示尾部注入唯一标记,问模型能否看到(B2 的前提)
+        console.log('\n[T6] experimental.chat.system.transform 系统提示注入')
+        const T6M = 'T6-MARKER-' + RAND
+        await apiLong('/session/' + sid2 + '/message', { parts: [{ type: 'text', text: '你的系统提示里有一句"注入测试标记:T6-MARKER-XXXXXX"样式的标记。请原样复述这个标记(只要标记本身,不要别的字)。如果找不到,只回答:找不到。' }] }, 300000, B2)
+        const g4 = await api('GET', '/session/' + sid2 + '/message', undefined, B2)
+        const a4 = assistantTexts(normMsgs(g4.json))
+        const log3 = readProbeLog(t4Dir)
+        if (a4.includes(T6M)) PASS('T6 system.transform 注入', '模型能复述系统提示里的注入标记 —— 钩子触发且回写生效')
+        else if (/"hook":"system.transform"/.test(log3)) WARN('T6 存疑', '钩子日志显示已触发并追加,但模型没能复述标记(可能注入了但模型没注意) —— 人工看 transcript 复核')
+        else FAIL('T6 钩子未触发', '探针插件无 system.transform 日志 —— fork 未保留该钩子')
+      }
+    }
+  } catch (e) { FAIL('T4/T5 执行', e.message) }
+  finally {
+    try {
+      if (proc) {
+        if (process.platform === 'win32') spawn('taskkill', ['/pid', String(proc.pid), '/t', '/f'], { stdio: 'ignore', windowsHide: true })
+        else proc.kill()
+      }
+    } catch {}
+    try { fs.rmSync(t4Dir, { recursive: true, force: true }) } catch {}
+  }
   dump()
 }
 function dump() { console.log('\n== ' + passN + ' 过 / ' + warnN + ' 警 / ' + failN + ' 失败 =='); process.exit(failN ? 1 : 0) }

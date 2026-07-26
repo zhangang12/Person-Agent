@@ -151,6 +151,27 @@ function bigText(lines = 500, lineLen = 40) {
   ok('异常输入静默放行不抛错', !threw)
 }
 
+// ── ⑧ 会话累计桶(第二道闸):单次不超也累计,超线后小输出照样外溢 ──
+{
+  const hooks = await loadPluginWithEnv({ BOCOMHERMES_READ_SPILL_DIR: TEST_DIR, BOCOMHERMES_READ_SPILL_SESSION_MAX: '15000' })
+  const mk = () => ({ title: 'read', output: 'y'.repeat(6000), metadata: {} })   // 6000 < 8000 单次闸不拦
+  const o1 = mk(); await hooks['tool.execute.after']({ tool: 'read', sessionID: 'ses_b1', callID: 'b1' }, o1)
+  const o2 = mk(); await hooks['tool.execute.after']({ tool: 'read', sessionID: 'ses_b1', callID: 'b2' }, o2)
+  ok('累计未超线:小输出原样放行', o1.output.length === 6000 && o2.output.length === 6000)
+  const o3 = mk(); await hooks['tool.execute.after']({ tool: 'read', sessionID: 'ses_b1', callID: 'b3' }, o3)   // 18000 > 15000
+  ok('累计超线:小输出(6000<8000)照样外溢', o3.output.includes('本会话读取量已到预算线'))
+  ok('预算线文案给落盘路径+改用 grep 提示', o3.output.includes(TEST_DIR) && o3.output.includes('grep'))
+  const diskFile = fs.readdirSync(TEST_DIR).find((f) => f.includes('ses_b1') && f.includes('b3'))
+  ok('超线外溢同样落盘且内容完整', !!diskFile && fs.readFileSync(path.join(TEST_DIR, diskFile), 'utf8').length === 6000)
+  ok('预算线外溢 metadata 留痕', o3.metadata.spillBudgetLine === true)
+  const o4 = mk(); await hooks['tool.execute.after']({ tool: 'read', sessionID: 'ses_b2', callID: 'b4' }, o4)
+  ok('累计按会话分桶:别的会话不受影响', o4.output.length === 6000)
+  const off = await loadPluginWithEnv({ BOCOMHERMES_READ_SPILL_DIR: TEST_DIR, BOCOMHERMES_READ_SPILL_SESSION_MAX: '0' })
+  let pass = true
+  for (let i = 0; i < 5; i++) { const o = mk(); await off['tool.execute.after']({ tool: 'read', sessionID: 'ses_b3', callID: 'c' + i }, o); if (o.output.length !== 6000) pass = false }
+  ok('累计桶 0 = 关闭(只剩单次闸)', pass)
+}
+
 fs.rmSync(TEST_DIR, { recursive: true, force: true })
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed ? 1 : 0)

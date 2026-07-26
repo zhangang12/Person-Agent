@@ -121,6 +121,14 @@
         <div id="knobGrid" class="knob-grid"></div>
       </div>
 
+      <div class="fld">
+        <span class="lbl">权限规则 <span class="hint" style="font-weight:400">（每行一条 · 语法 <code>工具名(通配)</code>，如 <code>bash(git *)</code>、<code>write(src/*)</code> · 保存即生效）</span></span>
+        <span class="hint">deny · 永远拒绝（用户红线：命中直接拒、不弹框；分片卡同样生效）</span>
+        <textarea id="permDeny" class="in" rows="3" placeholder="bash(rm -rf*)&#10;bash(curl *)&#10;bash(wget *)" spellcheck="false"></textarea>
+        <span class="hint">allow · 免弹框（命中自动放行一次，不再逐次点批准）</span>
+        <textarea id="permAllow" class="in" rows="3" placeholder="bash(git *)&#10;bash(npm run *)" spellcheck="false"></textarea>
+      </div>
+
       <div id="encWarn" style="display:none;margin-bottom:10px;padding:8px 11px;border-radius:8px;font-size:12px;line-height:1.5;color:var(--diff-del);background:var(--diff-del-bg);border:.5px solid var(--diff-del)">
         当前环境无法调用系统密钥库加密,邮箱密码将以<b>明文</b>保存到本机 settings.json。请仅在可信的个人设备上填写,或先确认系统钥匙串/凭据管理可用。
       </div>
@@ -159,6 +167,15 @@
       </div>
 
       <div class="fld">
+        <span class="lbl">内网 serve 优化 <span class="hint" style="font-weight:400">(工具表瘦身 + bash 权限通配 + explore 步数收口 · 写配置并热应用)</span></span>
+        <div class="row" style="margin-top:4px">
+          <button id="intranetOptApply" class="chip">应用内网优化</button>
+          <span id="intranetOptMsg" class="hint"></span>
+        </div>
+        <span class="hint">内容：<code>tools.webfetch/websearch/codesearch:false</code>（无外网工具模型不可见）、<code>permission.bash</code> 命令通配（git/npm 放、rm -rf/curl/wget 拒，并合并「权限规则」里的 bash 条）、<code>agent.explore.maxSteps:30</code>。<b>原文件自动备份 .bak</b>；已运行会话热生效（本机实测），预暖 serve 下次启动生效。已存在的自定义配置不会被覆盖。</span>
+      </div>
+
+      <div class="fld">
         <span class="lbl">当前项目目录</span>
         <div class="row">
           <span id="proj" class="proj">未选目录</span>
@@ -193,8 +210,8 @@
   // ── 页签(设计稿 S8/W4:通用/智能体/项目知识库 三段):按分组标签归位,不改正文结构 ──
   ;(function initTabs() {
     const MAP = [
-      [/^(主题|编辑器命令|serve 二进制|修复流程|邮件|OceanBase|注册 MCP)/, 'general'],
-      [/^(智能体旋钮|当前项目目录|后端代码仓库)/, 'agent'],
+      [/^(主题|编辑器命令|serve 二进制|修复流程|邮件|OceanBase|注册 MCP|内网 serve 优化)/, 'general'],
+      [/^(智能体旋钮|权限规则|当前项目目录|后端代码仓库)/, 'agent'],
       [/^(项目知识库)/, 'knowledge'],
     ]
     const flds = [...document.querySelectorAll('.body > .fld')]
@@ -231,6 +248,10 @@
   $('openMailCenter').addEventListener('click', () => { window.BocomHermes.openMailCenter(); window.BocomHermes.closeSelf() })
 
   const planMode = $('planMode'); planMode.checked = cur.planMode !== false   // 默认 ON
+
+  // 权限规则(P2.3):allow/deny 各一个文本域,读不到一律空
+  $('permAllow').value = (cur.permRules && Array.isArray(cur.permRules.allow) ? cur.permRules.allow : []).join('\n')
+  $('permDeny').value = (cur.permRules && Array.isArray(cur.permRules.deny) ? cur.permRules.deny : []).join('\n')
 
   // 当前项目 + 最近仓库
   const proj = $('proj'); proj.textContent = cur.project || '未选目录'; proj.title = cur.projectDir || ''
@@ -375,10 +396,20 @@
   }
 
 
+  // 内网 serve 优化:写 opencode 配置(备份+合并) + PATCH 热应用
+  $('intranetOptApply').addEventListener('click', async () => {
+    const m = $('intranetOptMsg'); m.style.color = ''; m.textContent = '应用中…'
+    try {
+      const r = await window.BocomHermes.intranetOptimizeApply()
+      if (r && r.ok) { m.style.color = 'var(--green)'; m.textContent = '✓ 已写入 ' + (r.path || '') + (r.patched && r.patched.length ? '；已热应用 ' + r.patched.length + ' 个 serve' : '；重启 serve 后生效') }
+      else { m.style.color = 'var(--diff-del)'; m.textContent = '✗ ' + ((r && r.error) || '失败') }
+    } catch (e) { m.style.color = 'var(--diff-del)'; m.textContent = '✗ ' + (e.message || '失败') }
+  })
+
   // 保存（IMAP/SMTP/代理/启动参数已分别移到「邮件中心」「浏览器」，此处不再处理）
   const msg = $('msg')
   async function save(silent) {
-    const patch = { editorCmd: editorCmd.value, planMode: !!planMode.checked, knobs: collectKnobs() }
+    const patch = { editorCmd: editorCmd.value, planMode: !!planMode.checked, knobs: collectKnobs(), permRules: { allow: $('permAllow').value.split('\n'), deny: $('permDeny').value.split('\n') } }
     if (!cur.serveBinLocked) patch.serveBin = serveBin.value
     patch.ob = {
       host: $('obHost').value.trim(),

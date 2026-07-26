@@ -83,6 +83,8 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   cardSend: (text, files, skill) => ipcRenderer.invoke('card-send', { text: String(text == null ? '' : text), files: JSON.parse(JSON.stringify(files || [])), skill: skill ? String(skill) : null }),
   skillsList: () => ipcRenderer.invoke('skills-list'),
   skillsOpenDir: () => ipcRenderer.invoke('skills-open-dir'),
+  transcriptPath: (sid) => ipcRenderer.invoke('transcript-path', sid),   // 交棒逃生舱:上一棒完整记录落盘路径(随续命消息注入)
+  intranetOptimizeApply: () => ipcRenderer.invoke('intranet-optimize-apply'),   // 内网 serve 优化:写 opencode 配置 + PATCH 热应用
   cardReinit: (opts) => ipcRenderer.invoke('card-reinit', opts || {}),
   cardPickProject: () => ipcRenderer.invoke('card-pick-project'),
   parseDoc: (path) => ipcRenderer.invoke('parse-doc', path),

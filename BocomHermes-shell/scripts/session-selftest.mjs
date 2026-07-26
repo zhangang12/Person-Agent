@@ -1,6 +1,7 @@
 // 自测:src/session.js(卡片↔opencode 会话 IPC 层)—— 本波改动逐条过:
 //   R6 提问清理 / R7 发送失败塞回背景 / R8 stale 换 id / C2 知识懒构建 / C4 本地转录(增量·截断·轮转·回放兜底)/
-//   P1 onRawMessages 降轮询 / P4 看门狗 limit 拉取 / T5 产物轨道 / 错误码人话 / C1 模型列表缓存版。
+//   P1 onRawMessages 降轮询 / P4 看门狗 limit 拉取 / T5 产物轨道 / 错误码人话 / C1 模型列表缓存版 /
+//   P3.3 todo 权威同步 / P3.4 promptAsync knob 透传。
 // 跑法:npm run session:test(零依赖 ok() 风格;假 ipcMain/oc/电子壳全注入,不连真 serve/模型;真 fs 只碰临时目录)
 import { createRequire } from 'module'
 import fs from 'fs'
@@ -340,6 +341,123 @@ console.log('用例11:契约补件 —— consumeAbortFlag 标记已手动停止
   release(); await p
   const rr2 = await h2.handlers['card-init'](mkEv(112), { sid })
   ok('回合已结束 reattach → running:false', rr2.running === false, rr2.running)
+}
+
+console.log('用例12:用户权限规则(P2.3 壳层轨) —— deny 先判/allow 免弹框/分片同规/通配匹配')
+{
+  const mkWc = (id) => ({ id, isDestroyed: () => false, send: () => {} })
+  const h = makeHarness()
+  const wc = mkWc(991)
+  const sid = 'ses_perm1'
+  h.S.sessionByWc.set(wc.id, sid)
+  h.S.sessionInfo.set(sid, { serve: h.serve, wc })
+  h.S.settings.permRules = { allow: ['bash(git *)'], deny: ['bash(rm -rf*)', 'write(*.env)'] }
+  const replies = []
+  h.oc.replyPermission = (serve, sessionId, requestId, d) => replies.push({ requestId, d })
+  h.S.handlers.onPermission({ sessionId: sid, requestId: 'r1', tool: 'bash', detail: 'rm -rf /tmp/x' })
+  ok('deny 命中即拒(reject)', replies[0] && replies[0].d === 'reject', replies[0])
+  h.S.handlers.onPermission({ sessionId: sid, requestId: 'r2', tool: 'write', detail: '/proj/.env' })
+  ok('deny 通配 *.env 命中', replies[1] && replies[1].d === 'reject', replies[1])
+  h.S.handlers.onPermission({ sessionId: sid, requestId: 'r3', tool: 'bash', detail: 'git status' })
+  ok('allow 命中免弹框(once)', replies[2] && replies[2].d === 'once', replies[2])
+  h.S.handlers.onPermission({ sessionId: sid, requestId: 'r4', tool: 'bash', detail: 'npm test' })
+  ok('不命中维持弹框路径(登记 pendingPerm)', h.S.pendingPerm.has('r4') && !replies.find((x) => x.requestId === 'r4'))
+  h.S.handlers.onPermission({ sessionId: sid, requestId: 'r5', tool: 'write', detail: 'rm -rf /tmp/x' })
+  ok('工具名不匹配不拦(write 不命中 bash 规则)', h.S.pendingPerm.has('r5') && !replies.find((x) => x.requestId === 'r5' && x.d === 'reject'))
+
+  const h2 = makeHarness()
+  const wc2 = mkWc(992)
+  const sid2 = 'ses_perm2'
+  h2.S.sessionByWc.set(wc2.id, sid2)
+  h2.S.sessionInfo.set(sid2, { serve: h2.serve, wc: wc2 })
+  h2.S.shardWc = new Set([wc2.id])
+  h2.S.settings.permRules = { deny: ['bash(rm -rf*)'] }
+  const replies2 = []
+  h2.oc.replyPermission = (serve, sessionId, requestId, d) => replies2.push({ requestId, d })
+  h2.S.handlers.onPermission({ sessionId: sid2, requestId: 's1', tool: 'bash', detail: 'rm -rf /tmp/x' })
+  ok('分片卡 deny 先于自动放行', replies2[0] && replies2[0].d === 'reject', replies2[0])
+  h2.S.handlers.onPermission({ sessionId: sid2, requestId: 's2', tool: 'bash', detail: 'npm test' })
+  ok('分片卡非 deny 维持自动放行(once)', replies2[1] && replies2[1].d === 'once', replies2[1])
+}
+
+console.log('用例13:P3.3 todo 权威数据源 —— 回合收尾 getSessionTodo 非空才覆盖注册表;空/异常/无桩/非wf卡一律不动不炸')
+{
+  // 非空 → wfTodos(本卡, 权威清单) 被调一次,注册表被覆盖
+  const h = makeHarness({ oc: { getSessionTodo: async () => [{ content: '步骤一', status: 'completed' }] } })
+  h.S.settings.projectDir = PROJ
+  const reg = { id: 'wf13', wcId: 131, todos: [{ content: '旧清单', status: 'pending' }] }
+  h.S.wfCardByWc = new Map([[131, reg]])
+  const wfCalls = []
+  h.S.wfTodos = (wcId, todos) => { wfCalls.push([wcId, todos]); if (Array.isArray(todos)) reg.todos = todos }
+  const { ev } = await openCard(h, 131)
+  await h.handlers['card-send'](ev, { text: 'x' })
+  await tick(); await tick()   // fire-and-forget 的 then 链走两拍落停
+  ok('wf 卡回合收尾:getSessionTodo 非空 → wfTodos 被调一次(本卡+权威清单)', wfCalls.length === 1 && wfCalls[0][0] === 131 && wfCalls[0][1][0].content === '步骤一', wfCalls)
+  ok('注册表 todos 已覆盖为 serve 权威清单', reg.todos.length === 1 && reg.todos[0].content === '步骤一', reg.todos)
+
+  // 空数组 → wfTodos 不调(保留工具入参学习兜底)
+  const h2 = makeHarness({ oc: { getSessionTodo: async () => [] } })
+  h2.S.settings.projectDir = PROJ
+  const reg2 = { id: 'wf13b', wcId: 132, todos: [{ content: '旧清单', status: 'pending' }] }
+  h2.S.wfCardByWc = new Map([[132, reg2]])
+  const calls2 = []
+  h2.S.wfTodos = (...a) => { calls2.push(a) }
+  const { ev: ev2 } = await openCard(h2, 132)
+  await h2.handlers['card-send'](ev2, { text: 'x' })
+  await tick(); await tick()
+  ok('空数组 → wfTodos 不调,注册表原样', calls2.length === 0 && reg2.todos[0].content === '旧清单', calls2)
+
+  // 异常 → wfTodos 不调,回合不炸
+  const h3 = makeHarness({ oc: { getSessionTodo: async () => { throw new Error('GET /session/x/todo -> 404: nf') } } })
+  h3.S.settings.projectDir = PROJ
+  const reg3 = { id: 'wf13c', wcId: 133, todos: [{ content: '旧清单', status: 'pending' }] }
+  h3.S.wfCardByWc = new Map([[133, reg3]])
+  let wf3 = 0
+  h3.S.wfTodos = () => { wf3++ }
+  const { ev: ev3 } = await openCard(h3, 133)
+  await h3.handlers['card-send'](ev3, { text: 'x' })
+  await tick(); await tick()
+  ok('getSessionTodo 抛异常 → wfTodos 未调,回合不炸', wf3 === 0 && reg3.todos[0].content === '旧清单', wf3)
+
+  // oc 无该函数(老版本)→ typeof 守卫安全跳过
+  const h4 = makeHarness()
+  h4.S.settings.projectDir = PROJ
+  h4.S.wfCardByWc = new Map([[134, { id: 'wf13d', wcId: 134, todos: [] }]])
+  let wf4 = 0
+  h4.S.wfTodos = () => { wf4++ }
+  const { ev: ev4 } = await openCard(h4, 134)
+  await h4.handlers['card-send'](ev4, { text: 'x' })
+  await tick(); await tick()
+  ok('oc.getSessionTodo 缺席(老版本)→ 安全跳过不炸', wf4 === 0)
+
+  // 非 wf 卡(wfCardByWc 无登记)→ 根本不发请求
+  let todoReqs = 0
+  const h5 = makeHarness({ oc: { getSessionTodo: async () => { todoReqs++; return [{ content: 'x' }] } } })
+  h5.S.settings.projectDir = PROJ
+  h5.S.wfCardByWc = new Map()
+  h5.S.wfTodos = () => {}
+  const { ev: ev5 } = await openCard(h5, 135)
+  await h5.handlers['card-send'](ev5, { text: 'x' })
+  await tick(); await tick()
+  ok('非 wf 卡 → 不打 todo 请求', todoReqs === 0, todoReqs)
+}
+
+console.log('用例14:P3.4 promptAsync knob —— truthy 透传 opts.promptAsync;knobs 缺席不传(原路径不动)')
+{
+  const h = makeHarness()
+  h.S.settings.projectDir = PROJ
+  h.S.settings.knobs = { promptAsync: 1 }
+  const { ev } = await openCard(h, 141)
+  await h.handlers['card-send'](ev, { text: 'x' })
+  const opts1 = h.calls.sendMessage[0] && h.calls.sendMessage[0][6]
+  ok('knobs.promptAsync=1 → sendMessage 第七参带 promptAsync:true', !!(opts1 && opts1.promptAsync === true), opts1)
+
+  const h2 = makeHarness()
+  h2.S.settings.projectDir = PROJ   // knobs 缺席
+  const { ev: ev2 } = await openCard(h2, 142)
+  await h2.handlers['card-send'](ev2, { text: 'x' })
+  const opts2 = h2.calls.sendMessage[0] && h2.calls.sendMessage[0][6]
+  ok('knobs 缺席 → 不带 promptAsync(原路径)', !!(opts2 && !('promptAsync' in opts2)), opts2)
 }
 
   console.log('\n' + (fail ? '❌ 有失败' : '✅ 全部通过') + '  ' + pass + ' passed, ' + fail + ' failed')
