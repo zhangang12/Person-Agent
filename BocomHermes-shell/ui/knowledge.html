@@ -22,20 +22,23 @@
   .kn-bar { display: flex; align-items: center; gap: 7px; flex: none; }
   .kn-bar select.in { flex: 1; min-width: 0; }
   .hint { font-size: 11px; color: var(--txt3); line-height: 1.6; }
-  /* 项目知识库:条目卡 + 体检三色(绿默认/黄警示/红隔离) */
-  .kn-list { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 7px; overflow-y: auto; padding-right: 2px; }
+  /* 项目知识库:条目行 + 体检三色(绿默认/黄警示/红隔离)—— 高密度可扫读版 */
+  .kn-list { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; padding-right: 2px; }
   .kn-list::-webkit-scrollbar { width: 6px; } .kn-list::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
-  .kn-item { background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+  .kn-item { position: relative; background: var(--composer-bg); border: .5px solid var(--composer-border); border-radius: 10px; padding: 7px 10px 6px; display: flex; flex-direction: column; gap: 3px; }
   .kn-item.kn-yellow { background: var(--warn-bg); border-color: var(--warn-border); }
   .kn-item.kn-red { background: var(--diff-del-bg); border-color: var(--diff-del); }
-  .kn-meta { display: flex; align-items: center; gap: 7px; font-size: 10.5px; color: var(--txt3); flex-wrap: wrap; }
-  .kn-status { font-size: 9px; flex: none; }
-  .kn-conf { font-size: 9.5px; font-weight: 600; border-radius: 999px; padding: 0 7px; line-height: 15px; background: var(--fill-1); color: var(--txt2); border: .5px solid var(--sep); }
-  .kn-text { font-size: 12px; color: var(--txt); line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
-  .kn-anchors { font-family: var(--mono); font-size: 10.5px; color: var(--txt3); word-break: break-all; }
+  .kn-top { display: flex; align-items: baseline; gap: 7px; font-size: 10px; color: var(--txt3); flex-wrap: wrap; }
+  .kn-status { font-size: 8px; flex: none; align-self: center; }
+  .kn-scene { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+  .kn-conf { font-size: 9px; font-weight: 600; border-radius: 999px; padding: 0 6px; line-height: 14px; background: var(--fill-1); color: var(--txt2); border: .5px solid var(--sep); flex: none; }
+  .kn-text { font-size: 12.5px; color: var(--txt); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+  .kn-anchors { font-family: var(--mono); font-size: 10px; color: var(--txt3); word-break: break-all; opacity: .85; }
   .kn-reasons { font-size: 10.5px; line-height: 1.5; }
-  .kn-ops { display: flex; gap: 6px; margin-top: 2px; }
-  .kn-ops .chip { font-size: 10.5px; padding: 2px 9px; }
+  /* 操作钮:右上悬停现身(不占行高,一屏多看一倍条目) */
+  .kn-ops { position: absolute; top: 6px; right: 8px; display: none; gap: 4px; }
+  .kn-item:hover .kn-ops { display: flex; }
+  .kn-ops .chip { font-size: 10px; padding: 1px 8px; background: var(--glass-bg); }
   .kn-edit { display: flex; flex-direction: column; gap: 5px; border-top: .5px dashed var(--composer-border); padding-top: 6px; }
   .kn-edit .in { font-size: 12px; }
   .kn-edit textarea.in { resize: vertical; min-height: 54px; font-family: var(--font); }
@@ -111,18 +114,18 @@
   }
   function buildKnItem(e) {
     const el = document.createElement('div'); el.className = 'kn-item'; el.dataset.index = e.index
-    const meta = document.createElement('div'); meta.className = 'kn-meta'
+    const top = document.createElement('div'); top.className = 'kn-top'
     const st = document.createElement('span'); st.className = 'kn-status'; st.textContent = '●'; st.style.color = 'var(--txt3)'; st.title = '未体检'
-    meta.appendChild(st)
-    if (e.date) { const d = document.createElement('span'); d.textContent = e.date; meta.appendChild(d) }
+    top.appendChild(st)
+    if (e.date) { const d = document.createElement('span'); d.textContent = e.date; top.appendChild(d) }
     if (e.confidence != null && e.confidence !== '') {
       const c = document.createElement('span'); c.className = 'kn-conf'
       const cv = +e.confidence
       c.textContent = '置信 ' + (Number.isFinite(cv) && cv <= 1 ? Math.round(cv * 100) + '%' : e.confidence)
-      meta.appendChild(c)
+      top.appendChild(c)
     }
-    if (e.scene) { const sc = document.createElement('span'); sc.textContent = '场景:' + e.scene; meta.appendChild(sc) }
-    el.appendChild(meta)
+    if (e.scene) { const sc = document.createElement('span'); sc.className = 'kn-scene'; sc.textContent = '场景:' + e.scene; sc.title = e.scene; top.appendChild(sc) }
+    el.appendChild(top)
     const tx = document.createElement('div'); tx.className = 'kn-text'; tx.textContent = e.text || e.raw || ''; el.appendChild(tx)
     const anchors = Array.isArray(e.anchors) ? e.anchors : []
     if (anchors.length) { const an = document.createElement('div'); an.className = 'kn-anchors'; an.textContent = '⚓ ' + anchors.join(' · '); el.appendChild(an) }
