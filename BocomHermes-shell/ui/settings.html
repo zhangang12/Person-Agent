@@ -222,7 +222,9 @@
       const ft = document.querySelector('.set .ft'); if (ft) ft.style.display = tab === 'knowledge' ? 'none' : ''
     }
     document.querySelectorAll('.stabs button').forEach((b) => b.addEventListener('click', () => paint(b.dataset.stab)))
-    paint('general')
+    window.__setTab = paint   // 宿主深链钩子(侧栏「知识库」直达本页签)
+    const want = new URLSearchParams(location.search).get('tab')
+    paint(want === 'agent' || want === 'knowledge' ? want : 'general')
   })()
 
   // 主题已锁定浅色(set-theme 幂等);只保留广播落地,不再提供切换控件

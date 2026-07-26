@@ -13,7 +13,7 @@ import SideBar from './SideBar.vue'
 import StatusBar from './StatusBar.vue'
 import QuickInput from './QuickInput.vue'
 import CtxPanel from './CtxPanel.vue'
-import { store, PRELOAD_URL, bindWv, spawnChat, closeChat, wireShell, viewSrc } from './store'
+import { store, PRELOAD_URL, bindWv, spawnChat, closeChat, wireShell, viewSrc, viewWv } from './store'
 
 onMounted(() => { wireShell() })
 
@@ -63,13 +63,14 @@ function onConfirmClose() {
           <CtxPanel />
         </section>
 
-        <!-- 编排 / 邮件 / 设置视图:webview 懒创建且保活 -->
+        <!-- 编排 / 邮件 / 设置视图:webview 懒创建且保活(设置视图登记元素引用,支持页签深链) -->
         <section v-for="v in (['orch', 'mail', 'settings'] as const)" :key="v" class="view" :class="{ on: store.view === v }">
           <webview
             v-if="store.visited.includes(v)"
             :src="viewSrc(v)"
             :preload="PRELOAD_URL"
             class="chat-wv"
+            :ref="(el: any) => { if (el) { viewWv[v] = el; if (v === 'settings') el.addEventListener('dom-ready', () => { el.__kbReady = true }) } }"
           ></webview>
         </section>
 

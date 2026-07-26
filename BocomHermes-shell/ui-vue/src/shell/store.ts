@@ -83,12 +83,23 @@ export function showView(view: string) {
     try { BH()?.openBrowser?.() } catch (e) { /* 静默 */ }
     return
   }
-  if (view === 'kb') view = 'settings'   // 知识库治理在设置视图内,归并到设置
+  if (view === 'kb') { gotoSettingsTab('knowledge'); return }   // 知识库入口直达设置的「项目知识库」页签(深链,不再丢到设置首页)
   const v = (['chat', 'orch', 'mail', 'settings'].includes(view) ? view : 'chat') as ViewName
   store.view = v
   if (v !== 'chat' && !store.visited.includes(v)) store.visited.push(v)
 }
 export function viewSrc(v: ViewName) { return VIEW_SRC[v] || '' }
+
+// 视图 webview 元素引用(ShellApp ref 回调登记):深链切页签用(settings.__setTab)
+export const viewWv: Record<string, any> = {}
+/** 深链到设置视图的某个页签:webview 未就绪就挂起等 dom-ready(settings.html 暴露 window.__setTab) */
+export function gotoSettingsTab(tab: string) {
+  showView('settings')
+  const apply = () => { try { viewWv.settings && viewWv.settings.executeJavaScript("window.__setTab && window.__setTab('" + tab + "')") } catch (e) { /* 静默 */ } }
+  const el = viewWv.settings
+  if (el && el.__kbReady) { apply(); return }
+  if (el) el.addEventListener('dom-ready', () => { el.__kbReady = true; apply() }, { once: true })
+}
 
 // ── 历史区:最近 8 条(排除活动 sid 与钉出 sid),点击 = 带 sid 重开 ──
 export function refreshHist() {
