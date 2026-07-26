@@ -198,6 +198,8 @@ export const s = reactive({
   compactAsk: false,
   /** 已挂载技能('/' 菜单选择;跨轮保持直到 ✕ 卸载,对齐旧页 activeSkill) */
   activeSkill: null as { id: string; name: string; desc?: string } | null,
+  /** 标题已被用户手改 → 首轮自动命名不再覆盖(尊重手改) */
+  titleCustomized: false,
   /** 子 Agent 事件计数(P2b 侧边栏数据源,本棒只记账) */
   unhandledEvents: 0,
   /** 子 Agent 侧边栏(P2b):本轮 task/delegate_task 扇出的子 Agent 活动(各自独立缓冲,不占主对话流) */
@@ -677,7 +679,7 @@ export async function turn(text: string, files?: any[] | null): Promise<boolean>
   } finally {
     curAnswer = null; curReason = null
     s.busy = false
-    if (ok) s.done = true
+    if (ok) { s.done = true; maybeAutoTitle() }   // 首轮成功 → 默认名自动换成首条消息前 24 字
     maybeCapFeed()
     pollRealUsage()   // 轮末刷实测用量(ctx chip 实测态;fire-and-forget)
     // 分片/主控卡空答自动重试(≤2,网关静默不能卡死无人值守链;拿到文本即归零)
@@ -1100,6 +1102,22 @@ export async function listSkills(): Promise<any[]> {
 }
 export function setActiveSkill(sk: { id: string; name: string; desc?: string } | null): void {
   s.activeSkill = sk
+}
+
+/** 改会话名:标题栏内联改名 / 首轮自动命名。三处同步:本卡标题、宿主侧栏(card-bound)、历史索引(history-rename)。 */
+const DEFAULT_TITLES = /^(新会话|新对话|BocomHermes 对话|对话)$/
+export function setSessionTitle(t: string, opts?: { manual?: boolean }): void {
+  const title = String(t || '').replace(/\s+/g, ' ').trim().slice(0, 40)
+  if (!title || title === s.title) return
+  if (opts && opts.manual) s.titleCustomized = true
+  s.title = title
+  try { BH()?.cardBoundEmit?.({ sid: s.sessionId, title }) } catch { /* 静默 */ }
+  try { BH()?.historyRename?.(s.sessionId, title) } catch { /* 静默 */ }
+}
+/** 首轮结束自动命名:默认名 + 没手改过 → 用首条消息前 24 字(一卡一话题,名字说人话) */
+function maybeAutoTitle(): void {
+  if (s.titleCustomized || !DEFAULT_TITLES.test(s.title) || !lastSend) return
+  setSessionTitle(String(lastSend.text).slice(0, 24))
 }
 
 /** 项目目录切换(标题栏项目 chip):选目录 → 换目录 = 换引擎,本卡重开会话(对齐旧卡 paintProj+cardReinit) */

@@ -3,7 +3,7 @@
 // ctx chip:<5% 隐藏;<60% 绿 / 60-80% 橙 / >80% 红(设计稿口径);点击 = 压缩续聊确认(KDialog 挂 ChatApp)。
 // embedded 模式:去窗口控件(宿主窗口的系统边框负责)。
 import { ref, computed } from 'vue'
-import { s, toggleVerbose, listModels, setModel, subToggle, subRunningCount, pickProject } from './store'
+import { s, toggleVerbose, listModels, setModel, subToggle, subRunningCount, pickProject, setSessionTitle } from './store'
 import { ctxPctVal, ctxLevel, ctxChipText, ctxChipTitle } from './lib/ctxchip'
 import { BH } from './bridge'
 import KMenu from '../components/KMenu.vue'
@@ -43,6 +43,34 @@ const pinOn = ref(false)
 async function onPin() {
   try { pinOn.value = !!(await BH()?.togglePin?.()) } catch { /* 静默 */ }
 }
+const call = (fn: 'closeSelf' | 'minimizeSelf' | 'toggleMaximize') => {
+  try { (BH() as any)?.[fn]?.() } catch { /* 静默 */ }
+}
+// 标题内联改名:点击标题 → 输入态(Enter 保存 / Esc 取消 / 失焦保存);手改后首轮自动命名不再覆盖
+const editing = ref(false)
+const editText = ref('')
+const editEl = ref<HTMLInputElement | null>(null)
+function startEdit() {
+  editText.value = s.title
+  editing.value = true
+  setTimeout(() => { try { editEl.value && editEl.value.select() } catch { /* 静默 */ } }, 0)
+}
+function commitEdit() {
+  const v = editText.value.trim()
+  editing.value = false
+  if (v) setSessionTitle(v, { manual: true })
+}
+</script>
+
+<template>
+  <div class="k-hd">
+    <span class="k-grip" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" style="fill:currentColor;stroke:none"><circle cx="8" cy="6" r="1.1"/><circle cx="8" cy="12" r="1.1"/><circle cx="8" cy="18" r="1.1"/><circle cx="13" cy="6" r="1.1"/><circle cx="13" cy="12" r="1.1"/><circle cx="13" cy="18" r="1.1"/></svg></span>
+    <span class="dot" :style="tintStyle" aria-hidden="true"></span>
+    <input
+      v-if="editing" ref="editEl" v-model="editText" class="k-title-edit"
+      @keydown.enter="commitEdit" @keydown.esc="editing = false" @blur="commitEdit"
+    >
+    <span v-else class="k-title" title="点击改名" @click="startEdit"><span v-if="s.done" class="done-tick">✓</span>{{ s.title }}</span>
 const call = (fn: 'closeSelf' | 'minimizeSelf' | 'toggleMaximize') => {
   try { (BH() as any)?.[fn]?.() } catch { /* 静默 */ }
 }

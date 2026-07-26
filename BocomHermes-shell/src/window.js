@@ -88,6 +88,18 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (S.history.length !== before) { saveHistory(); try { S.audit && S.audit('history', '删除历史会话索引', { id: id.slice(0, 40) }) } catch {} }
     return { ok: true }
   })
+  // 历史改名(首轮自动命名 / 标题栏内联改名):按 sid 更新索引标题
+  ipcMain.handle('history-rename', (_e, arg) => {
+    const { sid, title } = arg || {}
+    const id = String(sid == null ? '' : sid)
+    const t = String(title || '').replace(/\s+/g, ' ').trim().slice(0, 80)
+    if (!id || !t) return { ok: false }
+    const h = S.history.find((x) => x.id === id)
+    if (!h) return { ok: false, err: 'no such history entry' }
+    h.title = t; h.ts = Date.now()
+    saveHistory()
+    return { ok: true }
+  })
   function touchHistory(id) { const h = S.history.find((x) => x.id === id); if (h) { h.ts = Date.now(); saveHistory() } }
   // 会话换 id(引擎侧重建会话等场景):history.json 里把 oldId 条目原地换成 newId,created/title/model 等字段保留
   function replaceHistoryId(oldId, newId) {

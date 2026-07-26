@@ -32,8 +32,12 @@ html[data-embed="1"] .hl { display: none; }
 .k-hd > * { -webkit-app-region: no-drag; }
 .k-grip { color: var(--label-3); display: inline-flex; -webkit-app-region: drag; cursor: grab; }
 .dot { width: 8px; height: 8px; border-radius: var(--r-full); flex: none; }
-.k-title { font: var(--b1-em); color: var(--label-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.k-title { font: var(--b1-em); color: var(--label-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; cursor: text; }
 .k-title .done-tick { color: var(--green); margin-right: 4px; }
+.k-title-edit {
+  font: var(--b1-em); color: var(--label-1); background: var(--fill-1); border: 1px solid var(--blue);
+  border-radius: var(--r-xxs); padding: 1px 6px; outline: none; width: 180px;
+}
 .k-dir { font: var(--c1); color: var(--label-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
 .k-hd .sp { flex: 1; -webkit-app-region: drag; }
 .k-chip {
