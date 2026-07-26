@@ -399,6 +399,8 @@ html[data-embed="1"] .hl { display: none; }
 /* ── 标题栏 chips 扩展(ctx 三态 / 可点 chip / 保活灯 / 成果钮) ────────────── */
 .k-chip.clickable { cursor: pointer; }
 .k-chip.clickable:hover { background: var(--fill-3); }
+.k-dir.projchip { cursor: pointer; color: var(--label-2); background: var(--fill-2); border-radius: var(--r-full); padding: 2px 9px; }
+.k-dir.projchip:hover { color: var(--blue); background: var(--blue-10); }
 .k-chip.ctxchip.ok { color: var(--green); }
 .k-chip.ctxchip.warn { color: var(--orange); }
 .k-chip.ctxchip.danger { color: var(--danger); }

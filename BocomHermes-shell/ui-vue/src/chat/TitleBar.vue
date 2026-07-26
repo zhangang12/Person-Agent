@@ -3,7 +3,7 @@
 // ctx chip:<5% 隐藏;<60% 绿 / 60-80% 橙 / >80% 红(设计稿口径);点击 = 压缩续聊确认(KDialog 挂 ChatApp)。
 // embedded 模式:去窗口控件(宿主窗口的系统边框负责)。
 import { ref, computed } from 'vue'
-import { s, toggleVerbose, listModels, setModel, subToggle, subRunningCount } from './store'
+import { s, toggleVerbose, listModels, setModel, subToggle, subRunningCount, pickProject } from './store'
 import { ctxPctVal, ctxLevel, ctxChipText, ctxChipTitle } from './lib/ctxchip'
 import { BH } from './bridge'
 import KMenu from '../components/KMenu.vue'
@@ -53,7 +53,7 @@ const call = (fn: 'closeSelf' | 'minimizeSelf' | 'toggleMaximize') => {
     <span class="k-grip" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" style="fill:currentColor;stroke:none"><circle cx="8" cy="6" r="1.1"/><circle cx="8" cy="12" r="1.1"/><circle cx="8" cy="18" r="1.1"/><circle cx="13" cy="6" r="1.1"/><circle cx="13" cy="12" r="1.1"/><circle cx="13" cy="18" r="1.1"/></svg></span>
     <span class="dot" :style="tintStyle" aria-hidden="true"></span>
     <span class="k-title"><span v-if="s.done" class="done-tick">✓</span>{{ s.title }}</span>
-    <span v-if="s.project" class="k-dir">{{ s.project }}</span>
+    <span v-if="s.project" class="k-dir projchip" :title="'点击切换本卡对话的代码仓库 · ' + (s.dir || '')" @click="pickProject">📁 {{ s.project }}</span>
     <span class="sp"></span>
     <KMenu :items="modelItems" placement="bottom-end" @select="onModelSelect" @update:open="(v) => v && loadModels()">
       <span class="k-chip clickable" :title="'当前模型：' + s.modelLabel + '(点击切换)'">{{ s.modelLabel }}</span>

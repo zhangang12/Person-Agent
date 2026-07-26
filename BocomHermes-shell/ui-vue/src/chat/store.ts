@@ -1102,6 +1102,24 @@ export function setActiveSkill(sk: { id: string; name: string; desc?: string } |
   s.activeSkill = sk
 }
 
+/** 项目目录切换(标题栏项目 chip):选目录 → 换目录 = 换引擎,本卡重开会话(对齐旧卡 paintProj+cardReinit) */
+export async function pickProject(): Promise<void> {
+  try {
+    const r = await BH()?.cardPickProject?.()
+    if (!r || !r.changed) return
+    const nr = await BH()!.cardReinit({})
+    resetConversation()
+    s.project = nr.project || ''
+    s.dir = nr.dir || s.dir
+    s.modelLabel = (nr.model && (nr.model.name || nr.model.modelID)) || s.modelLabel
+    s.modelKey = nr.model ? (nr.model.providerID + '/' + nr.model.modelID) : s.modelKey
+    s.sessionId = nr.sessionId || s.sessionId
+    draftKey = draftKeyOf(s.sessionId)
+    refreshCtxLimit()
+    addNote('已切换目录:' + (nr.dir || '') + '(换目录 = 换引擎,已新开会话)')
+  } catch { /* 静默 */ }
+}
+
 // ── 压缩续聊(compactCore,旧页 982-1017 平移):模型写接力摘要 → cardReinit(carryCtx) → 清场续聊 ──
 // wf 变体(主动交棒):工作流专用摘要提示 + 压缩后自动发「恢复执行」棒次,无人值守链不断。
 const SUM_PROMPT_CHAT = '请把我们这段对话压缩成一份「接力摘要」，供新会话继续用。包含：1) 正在做的事与目标 2) 已确认的关键结论/决定（保留文件路径、命令、数据） 3) 未完成事项与下一步 4) 已排除的思路与失败尝试（各附一句原因 —— 保错误证据，下一棒不重犯） 5) 需要沿用的约束与偏好。只输出摘要正文。'
