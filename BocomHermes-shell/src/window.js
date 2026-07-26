@@ -79,6 +79,15 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     S.history = [{ id, title: t, dir: dir || '', project: dir ? path.basename(dir) : '未选目录', ts: Date.now(), created: Date.now() }, ...S.history.filter((h) => h.id !== id)].slice(0, 50)
     saveHistory()
   }
+  // 历史单条删除(侧栏历史区行内 ✕):只摘索引,serve 侧会话不管(与 clearHistory 同语义,索引 orphan 不影响)
+  ipcMain.handle('history-delete', (_e, sid) => {
+    const id = String(sid == null ? '' : sid)
+    if (!id) return { ok: false }
+    const before = S.history.length
+    S.history = S.history.filter((h) => h.id !== id)
+    if (S.history.length !== before) { saveHistory(); try { S.audit && S.audit('history', '删除历史会话索引', { id: id.slice(0, 40) }) } catch {} }
+    return { ok: true }
+  })
   function touchHistory(id) { const h = S.history.find((x) => x.id === id); if (h) { h.ts = Date.now(); saveHistory() } }
   // 会话换 id(引擎侧重建会话等场景):history.json 里把 oldId 条目原地换成 newId,created/title/model 等字段保留
   function replaceHistoryId(oldId, newId) {

@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   cardBoundEmit: (meta) => { try { ipcRenderer.sendToHost('card-bound', meta || {}) } catch (e) {} },   // webview guest → 宿主 shell 回写绑定;顶层窗调用静默吞掉
   chatCtxEmit: (ctx) => { try { ipcRenderer.sendToHost('chat-ctx', ctx || {}) } catch (e) {} },   // guest → 宿主:ctx 用量/模型回写(状态栏真值);顶层窗静默
   getHistory: () => ipcRenderer.sendSync('get-history'),
+  historyDelete: (sid) => ipcRenderer.invoke('history-delete', sid),   // 历史单条删除(侧栏行内 ✕,只摘索引)
   openHistory: (sid, title) => ipcRenderer.invoke('open-history', { sid, title }),
   clearHistory: () => ipcRenderer.invoke('clear-history'),
   // 工作流（动态编排）

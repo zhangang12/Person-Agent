@@ -8,10 +8,10 @@
   任务编排角标 = 运行中工作流数(真数据,wf-running-count 轮询,与状态栏同源)。
 -->
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { KBadge, KMenu, KSkeleton, KSpinner } from '../components'
 import type { KMenuItem } from '../components'
-import { store, dotColor, showView, spawnChat, closeChat, pinChat, sessMouseDown, sessClick } from './store'
+import { store, dotColor, showView, spawnChat, closeChat, pinChat, sessMouseDown, sessClick, refreshHist } from './store'
 import type { ChatEntry } from './store'
 
 const BH = (): any => (window as any).BocomHermes
@@ -32,6 +32,21 @@ function onMenu(c: ChatEntry, key: string) {
 }
 function openSkillCenter() { try { BH()?.openSkillCenter?.() } catch (e) { /* 静默 */ } }
 function histTitle(h: { title?: string; project?: string }) { return (h.title || '') + (h.project ? ' · ' + h.project : '') }
+// 历史单条删除:行内 ✕ 两步确认(第一次变「删?」,3s 未确认复位;只摘索引,引擎侧会话不动)
+const histDelArm = ref('')
+let histArmTimer: ReturnType<typeof setTimeout> | null = null
+async function delHist(id: string) {
+  if (histDelArm.value !== id) {
+    histDelArm.value = id
+    if (histArmTimer) clearTimeout(histArmTimer)
+    histArmTimer = setTimeout(() => { histDelArm.value = '' }, 3000)
+    return
+  }
+  if (histArmTimer) { clearTimeout(histArmTimer); histArmTimer = null }
+  histDelArm.value = ''
+  try { await BH()?.historyDelete?.(id) } catch (e) { /* 静默 */ }
+  refreshHist()
+}
 </script>
 
 <template>
@@ -77,11 +92,16 @@ function histTitle(h: { title?: string; project?: string }) { return (h.title ||
       <div v-if="store.histItems.length" class="lab">历史</div>
       <div
         v-for="h in store.histItems" :key="h.id"
-        class="sess"
+        class="sess hist"
         @click="spawnChat({ sid: h.id, title: h.title })"
       >
         <span class="dot" style="background: var(--label-3)"></span>
         <span class="t" :title="histTitle(h)">{{ h.title || '对话' }}</span>
+        <button
+          class="x hx" :class="{ arm: histDelArm === h.id }"
+          :title="histDelArm === h.id ? '再点一次确认删除' : '删除这条历史(只删索引,不影响引擎侧会话)'"
+          @click.stop="delHist(h.id)"
+        >{{ histDelArm === h.id ? '删?' : '×' }}</button>
       </div>
     </div>
 
@@ -168,6 +188,9 @@ function histTitle(h: { title?: string; project?: string }) { return (h.title ||
   cursor: pointer; display: none; align-items: center; justify-content: center; padding: 0;
 }
 .sess:hover .pin, .sess:hover .x { display: inline-flex; }
+.sess .x.hx { display: none; }
+.sess.hist:hover .x.hx { display: inline-flex; }
+.sess .x.hx.arm { display: inline-flex; width: auto; padding: 0 5px; color: var(--danger); font-size: 10px; font-weight: 600; }
 .sess:hover :deep(.k-menu-wrap) .more { display: inline-flex; }
 .sess .pin:hover, .sess .x:hover, .sess .more:hover { background: var(--fill-3); color: var(--label-1); }
 .sess :deep(.k-menu-wrap) { flex: none; display: none; }
