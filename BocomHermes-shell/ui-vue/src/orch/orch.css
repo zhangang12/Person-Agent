@@ -1,0 +1,96 @@
+/* 任务编排页样式(只吃 tokens.css 变量;浅色单主题) */
+html, body, #app { height: 100%; }
+body { background: var(--bg-primary); font: var(--b2); color: var(--label-1); overflow: hidden; }
+html[data-embed="1"], html[data-embed="1"] body { background: var(--bg-primary); }
+
+#orch { height: 100%; display: flex; flex-direction: column; padding: 12px 16px; gap: 10px; }
+.hd { flex: none; display: flex; align-items: center; gap: 10px; }
+.hd .ttl { font-size: 14px; font-weight: 600; }
+.hd .sp { flex: 1; }
+.seg { display: inline-flex; gap: 2px; background: var(--fill-2); border-radius: var(--r-lg); padding: 3px; }
+.seg button { min-width: 62px; height: 28px; padding: 0 12px; border: none; border-radius: var(--r-sm); background: transparent; color: var(--label-1); font: var(--b2); cursor: pointer; }
+.seg button.on { background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); }
+.proj { font: var(--c1); color: var(--label-3); font-family: var(--font-mono); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mini { border: 0.5px solid var(--sep); background: transparent; color: var(--label-2); border-radius: var(--r-sm); padding: 3px 9px; cursor: pointer; }
+.mini:hover { color: var(--blue); border-color: var(--blue); }
+
+.launch { flex: none; display: flex; gap: 9px; }
+.launch textarea {
+  flex: 1; resize: none; border: 0.5px solid var(--sep); border-radius: var(--r-md);
+  background: var(--bg-primary); color: var(--label-1); font: var(--b1); padding: 9px 12px; outline: none; line-height: 1.55;
+}
+.launch textarea:focus { border-color: var(--fill-4); }
+.launch .go {
+  flex: none; width: 44px; border: none; border-radius: var(--r-md); background: var(--brand); color: var(--brand-text);
+  font-size: 16px; cursor: pointer;
+}
+.launch .go:disabled { opacity: 0.4; cursor: default; }
+.errline { flex: none; font: var(--c1); color: var(--danger); background: var(--red-10); border: 0.5px solid var(--danger); border-radius: var(--r-sm); padding: 6px 11px; }
+.tpls { flex: none; display: flex; gap: 6px; flex-wrap: wrap; }
+.tpl { font: var(--c1); color: var(--label-2); background: var(--fill-1); border: 0.5px solid var(--sep); border-radius: var(--r-full); padding: 3px 11px; cursor: pointer; }
+.tpl:hover { color: var(--blue); border-color: var(--blue); }
+
+.preview { flex: none; border: 0.5px solid var(--sep); border-radius: var(--r-md); background: var(--fill-1); padding: 9px 11px; }
+.pv-hd { font: var(--c1-em); color: var(--label-2); display: flex; margin-bottom: 7px; }
+.pv-hd .sp { flex: 1; }
+.pv-hd .lnk { color: var(--blue); cursor: pointer; background: none; border: none; font: var(--c1); }
+.pv-steps { display: flex; flex-wrap: wrap; gap: 6px; }
+.pv-chip { display: inline-flex; align-items: center; gap: 6px; font: var(--c1); color: var(--label-1); background: var(--bg-primary); border: 0.5px solid var(--sep); border-radius: var(--r-sm); padding: 4px 8px; }
+.pv-chip .pv-n { color: var(--blue); font-weight: 600; }
+.pv-chip .pv-ops button { border: none; background: transparent; color: var(--label-3); cursor: pointer; font-size: 11px; padding: 0 2px; }
+.pv-chip .pv-ops button:hover { color: var(--danger); }
+.pv-acts { display: flex; gap: 8px; margin-top: 8px; }
+.pp-btn { font: var(--c1-em); border: 0.5px solid var(--sep); background: var(--bg-primary); color: var(--label-1); border-radius: var(--r-sm); padding: 4px 13px; cursor: pointer; }
+.pp-btn.on { background: var(--brand); border-color: var(--brand); color: var(--brand-text); }
+
+.qbar { flex: none; font: var(--c1); color: var(--orange); background: var(--orange-10); border: 0.5px solid var(--orange); border-radius: var(--r-md); padding: 7px 11px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.qchip { display: inline-flex; align-items: center; gap: 4px; background: var(--bg-primary); border: 0.5px solid var(--orange); border-radius: var(--r-sm); padding: 2px 7px; color: var(--label-2); }
+.qchip button { border: none; background: transparent; color: var(--label-3); cursor: pointer; font-size: 11px; }
+.qchip button:hover { color: var(--danger); }
+
+.split { flex: 1; min-height: 0; display: flex; gap: 10px; }
+.list { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; padding-right: 2px; }
+.list::-webkit-scrollbar, .detail::-webkit-scrollbar { width: 7px; }
+.list::-webkit-scrollbar-thumb, .detail::-webkit-scrollbar-thumb { background: var(--fill-3); border-radius: 3px; }
+.empty { font: var(--b2); color: var(--label-3); text-align: center; padding: 40px 12px; }
+.wfcard { border: 0.5px solid var(--sep); border-radius: var(--r-md); background: var(--bg-primary); padding: 9px 12px; cursor: pointer; transition: border-color 150ms; }
+.wfcard:hover { border-color: var(--fill-4); }
+.wfcard.sel { border-color: var(--blue); background: var(--blue-10); }
+.wfcard .top { display: flex; align-items: center; gap: 8px; }
+.wfcard .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; }
+.wfcard .dot.running { background: var(--green); box-shadow: 0 0 5px var(--green); }
+.wfcard .dot.interrupted { background: var(--orange); }
+.wfcard .dot.done { background: var(--label-3); }
+.wfcard .dot.archived { background: var(--label-4); }
+.pill { flex: none; font: var(--c2); padding: 1px 8px; border-radius: var(--r-full); border: 0.5px solid; }
+.pill.running { color: var(--green); border-color: var(--green); }
+.pill.interrupted { color: var(--orange); border-color: var(--orange); }
+.pill.done, .pill.archived { color: var(--label-3); border-color: var(--sep); }
+.wfcard .goal { font: var(--b2-em); color: var(--label-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pbar { height: 3px; border-radius: 2px; background: var(--fill-2); margin-top: 7px; overflow: hidden; }
+.pbar i { display: block; height: 100%; background: var(--blue); border-radius: 2px; transition: width .3s; }
+.wfcard .meta { display: flex; gap: 10px; margin-top: 6px; font: var(--c2); color: var(--label-3); font-family: var(--font-mono); flex-wrap: wrap; }
+.wfcard .meta .diff { color: var(--green); }
+.wfcard .cur { margin-top: 5px; font: var(--c1); color: var(--orange); }
+
+.detail { width: 320px; flex: none; overflow-y: auto; border: 0.5px solid var(--sep); border-radius: var(--r-md); background: var(--bg-primary); padding: 11px 13px; align-self: flex-start; max-height: 100%; }
+.d-goal { font: var(--b1-em); line-height: 1.5; }
+.d-meta { font: var(--c1); color: var(--label-3); margin-top: 5px; font-family: var(--font-mono); }
+.d-ops { display: flex; flex-wrap: wrap; gap: 6px; margin: 9px 0 3px; }
+.d-ops button { font: var(--c1); color: var(--label-2); background: var(--fill-1); border: 0.5px solid var(--sep); border-radius: var(--r-sm); padding: 4px 11px; cursor: pointer; }
+.d-ops button:hover { color: var(--blue); border-color: var(--blue); }
+.d-ops button.danger:hover { color: var(--danger); border-color: var(--danger); }
+.sec { margin-top: 10px; border-top: 0.5px dashed var(--sep); padding-top: 8px; }
+.sec .lb { font: var(--c2); color: var(--label-3); margin-bottom: 6px; }
+.todo { display: flex; align-items: center; gap: 7px; font: var(--b2); color: var(--label-1); padding: 2px 0; }
+.todo i { flex: none; width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--fill-4); }
+.todo.done { color: var(--label-3); text-decoration: line-through; }
+.todo.done i { background: var(--green); border-color: var(--green); }
+.todo.doing i { border-color: var(--blue); }
+.file { font: var(--c1); font-family: var(--font-mono); color: var(--blue); padding: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.act { font: var(--c2); color: var(--label-2); font-family: var(--font-mono); padding: 2px 0; }
+.act b { color: var(--blue); font-weight: 500; }
+.gate { border: 1px solid var(--orange); border-radius: var(--r-md); background: var(--orange-10); padding: 9px 11px; margin-bottom: 10px; }
+.gate .gt { font: var(--c1-em); color: var(--orange); }
+.gate .gd { font: var(--c1); color: var(--label-2); margin: 4px 0 8px; line-height: 1.5; }
+.gate .gbtn { font: var(--c1-em); color: var(--brand-text); background: var(--brand); border: none; border-radius: var(--r-sm); padding: 5px 14px; cursor: pointer; }
