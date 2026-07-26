@@ -128,7 +128,7 @@ async function delHist(id: string) {
       <svg class="ic s16" viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>
       技能中心
     </button>
-    <button class="nav-item" :class="{ on: store.view === 'settings' }" @click="showView('kb')">
+    <button class="nav-item" :class="{ on: store.view === 'kb' }" @click="showView('kb')">
       <svg class="ic s16" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5v14z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/></svg>
       知识库
     </button>
