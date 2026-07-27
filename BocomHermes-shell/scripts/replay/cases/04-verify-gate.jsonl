@@ -1,0 +1,7 @@
+# 用例④ transcript:两个分片各两行 —— todowrite(全勾收官) + 一条 bash 记录(验证证据闸的判据原料)。
+# $s1 = 分片A 会话(bash 是 echo,无验证命令 → 应标未验证);$s2 = 分片B 会话(bash 是 npm test → 有证据,不标)。
+# 响应走 fake serve 默认行为:POST /session/:id/message 落 user + 返一条 assistant 完成消息(快速路径)。
+{"t":0,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s1","part":{"id":"prt_td1","callID":"c1","type":"tool","tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"实现登录接口","status":"completed"}]}}}}}}
+{"t":1,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s1","part":{"id":"prt_b1","callID":"c2","type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"echo hello"},"output":"hello"}}}}}
+{"t":2,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s2","part":{"id":"prt_td2","callID":"c3","type":"tool","tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"实现注册接口","status":"completed"}]}}}}}}
+{"t":3,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s2","part":{"id":"prt_b2","callID":"c4","type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"npm test"},"output":"ok 12 passed"}}}}}

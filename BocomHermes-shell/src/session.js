@@ -509,6 +509,10 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
           } else if (/(^|[._-])doc_read$/i.test(tname)) {
             const fp = String(inp.path || inp.file || inp.filePath || '')
             if (fp) S.wfAction(si.wc.id, { kind: 'doc', label: '读文档：' + path.basename(fp), detail: fp })
+          // bash:命令流水(验证证据闸的原料 —— 编码分片"跑没跑过构建/测试"据此机判,不靠模型自觉汇报)
+          } else if (/^bash$/i.test(tname)) {
+            const cmd = String(inp.command || inp.cmd || '').replace(/\s+/g, ' ').trim()
+            if (cmd) S.wfAction(si.wc.id, { kind: 'cmd', label: cmd.slice(0, 120), detail: '' })
           }
         } catch {}
       }

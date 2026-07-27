@@ -542,12 +542,24 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       }
     } catch {}
   }
+  // 验证证据闸(编码 harness):编码分片(有写归属)收官时,机判"跑没跑过构建/测试"——bash 命令流水(session.js wfAction 'cmd' 轨)
+  // 里有没有验证命令。无证据 ≠ 判失败,但标 reg.unverified 随唤醒报主控按【未验证】对待(弱模型"看上去做完了实际没验证"的头号漏网);
+  // 全片齐后壳层自动补派【集成验证棒】,验证不再依赖模型自觉。
+  const VERIFY_CMD = /(npm|pnpm|yarn)\s+(run\s+)?(test|build|lint|typecheck|tsc|ci)\b|\b(pytest|vitest|jest|go test|cargo test|mvn|gradle|make)\b/i
+  function hasVerifyEvidence(reg) {
+    const acts = Array.isArray(reg.actions) ? reg.actions : []
+    return acts.some((a) => a && a.kind === 'cmd' && VERIFY_CMD.test(String(a.label || '')))
+  }
   // 多层派发唤醒钩:带 parentOrch 的分片收官(完成/中断,一次)→ 给主控卡注入进度消息(N/M)把它唤醒。
   // 主控只装清单,收到后自己对照 todo:齐了按规程派索引棒,没齐结束本轮继续等 —— 事件驱动,不轮询。
   function shardSettled(reg) {
     if (!reg.parentOrch || reg.orchNotified) return
     if (reg.status !== 'done' && reg.status !== 'interrupted') return
     if (reg.status === 'done') checkContract(reg)   // 中断片不核对:半成品缺签名是常态,报了也是噪音
+    if (reg.status === 'done' && Array.isArray(reg.writeScope) && reg.writeScope.length && !hasVerifyEvidence(reg)) {
+      reg.unverified = true   // 编码分片零验证证据:标【未验证】随唤醒报主控(契约核对管"签名在不在",这条管"跑没跑过")
+      log('[harness-verify] shard ' + reg.id + ' 无构建/测试执行证据,标未验证: ' + String(reg.goal).slice(0, 50))
+    }
     // 先确认主控窗真的在,再置一次性标志 —— 以前是"先置标志再找窗",窗没了(tag 查无/主控已关)静默跳过且永不重试,主控变聋
     const oref = S.orchByTag && S.orchByTag.get(reg.parentOrch)
     const oreg = oref && S.wfRegistry && S.wfRegistry.get(String(oref.id))
@@ -562,7 +574,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       const doneN = sibs.filter((r) => r.status === 'done' || r.status === 'interrupted').length
       const miss = (reg.contractMiss && reg.contractMiss.length) ? reg.contractMiss : null
       const gapTxt = miss ? ('【契约缺口:' + miss.slice(0, 10).join('、') + ' —— 该片号称完成但归属文件里找不到这些签名;按缺口对待:重派补缺或索引显著标注,别当完成。】') : ''
-      win.send('card-inject', { text: '<主控进度>分片「' + String(reg.goal).slice(0, 60) + '」已' + (reg.status === 'done' ? '完成' : '中断') + ' (' + doneN + '/' + total + ')。' + gapTxt + '调 workflow_result(id="' + reg.id + '") 取回它的成果;对照你的 todo 清单 —— 全部 ' + total + ' 个分片齐了,就按规程第 6 条派【索引棒】收口;还没齐,结束本轮继续等。</主控进度>', disp: '分片 ' + doneN + '/' + total + ' 已' + (reg.status === 'done' ? '完成' : '中断') + (miss ? '(契约缺口)' : '') + ':' + String(reg.goal).slice(0, 40) })
+      const unverTxt = reg.unverified ? '【未验证:该片号称完成但无构建/测试执行证据,按未验证对待 —— 别当完成;壳层将自动补派集成验证棒。】' : ''
+      win.send('card-inject', { text: '<主控进度>分片「' + String(reg.goal).slice(0, 60) + '」已' + (reg.status === 'done' ? '完成' : '中断') + ' (' + doneN + '/' + total + ')。' + gapTxt + unverTxt + '调 workflow_result(id="' + reg.id + '") 取回它的成果;对照你的 todo 清单 —— 全部 ' + total + ' 个分片齐了,就按规程第 6 条派【索引棒】收口;还没齐,结束本轮继续等。</主控进度>', disp: '分片 ' + doneN + '/' + total + ' 已' + (reg.status === 'done' ? '完成' : '中断') + (miss ? '(契约缺口)' : '') + (reg.unverified ? '(未验证)' : '') + ':' + String(reg.goal).slice(0, 40) })
       if (!queuedN && doneN === sibs.length) {   // 全部收官(且无排队片)
         for (const r of sibs) {   // 还活着的分片窗口一律关掉(隐藏工人不停下就一直烧 token);忙着的别杀 —— 可能正在交棒/补零产出文档,杀了就毁在半路
           if (S.isCardBusy && S.isCardBusy(r.wcId)) continue
@@ -572,6 +585,20 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         // 索引棒壳层兜底:唤醒只是文案提示,主控模型走神/误判不派 = 链静默停摆(实测无兜底)。
         // 5 分钟后仍没有任何带本 tag 的新登记(索引棒 goal 按规程带 [orch:TAG],spawn 即入注册表)→ 催办一次(只催不代派,编排主权仍归主控)
         const settledAt = Date.now(), tag0 = reg.parentOrch
+        // 自动验证棒(harness):有编码分片被标【未验证】→ 壳层补派一根【集成验证】分片(跑构建/测试,失败按归属回派)——
+        // 弱模型"号称完成但从不验证"从此不靠自觉;S.orchVerifyDone 记 tag 防循环(验证棒自己收官不触发再派)
+        const needVerify = sibs.some((r) => r.unverified)
+        S.orchVerifyDone = S.orchVerifyDone || new Set()
+        if (needVerify && !S.orchVerifyDone.has(tag0)) {
+          S.orchVerifyDone.add(tag0)
+          try {
+            const vGoal = '[orch:' + tag0 + ']【集成验证】在 ' + (S.settings.projectDir || '项目目录') + ' 按仓库文档(CLAUDE.md/README/交接文档)的命令跑全量构建/测试;失败按写归属回派对应分片修复(同标记 [orch:' + tag0 + ']);只汇报:命令 + 通过/失败数 + 失败归属文件。'
+            const vid = spawnWorkflow(vGoal)
+            log('[harness-verify] 自动集成验证棒已派出 (tag ' + tag0 + ', card ' + JSON.stringify(vid) + ')')
+            const owin2 = wcById(oreg.wcId)
+            if (owin2) owin2.send('card-inject', { text: '<主控进度>(壳层验证闸)检测到编码分片缺验证证据,已自动补派【集成验证】分片跑构建/测试 —— 它的结果会作为收官证据回流;别急着索引,等验证棒收官再收口。</主控进度>', disp: '壳层已自动补派集成验证棒' })
+          } catch (e) { log('harness verify dispatch err: ' + e.message) }
+        }
         setTimeout(() => {
           try {
             const spawned = [...S.wfRegistry.values()].some((r) => r.parentOrch === tag0 && (r.at || 0) >= settledAt - 1000)
