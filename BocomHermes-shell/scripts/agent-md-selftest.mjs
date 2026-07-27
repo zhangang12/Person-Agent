@@ -96,5 +96,25 @@ function mkproj(name, files) {
   fs.rmSync(dir, { recursive: true, force: true })
 }
 
+// ── ⑥ autoEnsure 自动插入:无文件直接生成 / 人工文件不碰 / 我们的段自动刷新 ──
+{
+  const init = require('../src/agent-md.js')
+  const inst = init({ app: { getPath: () => os.tmpdir() }, path, fs, ipcMain: { handle: () => {} }, log: () => {} })
+  // 无文件 → 直接生成
+  const d1 = mkproj('auto1', { 'package.json': JSON.stringify({ scripts: { test: 'vitest run' }, devDependencies: { vitest: '^4.0.0' } }) })
+  const r1 = inst.autoEnsure(d1)
+  ok('autoEnsure 无文件 → created', r1.ok && r1.action === 'created' && fs.existsSync(path.join(d1, 'AGENTS.md')))
+  // 我们的段 → 自动刷新(幂等)
+  fs.writeFileSync(path.join(d1, 'AGENTS.md'), '<!-- BocomHermes:agents-md -->\n旧内容\n')
+  const r2 = inst.autoEnsure(d1)
+  const body2 = fs.readFileSync(path.join(d1, 'AGENTS.md'), 'utf8')
+  ok('autoEnsure 我们的段 → 幂等刷新(replaced-section)', r2.ok && r2.action === 'replaced-section' && !body2.includes('旧内容') && body2.includes('npm test'))
+  // 人工文件 → 不碰(skipped)
+  const d2 = mkproj('auto2', { 'AGENTS.md': '# 人工写的,别碰\n' })
+  const r3 = inst.autoEnsure(d2)
+  ok('autoEnsure 人工文件 → 跳过不碰', r3.ok && r3.skipped === 'human-file' && fs.readFileSync(path.join(d2, 'AGENTS.md'), 'utf8') === '# 人工写的,别碰\n')
+  fs.rmSync(d1, { recursive: true, force: true }); fs.rmSync(d2, { recursive: true, force: true })
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed')
 process.exit(fail ? 1 : 0)

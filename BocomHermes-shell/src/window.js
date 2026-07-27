@@ -71,6 +71,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     S.settings.recentDirs = [dir, ...(S.settings.recentDirs || []).filter((d) => d !== dir)].slice(0, 6)
     saveSettings()
     oc.ensureServe(dir, S.handlers, log).catch((e) => log('prewarm failed: ' + e.message))
+    try { agentMd.autoEnsure(dir) } catch (e) { log('agent-md auto-ensure err: ' + e.message) }   // 自动把"怎么构建/测试/验证"写进项目 AGENTS.md(人工文件不碰)
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send('project-changed', projName())
   }
 
@@ -2286,7 +2287,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   // 启动即确保已注册:缺失/路径过期自动补写(带备份)——否则 Agent 静默没有任何天枢工具(技能解析/自愈/接管全空转)。
   const mcpCfg = initMcpConfig({ app, path, fs, ipcMain, log })
   initIntranetOptimize({ app, path, fs, ipcMain, log, getPermRules: () => S.settings.permRules, getServeBases: () => [...new Set([...S.sessionInfo.values()].map((si) => si && si.serve && si.serve.base).filter(Boolean))] })
-  initAgentMd({ app, path, fs, ipcMain, log })
+  const agentMd = initAgentMd({ app, path, fs, ipcMain, log })
   setTimeout(() => {
     try {
       const r = mcpCfg.autoRegisterIfMissing()
@@ -2303,6 +2304,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       if (r && r.ok && !r.already && !r.skipped) log('LSP 自动注册完成 → ' + r.path + '(若已有外部 serve 在跑,需重启 serve 才生效)')
     } catch (e) { log('LSP 自动注册异常: ' + e.message) }
     try { initPluginInstall({ app, path, fs, log }).autoInstall() } catch (e) { log('read-spill 自动安装异常: ' + e.message) }
+    try { if (S.settings.projectDir) agentMd.autoEnsure(S.settings.projectDir) } catch (e) { log('agent-md auto-ensure err: ' + e.message) }   // 启动也对当前项目兜底一次(换项目时已即时做过)
   }, 900)
 
   // ── Settings: IMAP 字段读写 ───────────────────────────────────────────────

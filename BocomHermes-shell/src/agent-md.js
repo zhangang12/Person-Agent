@@ -108,6 +108,26 @@ module.exports = function initAgentMd(ctx) {
 
   function targetFile(dir) { return path.join(dir, 'AGENTS.md') }
 
+  // 内部共用写入:按三种情形落盘(新建/我们生成的段幂等替换/人工文件备份+追加),返回 {action, backup}
+  function writeBlock(dir, content, log) {
+    const f = targetFile(dir)
+    let backup = null, action = 'created'
+    if (fs.existsSync(f)) {
+      const old = fs.readFileSync(f, 'utf8')
+      if (old.includes('<!-- BocomHermes:agents-md -->')) {
+        action = 'replaced-section'   // 我们以前生成的段:整体替换(幂等,可重复点)
+      } else {
+        backup = f + '.bak.' + Date.now()   // 人工写的 AGENTS.md:备份后把生成段【追加】到尾部,不覆盖
+        try { fs.copyFileSync(f, backup) } catch (e) { log && log('agent-md backup err: ' + e.message) }
+        action = 'appended'
+      }
+    }
+    const block = '<!-- BocomHermes:agents-md -->\n' + String(content || '').trim() + '\n'
+    const final = (action === 'appended') ? fs.readFileSync(f, 'utf8').trimEnd() + '\n\n' + block : block
+    fs.writeFileSync(f, final, 'utf8')
+    return { path: f, action, backup }
+  }
+
   ipcMain.handle('agent-md-draft', (_e, dir) => {
     try {
       if (!dir || !fs.existsSync(dir)) return { ok: false, error: '目录不存在' }
@@ -120,27 +140,28 @@ module.exports = function initAgentMd(ctx) {
   ipcMain.handle('agent-md-write', (_e, { dir, content }) => {
     try {
       if (!dir || !fs.existsSync(dir)) return { ok: false, error: '目录不存在' }
-      const f = targetFile(dir)
-      let backup = null, action = 'created'
-      if (fs.existsSync(f)) {
-        const old = fs.readFileSync(f, 'utf8')
-        if (old.includes('<!-- BocomHermes:agents-md -->')) {
-          action = 'replaced-section'   // 我们以前生成的段:整体替换(幂等,可重复点)
-        } else {
-          backup = f + '.bak.' + Date.now()   // 人工写的 AGENTS.md:备份后把生成段【追加】到尾部,不覆盖
-          try { fs.copyFileSync(f, backup) } catch (e) { log('agent-md backup err: ' + e.message) }
-          action = 'appended'
-        }
-      }
-      const block = '<!-- BocomHermes:agents-md -->\n' + String(content || '').trim() + '\n'
-      let final
-      if (action === 'appended') final = fs.readFileSync(f, 'utf8').trimEnd() + '\n\n' + block
-      else final = block
-      fs.writeFileSync(f, final, 'utf8')
-      log('agent-md: ' + action + ' → ' + f + (backup ? ' (backup ' + backup + ')' : ''))
-      return { ok: true, path: f, action, backup }
+      const r = writeBlock(dir, content, log)
+      log('agent-md: ' + r.action + ' → ' + r.path + (r.backup ? ' (backup ' + r.backup + ')' : ''))
+      return { ok: true, ...r }
     } catch (e) { return { ok: false, error: e.message } }
   })
 
-  return {}
+  // 自动插入(用户确认的方向:不靠设置页手点)——选定项目/启动时壳层自己把说明书写进项目:
+  //   无 AGENTS.md → 直接生成;有我们生成的段 → 自动刷新(幂等);【人工写的文件不碰】(不把机器文本塞给人)。
+  //   草稿里「待确认」项保留由人补;写入事实只记日志,不打扰。
+  function autoEnsure(dir) {
+    try {
+      if (!dir || !fs.existsSync(dir)) return { ok: false, skipped: 'no-dir' }
+      const f = targetFile(dir)
+      if (fs.existsSync(f)) {
+        const old = fs.readFileSync(f, 'utf8')
+        if (!old.includes('<!-- BocomHermes:agents-md -->')) return { ok: true, skipped: 'human-file' }   // 人工文件,不碰
+      }
+      const r = writeBlock(dir, draftAgentsMd(detectProject(dir)), log)
+      log('agent-md auto-ensure: ' + r.action + ' → ' + r.path)
+      return { ok: true, ...r }
+    } catch (e) { return { ok: false, error: e.message } }
+  }
+
+  return { autoEnsure }
 }
