@@ -40,6 +40,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     watchdogOverlap: 0.7,         // 看门狗绕圈重合度
     watchdogEscalateRounds: 2,    // 看门狗升级轮数
     ctxHandoffPct: 0.55,          // 工作流卡主动交棒水位:≤55% 就交接给下一棒主 Agent(全新 128k),永不触发被动压缩(曾经的 ctxCompactPct 是没人读的死旋钮,已删,勿复活)
+    chatHandoffPct: 0.9,          // 普通对话卡高水位自动交棒:≥90% 自动压缩续聊(摘要留顶部);0=关闭,回 90% 提醒纯手动
     autoCompactMax: 20,           // 交棒次数上限:文档接力下棒数不该卡死(每棒都在推 todo);仅兜底病态循环
     todoNudgeRounds: 3,           // todo 停滞提醒轮数
     knowledgeChurnMax: 300,       // 知识 C4 churn 阈值(行)

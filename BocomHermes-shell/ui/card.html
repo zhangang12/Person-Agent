@@ -993,7 +993,8 @@
       addNote(auto ? '到达主动交棒水位,接力给下一棒主 Agent(第 ' + autoCompactN + '/' + autoCompactMax() + ' 棒):正在写交接单…' : '压缩续聊:正在让模型总结本段对话…', 'muted')
       const ok = await turn(wfMode ? SUM_PROMPT_WF : SUM_PROMPT_CHAT)
       const ais = feed.querySelectorAll('.msg.ai')
-      const summary = ok && ais.length ? String(ais[ais.length - 1].dataset.raw || '') : ''
+      let summary = ''
+      if (ok) { for (let i = ais.length - 1; i >= 0; i--) { const r0 = String(ais[i].dataset.raw || '').trim(); if (r0) { summary = r0; break } } }   // 从尾找第一个有正文的泡:轮末催办可能顶起一个空的嵌套泡(实测"没拿到摘要"死循环)
       if (!summary.trim()) { addNote('压缩失败：没拿到摘要，继续用原会话（可稍后重试）', 'muted'); return false }
       try {
         setBusy(true)
@@ -1047,16 +1048,28 @@
     autoCompactN++
     compactCore(true)
   }
-  // 普通对话卡水位主动提醒(普通卡不自动压缩 —— 会清可见对话,越权;wf 卡有主动交棒):≥90% 且轮末空闲 → 提醒一次,别等用户盯 chip
+  // 普通对话卡水位主动提醒(仅当高水位自动交棒关闭时才有意义:chatHandoffPct=0 → 提醒人来点;>0 由自动交棒接管)
   let ctxNag = false
   function maybeCtxNag() {
     if (wfMode || ctxNag || compacting || !ctxLimitTokens) return
+    if (knobNum('chatHandoffPct', 0.9) > 0) return   // 自动交棒接管中,不重复提醒
     try {
       const pct = ctxPctVal()
       if (pct < 0.9) return
       ctxNag = true
       addNote('上下文已用 ' + Math.round(pct * 100) + '% —— 继续聊质量会下降,建议点上方上下文 chip「压缩续聊」', 'muted')
     } catch {}
+  }
+  // 普通对话卡【高水位自动交棒】(knobs.chatHandoffPct 默认 0.9;0=关闭回纯手动提醒):
+  // 原设计普通卡不自动压(怕清屏越权),但 90% 提醒长期没人点、到 100% 才发现(实测)——高水位自动交棒:
+  // 接力摘要块留在对话顶部可回看,note 先说明再动手;不自动续跑新回合(普通卡用户主导,接着聊即可)
+  async function maybeAutoChatCompact() {
+    if (wfMode || compacting || busy || !cardReady || pendingInjects.length) return
+    if (!ctxLimitTokens) return
+    const line = knobNum('chatHandoffPct', 0.9)
+    if (line <= 0 || ctxPctVal() < line) return
+    addNote('上下文已到 ' + Math.round(line * 100) + '% 高水位 —— 自动压缩续聊:本段对话总结成接力摘要留在顶部,可直接接着聊', 'muted')
+    await compactCore(false)   // 必须 await:不 await 它在后台跑,测试与用户看到"摘要轮卡思考中"(实测);轮末串行化才不出竞态
   }
   // ── 委派驱动(harness):复杂任务主 Agent 一直单干 = 必走歪路(128k 被原文灌爆/串行慢/质量降) ──
   // 检测:todo ≥3 步(复杂) 且 已实质干活(读过文件/写过文件) 且 ≥2 轮 且 从未派过 task/delegate_task →
@@ -1084,7 +1097,7 @@
   // 防死循环:连催 3 次且未完项数没降 → 停催转人工;未完项变少=有进展,计数即复位。
   let contNudgeN = 0, contLastOpen = -1
   function maybeContinueNudge() {
-    if (handoffDue()) return   // 交棒优先:水位到线的轮末谁也别起新回合(handoffDue 处注释)
+    if (compacting || handoffDue()) return   // 压缩/交棒期间不催:摘要轮里再注入会起嵌套回合,把 compactCore 的摘要泡顶成空气泡(实测死循环)
     const open = latestTodos.filter((t) => !/complet|cancel/i.test(String(t && t.status || ''))).map((t) => String((t && (t.content || t.text || t.title)) || '')).filter(Boolean)
     if (!open.length) { contNudgeN = 0; contLastOpen = -1; return }
     if (contLastOpen >= 0 && open.length < contLastOpen) contNudgeN = 0
@@ -2107,7 +2120,7 @@
       for (const [id, s] of subAgents) if (!s.done) subAgentDone(id, 'done')
       curAnswer = null; curReason = null; if (!autoRetryPending) setBusy(false); scrollFeed()   // 自动重试已排期:busy 必须保住,否则批准条/注入会在重试窗口并发起第二个回合
       try { wdFinalizeRound(); wdCheck() } catch {}   // 进展型看门狗:结算本轮读文件集合并判绕圈(可能注入提醒/挂横幅)
-      maybeDrain(); if (ok || abortedTurn) maybeShowPlanBar(); maybeWfProduceNag(); maybeCtxNag()   // 轮末:补批准条 → 产出兜底(工作流) → 水位提醒(普通卡);出错轮不挂批准条(预检没做完就批=怂恿模型编方案),用户主动中止的除外(闸还要等人批)
+      maybeDrain(); if (ok || abortedTurn) maybeShowPlanBar(); maybeWfProduceNag(); maybeCtxNag(); await maybeAutoChatCompact()   // 轮末:补批准条 → 产出兜底(wf) → 水位提醒(knob=0)/高水位自动交棒(普通卡,await 串行);出错轮不挂批准条(防预检没做完就批),用户主动中止的除外
       if (ok) { try { maybeContinueNudge() } catch {} }   // 长任务防停(harness):成功轮末 todo 还有未完项 → wf 卡自动催继续/普通卡出继续按钮;中止/出错不催
       if (ok) { try { maybeDelegateNudge() } catch {} }   // 委派驱动(harness):复杂任务多轮单干未派子 Agent → wf 卡自动注入按规程派单/普通卡给建议
       if (ok && !target) markDone()   // 本轮成功结束:标题加 ✓(多卡扫一眼就知道谁跑完了)

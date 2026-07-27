@@ -63,14 +63,16 @@ const documentStub = {
 }
 const cbs = {}
 const qReplies = [], qRejects = []   // 提问卡应答记录(questionReply/questionReject 桩)
+const sharedSettings = { knobs: { chatHandoffPct: 0 } }   // 共享 settings(默认关自动交棒=老行为;要测自动交棒的用例自己临时开)
 const bocom = new Proxy({}, {
   get: (t, k) => {
     const key = String(k)
     if (/^on[A-Z]/.test(key)) return (f) => { cbs[key] = f }
     if (key === 'getTheme') return () => 'light'
-    if (key === 'getSettings') return () => ({})
+    if (key === 'getSettings') return () => sharedSettings
     if (key === 'getDropPath') return () => ''
     if (key === 'cardInit') return async () => ({ sessionId: 's1', project: 'demo', dir: 'C:/demo', model: null, reattached: false })
+    if (key === 'cardReinit') return async () => ({ sessionId: 's1b', project: 'demo', dir: 'C:/demo', model: null })   // 压缩续聊桩(普通卡高水位自动交棒用例)
     if (key === 'cardSend') return async () => { await new Promise((r) => setTimeout(r, 60)); return '好的,已完成。' }   // 留 60ms 流式窗口:测试在 turn 进行中喂 onStream 事件
     if (key === 'readFileText') return async (p) => ({ ok: true, text: '# 分析手册\n这是 ' + p + ' 的内容' })   // 成果抽屉读文件桩
     if (key === 'questionReply') return async (id, answers) => { qReplies.push([id, answers]); return { ok: true } }
@@ -818,10 +820,11 @@ console.log('用例19:体验包 —— 截断提示 / sticky待批准 / 水位�
   ok('权限请求 → sticky 待批准钉出现(引擎在等你)', !!sticky && /引擎在等你/.test(sticky.el.textContent), sticky && sticky.el.textContent)
   created.filter((c) => c.el.className === 'ok').map((c) => c.el).pop()._fire('click')
   ok('批准后 sticky 消失', sticky.el.parentNode === null)
-  // #10 普通卡 ≥90% 轮末主动提醒压缩续聊(一次)
+  // #10 普通卡:chatHandoffPct=0(关自动)→ ≥90% 轮末提醒压缩续聊(一次)
+  sharedSettings.knobs = { chatHandoffPct: 0 }
   exported._setCtx(Math.round(128000 * 1.6 * 0.92))
   await exported.turnFn('x')
-  ok('≥90% 轮末提醒压缩续聊', created.some((c) => c.el.className === 'note muted' && /压缩续聊/.test(c.el.textContent || '')))
+  ok('knob=0 时 ≥90% 轮末提醒压缩续聊', created.some((c) => c.el.className === 'note muted' && /压缩续聊/.test(c.el.textContent || '')))
   // #12 feed DOM 回收:超 320 收到 ≤280 + 顶部收纳占位
   cbs.onStream({ kind: 'tool', text: 'todowrite', partID: 'tdclose', status: 'completed', input: { todos: [{ content: '读代码', status: 'completed' }, { content: '写修复', status: 'completed' }, { content: '跑测试', status: 'completed' }] } })   // 先把用例3 留下的未完 todo 勾完——防停提醒(harness 新特性,todo 有未完项轮末出「继续执行」note)会多占 DOM,干扰计数
   const feedEl = byId.get('feed')
@@ -848,6 +851,19 @@ console.log('用例19:体验包 —— 截断提示 / sticky待批准 / 水位�
   ok('新稳定块只 append(冻结区只增)', aiBub.children[0].children.length > frozenN, frozenN + '→' + aiBub.children[0].children.length)
   ok('尾巴区是当前未完成块', /尾巴/.test(aiBub.children[1].innerHTML), aiBub.children[1].innerHTML.slice(0, 40))
   await p1
+  // #10b 普通卡高水位自动交棒(knob 0.5,隔离验证):自动压缩续聊成功、接力摘要块留顶部、无"没拿到摘要"死循环
+  // (桩局限:fakeEl.querySelectorAll 恒 [],compactCore 取摘要靠它 —— 本用例按真实语义补 '.msg.ai' 过滤)
+  sharedSettings.knobs = { chatHandoffPct: 0.5 }
+  const feed0 = byId.get('feed')
+  feed0.querySelectorAll = (sel) => sel === '.msg.ai' ? feed0.children.filter((c) => /msg ai/.test(String(c.className || ''))) : []
+  exported._setCtx(Math.round(128000 * 1.6 * 0.92))
+  await exported.turnFn('x2')
+  ok('knob 0.5 水位 92% → 自动交棒(note 明示)', created.some((c) => /高水位.*自动压缩续聊/.test(c.el.textContent || '')))
+  ok('接力摘要块留在对话顶部(可回看)', created.some((c) => c.el.className === 'reason' && /接力摘要/.test(c.el.innerHTML || '')), created.filter((c) => c.el.className === 'reason').map((c) => (c.el.innerHTML || '').slice(0, 50)).join('|'))
+  ok('压缩成功完成交接(会话已重绑,feed 已清)', byId.get('feed').children.length < 10, 'children=' + byId.get('feed').children.length)
+  const lastCompNotes = created.filter((c) => /压缩|摘要/.test(c.el.textContent || '')).map((c) => c.el.textContent)
+  ok('不再出现"没拿到摘要"死循环', !/没拿到摘要/.test(lastCompNotes.slice(-3).join('|')), lastCompNotes.slice(-3).join('|'))
+  sharedSettings.knobs = { chatHandoffPct: 0 }
 }
 
 console.log('用例20:Esc 中断角标 + 空回复给重试(可变回复模式)')

@@ -377,13 +377,14 @@
   })
 
   // ── 智能体旋钮(settings.knobs.*):读不到/输坏一律回默认,绝不写脏值 ──────────
-  const KNOB_DEFAULTS = { approvalTimeoutMin: 0, watchdogRounds: 3, watchdogOverlap: 0.7, watchdogEscalateRounds: 2, ctxHandoffPct: 0.55, autoCompactMax: 20, todoNudgeRounds: 3, knowledgeChurnMax: 300, wfConcurrency: 4 }
+  const KNOB_DEFAULTS = { approvalTimeoutMin: 0, watchdogRounds: 3, watchdogOverlap: 0.7, watchdogEscalateRounds: 2, ctxHandoffPct: 0.55, chatHandoffPct: 0.9, autoCompactMax: 20, todoNudgeRounds: 3, knowledgeChurnMax: 300, wfConcurrency: 4 }
   const KNOB_DEFS = [
     { k: 'approvalTimeoutMin', name: '批准闸超时', step: 1, min: 0, hint: '工作流计划批准闸超过该分钟数自动开跑；0 = 永不自动批准（保守默认）' },
     { k: 'watchdogRounds', name: '看门狗判绕圈轮数', step: 1, min: 2, hint: '连续这么多轮读同一批文件且 todo 无进展，判定在绕圈并注入提醒' },
     { k: 'watchdogOverlap', name: '看门狗重合度', step: 0.05, min: 0.1, max: 1, hint: '读文件集合重合度（∩/∪）达到该比例记为"同一批"；调高=更宽容' },
     { k: 'watchdogEscalateRounds', name: '看门狗升级轮数', step: 1, min: 1, hint: '注入绕圈提醒后再绕这么多轮，升级为醒目横幅（判死权给人，不自动杀）' },
     { k: 'ctxHandoffPct', name: '工作流交棒水位', step: 0.05, min: 0.3, max: 0.9, hint: '工作流卡上下文水位到该比例就写交接单换下一棒主 Agent（全新 128k），永不触发被动压缩；模型变强后可调高' },
+    { k: 'chatHandoffPct', name: '普通卡自动交棒水位', step: 0.05, min: 0, max: 0.98, hint: '普通对话卡上下文到该比例自动压缩续聊（接力摘要留顶部）；0 = 关闭，回 90% 提醒纯手动' },
     { k: 'autoCompactMax', name: '交棒次数上限', step: 1, min: 1, hint: '一段工作流最多自动交棒次数（文档接力不该卡死），到顶转人工（上下文 chip 仍可手动压缩）' },
     { k: 'todoNudgeRounds', name: 'todo 停滞提醒', step: 1, min: 1, hint: 'todo 清单连续这么多轮未更新，下一条消息尾部附系统提醒' },
     { k: 'knowledgeChurnMax', name: '知识库翻腾上限', step: 10, min: 50, hint: '项目知识库条目达到该规模触发蒸馏整理（条目数，见下方知识库面板）' },
