@@ -57,8 +57,8 @@
 
 /* ── 字体/字阶/圆角/间距/动效(照抄 design.css 第二 :root 块) ───────────── */
 :root {
-  --font-ui: "PingFang SC", -apple-system, "Microsoft YaHei", "Noto Sans SC", sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-ui: "Microsoft YaHei UI", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei", "Noto Sans SC", "PingFang SC", sans-serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
   --t-largeTitle: 600 20px/30px var(--font-ui);
   --t2: 400 16px/24px var(--font-ui);
@@ -80,6 +80,56 @@
   --ez-inout: cubic-bezier(0.77, 0, 0.175, 1);    /* 屏内移动 */
   --ez-drawer: cubic-bezier(0.32, 0.72, 0, 1);    /* 抽屉 */
   --z-toast: 1000; --z-tooltip: 900; --z-dialog: 860; --z-modal: 810; --z-header: 500;
+}
+
+/* ── 深色主题(深空蓝灰,评审稿 font-theme-design.html 映射组;与浅色同名变量一一对应) ── */
+html[data-theme="dark"] {
+  --bg-primary: #141a24;
+  --bg-primary-90: rgba(20,26,36,0.9);
+  --bg-secondary: #1a2230;
+  --bg-tertiary: #1a2230;
+  --bg-quaternary: #1a2230;
+  --bg-ground: #10151d;
+
+  --label-1: rgba(229,234,241,0.92);
+  --label-2: rgba(167,178,193,0.75);
+  --label-3: rgba(125,138,156,0.65);
+  --label-4: rgba(125,138,156,0.45);
+
+  --fill-1: rgba(148,163,184,.08);
+  --fill-2: rgba(148,163,184,.13);
+  --fill-3: rgba(148,163,184,.28);
+  --fill-4: rgba(148,163,184,.40);
+
+  --sep: rgba(148,163,184,.16);
+
+  --blue: #5b9dff;
+  --green: #34c785;
+  --danger: #ff5d6c;
+  --orange: #f0a23c;
+  --yellow: #e6c26a;
+  --purple: #a78bfa;
+  --brand: #e5eaf1;
+  --brand-text: #10151d;
+
+  --blue-10: rgba(91,157,255,.14);
+  --green-10: rgba(52,199,133,.14);
+  --red-10: rgba(255,93,108,.14);
+  --orange-10: rgba(240,162,60,.14);
+  --yellow-10: rgba(230,194,106,.16);
+  --selected: rgba(91,157,255,.28);
+
+  --bubble-user: #2b4d7d;
+  --toast-bg: #2b2b2b;
+  --mask: rgba(0,0,0,.55);
+
+  --syn-kw: #7fb3e8; --syn-str: #d48ac0; --syn-cmt: #6b7686;
+  --syn-fn: #9fd16b; --syn-var: #6fb3f0; --syn-num: #6ba3e8; --syn-op: #4fc3d8;
+
+  --shadow-input: 0 5px 16px -4px rgba(0,0,0,.4);
+  --shadow-small: 0 4px 16.4px rgba(0,0,0,.4);
+  --shadow-medium: 0 4px 15px 2px rgba(0,0,0,.5);
+  --blur-heavy: 30px;
 }
 
 /* ── 组件态变量(P0 补充,值取自 interactions.html 动效规格表/组件契约) ── */

@@ -1558,11 +1558,12 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   app.on('web-contents-created', (_e, wc) => attachContextMenu(wc))
 
   // ── IPC ─────────────────────────────────────────────────────────────────────
-  // 浅色单主题:get-theme 恒回 'light';set-theme 幂等空操作(留壳防调用方炸,输入一律忽略)
-  ipcMain.on('get-theme', (e) => { e.returnValue = 'light' })
-  ipcMain.on('set-theme', () => {
-    S.settings.theme = 'light'
-    for (const wc of webContents.getAllWebContents()) { try { wc.send('theme-changed', 'light') } catch {} }   // 仍广播,调用方的 onTheme 回调照常触发
+  // 双主题(浅色暖纸/深色深空):get-theme 读 settings.theme;set-theme 持久化并广播,各页 onTheme 监听照旧
+  ipcMain.on('get-theme', (e) => { e.returnValue = S.settings.theme === 'dark' ? 'dark' : 'light' })
+  ipcMain.on('set-theme', (_e, t) => {
+    S.settings.theme = t === 'dark' ? 'dark' : 'light'
+    try { saveSettings() } catch {}
+    for (const wc of webContents.getAllWebContents()) { try { wc.send('theme-changed', S.settings.theme) } catch {} }
   })
 
   ipcMain.on('get-project', (e) => { e.returnValue = projName() })

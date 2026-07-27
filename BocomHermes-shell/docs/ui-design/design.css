@@ -105,8 +105,8 @@ html[data-theme="light"] {
 
 /* ── 令牌:字体/字阶(typography.webUI + markdown) ─────────────────────── */
 :root {
-  --font-ui: "PingFang SC", -apple-system, "Microsoft YaHei", "Noto Sans SC", sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-ui: "Microsoft YaHei UI", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei", "Noto Sans SC", "PingFang SC", sans-serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
   --t-largeTitle: 600 20px/30px var(--font-ui);   /* largeTitleEmphasized */
   --t2: 400 16px/24px var(--font-ui);             /* t2Regular */

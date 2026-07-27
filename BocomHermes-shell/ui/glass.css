@@ -1,15 +1,14 @@
-/* ===== 设计令牌:浅色单主题,令牌值唯一事实源 = docs/ui-design/design.css =====
-   换肤(浅色单主题 · 样式对齐设计稿):
-   - 只保留浅色一套;原 onyx/paper/dark 主题块与 data theme 切换机制整体退役
-     (主进程 get-theme 恒回 'light',各页初始化脚本照常跑,无副作用)。
-   - 色值按 Kimi Design Tokens 浅色组:文字四档 label-1/2/3/4、fill-1/2/3、sep、
-     状态色 blue/green/danger/orange/yellow/purple、syntax 浅色组、shadow 族。
-   - Quiet Utility:禁装饰性渐变 —— 主按钮 --brand 为 labels.primary 实色(rgba(0,0,0,0.9));
-     玻璃感只保留 rgba(255,255,255,0.9)+blur 一种(--glass-float,浮层/悬浮卡专用);
-     主窗口与嵌入页为实底 #fff(--glass-bg)。原 --hl 高光线、--orb-* orb 残留令牌删除。 */
+/* ===== 设计令牌:双主题(浅色暖纸/深色深空),浅色令牌值唯一事实源 = docs/ui-design/design.css =====
+   换肤:
+   - 浅色单主题曾短期上线(深色退役);按评审稿(docs/ui-design/font-theme-design.html)恢复双主题:
+     浅色=暖纸系(实底 #f7f6f2,长时间看不刺眼),深色=深空蓝灰玻璃拟态;html[data-theme] 驱动,
+     主进程 get-theme 读 settings.theme(设置页可切)。
+   - 色值浅色按 Kimi Design Tokens 浅色组;深色为评审稿映射组(同名 token 一一对应)。
+   - Quiet Utility:禁装饰性渐变 —— 主按钮 --brand 为 labels.primary 实色(浅=黑/深=白);
+     玻璃感只保留 blur 一种(--glass-float,浮层/悬浮卡专用)。 */
 :root {
-  --font: "PingFang SC", -apple-system, "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
-  --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, "Cascadia Code", Consolas, monospace;
+  --font: "Microsoft YaHei UI", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei", "Noto Sans SC", "PingFang SC", system-ui, sans-serif;
+  --mono: "Cascadia Code", "Cascadia Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
   /* 文字四档(color.labels.*) */
   --txt: rgba(0,0,0,0.9); --txt2: rgba(0,0,0,0.6); --txt3: rgba(0,0,0,0.45); --txt4: rgba(0,0,0,0.3);
@@ -30,8 +29,8 @@
   --send-fg: #ffffff;
   --hover: var(--fill-1);             /* 统一悬停底色:所有可点条目共用 */
   --sel-bg: var(--selected);          /* 选区底色:设计 selected,不用浏览器默认刺蓝 */
-  /* 实底(主窗口/嵌入页)与悬浮玻璃(浮层菜单/钉出迷你卡)分离:设计只允许后者 rgba(255,255,255,0.9)+blur */
-  --glass-bg: #ffffff;
+  /* 实底(主窗口/嵌入页,暖纸)与悬浮玻璃(浮层菜单/钉出迷你卡)分离:设计只允许后者 白90%+blur */
+  --glass-bg: #f7f6f2;
   --glass-float: rgba(255,255,255,0.9);
   --glass-border: var(--sep);
   /* 阴影(effect.shadow.* 族) */
@@ -50,6 +49,42 @@
   --kbd-border: var(--sep);
   --scroll: var(--fill-3);
   --warn-bg: var(--orange-10); --warn-border: rgba(255,149,0,0.35); --warn-txt: var(--orange); --warn-btn: var(--brand); --warn-btn-fg: #fff;
+  --diff-add: var(--green); --diff-add-bg: var(--green-10); --diff-del: var(--danger); --diff-del-bg: var(--red-10);
+}
+
+/* ===== 深色主题(深空蓝灰玻璃拟态):与浅色同名 token 一一映射,html[data-theme="dark"] 驱动 =====
+   映射稿 = docs/ui-design/font-theme-design.html 深色组;accent 提亮保对比,brand 反白(send 按钮深底浅字)。 */
+html[data-theme="dark"] {
+  --txt: #e5eaf1; --txt2: #a7b2c1; --txt3: #7d8a9c; --txt4: #5f6b7c;
+  --fill-1: rgba(148,163,184,.08); --fill-2: rgba(148,163,184,.13); --fill-3: rgba(148,163,184,.28);
+  --sep: rgba(148,163,184,.16);
+  --blue: #5b9dff; --green: #34c785; --danger: #ff5d6c; --orange: #f0a23c; --yellow: #e6c26a; --purple: #a78bfa;
+  --blue-10: rgba(91,157,255,.14); --green-10: rgba(52,199,133,.14); --red-10: rgba(255,93,108,.14);
+  --orange-10: rgba(240,162,60,.14); --yellow-10: rgba(230,194,106,.16);
+  --selected: rgba(91,157,255,.28);
+  --accent: var(--blue); --accent-dim: var(--blue-10);
+  --halo: none;
+  --brand: #e5eaf1;                /* 深色下主按钮反白(labels.primary 深色组) */
+  --send-fg: #10151d;
+  --hover: var(--fill-1);
+  --sel-bg: var(--selected);
+  --glass-bg: #141a24;
+  --glass-float: rgba(22,29,40,.82);
+  --glass-border: var(--sep);
+  --shadow-input: 0 5px 16px -4px rgba(0,0,0,.4);
+  --shadow-small: 0 4px 16.4px rgba(0,0,0,.4);
+  --shadow-medium: 0 4px 15px 2px rgba(0,0,0,.5);
+  --glass-shadow: var(--shadow-medium), 0 16px 44px rgba(0,0,0,.45);
+  --me-bg: #2b4d7d; --me-border: rgba(91,157,255,.25); --me-txt: var(--txt);
+  --ai-bg: rgba(26,34,47,.92); --ai-border: var(--sep); --ai-txt: var(--txt);
+  --syn-kw: #7fb3e8; --syn-str: #d48ac0; --syn-cmt: #6b7686;
+  --syn-fn: #9fd16b; --syn-var: #6fb3f0; --syn-num: #6ba3e8; --syn-op: #4fc3d8;
+  --c-heading: var(--blue); --c-code: var(--syn-kw); --c-codebg: var(--fill-1);
+  --c-think: var(--purple); --c-think-bg: rgba(167,139,250,.12); --c-quote: var(--syn-op); --c-strong: var(--syn-str);
+  --composer-bg: var(--fill-1); --composer-border: var(--sep);
+  --kbd-border: var(--sep);
+  --scroll: var(--fill-3);
+  --warn-bg: var(--orange-10); --warn-border: rgba(240,162,60,.35); --warn-txt: var(--orange); --warn-btn: var(--brand); --warn-btn-fg: #10151d;
   --diff-add: var(--green); --diff-add-bg: var(--green-10); --diff-del: var(--danger); --diff-del-bg: var(--red-10);
 }
 
@@ -97,7 +132,7 @@ body { padding: 24px; }
 .nodrag { -webkit-app-region: no-drag; }
 
 /* ===== 消息气泡 ===== */
-.msg { max-width: 86%; font-size: 14.5px; line-height: 1.6; padding: 9px 12px; border-radius: 13px; word-break: break-word; animation: msgIn .16s ease-out; }
+.msg { max-width: 86%; font-size: 14px; line-height: 1.65; padding: 9px 12px; border-radius: 13px; word-break: break-word; animation: msgIn .16s ease-out; }
 .me { align-self: flex-end; background: var(--me-bg); border: .5px solid var(--me-border); border-bottom-right-radius: 5px; color: var(--me-txt); }
 .ai { align-self: flex-start; background: var(--ai-bg); border: .5px solid var(--ai-border); border-bottom-left-radius: 5px; color: var(--ai-txt); }
 @keyframes msgIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }   /* 新消息轻入场:3px 上浮,快到不构成等待 */

@@ -87,7 +87,11 @@
     <div class="body nodrag">
       <div class="fld">
         <span class="lbl">主题</span>
-        <span class="hint">浅色(已锁定,样式事实源 docs/ui-design)</span>
+        <div class="row" id="themeRow">
+          <button class="chip" data-theme="light">☀ 浅色(暖纸)</button>
+          <button class="chip" data-theme="dark">☾ 深色(深空)</button>
+        </div>
+        <span class="hint">即时生效并持久化;样式事实源 docs/ui-design + font-theme-design.html</span>
       </div>
 
       <div class="fld">
@@ -232,8 +236,24 @@
     paint(want === 'agent' || want === 'knowledge' ? want : 'general')
   })()
 
-  // 主题已锁定浅色(set-theme 幂等);只保留广播落地,不再提供切换控件
-  window.BocomHermes.onTheme(() => { document.documentElement.dataset.theme = 'light' })
+  // 主题切换(浅色暖纸/深色深空):点击 set-theme(主进程持久化+广播),本页与其它页经 onTheme 落地
+  ;(function () {
+    const H = window.BocomHermes
+    function paintThemeBtn(t) {
+      document.querySelectorAll('#themeRow .chip').forEach((b) => {
+        const on = b.dataset.theme === t
+        b.style.background = on ? 'var(--brand)' : ''
+        b.style.color = on ? 'var(--send-fg)' : ''
+        b.style.fontWeight = on ? '600' : ''
+      })
+    }
+    try { paintThemeBtn(H.getTheme && H.getTheme()) } catch {}
+    document.querySelectorAll('#themeRow .chip').forEach((b) => b.addEventListener('click', () => {
+      try { H.setTheme(b.dataset.theme) } catch {}
+      paintThemeBtn(b.dataset.theme)
+    }))
+    H.onTheme((t) => { document.documentElement.dataset.theme = t; paintThemeBtn(t) })
+  })()
 
   // 编辑器命令 + 预设
   const editorCmd = $('editorCmd'); editorCmd.value = cur.editorCmd || ''
