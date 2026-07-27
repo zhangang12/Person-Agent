@@ -8,13 +8,28 @@
   任务编排角标 = 运行中工作流数(真数据,wf-running-count 轮询,与状态栏同源)。
 -->
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { KBadge, KMenu, KSkeleton, KSpinner } from '../components'
 import type { KMenuItem } from '../components'
-import { store, dotColor, showView, spawnChat, closeChat, pinChat, sessMouseDown, sessClick } from './store'
+import { store, dotColor, showView, spawnChat, closeChat, pinChat, sessMouseDown, sessClick, refreshHist } from './store'
 import type { ChatEntry } from './store'
 
 const projTag = computed(() => (store.projName !== '未选目录' ? ' · ' + store.projName : ''))
+
+// 历史区单条删除:两步确认(✕ → 删?),只摘索引,serve 侧会话与转录不动
+const armDel = ref('')
+let armTimer: ReturnType<typeof setTimeout> | 0 = 0
+function delHist(sid: string) {
+  if (armDel.value !== sid) {
+    armDel.value = sid
+    clearTimeout(armTimer as number)
+    armTimer = setTimeout(() => { armDel.value = '' }, 3000)
+    return
+  }
+  clearTimeout(armTimer as number); armDel.value = ''
+  try { (window as any).BocomHermes?.historyDelete?.(sid) } catch { /* 静默 */ }
+  refreshHist()
+}
 
 function dotVar(c: ChatEntry) { return 'var(--' + dotColor(c.sid || c.key) + ')' }
 
@@ -71,7 +86,18 @@ function onMenu(c: ChatEntry, key: string) {
         <button class="x" title="关闭会话" @click.stop="closeChat(c.key)">×</button>
       </div>
 
-      <!-- 历史区已撤(用户拍板:与会话区功能重复;历史续接在 任务编排/动态工作流 详情与卡坞里) -->
+      <!-- 历史区:最近 8 条已关会话(点击带 sid 续接回放;✕ 两步确认删索引) -->
+      <template v-if="store.histItems.length">
+        <div class="lab">历史</div>
+        <div v-for="h in store.histItems" :key="h.id" class="sess hist"
+          :title="(h.title || '会话') + (h.project ? '\n' + h.project : '')"
+          @click="spawnChat({ sid: h.id, title: h.title || '续接会话' })">
+          <span class="t">{{ h.title || '会话' }}</span>
+          <button class="x hx" :class="{ arm: armDel === h.id }"
+            :title="armDel === h.id ? '再点一次确认删除' : '删除这条历史索引'"
+            @click.stop="delHist(h.id)">{{ armDel === h.id ? '删?' : '×' }}</button>
+        </div>
+      </template>
     </div>
 
     <div class="lab">导航</div>
