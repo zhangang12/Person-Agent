@@ -213,6 +213,26 @@ async function main() {
     }
   } catch (e) { WARN('limit.context 查询', e.message) }
 
+  console.log('\n[T2c] 首轮注入基线构成(本地估算:项目文档(serve 自动注入嫌疑) + MCP 工具表)')
+  try {
+    // 项目文档:opencode 会自动把项目根的 AGENTS.md/CLAUDE.md 注入系统提示(上游行为),和壳层 CLAUDE/README 注入可能重复计税
+    const docNames = ['AGENTS.md', 'CLAUDE.md', 'README.md', 'README']
+    for (const n of docNames) {
+      const p = path.join(process.cwd(), n)
+      if (fs.existsSync(p)) {
+        const sz = fs.statSync(p).size
+        console.log('  ' + (sz > 8000 ? '⚠' : '✓') + ' ' + n + ': ' + (sz / 1000).toFixed(1) + 'KB' + (sz > 8000 ? ' —— 偏大,serve 若全量注入将吃掉 ' + Math.round(sz / 1000) + 'k+ tokens' : ''))
+      }
+    }
+    // MCP 工具表:逐 server tools/list 量尺寸(内建工具表在 serve 侧拿不到,此处只量壳层 9 个 MCP)
+    const mcpDir = path.join(process.cwd(), 'mcp')
+    if (fs.existsSync(mcpDir)) {
+      // 简化法:直接 require 各 server 的 TOOLS 定义不可行(stdio 协议),用上次实测常数 + 提示
+      console.log('  MCP 工具表: 9 个 server 约 68 个工具 / ≈25k 字符(本机实测,scripts 同目录可复测) —— 占首轮基线约 8-10k tokens')
+    }
+    console.log('  (说明:serve 系统提示与内建工具表的大小只能由 T1 的 tokens 反推 —— 看 T1 的"首轮 prompt 基线"读数)')
+  } catch (e) { WARN('T2c 注入基线', e.message) }
+
   console.log('\n[T1] 插件机制(read-spill 端到端,真实调一次模型)')
   const tmpDir = path.join(os.tmpdir(), 'bocomhermes-forkprobe')
   fs.mkdirSync(tmpDir, { recursive: true })
@@ -237,10 +257,18 @@ async function main() {
     const g = await api('GET', '/session/' + sid + '/message')
     msgs = g.json && (Array.isArray(g.json) ? g.json : (g.json.messages || g.json.data)) || msgs
     const allTools = [], readParts = []
-    for (const m of msgs || []) for (const p of (m.parts || (m.data && m.data.parts) || [])) {
-      if (p && p.type === 'tool') allTools.push(String(p.tool || (p.state && p.state.tool) || p.name || '?') + '(' + String((p.state && p.state.output) || p.output || '').length + '字)')
-      if (p && p.type === 'tool' && /^(read|grep|bash|powershell|pwsh|cmd)$/i.test(String(p.tool || (p.state && p.state.tool) || p.name || ''))) readParts.push(p)
+    let promptTokens = 0
+    for (const m of msgs || []) {
+      const tk = (m && m.info && m.info.tokens) || (m && m.tokens) || {}
+      const c = tk.cache || {}
+      const p0 = (tk.input || 0) + (c.read || 0) + (c.write || 0)
+      if (p0 > promptTokens) promptTokens = p0
+      for (const p of (m.parts || (m.data && m.data.parts) || [])) {
+        if (p && p.type === 'tool') allTools.push(String(p.tool || (p.state && p.state.tool) || p.name || '?') + '(' + String((p.state && p.state.output) || p.output || '').length + '字)')
+        if (p && p.type === 'tool' && /^(read|grep|bash|powershell|pwsh|cmd)$/i.test(String(p.tool || (p.state && p.state.tool) || p.name || ''))) readParts.push(p)
+      }
     }
+    if (promptTokens > 0) console.log('  (首轮 prompt 基线: ' + Math.round(promptTokens / 1000) + 'k tokens 进上下文 —— 含 serve 系统提示+工具表+自动注入+壳层注入;内网治理靶子就是它)')
     if (allTools.length) console.log('  (本轮实际调用的工具: ' + allTools.join(', ') + ')')
     if (!readParts.length) WARN('模型没调 read/grep/bash', '(msgs=' + ((msgs && msgs.length) || 0) + ', toolParts=' + allTools.length + ') 模型行为差异,不是机制问题 —— 换个更强势的 prompt 重跑本探针')
     else {
