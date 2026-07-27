@@ -25,6 +25,7 @@
     "ctxguard:test": "node scripts/electron-node.cjs scripts/context-guard-selftest.mjs",
     "lspmcp:test": "node scripts/lsp-mcp-selftest.mjs",
     "session:test": "node scripts/session-selftest.mjs",
+    "replay:test": "node scripts/replay/run.mjs",
     "modelroute": "node scripts/model-route-probe.mjs",
     "mcp:browser": "node mcp/browser-mcp.mjs",
     "mcp:browser:test": "node mcp/selftest.mjs",

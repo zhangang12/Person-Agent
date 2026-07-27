@@ -108,6 +108,9 @@ npm run readspill:test # read-spill 插件:大输出落盘/小输出放行/阈�
 npm run lspmcp:test    # lsp-mcp:帧编解码/路由/行列换算/路径围栏 + ts server 真实握手
 npm run forkcheck      # fork 兼容性一键探针(内网验收:插件钩子回写/LSP 配置面/serve 健康,需真实 serve+模型,真实调一次模型)
 npm run scope:test     # 分片写归属(writescope.js)：goal 解析/范围匹配/越界判定
+npm run replay:test    # L1 golden transcript 录制回放 e2e(scripts/replay/)：真 opencode.js+session.js+
+                       #   window.js 在纯 Node 里跑多层派发回归,fake serve 放 JSONL transcript;
+                       #   补新用例用 scripts/replay/record.mjs 连真 serve 录制再裁剪
 npm run mcp:browser:test   # 浏览器 MCP 端到端(需本机 Edge/Chrome)
 npm run mcp:httpcap:test   # 抓包代理端到端
 npm run mcp:repro:test     # 复现取证 MCP

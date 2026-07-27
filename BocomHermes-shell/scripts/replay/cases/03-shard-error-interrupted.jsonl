@@ -1,0 +1,4 @@
+# 用例③ transcript:POST /session/:id/message 恒定 500(错误注入)—— 驱动 card-send 抛错 → wfTurnError。
+# appendUser:false = 失败请求不落 user 消息:sendMessage 的 R4 探针 lastUserMatches 探不到本次内容 →
+# 原错上抛(不自愈重发),session.js catch 里才能走到 wfTurnError。
+{"t":0,"op":"respond","method":"POST","path":"^/session/ses_[^/]+/message$","status":500,"appendUser":false,"json":{"error":"upstream 500(脚本化注入)"}}
