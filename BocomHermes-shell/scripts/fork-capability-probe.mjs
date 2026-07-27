@@ -16,6 +16,9 @@
 //      (注:公网 opencode 1.18.3 实测二进制中无 permission.ask 触发点,该钩子是"类型已声明、实现未上线")
 //   T6 experimental.chat.system.transform 系统提示注入:插件往系统提示尾部注入唯一标记,
 //      模型能复述=钩子+回写都活(子 Agent 系统提示注入 B2 的前提)
+//   T8 双模型与读图能力(同隔离 serve):T8a 同一会话两条消息各指定不同模型(body.model),
+//      两条都答=消息级模型切换支持;T8b 找 capabilities.input.image 的模型发 64x64 纯红 PNG,
+//      答出"红/red"=多模态可读图(清单无多模态模型则 WARN 降级)
 // 用法: node scripts/fork-capability-probe.mjs [baseURL]   (默认 http://127.0.0.1:4096)
 // 注意:T1 会真实调一次模型(读大文件),内网跑一次约 1-3 分钟;T4/T5 自起隔离 serve 真实调 3 回合,约 3-10 分钟;
 //      隔离 serve 用 bocomcode/opencode(PATH 或 BOCOMHERMES_SERVE_BIN),探针插件放项目级 .opencode/plugin/,用完即删。
@@ -27,6 +30,8 @@ import path from 'node:path'
 
 const BASE = process.argv[2] || 'http://127.0.0.1:4096'
 const SPILL_MARK = '输出过长已外溢'
+// T8b 读图用:64x64 纯红 PNG(预生成的 data URL 常量,168 字节)
+const RED_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAb0lEQVR4nO3PAQkAAAyEwO9feoshgnABdLep8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3IPanc8OLDQitxAAAAAElFTkSuQmCC'
 let passN = 0, warnN = 0, failN = 0
 const PASS = (n, d) => { passN++; console.log('  ✓ ' + n + (d ? ' — ' + d : '')) }
 const WARN = (n, d) => { warnN++; console.log('  ⚠ ' + n + (d ? ' — ' + d : '')) }
@@ -359,6 +364,70 @@ async function main() {
         if (a4.includes(T6M)) PASS('T6 system.transform 注入', '模型能复述系统提示里的注入标记 —— 钩子触发且回写生效')
         else if (/"hook":"system.transform"/.test(log3)) WARN('T6 存疑', '钩子日志显示已触发并追加,但模型没能复述标记(可能注入了但模型没注意) —— 人工看 transcript 复核')
         else FAIL('T6 钩子未触发', '探针插件无 system.transform 日志 —— fork 未保留该钩子')
+        // T8:双模型与读图能力(消息级 body.model 切换 + 多模态图片输入;沿用隔离 serve B2,独立会话用完即删)
+        console.log('\n[T8] 双模型与读图能力(消息级模型切换 / 多模态读图)')
+        let sid3 = null
+        try {
+          // 模型发现:GET /config/providers 拍平 → {providerID, modelID, name, image}
+          const rp = await api('GET', '/config/providers', undefined, B2)
+          const provAll = (rp.json && (rp.json.all || rp.json.providers || rp.json)) || []
+          const models = []
+          for (const p of (Array.isArray(provAll) ? provAll : [])) {
+            for (const [mid, m] of Object.entries(p.models || {})) {
+              models.push({ providerID: p.id || p.providerID || '?', modelID: mid, name: (m && m.name) || mid, image: !!(((m && m.capabilities && m.capabilities.input) || {}).image) })
+            }
+          }
+          const mmList = models.filter((m) => m.image)
+          console.log('  (模型清单 ' + models.length + ' 个: ' + models.map((m) => m.providerID + '/' + m.modelID).join(', ') + ')')
+          console.log('  (多模态 ' + mmList.length + ' 个: ' + (mmList.map((m) => m.name).join(', ') || '无') + ')')
+          // 发消息时双写:body.model={providerID,modelID} + 顶层 providerID/modelID(兼容不同 fork 版本)
+          const sendWith = (m, parts, ms) => apiLong('/session/' + sid3 + '/message', { parts, model: { providerID: m.providerID, modelID: m.modelID }, providerID: m.providerID, modelID: m.modelID }, ms || 180000, B2)
+          const answerText = (r) => {
+            const parts = (r && r.json && (Array.isArray(r.json.parts) ? r.json.parts : (r.json.data && r.json.data.parts))) || []
+            return parts.filter((p) => p && p.type === 'text').map((p) => String(p.text || '')).join('\n')
+          }
+          const answered = (r) => !!(r && r.status < 400 && answerText(r).trim())
+          // HTTP 200 也可能内嵌 info.error(账号余额/鉴权等模型侧原因,实测 deepseek Insufficient Balance) —— 不是切换机制的锅,要区分开
+          const errOf = (r) => { const e = r && r.json && r.json.info && r.json.info.error; return e ? String((e.data && e.data.message) || e.message || e.name || 'error') : '' }
+          const echoOk = (r, m) => { const i = r && r.json && r.json.info; return !!(i && i.modelID === m.modelID && i.providerID === m.providerID) }
+          const rs = await api('POST', '/session', { title: 't8-probe', directory: t4Dir }, B2)
+          sid3 = rs.json && (rs.json.id || (rs.json.data && rs.json.data.id) || (rs.json.info && rs.json.info.id))
+          if (!sid3) FAIL('T8 POST /session', 'status=' + rs.status)
+          else {
+            // T8a:同一会话两条消息各指定不同模型 —— 都拿到回答且回显各随消息 = fork 支持消息级模型切换
+            const uniq = []
+            for (const m of models) { if (!uniq.some((x) => x.modelID === m.modelID)) uniq.push(m) }
+            if (uniq.length < 2) WARN('T8a 双模型切换', '模型清单不足两个不同 modelID(只有 ' + uniq.length + ' 个) —— 跳过')
+            else {
+              // 清单前几个可能是死账号(秒回 info.error)—— 顺延扫描,各找第一个能答的 A/B(上限 8 个)
+              const scan = uniq.slice(0, 8)
+              let A = null, r1 = null, Bm = null, r2 = null, lastWhy = ''
+              const why = (m, r) => m.providerID + '/' + m.modelID + ':' + (r.status >= 400 ? 'HTTP' + r.status : errOf(r) || '无回答')
+              for (const m of scan) { const r = await sendWith(m, [{ type: 'text', text: '只回答:甲' }]); if (answered(r)) { A = m; r1 = r; break } lastWhy = why(m, r) }
+              if (A) for (const m of scan) { if (m.modelID === A.modelID) continue; const r = await sendWith(m, [{ type: 'text', text: '只回答:乙' }]); if (answered(r)) { Bm = m; r2 = r; break } lastWhy = why(m, r) }
+              if (A && Bm && echoOk(r1, A) && echoOk(r2, Bm)) PASS('T8a 消息级模型切换', A.name + ' → ' + Bm.name + ' 两条都拿到回答且 info 回显各随消息指定 —— fork 支持消息级 model 指定')
+              else if (A && Bm) WARN('T8a 消息级模型切换', A.name + '/' + Bm.name + ' 都答了,但 info 回显模型与指定不符 —— 可能全程走默认模型,切换疑似被静默忽略')
+              else FAIL('T8a 消息级模型切换', (A ? 'A(' + A.name + ') 能答,但找不到第二个能答的模型' : '清单前 ' + scan.length + ' 个模型无一能答') + ';末次 ' + lastWhy + ' —— 消息级切换不可用或模型全挂,验证棒整卡多模态成唯一通道')
+            }
+            // T8b:多模态读图 —— 带 64x64 纯红 PNG 问颜色,答出红/red = 图片真进了上下文
+            const mm = models.find((m) => m.image)
+            if (!mm) WARN('T8b 多模态读图', 'serve 无多模态模型,读图环节降级 console+DOM 断言')
+            else {
+              let a3 = '', why3 = '', ok3 = false
+              for (let att = 1; att <= 2 && !ok3; att++) {   // 免费模型路由偶发"No provider available"(实测,隔离 serve 复测又正常) —— 重试一次
+                try {
+                  const r3 = await sendWith(mm, [{ type: 'file', mime: 'image/png', url: RED_PNG }, { type: 'text', text: '这张图主要是什么颜色?只答颜色名。' }], 240000)
+                  a3 = answerText(r3).trim()
+                  if (r3.status < 400 && /红|red/i.test(a3)) ok3 = true
+                  else why3 = 'status=' + r3.status + (errOf(r3) ? ' 错误:' + errOf(r3) : '') + (a3 ? ' 答「' + a3.slice(0, 60) + '」' : ' 无回答')
+                } catch (e) { why3 = e.message }
+              }
+              if (ok3) PASS('T8b 多模态读图', mm.name + ' 答「' + a3.slice(0, 40) + '」—— 多模态可读图')
+              else FAIL('T8b 多模态读图', mm.providerID + '/' + mm.modelID + ' 两次均失败(末次 ' + why3 + ') —— 读图失败/答非所问')
+            }
+          }
+        } catch (e) { FAIL('T8 执行', e.message) }
+        finally { try { if (sid3) await api('DELETE', '/session/' + sid3, undefined, B2) } catch {} }
       }
     }
   } catch (e) { FAIL('T4/T5 执行', e.message) }
