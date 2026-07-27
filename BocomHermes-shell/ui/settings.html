@@ -180,6 +180,13 @@
       </div>
 
       <div class="fld">
+        <span class="lbl">双模型 <span class="hint" style="font-weight:400">（干活主模型 + 读图模型 · 带图消息与验证棒自动用读图模型）</span></span>
+        <div class="row"><span class="hint" style="width:64px;flex:none">主模型</span><select id="modelMain" class="in" style="flex:1"></select></div>
+        <div class="row"><span class="hint" style="width:64px;flex:none">读图模型</span><select id="modelVision" class="in" style="flex:1"></select></div>
+        <span class="hint">候选来自 serve 已配模型；读图模型按支持图像（image）过滤。留空 = 主模型用全局默认、带图消息临时找图像模型（老行为）。</span>
+      </div>
+
+      <div class="fld">
         <span class="lbl">当前项目目录</span>
         <div class="row">
           <span id="proj" class="proj">未选目录</span>
@@ -215,7 +222,7 @@
   ;(function initTabs() {
     const MAP = [
       [/^(主题|编辑器命令|serve 二进制|修复流程|邮件|OceanBase|注册 MCP|内网 serve 优化)/, 'general'],
-      [/^(智能体旋钮|权限规则|当前项目目录|后端代码仓库)/, 'agent'],
+      [/^(智能体旋钮|权限规则|双模型|当前项目目录|后端代码仓库)/, 'agent'],
       [/^(项目知识库)/, 'knowledge'],
     ]
     const flds = [...document.querySelectorAll('.body > .fld')]
@@ -268,6 +275,28 @@
   $('openMailCenter').addEventListener('click', () => { window.BocomHermes.openMailCenter(); window.BocomHermes.closeSelf() })
 
   const planMode = $('planMode'); planMode.checked = cur.planMode !== false   // 默认 ON
+
+  // 双模型下拉(候选=serve 已配模型;读图位按 image 过滤)
+  ;(async function initModelPickers() {
+    const fill = (sel, list, cur, filter) => {
+      if (!sel) return
+      sel.innerHTML = ''
+      const empty = document.createElement('option'); empty.value = ''; empty.textContent = '（默认/未设置）'; sel.appendChild(empty)
+      for (const m of list) {
+        if (filter && !filter(m)) continue
+        const o = document.createElement('option')
+        o.value = JSON.stringify({ providerID: m.providerID, modelID: m.modelID, name: m.name })
+        o.textContent = (m.name || m.modelID) + (m.provider ? ' · ' + m.provider : '')
+        if (cur && cur.modelID === m.modelID && cur.providerID === m.providerID) o.selected = true
+        sel.appendChild(o)
+      }
+    }
+    try {
+      const models = (await window.BocomHermes.listModels()) || []
+      fill($('modelMain'), models, cur.modelMain)
+      fill($('modelVision'), models, cur.modelVision, (m) => !!m.image)
+    } catch {}
+  })()
 
   // 权限规则(P2.3):allow/deny 各一个文本域,读不到一律空
   $('permAllow').value = (cur.permRules && Array.isArray(cur.permRules.allow) ? cur.permRules.allow : []).join('\n')
@@ -431,6 +460,8 @@
   const msg = $('msg')
   async function save(silent) {
     const patch = { editorCmd: editorCmd.value, planMode: !!planMode.checked, knobs: collectKnobs(), permRules: { allow: $('permAllow').value.split('\n'), deny: $('permDeny').value.split('\n') } }
+    const pickModel = (id) => { try { return $(id).value ? JSON.parse($(id).value) : null } catch { return null } }
+    patch.modelMain = pickModel('modelMain'); patch.modelVision = pickModel('modelVision')   // 双模型(null=未设置)
     if (!cur.serveBinLocked) patch.serveBin = serveBin.value
     patch.ob = {
       host: $('obHost').value.trim(),

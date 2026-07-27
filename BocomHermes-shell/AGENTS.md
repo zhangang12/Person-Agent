@@ -154,6 +154,12 @@ npm run bars:e2e           # card.html 真 Chromium 渲染 e2e：重放工作流
 - **写法库**：负面指令给可判定颗粒度、禁令附理由、双向纠偏（不粉饰也不许防御性打折）、行动 cue 标题、定量优于定性——模板见提示词借鉴文档 §8，照那个风格写。
 - **纪律注入的位置纪律**：壳层首发注入拼在首条 user 消息（session.js）；serve 系统提示纪律走 context-guard 插件追加在 system 数组**尾部**（保 KV-cache 前缀），不插入、不替换既有元素。
 
+## 验证闭环与双模型（2026-07 起，改验证相关代码前必读）
+
+- **双模型**：`settings.modelMain`（干活）/ `modelVision`（读图），设置页两个下拉（候选=serve 已配模型，读图位按 `image:true` 过滤）。路由：会话默认主模型（`session.js card-send`）；带图消息自动切读图模型（未配则回退"清单找 image 模型"老行为）；**验证棒整卡跑读图模型**（`spawnWorkflow(goal, forceModel)`）。多模态读完图后，context-guard 插件把历史图片 part 替换成 `[图片已读:结论见下文]`（防非多模态模型读图报错+省上下文，`BOCOMHERMES_CTX_GUARD_IMG_PURGE=0` 关）。
+- **验证闭环**（全链路在 `window.js shardSettled`）：编码分片收官 → 证据闸（无构建/测试/浏览器证据标【未验证】，验证棒自身豁免）→ 壳层自动派【集成验证】分片（CC verificationAgent 全量提示词，见 `verifyGoalFor`：基线五步/分型动作链/对抗探针/FAIL 三查/只读沙箱 writeScope=/tmp）→ 收官解析 `reg.final` 的 VERDICT 机判（无字面量/PASS 无 Command run 块=拒收，自动回派一次，连撞 2 次转人工）→ **FAIL 保留同棒复验**（`verifyOpen/verifyRounds`，修复分片收官喂"复验"，喂之前**必须复位 `reg.orchNotified`**，否则复验收官被一次性标志吞掉——实测坑）→ PASS 清账 + **抽查重放**（抽只读白名单命令真跑，不符拒收）；FAIL 循环 ≤3 轮到顶转人工。
+- **验证棒只读沙箱**：`assignVerifyScope` 把验证棒 writeScope 限定为系统临时目录（write/edit 项目文件被拒、bash 重定向越界被拒、一次性验证脚本可写、npm test 这类无显式文件目标的命令不受影响）——别再给验证棒项目写权限，那是"又当裁判又当运动员"。
+
 ## 配置与用户数据
 
 运行期数据都在 Electron `userData` 目录：`settings.json`（theme/projectDir/backendDir/serveBin/editorCmd/recentDirs/proxy/browserArgs/smtp 等）、`history.json`、`BocomHermes.log`（3MB 滚动）、`audit.jsonl`、`memory.md`（个人记忆库，注入会话上下文）、`recordings/`（录制与技能 JSON）、`evidence/`（复现取证）。

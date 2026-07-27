@@ -1,0 +1,11 @@
+# 用例⑧ transcript:A/B/C 三个分片(td+动作) + 验证棒两轮定稿的 respond 规则。
+# $s1=分片A(echo,无证据) $s2=分片B(npm test,有证据) $s3=保活卡(不收官,防 serve 退休) $s4=验证棒 $s5=修复分片C(npm test)
+{"t":0,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s1","part":{"id":"prt_td1","callID":"c1","type":"tool","tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"实现A","status":"completed"}]}}}}}}
+{"t":1,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s1","part":{"id":"prt_b1","callID":"c2","type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"echo done"},"output":"done"}}}}}
+{"t":2,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s2","part":{"id":"prt_td2","callID":"c3","type":"tool","tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"实现B","status":"completed"}]}}}}}}
+{"t":3,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s2","part":{"id":"prt_b2","callID":"c4","type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"npm test"},"output":"ok 12 passed"}}}}}
+{"t":4,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s4","part":{"id":"prt_td4","callID":"c5","type":"tool","tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"验证","status":"completed"}]}}}}}}
+{"t":5,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s5","part":{"id":"prt_td5","callID":"c6","type":"tool","tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"修复C","status":"completed"}]}}}}}}
+{"t":6,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s5","part":{"id":"prt_b5","callID":"c7","type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"npm test"},"output":"ok 14 passed"}}}}}
+{"t":7,"op":"respond","method":"POST","path":"/session/.*/message","bodyIncludes":"V1定稿","appendAssistant":"VERDICT: FAIL\nCommand run: npm test\nOutput observed: 2 failed\n失败归属: src/a.ts 的 login() 对空密码未拦截"}
+{"t":8,"op":"respond","method":"POST","path":"/session/.*/message","bodyIncludes":"V2定稿","appendAssistant":"VERDICT: PASS\nCommand run: npm test\nOutput observed: 14 passed"}

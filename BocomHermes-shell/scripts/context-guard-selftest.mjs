@@ -10,6 +10,9 @@
  *   ⑥ chat.params:默认不收口;MAX_OUT>0 时钳高保低
  *   ⑦ tool.execute.after:空输出 → 占位符;非空不动;read-spill 外溢文本(非空)不受影响
  *   ⑧ 异常输入静默放行
+ *   ⑨ 读图后历史净化:后面有 assistant 文本结论的图片 part → 文本占位(保留 id);
+ *      最后一条(还没结论)不动;非图片 file 不动;幂等逐字节稳定;结论被压缩掉也不还原;
+ *      BOCOMHERMES_CTX_GUARD_IMG_PURGE=0 关闭
  * 怎么跑: node scripts/context-guard-selftest.mjs
  */
 import path from 'node:path'
@@ -168,6 +171,50 @@ function makeSession(turns, outLen = 3000) {
     ok('总开关 0 = 全部 no-op', o.system.length === 0)
   } catch { threw = true }
   ok('异常输入静默放行不抛错', !threw)
+}
+
+// ── ⑨ 读图后历史净化 ──
+{
+  // u1:文本+已读图片(img1) → a1:结论文本;u2:文本+未读图片(img2)+非图片附件(doc1)
+  const mk = () => ([
+    { info: { id: 'u1', role: 'user' }, parts: [
+      { id: 't1', type: 'text', text: '看这个截图' },
+      { id: 'img1', type: 'file', mime: 'image/png', url: 'data:image/png;base64,AAA' },
+      { id: 'img3', type: 'image', image: '/9j/4AAQSkZJRg==' },
+    ] },
+    { info: { id: 'a1', role: 'assistant' }, parts: [{ id: 'at1', type: 'text', text: '截图里是登录页,按钮正常。' }] },
+    { info: { id: 'u2', role: 'user' }, parts: [
+      { id: 't2', type: 'text', text: '再看这张' },
+      { id: 'img2', type: 'file', mime: 'image/png', url: 'data:image/png;base64,BBB' },
+      { id: 'doc1', type: 'file', mime: 'text/plain', url: 'data:text/plain;base64,CCC' },
+    ] },
+  ])
+  const hooks = await loadPluginWithEnv({})
+  const output = { messages: mk() }
+  await hooks['experimental.chat.messages.transform']({}, output)
+  const img1 = output.messages[0].parts[1]
+  ok('① 已读图片(file+mime image/*)被替换为占位且保留 id',
+    img1.type === 'text' && img1.text === '[图片已读:结论见下文]' && img1.id === 'img1' && !('url' in img1))
+  const img3 = output.messages[0].parts[2]
+  ok("①b type==='image' 形状同样被替换(保留 id)", img3.type === 'text' && img3.text === '[图片已读:结论见下文]' && img3.id === 'img3')
+  const img2 = output.messages[2].parts[1]
+  ok('② 历史最后的图片(后面没有 assistant 文本)不替换', img2.type === 'file' && img2.mime === 'image/png' && img2.url.startsWith('data:image/png'))
+  const doc1 = output.messages[2].parts[2]
+  ok('④ 非图片 file part(mime=text/plain)不替换', doc1.type === 'file' && doc1.mime === 'text/plain' && doc1.url.startsWith('data:text/plain'))
+  const snapshot = JSON.stringify(output.messages)
+  await hooks['experimental.chat.messages.transform']({}, output)   // 已净化结果再跑一遍
+  ok('③ 再跑一遍输出逐字节相同(幂等)', JSON.stringify(output.messages) === snapshot)
+  const fresh = { messages: mk() }
+  await hooks['experimental.chat.messages.transform']({}, fresh)   // 同内容新对象走决策记忆
+  ok('③b 同内容新对象结果也逐字节相同(同 ID 同决策)', JSON.stringify(fresh.messages) === snapshot)
+  // 压缩后 assistant 结论消失:已净化的图片绝不还原
+  const compacted = { messages: [mk()[0], mk()[2]] }   // u1(img1/img3) + u2,a1 结论没了
+  await hooks['experimental.chat.messages.transform']({}, compacted)
+  ok('⑨b 结论被压缩掉后已净化图片不还原', compacted.messages[0].parts[1].type === 'text' && compacted.messages[0].parts[1].text === '[图片已读:结论见下文]')
+  const off = await loadPluginWithEnv({ BOCOMHERMES_CTX_GUARD_IMG_PURGE: '0' })
+  const o2 = { messages: mk() }
+  await off['experimental.chat.messages.transform']({}, o2)
+  ok('⑤ BOCOMHERMES_CTX_GUARD_IMG_PURGE=0 关闭净化', o2.messages[0].parts[1].type === 'file' && o2.messages[0].parts[2].type === 'image')
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

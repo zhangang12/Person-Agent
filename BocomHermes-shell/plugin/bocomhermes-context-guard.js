@@ -5,6 +5,10 @@
  *   ① experimental.chat.messages.transform — 历史工具结果清理(R2):发给 LLM 前,
  *      保最近 N 轮(默认 3)工具结果全文,更早的替换为 `[已清理:read <path>,原 N 字符]` 占位符;
  *      聚合预算:可见工具结果总字符超 BUDGET(默认 40000)时,对窗口内最老的也降级(最新一轮永远不动)。
+ *      读图后历史净化(在轮次清理之前执行):后面已有 assistant 文本结论的图片 part
+ *      (type 'file' 且 mime 为 image/*,或 type 'image')替换为 `[图片已读:结论见下文]` 文本占位
+ *      (保留 id)——多模态验证棒读完图后,base64 不留历史白占上下文,后续非多模态模型也不会再
+ *      读到图片 part 而报错;同 ID 同决策('img:' 前缀),绝不还原。
  *      【KV-cache 纪律】清理决策按 partID 记忆:同一 part 任何轮次做相同替换(同 ID 同决策),
  *      已被清理的绝不还原——前缀逐字节稳定才保 prompt 缓存命中(借鉴 CC forkedAgent 克隆注释)。
  *   ② experimental.chat.system.transform — 系统提示纪律注入:往 system 数组【尾部】追加
@@ -25,6 +29,7 @@
  *
  * 配置(环境变量,读取时机 = 插件初始化;均可省):
  *   BOCOMHERMES_CTX_GUARD             总开关,默认 1;0 = 全部钩子变 no-op(内网排障逃生门)
+ *   BOCOMHERMES_CTX_GUARD_IMG_PURGE   读图后历史净化开关,默认 1;0 = 关闭净化
  *   BOCOMHERMES_CTX_GUARD_KEEP_TURNS  保留全文的最近轮数,默认 3
  *   BOCOMHERMES_CTX_GUARD_BUDGET      可见工具结果聚合预算(字符),默认 40000;0 = 只按轮次清理
  *   BOCOMHERMES_MAX_OUTPUT_TOKENS     maxOutputTokens 钳制,默认 0 = 不收口
@@ -52,6 +57,7 @@ const COMPACT_RULES = [
 ]
 
 const CLEAN_MARK = '[已清理:'
+const IMG_MARK = '[图片已读:结论见下文]'
 
 /** 提取 tool part 的输出字符串所在位置(state.output 优先,兼容扁平 output) */
 function toolOut(p) {
@@ -70,14 +76,41 @@ function makePlaceholder(p, text) {
 }
 function roleOf(m) { return String((m && m.info && m.info.role) || (m && m.role) || '') }
 
+/** 图片类 part 判定:type==='file' 且 mime 以 image/ 开头,或 type==='image'(serve 两种形状) */
+function isImgPart(p) {
+  if (!p || typeof p !== 'object') return false
+  if (p.type === 'image') return true
+  return p.type === 'file' && String(p.mime || '').startsWith('image/')
+}
+/** 该 part 之后是否存在更新的 assistant 非空文本(在该 part 所属消息之后,含同消息更后的 part) */
+function hasLaterAssistantText(msgs, mi, pi) {
+  for (let i = mi; i < msgs.length; i++) {
+    if (roleOf(msgs[i]) !== 'assistant') continue
+    const parts = (msgs[i] && msgs[i].parts) || []
+    for (let j = i === mi ? pi + 1 : 0; j < parts.length; j++) {
+      const q = parts[j]
+      if (q && q.type === 'text' && String(q.text || '').trim()) return true
+    }
+  }
+  return false
+}
+/** 图片占位 part(确定性同文,保 KV-cache;保留原 part 的 id) */
+function imgPlaceholder(p) {
+  const ph = { type: 'text', text: IMG_MARK }
+  if (p.id) ph.id = p.id
+  return ph
+}
+
 function loadConfig() {
   const on = String(process.env.BOCOMHERMES_CTX_GUARD ?? '1') !== '0'
+  const imgPurge = String(process.env.BOCOMHERMES_CTX_GUARD_IMG_PURGE ?? '1') !== '0'
   const keepTurns = Number(process.env.BOCOMHERMES_CTX_GUARD_KEEP_TURNS ?? 3)
   const budget = Number(process.env.BOCOMHERMES_CTX_GUARD_BUDGET ?? 40000)
   const maxOut = Number(process.env.BOCOMHERMES_MAX_OUTPUT_TOKENS ?? 0)
   const ck = String(Math.max(1, Math.round(Number(process.env.BOCOMHERMES_CTX_LIMIT_K ?? 192) || 192))) + 'k'
   return {
     on,
+    imgPurge,
     keepTurns: Number.isFinite(keepTurns) && keepTurns >= 1 ? Math.floor(keepTurns) : 3,
     budget: Number.isFinite(budget) && budget >= 0 ? budget : 40000,
     maxOut: Number.isFinite(maxOut) && maxOut > 0 ? Math.floor(maxOut) : 0,
@@ -88,7 +121,7 @@ function loadConfig() {
 /** opencode 插件入口:返回钩子表。本文件唯一导出(目录扫描约束②)。 */
 export const ContextGuardPlugin = async () => {
   const cfg = loadConfig()
-  const decisions = new Map()   // partID → 占位符 | null(已是占位符);同 ID 同决策(KV-cache 纪律),超 5000 整表清
+  const decisions = new Map()   // partID → 占位符 | null(已是占位符);图片净化键带 'img:' 前缀;同 ID 同决策(KV-cache 纪律),超 5000 整表清
 
   /** 清理一个 tool part(幂等;返回"省下的字符数") */
   function cleanPart(p) {
@@ -117,6 +150,25 @@ export const ContextGuardPlugin = async () => {
       try {
         if (!cfg.on || !output || !Array.isArray(output.messages)) return
         const msgs = output.messages
+        // 读图后历史净化(在轮次清理之前):后面已有 assistant 文本结论的图片 part 降级为文本占位。
+        // 只记忆"替换"决策("还没读"不记忆——图片首次出现正是没有结论的时候,记住了就永远清不掉);
+        // 已决策替换的同 ID 任何轮次都替换,即使结论后来被压缩掉也绝不还原。
+        if (cfg.imgPurge) {
+          for (let i = 0; i < msgs.length; i++) {
+            const parts = (msgs[i] && msgs[i].parts) || []
+            for (let j = 0; j < parts.length; j++) {
+              const p = parts[j]
+              if (!isImgPart(p)) continue   // 已是占位(type 'text')/非图片:天然跳过
+              const id = String(p.id || '')
+              const key = 'img:' + id
+              if (id && decisions.has(key)) { parts[j] = imgPlaceholder(p); continue }   // 同 ID 同决策
+              if (!hasLaterAssistantText(msgs, i, j)) continue   // 模型还没读它/还没给结论:不动
+              if (decisions.size > 5000) decisions.clear()
+              if (id) decisions.set(key, IMG_MARK)
+              parts[j] = imgPlaceholder(p)
+            }
+          }
+        }
         // 轮次边界:从后往前数第 N 个 user 消息;它之前的是"已死的历史"
         let keepFrom = msgs.length, seen = 0
         for (let i = msgs.length - 1; i >= 0; i--) {

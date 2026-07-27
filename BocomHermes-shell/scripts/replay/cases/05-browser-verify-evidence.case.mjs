@@ -41,8 +41,8 @@ export default {
     expectState('B 无证据:unverified 置位', () => b.reg.unverified === true)
     const verify = [...world.S.wfRegistry.values()].find((r) => /集成验证/.test(String(r.goal || '')) && r.parentOrch === orch2.tag)
     ok('壳层自动补派集成验证棒(同 tag)', !!verify, [...world.S.wfRegistry.values()].map((r) => r.goal && r.goal.slice(0, 40)))
-    ok('验证棒 goal 含【浏览器自验】步骤(写归属含前端文件)', !!verify && verify.goal.includes('浏览器自验'))
-    ok('验证棒 goal 要求截图路径随回报给出', !!verify && verify.goal.includes('自验截图路径'))
+    ok('验证棒 goal 含【浏览器验证】步骤(写归属含前端文件)', !!verify && verify.goal.includes('浏览器验证'))
+    ok('验证棒 goal 要求截图路径随证据给出', !!verify && verify.goal.includes('截图路径'))
     const injects = world.injects(orch2.wcId)
     ok('唤醒报【未验证】', injects.some((i) => (i.p.text || '').includes('未验证')), injects.map((i) => i.p && i.p.text && i.p.text.slice(0, 80)))
   },

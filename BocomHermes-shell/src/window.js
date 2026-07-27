@@ -351,7 +351,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (m2 && S.orchByTag && S.orchByTag.has(m2[1])) return { tag: m2[1], rest: (raw.slice(0, m2.index) + raw.slice(m2.index + m2[0].length)).trim() || raw, rescued: true }
     return { tag: '', rest: raw }
   }
-  function spawnWorkflow(goal) {
+  function spawnWorkflow(goal, forceModel) {
     const raw = String(goal || '').trim() || '未命名工作流'
     // 多层派发:主控卡派出的分片 goal 带 [orch:TAG] 前缀 → 登记父子关联(wfTurnDone 据此唤醒主控),展示与注入都剥掉标记;
     // 排队时保留原始 goal(含标记),出队重走本函数再解析,标记不丢
@@ -378,7 +378,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         shardModel = (oreg && oreg.model) || null
       } catch {}
     }
-    const id = spawnCard('工作流 · ' + g.slice(0, 20), null, workflowSystemPrompt(dir, S.settings.backendDir || '') + '\n\n【总目标】\n' + g, g, parentOrch ? { wf: true, shard: true, hidden: true, model: shardModel } : { flash: true, wf: true })
+    const id = spawnCard('工作流 · ' + g.slice(0, 20), null, workflowSystemPrompt(dir, S.settings.backendDir || '') + '\n\n【总目标】\n' + g, g, parentOrch ? { wf: true, shard: true, hidden: true, model: forceModel || shardModel } : { flash: true, wf: true })
     if (parentOrch) { try { const reg = S.wfRegistry && S.wfRegistry.get(String(id)); if (reg) { reg.parentOrch = parentOrch; reg.writeScope = writescope.parseWriteScope(g); reg.contract = writescope.parseContract(g); if (reg.writeScope.length) log('shard ' + reg.id + ' 写归属: ' + reg.writeScope.join(', ')); if (reg.contract.length) log('shard ' + reg.id + ' 契约签名 ' + reg.contract.length + ' 个(收官核对)'); pushShardProgress(parentOrch) } } catch {} }
     return id
   }
@@ -554,18 +554,32 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     // 两轨都算证据:构建/测试命令轨(bash 流水)+ 浏览器动作轨(前端自验:browser_navigate/eval/screenshot 等)
     return acts.some((a) => a && ((a.kind === 'cmd' && VERIFY_CMD.test(String(a.label || ''))) || a.kind === 'browser'))
   }
-  // 验证棒目标文本(V1,CC verification agent 五件套改写):角色翻转(试图搞挂它)/借口反驳(读过不算验证)/VERDICT 字面量契约/
-  // Command run 证据块强制/壳层机判预告。note = 回派时注明的拒收原因;frontendHit 追加浏览器自验六步(cd07fbe)。
-  // 验证恒由新分片执行(V4:新眼睛防锚定,不由原分片自查)——验证棒本来就是新派的工作流卡。
+  // 验证棒目标文本(M3,CC verificationAgent 全量改写):角色翻转/基线五步/分型动作链/对抗探针/FAIL 三查/
+  // PARTIAL 限制/证据 copy-paste/测试套件不信任/读图判断/只读沙箱声明。note = 回派拒因;frontendHit 追加浏览器专条。
+  // 验证恒由新分片执行(新眼睛防锚定);模型由 spawnWorkflow forceModel 覆盖(双模型:读图模型整卡)。
+  function visionModel() { const mv = S.settings.modelVision; return (mv && mv.modelID) ? mv : null }
+  // 验证棒只读沙箱(CC :14-22):writeScope 限定系统临时目录——write/edit 项目文件被拒,bash 重定向写入越界被拒;
+  // 一次性验证脚本仍可写(临时目录内),npm test/build 这类无显式文件目标的命令不受影响。
+  function assignVerifyScope(cardId) {
+    try { const vreg = S.wfRegistry && S.wfRegistry.get(String(cardId)); if (vreg) vreg.writeScope = [require('os').tmpdir().replace(/\\/g, '/')] } catch {}
+  }
+  // 前端命中检测:任一分片的写归属含前端文件 → 验证棒除基线外追加浏览器专条
   function verifyFrontendHit(tag) {
     return [...S.wfRegistry.values()].filter((r) => r.parentOrch === tag).some((r) => (Array.isArray(r.writeScope) ? r.writeScope : []).some((p) => /\.(vue|tsx?|jsx|css|less|scss|html?)($|\?)/i.test(String(p)) || /\/(ui|web|frontend|fe|pages|views|components)\//i.test(String(p))))
   }
   function verifyGoalFor(tag, frontendHit, note) {
-    const feSteps = frontendHit ? '本次改动含前端文件,构建/测试之外【必须浏览器自验】(不许只凭代码说能跑):① 起 dev 服务或按仓库文档找入口 URL;② browser_navigate 打开;③ browser_eval 装错误收集(window.__errlog 记录 error 与 unhandledrejection)并 location.reload();④ 等 3s 后 browser_eval 收集 errors/失败资源(responseStatus>=400)/正文长度;⑤ browser_screenshot 截图留证;⑥ browser_close。console 有错、资源 4xx、正文不足 50 字(白屏)任一即按失败处理;截图路径随回报给出(完整步骤见【浏览器自验】技能)。' : ''
-    return '[orch:' + tag + ']【集成验证】' + (note ? '(回派:' + note + ')' : '') + '在 ' + (S.settings.projectDir || '项目目录') + ' 按仓库文档(CLAUDE.md/README/交接文档)的命令跑全量构建/测试。' + feSteps
-      + '【验证纪律】你的任务不是确认它能跑,是试图搞挂它——读过代码不算验证,跑一遍才算;别被前 80% 迷惑,最后 20% 才是问题藏身处。'
-      + '【输出契约】最终回报第一行必须是字面量 VERDICT: PASS|FAIL|PARTIAL(不加粗不变体);每项检查必须带两行 Command run: <你实际跑的命令> / Output observed: <关键输出原文> —— 没有 Command run 块的 PASS 是跳过不是通过;壳层会机判 VERDICT 与 Command run 块,缺了一律拒收回派。'
-      + '失败按写归属回派对应分片修复(同标记 [orch:' + tag + ']);汇报只给:VERDICT 行 + 各检查的 Command run/Output observed + 失败归属文件' + (frontendHit ? ' + 自验截图路径' : '') + '。'
+    const feSteps = frontendHit ? '【前端专条】本次改动含前端文件,除基线外【必须浏览器验证】:① 按 AGENTS.md/README 起 dev 服务(起不来=FAIL 并附报错);② browser_navigate 打开入口 → browser_eval 收集 console 错误与失败资源(responseStatus>=400) → browser_screenshot 截图;③ read 截图文件读图判断:布局破没破/内容对不对/是不是白屏或报错页(模型无读图能力时退而 browser_get_text 对照预期文案);④ curl 抽查页面子资源(HTML 200 但 JS/CSS/接口全挂不算过);⑤ 关键交互(按钮/表单)用 browser_click/browser_type 走一遍再收集一次。console 有错、资源 4xx、白屏、读图判不合格任一即 FAIL;截图路径随证据给出。' : ''
+    return '[orch:' + tag + ']【集成验证】' + (note ? '(回派:' + note + ')' : '') + '在 ' + (S.settings.projectDir || '项目目录') + ' 对本次改动做对抗性验证。'
+      + '【角色】你的任务不是确认它能跑,是试图搞挂它——读过代码不算验证,跑一遍才算;别被前 80% 迷惑,最后 20% 才是问题藏身处;想写解释的时候停手,去跑命令。\n'
+      + '【只读沙箱】禁改/禁删项目文件(只能往临时目录写一次性验证脚本,用完即删),禁装依赖,禁 git 写操作;壳层已用 writeScope 替你硬拦,越界会被拒。\n'
+      + '【基线五步】(先于一切)读 AGENTS.md/README/package.json 拿准确命令 → 构建(挂=自动 FAIL) → 全量测试(挂=自动 FAIL) → lint/类型检查 → 改动相关代码回归;按风险定严度(一次性脚本不必全上,生产路径一项不落)。\n'
+      + '【分型动作链】按改动类型选(可叠加):后端/接口=curl 调用并校验响应体形状与字段(不只看状态码),异常参数也要测;Bug 修复=先写最小复现脚本到临时目录让 bug 复现(亲眼看它挂),再验修复(亲眼看它过),再跑回归;重构=既有测试原样全过 + diff 公开 API 面 + 抽查可观测行为一致;库/组件=从全新上下文 import 当消费者调公开 API;CLI=验 stdout/stderr/exit code + 空/畸形/边界输入;数据/迁移=空输入/单行/异常值+进出行数对账防静默丢数据,迁移须 up/down 均可逆。\n'
+      + '【测试套件不可全信】实现者也是 LLM,它写的测试可能是循环论证——测试通过只是上下文不是证据,你必须有自己的检查。\n'
+      + '【对抗探针 ≥1】从并发(同一请求双发)、边界(0/-1/空串/超长/unicode)、幂等(同一变更发两次)、孤儿(引用不存在的 ID)里挑至少一个真实探一把;全是 200 与 test passes 只算 happy path,不算验证。\n'
+      + '【FAIL 三查】判 FAIL 前先查:别处已有防御代码?文档/注释/提交说明这是有意设计?修了会破坏外部契约(→ 记 observation 不记 FAIL)?\n'
+      + '【输出契约】最终回报第一行必须是字面量 VERDICT: PASS|FAIL|PARTIAL(不加粗不变体;PARTIAL 仅限环境限制,能跑的检查必须判 PASS/FAIL);每项检查带两行 Command run: <实际跑的命令> / Output observed: <关键输出原文,copy-paste 不得转述> —— 没有 Command run 块的 PASS 是跳过不是通过;壳层会机判 VERDICT 与 Command run 块(缺了拒收回派),并会抽 1-2 条命令真跑核对(不符按拒收)。\n'
+      + feSteps
+      + '失败按写归属回派对应分片修复(同标记 [orch:' + tag + ']);汇报只给:VERDICT 行 + 各检查的 Command run/Output observed + 失败归属文件' + (frontendHit ? ' + 截图路径' : '') + '。'
   }
   // 多层派发唤醒钩:带 parentOrch 的分片收官(完成/中断,一次)→ 给主控卡注入进度消息(N/M)把它唤醒。
   // 主控只装清单,收到后自己对照 todo:齐了按规程派索引棒,没齐结束本轮继续等 —— 事件驱动,不轮询。
@@ -573,7 +587,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (!reg.parentOrch || reg.orchNotified) return
     if (reg.status !== 'done' && reg.status !== 'interrupted') return
     if (reg.status === 'done') checkContract(reg)   // 中断片不核对:半成品缺签名是常态,报了也是噪音
-    if (reg.status === 'done' && Array.isArray(reg.writeScope) && reg.writeScope.length && !hasVerifyEvidence(reg)) {
+    if (reg.status === 'done' && !/集成验证/.test(String(reg.goal || '')) && Array.isArray(reg.writeScope) && reg.writeScope.length && !hasVerifyEvidence(reg)) {
+      // 验证棒自身(【集成验证】分片)不算编码分片,不进证据闸——否则它的只读沙箱 writeScope 会把自己标【未验证】,误触发再派(实测)
       reg.unverified = true   // 编码分片零验证证据:标【未验证】随唤醒报主控(契约核对管"签名在不在",这条管"跑没跑过")
       log('[harness-verify] shard ' + reg.id + ' 无构建/测试执行证据,标未验证: ' + String(reg.goal).slice(0, 50))
     }
@@ -596,9 +611,59 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         } else {
           verifyRejectNote = '【验证回报被壳层拒收:' + rejectWhy + ' —— 已自动回派一根验证棒,等它收官再收口。】'
           log('[harness-verify] 验证棒拒收(tag ' + reg.parentOrch + '):' + rejectWhy + ' → 自动回派一次')
-          try { spawnWorkflow(verifyGoalFor(reg.parentOrch, verifyFrontendHit(reg.parentOrch), rejectWhy)) } catch (e) { log('verify retry dispatch err: ' + e.message) }
+          try { const rid = spawnWorkflow(verifyGoalFor(reg.parentOrch, verifyFrontendHit(reg.parentOrch), rejectWhy), visionModel()); assignVerifyScope(rid) } catch (e) { log('verify retry dispatch err: ' + e.message) }
+        }
+      } else if (vm[1] === 'FAIL') {
+        // M4 修复循环(CC "fix, resume the verifier, repeat until PASS"):FAIL 保留验证卡待复验,循环 ≤3 轮到顶转人工
+        S.verifyOpen = S.verifyOpen || new Map(); S.verifyRounds = S.verifyRounds || new Map()
+        const rounds = (S.verifyRounds.get(reg.parentOrch) || 0) + 1
+        S.verifyRounds.set(reg.parentOrch, rounds)
+        if (rounds >= 3) {
+          S.verifyOpen.delete(reg.parentOrch); S.verifyRounds.delete(reg.parentOrch)
+          verifyRejectNote = '【验证未通过:连续 ' + rounds + ' 轮修复后仍未达标 —— 按未完成对待,需人工介入。】'
+          log('[harness-verify] 验证棒 ' + rounds + ' 轮 FAIL(tag ' + reg.parentOrch + ') → 转人工')
+        } else {
+          S.verifyOpen.set(reg.parentOrch, reg.wcId)   // 保留这张卡:修复落盘后由壳层喂"复验"消息同棒续验
+          verifyRejectNote = '【验证未达标(第 ' + rounds + ' 轮):请按验证棒回报的失败项修复 —— 修复落盘后壳层会让同一根验证棒复验。】'
+          log('[harness-verify] 验证棒 FAIL 第 ' + rounds + ' 轮(tag ' + reg.parentOrch + '),保留待复验')
+        }
+      } else if (vm[1] === 'PASS') {
+        S.verifyOpen && S.verifyOpen.delete(reg.parentOrch); S.verifyRounds && S.verifyRounds.delete(reg.parentOrch)   // 过了:清修复循环账
+        // M4 抽查重放(CC spot-check):抽报告里一条只读白名单命令真跑(异步,不阻塞),非零退出 → 按拒收回派
+        const cmds = [...rep.matchAll(/Command run\s*[:：]\s*(.+)/g)].map((m) => String(m[1] || '').trim()).filter(Boolean)
+        const safe = cmds.find((c) => /^(curl\s|npm (test|run (build|test|lint|typecheck))|pnpm test|yarn test|pytest|mvn( | -q )(test|compile)|gradle test|go test|npx (vitest|jest))/.test(c))
+        if (safe) {
+          const tag1 = reg.parentOrch
+          require('child_process').exec(safe, { cwd: (reg.dir || S.settings.projectDir || '.'), timeout: 120000, windowsHide: true }, (err) => {
+            try {
+              if (!err) { log('[harness-verify] 抽查重放通过(tag ' + tag1 + '): ' + safe.slice(0, 60)); return }
+              log('[harness-verify] 抽查重放不符(tag ' + tag1 + '): ' + safe.slice(0, 60) + ' 实跑非零退出 → 按拒收处理')
+              S.orchVerifyRetry = S.orchVerifyRetry || new Map()
+              const rn = (S.orchVerifyRetry.get(tag1) || 0) + 1
+              S.orchVerifyRetry.set(tag1, rn)
+              const oref2 = S.orchByTag && S.orchByTag.get(tag1)
+              const oreg2 = oref2 && S.wfRegistry && S.wfRegistry.get(String(oref2.id))
+              const w4 = oreg2 && wcById(oreg2.wcId)
+              if (w4) w4.send('card-inject', { text: '<主控进度>(壳层验证闸)验证棒报告称 PASS,但抽验命令「' + safe.slice(0, 60) + '」实跑非零退出 —— 已按拒收处理' + (rn >= 2 ? ',连续 ' + rn + ' 次,标【验证未完成】转人工。' : '并回派一根验证棒,等它收官再收口。') + '</主控进度>', disp: '验证棒抽查重放不符' })
+              if (rn < 2) { const rid = spawnWorkflow(verifyGoalFor(tag1, verifyFrontendHit(tag1), '抽查重放不符:' + safe.slice(0, 40)), visionModel()); assignVerifyScope(rid) }
+            } catch (e2) { log('verify spotcheck err: ' + e2.message) }
+          })
         }
       }
+    }
+    // M4 复验触发:本 tag 有待复验的验证棒,且当前收官的是其它(修复)分片 → 喂同一验证棒"复验"消息(CC resume the verifier)
+    if (reg.status === 'done' && !/集成验证/.test(String(reg.goal || '')) && S.verifyOpen && S.verifyOpen.has(reg.parentOrch)) {
+      try {
+        const vwcId = S.verifyOpen.get(reg.parentOrch)
+        // 复验棒的下一次收官要重走唤醒+VERDICT 机判全流程:一次性标志 orchNotified 已在上轮收官被消费,先复位(实测漏复位=复验收官静默)
+        const vreg = [...S.wfRegistry.values()].find((r) => r.wcId === vwcId)
+        if (vreg) vreg.orchNotified = false
+        const vwc = wcById(vwcId)
+        if (vwc) {
+          vwc.send('card-inject', { text: '<主控进度>实现方已回报修复(分片「' + String(reg.goal).slice(0, 40) + '」已收官),请按原检查清单复验并更新 VERDICT。</主控进度>', disp: '修复落盘,验证棒复验' })
+          log('[harness-verify] 修复分片收官,已喂验证棒复验 (tag ' + reg.parentOrch + ')')
+        }
+      } catch (e) { log('verify resume err: ' + e.message) }
     }
     // 先确认主控窗真的在,再置一次性标志 —— 以前是"先置标志再找窗",窗没了(tag 查无/主控已关)静默跳过且永不重试,主控变聋
     const oref = S.orchByTag && S.orchByTag.get(reg.parentOrch)
@@ -619,6 +684,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       if (!queuedN && doneN === sibs.length) {   // 全部收官(且无排队片)
         for (const r of sibs) {   // 还活着的分片窗口一律关掉(隐藏工人不停下就一直烧 token);忙着的别杀 —— 可能正在交棒/补零产出文档,杀了就毁在半路
           if (S.isCardBusy && S.isCardBusy(r.wcId)) continue
+          if (S.verifyOpen && S.verifyOpen.has(r.parentOrch) && /集成验证/.test(String(r.goal || ''))) continue   // M4:FAIL 待复验的验证棒保留不关(复验后 PASS/到顶自清)
           const w2 = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === r.wcId)
           if (w2) { try { (S.shardForceClose = S.shardForceClose || new Set()).add(r.wcId); w2.close() } catch {} }   // 走白名单真销毁(弹窗查看后 X 只转隐藏,见 spawnCard close 拦截)
         }
@@ -632,8 +698,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         if (needVerify && !S.orchVerifyDone.has(tag0)) {
           S.orchVerifyDone.add(tag0)
           try {
-            const vGoal = verifyGoalFor(tag0, verifyFrontendHit(tag0))   // V1 五件套;前端命中自动追加浏览器自验六步
-            const vid = spawnWorkflow(vGoal)
+            const vGoal = verifyGoalFor(tag0, verifyFrontendHit(tag0))   // M3 全量 CC 验证代理;前端命中自动追加浏览器专条
+            const vid = spawnWorkflow(vGoal, visionModel())   // 双模型:验证棒整卡跑读图模型(已配时)
+            assignVerifyScope(vid)   // 只读沙箱:writeScope 限定系统临时目录(CC :14-22 思想)
             log('[harness-verify] 自动集成验证棒已派出 (tag ' + tag0 + ', card ' + JSON.stringify(vid) + ')')
             const owin2 = wcById(oreg.wcId)
             if (owin2) owin2.send('card-inject', { text: '<主控进度>(壳层验证闸)检测到编码分片缺验证证据,已自动补派【集成验证】分片跑构建/测试 —— 它的结果会作为收官证据回流;别急着索引,等验证棒收官再收口。</主控进度>', disp: '壳层已自动补派集成验证棒' })
@@ -1693,6 +1760,8 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       knobs: mergeKnobs(S.settings.knobs),   // 阈值旋钮(治理波次):完整 9 键随设置下发,渲染端不必各自兜底
       permRules: (S.settings.permRules && typeof S.settings.permRules === 'object') ? S.settings.permRules : { allow: [], deny: [] },   // 用户权限规则(P2.3):设置页两个文本域读写
       model: S.settings.model || null,   // 全局默认模型(对话坞设)
+      modelMain: S.settings.modelMain || null,     // 双模型·干活主模型(会话默认;缺省回 model)
+      modelVision: S.settings.modelVision || null, // 双模型·读图模型(带图消息/验证棒整卡;候选按 serve 模型元数据 image:true 过滤)
       encryptionAvailable: email.encryptionAvailable(),   // false → 密码只能明文落盘,设置面板要红字告警
       outboxHoldSeconds: S.settings.outboxHoldSeconds == null ? 15 : S.settings.outboxHoldSeconds,   // 发信延迟窗(软撤回),0=立即发
       imapIdleEnabled: S.settings.imapIdleEnabled !== false,   // IMAP IDLE 实时新邮件提醒,默认开
@@ -2345,6 +2414,9 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       const clean = (a) => (Array.isArray(a) ? a.map((x) => String(x).slice(0, 200).trim()).filter(Boolean).slice(0, 100) : [])
       S.settings.permRules = { allow: clean(patch.permRules.allow), deny: clean(patch.permRules.deny) }
     }
+    // 双模型(M1):modelMain/modelVision,形状同 model({providerID,modelID,name} 或 null)
+    if (patch && 'modelMain' in patch) S.settings.modelMain = (patch.modelMain && patch.modelMain.modelID) ? { providerID: patch.modelMain.providerID, modelID: patch.modelMain.modelID, name: patch.modelMain.name } : null
+    if (patch && 'modelVision' in patch) S.settings.modelVision = (patch.modelVision && patch.modelVision.modelID) ? { providerID: patch.modelVision.providerID, modelID: patch.modelVision.modelID, name: patch.modelVision.name } : null
     if (patch && 'model' in patch) S.settings.model = (patch.model && patch.model.modelID) ? { providerID: patch.model.providerID, modelID: patch.model.modelID, name: patch.model.name } : null   // 全局默认模型(对话坞设;卡片可覆盖)
     if (patch && patch.imap) {
       S.settings.imap = S.settings.imap || {}

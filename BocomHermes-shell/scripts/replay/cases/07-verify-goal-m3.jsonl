@@ -1,0 +1,3 @@
+# 用例⑦ transcript:一个前端分片(无验证证据) → 壳层补派集成验证棒;检查 M3 目标文本/只读沙箱/模型覆盖。
+{"t":0,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s1","part":{"id":"prt_td1","callID":"c1","type":"tool","tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"实现登录页","status":"completed"}]}}}}}}
+{"t":1,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s1","part":{"id":"prt_b1","callID":"c2","type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"echo done"},"output":"done"}}}}}

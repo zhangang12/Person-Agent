@@ -1016,18 +1016,25 @@ desc: 改完前端代码后,用内嵌浏览器真正打开页面验证(加载/�
     const msg = ctxPrefix + skillPrefix + (text || '')
     S.sentPrompt.set(sessionId, msg); S.streamBuf.delete(sessionId)   // 存【实际发出的全文】(含注入前缀):回显过滤比对的是 serve 收到的东西 —— 只存原文的话,带前缀的回显漏网,整坨背景提示词会打进对话流
     touchHistory(sessionId)
-    let model = si.model || S.settings.model || null
+    let model = si.model || S.settings.modelMain || S.settings.model || null   // 双模型(M1):会话默认走主模型(缺省回全局 model)
     const fileArr = Array.isArray(files) ? files : []
     const hasImage = fileArr.some((f) => f && /^image\//.test(f.mime || ''))
-    if (hasImage) {                                   // 有图 → 确保用支持图像的模型(动态切多模态);C1:走 oc 缓存版,不为检查单拉全量
-      try {
-        const models = await oc.listModels(si.serve, {})
-        const cur = model && models.find((m) => m.providerID === model.providerID && m.modelID === model.modelID)
-        if (!cur || !cur.image) {
-          const v = models.find((m) => m.image)
-          if (v) { model = { providerID: v.providerID, modelID: v.modelID, name: v.name }; if (!si.wc.isDestroyed()) si.wc.send('card-note', { text: '检测到图片，已临时切到多模态模型「' + v.name + '」识别', tone: 'muted' }) }
-        }
-      } catch {}
+    if (hasImage) {
+      // 带图消息路由(M1 双模型):优先用显式配置的读图模型;没配回退"清单里找一个 image 模型"(老行为)
+      const mv = S.settings.modelVision
+      if (mv && mv.modelID) {
+        model = { providerID: mv.providerID, modelID: mv.modelID, name: mv.name }
+        if (!si.wc.isDestroyed()) si.wc.send('card-note', { text: '检测到图片，本条用读图模型「' + (mv.name || mv.modelID) + '」识别', tone: 'muted' })
+      } else {
+        try {
+          const models = await oc.listModels(si.serve, {})
+          const cur = model && models.find((m) => m.providerID === model.providerID && m.modelID === model.modelID)
+          if (!cur || !cur.image) {
+            const v = models.find((m) => m.image)
+            if (v) { model = { providerID: v.providerID, modelID: v.modelID, name: v.name }; if (!si.wc.isDestroyed()) si.wc.send('card-note', { text: '检测到图片，已临时切到多模态模型「' + v.name + '」识别', tone: 'muted' }) }
+          }
+        } catch {}
+      }
     }
     const onNote = (t) => { try { if (!si.wc.isDestroyed()) si.wc.send('card-note', { text: t, tone: 'muted' }) } catch {} }
     // 轮询补渲染:这台 serve 的 /event 常不推 message 流式事件(工具/子Agent/思考全静默 → 卡片只能等 POST 返回一次性贴,
