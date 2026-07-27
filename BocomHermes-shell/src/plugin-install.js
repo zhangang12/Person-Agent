@@ -1,6 +1,7 @@
 // 【插件自动安装】把 plugin/ 下的壳层插件(read-spill + bocomhermes-context-guard)拷进 opencode 全局插件目录
 // (~/.config/opencode/plugin/,opencode 启动自动加载,无需改 opencode.jsonc)——
-// read-spill:tool.execute.after 钩子上把 read/grep 大输出外溢落盘 + 会话累计桶第二道闸;
+// read-spill:tool.execute.after 钩子上把 read/grep/bash 大输出(单次 >8000 字符)外溢落盘;
+// 会话累计桶默认关闭(编码场景实测伤工具效率,累计增长归 context-guard① 历史清理层管,>0 才启用);
 // context-guard:历史工具结果清理/系统提示纪律注入/压缩纪律/参数收口/空输出占位符(均详见各文件头注释)。
 // 每次启动覆盖式拷贝 = 自更新(壳层升版插件跟着升);拷贝源在 asar 内也能读(Electron 补过 fs)。
 'use strict'

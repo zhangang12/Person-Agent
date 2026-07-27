@@ -24,10 +24,12 @@
  *   BOCOMHERMES_READ_SPILL_HEAD   摘要保留头部行数,默认 40
  *   BOCOMHERMES_READ_SPILL_TOOLS  拦截的工具名(逗号分隔,大小写不敏感),默认 "read,grep,bash"(bash 同拦:模型会用 cat 绕开 read)
  *   BOCOMHERMES_READ_SPILL_DIR    落盘目录,默认 <系统 temp>/bocomhermes-read-spill
- *   BOCOMHERMES_READ_SPILL_SESSION_MAX  会话累计桶(第二道闸,字符),默认 40000;0 或负数 = 关闭累计桶。
- *     单次闸管"一次读了个大的",累计桶管"十次 6k 中等输出累计灌爆"(128k 实测病灶):
- *     每次工具输出都计入该会话总账,累计超线后【该会话后续输出一律外溢】(无论单次多小),
- *     替代文本引导"grep 定位后分段精读"。计数只增不减(保守),新会话自然新桶;桶表超 500 会话整表清。
+ *   BOCOMHERMES_READ_SPILL_SESSION_MAX  会话累计桶(字符),默认 0 = 关闭(编码场景实测:40k 默认线对长周期编码任务太紧,
+ *      超线后连小输出也一律外溢,工具效率腰斩;长任务累计增长由 context-guard① 的历史清理层负责,该桶只作极端场景逃生门,>0 才启用)。
+ *     单次闸管"一次读了个大的";设计另有累计桶管"十次 6k 中等输出累计灌爆",但【默认关闭】(编码场景实测:
+ *     40k 线对长周期编码任务太紧,超线后连 200 字小读也一律外溢,工具效率腰斩;累计增长已由 context-guard①
+ *     在 messages.transform 层接管——清旧历史,不碰新鲜内容)。桶逻辑保留:>0 启用后,计入每次输出总账,
+ *     超线后该会话后续输出一律外溢并引导"grep 定位后分段精读"。计数只增不减(保守),桶表超 500 会话整表清。
  *   (注意:opencode 是 Windows 原生进程,传 Windows 路径如 C:/...,不要传 Git Bash 的 /c/...)
  *
  * 注入哪些依赖:无(零依赖,只用 node 内置模块);ctx 未使用,纯靠环境变量配置,
@@ -102,7 +104,8 @@ function loadConfig() {
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
   const spillDir = process.env.BOCOMHERMES_READ_SPILL_DIR
     || path.join(os.tmpdir(), 'bocomhermes-read-spill')
-  const sessionMax = Number(process.env.BOCOMHERMES_READ_SPILL_SESSION_MAX ?? 40000)
+  const sessionMax = Number(process.env.BOCOMHERMES_READ_SPILL_SESSION_MAX ?? 0)   // 累计桶默认关(编码场景实测:40k 几波 read 就到顶,之后连 200 字小读也外溢,工具调用效率腰斩;
+  // 长任务的"累计增长"已由 context-guard① 在 messages.transform 层管(清旧历史不碰新鲜内容),累计桶只留环境变量作极端场景逃生门
   return {
     maxChars: Number.isFinite(maxChars) ? maxChars : 8000,
     headLines: Number.isFinite(headLines) && headLines > 0 ? headLines : 40,
