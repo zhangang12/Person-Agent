@@ -85,6 +85,8 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   skillsOpenDir: () => ipcRenderer.invoke('skills-open-dir'),
   transcriptPath: (sid) => ipcRenderer.invoke('transcript-path', sid),   // 交棒逃生舱:上一棒完整记录落盘路径(随续命消息注入)
   intranetOptimizeApply: () => ipcRenderer.invoke('intranet-optimize-apply'),   // 内网 serve 优化:写 opencode 配置 + PATCH 热应用
+  agentMdDraft: (dir) => ipcRenderer.invoke('agent-md-draft', dir),             // AGENTS.md 起草(检测项目清单)
+  agentMdWrite: (opts) => ipcRenderer.invoke('agent-md-write', opts),           // AGENTS.md 写入(人工确认后;旧文件备份/追加)
   cardReinit: (opts) => ipcRenderer.invoke('card-reinit', opts || {}),
   cardPickProject: () => ipcRenderer.invoke('card-pick-project'),
   parseDoc: (path) => ipcRenderer.invoke('parse-doc', path),

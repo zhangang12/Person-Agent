@@ -190,6 +190,17 @@
       </div>
 
       <div class="fld">
+        <span class="lbl">AGENTS.md 项目说明书 <span class="hint" style="font-weight:400">（告诉 Agent 怎么构建/测试/验证 · serve 自动注入每个会话）</span></span>
+        <div class="row">
+          <button id="agentMdDraft" class="chip">检测并起草</button>
+          <button id="agentMdSave" class="chip" style="display:none">确认写入</button>
+          <span id="agentMdMsg" class="hint"></span>
+        </div>
+        <textarea id="agentMdText" class="in" rows="10" style="display:none" spellcheck="false"></textarea>
+        <span class="hint">扫描当前项目(package.json/pom.xml/pytest 等)生成草稿，可手动改两笔再「确认写入」。已有人工 AGENTS.md 不覆盖：备份后生成段追加到尾部；「待确认」项请补齐。改验证方式后重跑一次即可（幂等）。</span>
+      </div>
+
+      <div class="fld">
         <span class="lbl">后端代码仓库 <span class="hint" style="font-weight:400">（可选 · 跨前后端调查 / 修复）</span></span>
         <div class="row">
           <span id="backend" class="proj">未配置</span>
@@ -215,7 +226,7 @@
   ;(function initTabs() {
     const MAP = [
       [/^(主题|编辑器命令|serve 二进制|修复流程|邮件|OceanBase|注册 MCP|内网 serve 优化)/, 'general'],
-      [/^(智能体旋钮|权限规则|当前项目目录|后端代码仓库)/, 'agent'],
+      [/^(智能体旋钮|权限规则|AGENTS.md|当前项目目录|后端代码仓库)/, 'agent'],
       [/^(项目知识库)/, 'knowledge'],
     ]
     const flds = [...document.querySelectorAll('.body > .fld')]
@@ -425,6 +436,30 @@
       if (r && r.ok) { m.style.color = 'var(--green)'; m.textContent = '✓ 已写入 ' + (r.path || '') + (r.patched && r.patched.length ? '；已热应用 ' + r.patched.length + ' 个 serve' : '；重启 serve 后生效') }
       else { m.style.color = 'var(--diff-del)'; m.textContent = '✗ ' + ((r && r.error) || '失败') }
     } catch (e) { m.style.color = 'var(--diff-del)'; m.textContent = '✗ ' + (e.message || '失败') }
+  })
+
+  // AGENTS.md 起草/写入(项目说明书:怎么构建/测试/验证)
+  $('agentMdDraft').addEventListener('click', async () => {
+    const m = $('agentMdMsg'); m.style.color = ''; m.textContent = '检测中…'
+    try {
+      const dir = cur.projectDir
+      if (!dir) { m.style.color = 'var(--diff-del)'; m.textContent = '先在上方选当前项目目录'; return }
+      const r = await window.BocomHermes.agentMdDraft(dir)
+      if (!r || !r.ok) { m.style.color = 'var(--diff-del)'; m.textContent = '✗ ' + ((r && r.error) || '起草失败'); return }
+      $('agentMdText').value = r.draft
+      $('agentMdText').style.display = 'block'
+      $('agentMdSave').style.display = ''
+      m.style.color = 'var(--green)'
+      m.textContent = r.existing != null ? '草稿已生成：检测到已有 AGENTS.md，写入时会备份并把生成段追加到尾部' : '草稿已生成（将新建 AGENTS.md），请审阅「待确认」项后写入'
+    } catch (e) { m.style.color = 'var(--diff-del)'; m.textContent = '✗ ' + (e.message || '起草失败') }
+  })
+  $('agentMdSave').addEventListener('click', async () => {
+    const m = $('agentMdMsg'); m.textContent = '写入中…'
+    try {
+      const r = await window.BocomHermes.agentMdWrite({ dir: cur.projectDir, content: $('agentMdText').value })
+      if (r && r.ok) { m.style.color = 'var(--green)'; m.textContent = '✓ 已写入 ' + r.path + (r.action === 'appended' ? '（原文件已备份，生成段在尾部）' : '') + '；之后新开的会话自动生效' }
+      else { m.style.color = 'var(--diff-del)'; m.textContent = '✗ ' + ((r && r.error) || '写入失败') }
+    } catch (e) { m.style.color = 'var(--diff-del)'; m.textContent = '✗ ' + (e.message || '写入失败') }
   })
 
   // 保存（IMAP/SMTP/代理/启动参数已分别移到「邮件中心」「浏览器」，此处不再处理）

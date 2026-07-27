@@ -16,6 +16,7 @@ const initMcpConfig = require('./mcp-config')
 const initLspConfig = require('./lsp-config')   // 内网无外网:随包自带三个 node 系 LSP server,首启自动注册进 opencode 配置
 const initPluginInstall = require('./plugin-install')   // read-spill 插件(read/grep 大输出外溢落盘)拷进 opencode 全局插件目录
 const initIntranetOptimize = require('./intranet-optimize')   // 内网×弱模型静态优化包:tools 瘦身/permission.bash 通配/agent 收口,写配置+PATCH 热应用
+const initAgentMd = require('./agent-md')   // AGENTS.md 生成器:扫清单文件起草"怎么构建/测试/验证",serve 原生注入每个会话
 const initBrowser = require('./browser')
 const knowledge = require('./knowledge')   // 项目知识库治理 IPC 用(纯逻辑,落盘/审计在本文件)
 const writescope = require('./writescope')   // 分片写归属(编码模式):goal 解析 + 范围匹配,session.js 的权限硬闸用
@@ -2285,6 +2286,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   // 启动即确保已注册:缺失/路径过期自动补写(带备份)——否则 Agent 静默没有任何天枢工具(技能解析/自愈/接管全空转)。
   const mcpCfg = initMcpConfig({ app, path, fs, ipcMain, log })
   initIntranetOptimize({ app, path, fs, ipcMain, log, getPermRules: () => S.settings.permRules, getServeBases: () => [...new Set([...S.sessionInfo.values()].map((si) => si && si.serve && si.serve.base).filter(Boolean))] })
+  initAgentMd({ app, path, fs, ipcMain, log })
   setTimeout(() => {
     try {
       const r = mcpCfg.autoRegisterIfMissing()
