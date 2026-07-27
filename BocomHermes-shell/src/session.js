@@ -72,9 +72,11 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
     const anchor = `当前项目工作目录（主仓,唯一可写真相源）：${dir}\n`
       + (backend ? `副仓（只读,跨仓探查允许）：${backend}\n写与改只落主仓;副仓可以 grep/glob/read 读,但【严禁】写、改、删它;其它路径仍不许访问。\n`
                  : `分析、探索、读写代码时一律在此目录内进行;不要访问或分析其它路径下的项目/目录。\n`)
-    // 128k 上下文纪律(所有 Agent 同规,随首条背景注入每一张卡):与 workflowSystemPrompt 第 4 条、session.js 硬闸同口径,改数值要三处同步。
-    const discipline = '<上下文纪律(128k)>你的上下文窗口约 128k tokens,省着用：'
-      + '① 按需精读,不通读整个模块——单次 read ≤400 行(带 offset/limit),grep 先收窄路径与类型;深读大片文件用 task 派子 Agent(它有独立 128k)。'
+    // 上下文纪律(所有 Agent 同规,随首条背景注入每一张卡):与 workflowSystemPrompt 第 4 条、session.js 硬闸同口径,
+    // 数值口径 = knobs.ctxLimitMax(默认 192k,M2.5 实测),生效上限另按 min(serve 上报, 该值) 收口,改数值要三处同步。
+    const _ck = Math.round((+(S.settings.knobs && S.settings.knobs.ctxLimitMax) || 192000) / 1000) + 'k'
+    const discipline = '<上下文纪律(' + _ck + ')>你的上下文窗口约 ' + _ck + ' tokens,省着用：'
+      + '① 按需精读,不通读整个模块——单次 read ≤400 行(带 offset/limit),grep 先收窄路径与类型;深读大片文件用 task 派子 Agent(它有独立 ' + _ck + ')。'
       + '② task / delegate_task 指令只写目标+文件路径+边界+回报格式,【严禁】贴文件原文/大段代码——不是限字数,是禁止把文档内容搬进上下文(塞原文超 2 万字壳层直接拦停该子 Agent);用 delegate_task 必须显式传 load_skills,不需要技能就传 []。'
       + '③ 子 Agent 结论一律落盘成文档,回报只给一句话+路径(字数不限,内容住文档里,谁要用谁去读);要整理结论也派子 Agent 读文档接力归纳,别自己全读。</上下文纪律>\n'
       // 弱模型双向纪律(P1.3,2026-07-26,依据 external/claude-code-提示词工程借鉴.md §1.2/§3):不粉饰也不许防御性打折;
@@ -608,7 +610,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
   // 父卡 task 永 running 拖住整波。判据:父卡在忙 + 子会话静默 > 5min + generationStalled(最后 assistant 未收尾且无工具在跑)
   // → 只中止这个子会话(task 报"Task cancelled",主 Agent 重派或带其余结果综合,实测恢复路径)。有工具在跑/已收尾一律放过:慢≠死。
   const SUB_STALL_MS = 5 * 60 * 1000   // 旋钮候选:生成挂起容忍(网关掉链子常见,但 5min 无字基本是真死)
-  const SUB_CTX_WARN = Math.round(128000 * 0.8)   // 子 Agent 上下文预警线(128k 口径):隔离上下文不进卡片水位,这里直接看它的真实用量
+  const SUB_CTX_WARN = Math.round(((+(S.settings.knobs && S.settings.knobs.ctxLimitMax)) > 0 ? +(S.settings.knobs && S.settings.knobs.ctxLimitMax) : 192000) * 0.8)   // 子 Agent 上下文预警线 = 口径 80%(随 knobs.ctxLimitMax,默认 192k):隔离上下文不进卡片水位,这里直接看它的真实用量
   const subCtxWarned = new Set()   // 每个子会话只预警一次
   setInterval(async () => {
     try {
@@ -629,7 +631,7 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
               if (u && u.prompt >= SUB_CTX_WARN && !subCtxWarned.has(c.id)) {
                 subCtxWarned.add(c.id)
                 if (subCtxWarned.size > 500) subCtxWarned.clear()
-                if (!wc.isDestroyed()) wc.send('card-note', { text: '⚠ 子 Agent「' + String(c.title || c.id).slice(0, 40) + '」上下文已用 ' + Math.round(u.prompt / 1000) + 'k/128k —— 任务偏大,宜让它尽快收尾落盘;下次拆小(指令≤2000字)', tone: 'muted' })
+                if (!wc.isDestroyed()) wc.send('card-note', { text: '⚠ 子 Agent「' + String(c.title || c.id).slice(0, 40) + '」上下文已用 ' + Math.round(u.prompt / 1000) + 'k/' + Math.round(SUB_CTX_WARN / 0.8 / 1000) + 'k —— 任务偏大,宜让它尽快收尾落盘;下次拆小(指令≤2000字)', tone: 'muted' })
               }
             } catch {}
             const upd = (c.time && c.time.updated) || 0

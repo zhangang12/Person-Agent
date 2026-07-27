@@ -195,6 +195,24 @@ async function main() {
     }
   } catch (e) { WARN('lsp 配置检查', e.message) }
 
+  console.log('\n[T2b] 上下文上限上报(limit.context → 壳层生效上限 = min(上报, 192k))')
+  try {
+    const r = await api('GET', '/config/providers')
+    const all = (r.json && (r.json.all || r.json.providers || r.json)) || []
+    const vals = new Map()   // limit.context → [modelID]
+    for (const p of (Array.isArray(all) ? all : [])) {
+      for (const [mid, m] of Object.entries(p.models || {})) {
+        const lim = (m && m.limit && m.limit.context) || 0
+        if (lim) { if (!vals.has(lim)) vals.set(lim, []); vals.get(lim).push((p.id || p.providerID || '?') + '/' + mid) }
+      }
+    }
+    if (!vals.size) WARN('limit.context 上报', '拿不到任何模型的窗口上限(壳层回退 128000 兜底;fork 若阉割此字段,192k 口径无法生效)')
+    for (const [lim, models] of [...vals.entries()].sort((a, b) => a[0] - b[0])) {
+      const eff = Math.min(lim, 192000)
+      PASS('limit.context=' + lim, '生效上限 ' + eff / 1000 + 'k(' + models.length + ' 个模型,如 ' + models[0] + ')')
+    }
+  } catch (e) { WARN('limit.context 查询', e.message) }
+
   console.log('\n[T1] 插件机制(read-spill 端到端,真实调一次模型)')
   const tmpDir = path.join(os.tmpdir(), 'bocomhermes-forkprobe')
   fs.mkdirSync(tmpDir, { recursive: true })
