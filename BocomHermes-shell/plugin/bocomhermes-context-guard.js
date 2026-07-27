@@ -28,6 +28,8 @@
  *   BOCOMHERMES_CTX_GUARD_KEEP_TURNS  保留全文的最近轮数,默认 3
  *   BOCOMHERMES_CTX_GUARD_BUDGET      可见工具结果聚合预算(字符),默认 40000;0 = 只按轮次清理
  *   BOCOMHERMES_MAX_OUTPUT_TOKENS     maxOutputTokens 钳制,默认 0 = 不收口
+ *   BOCOMHERMES_CTX_LIMIT_K           纪律文本里的上下文口径(千 tokens),默认 192(MiniMax M2.5 实测口径;
+ *                                     与壳层 knobs.ctxLimitMax 同源——壳层改口径时同步改这个环境变量)
  *
  * 通道验证:forkcheck T4(messages.transform)/T6(system.transform)已在本机 opencode 1.18.3
  *   端到端验证绿;bocomcode fork 需复验(不绿则钩子静默无效,不伤会话)。
@@ -35,9 +37,12 @@
  * 自测:scripts/context-guard-selftest.mjs。
  */
 // ── 纪律文本(终稿,docs/整改实施计划-内网opencode×弱模型.md 附录 A/B) ──
-const SYS_BLOCK = '<上下文纪律(128k)>你的上下文窗口约 128k tokens，省着用：① 按需精读，不通读整个模块——单次 read ≤400 行（带 offset/limit），grep 先收窄路径与类型；深读大片文件用 task 派子 Agent（它有独立 128k）。② task/delegate_task 指令只写目标+文件路径+边界+回报格式，严禁贴文件原文/大段代码。③ 子 Agent 结论一律落盘成文档，回报只给一句话+路径。</上下文纪律>\n'
-  + '<如实汇报>跑过验证再说"完成"；没法验证就明说"还没验证"；失败贴原始输出，不许粉饰成成功；确认通过的也直说，不要防御性打折扣。</如实汇报>\n'
-  + '<委派纪律>委派指令=目标+路径+边界+回报格式；回报要自包含（结论带 文件:行号）；不偷看子 Agent 的中间过程，不编造未收到的回报。</委派纪律>'
+// 口径随 knobs.ctxLimitMax 同步(当前 192k,M2.5 实测):插件读不到壳层设置,经 BOCOMHERMES_CTX_LIMIT_K 注入(读取时机 = 插件初始化)
+function sysBlockOf(cfg) {
+  return '<上下文纪律(' + cfg.ck + ')>你的上下文窗口约 ' + cfg.ck + ' tokens，省着用：① 按需精读，不通读整个模块——单次 read ≤400 行（带 offset/limit），grep 先收窄路径与类型；深读大片文件用 task 派子 Agent（它有独立 ' + cfg.ck + '）。② task/delegate_task 指令只写目标+文件路径+边界+回报格式，严禁贴文件原文/大段代码。③ 子 Agent 结论一律落盘成文档，回报只给一句话+路径。</上下文纪律>\n'
+    + '<如实汇报>跑过验证再说"完成"；没法验证就明说"还没验证"；失败贴原始输出，不许粉饰成成功；确认通过的也直说，不要防御性打折扣。</如实汇报>\n'
+    + '<委派纪律>委派指令=目标+路径+边界+回报格式；回报要自包含（结论带 文件:行号）；不偷看子 Agent 的中间过程，不编造未收到的回报。</委派纪律>'
+}
 const COMPACT_RULES = [
   '- 保留 todo 计划清单原样逐条及其当前状态',
   '- 保留已读文件清单（路径 + 一句"读到了什么"），新上下文直接采信不重读',
@@ -70,11 +75,13 @@ function loadConfig() {
   const keepTurns = Number(process.env.BOCOMHERMES_CTX_GUARD_KEEP_TURNS ?? 3)
   const budget = Number(process.env.BOCOMHERMES_CTX_GUARD_BUDGET ?? 40000)
   const maxOut = Number(process.env.BOCOMHERMES_MAX_OUTPUT_TOKENS ?? 0)
+  const ck = String(Math.max(1, Math.round(Number(process.env.BOCOMHERMES_CTX_LIMIT_K ?? 192) || 192))) + 'k'
   return {
     on,
     keepTurns: Number.isFinite(keepTurns) && keepTurns >= 1 ? Math.floor(keepTurns) : 3,
     budget: Number.isFinite(budget) && budget >= 0 ? budget : 40000,
     maxOut: Number.isFinite(maxOut) && maxOut > 0 ? Math.floor(maxOut) : 0,
+    ck,
   }
 }
 
@@ -143,7 +150,7 @@ export const ContextGuardPlugin = async () => {
     'experimental.chat.system.transform': async (input, output) => {
       try {
         if (!cfg.on || !output || !Array.isArray(output.system)) return
-        if (!output.system.some((x) => String(x).includes('上下文纪律(128k)'))) output.system.push(SYS_BLOCK)
+        if (!output.system.some((x) => String(x).includes('上下文纪律('))) output.system.push(sysBlockOf(cfg))
       } catch { /* 静默 */ }
     },
     // ③ 压缩纪律(只往 context 追加,不替换 prompt)

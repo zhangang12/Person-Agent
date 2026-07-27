@@ -100,11 +100,15 @@ function makeSession(turns, outLen = 3000) {
   const hooks = await loadPluginWithEnv({})
   const output = { system: ['原始系统提示A', '原始系统提示B'] }
   await hooks['experimental.chat.system.transform']({ model: {} }, output)
-  ok('纪律块被追加到尾部', output.system.length === 3 && output.system[2].includes('上下文纪律(128k)'))
+  ok('纪律块被追加到尾部', output.system.length === 3 && output.system[2].includes('上下文纪律(192k)'))
   ok('原有元素原样未动', output.system[0] === '原始系统提示A' && output.system[1] === '原始系统提示B')
   await hooks['experimental.chat.system.transform']({ model: {} }, output)
   ok('重复调用不重复追加(去重)', output.system.length === 3)
   ok('纪律块含如实汇报与委派纪律', output.system[2].includes('如实汇报') && output.system[2].includes('委派纪律'))
+  const hooks96 = await loadPluginWithEnv({ BOCOMHERMES_CTX_LIMIT_K: '96' })
+  const o96 = { system: [] }
+  await hooks96['experimental.chat.system.transform']({ model: {} }, o96)
+  ok('口径环境变量生效(BOCOMHERMES_CTX_LIMIT_K=96)', o96.system[0] && o96.system[0].includes('上下文纪律(96k)'))
 }
 
 // ── ⑤ compacting + autocontinue ──
