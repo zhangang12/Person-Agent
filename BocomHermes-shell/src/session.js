@@ -180,6 +180,30 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
 - 浅色 + 深色都好看;窄屏不破版;零外链;标签语义正确;信息层级一眼看懂;浏览器打开即用。
 
 若需求不涉及 HTML 呈现,就正常作答,不必强行套 HTML。`,
+    'browser-verify': `---
+name: 浏览器自验
+desc: 改完前端代码后,用内嵌浏览器真正打开页面验证(加载/报错/截图),不许只凭代码说"能跑"
+---
+你现在执行【浏览器自验】。目的:验证前端改动真的能在浏览器里跑起来——读过代码不算验证,打开页面才算。严格按步骤来,不许跳步、不许凭感觉下结论。
+
+【步骤】(全部用 browser_ 系 MCP 工具,bash 只用于起服务)
+1. 确认前端在跑:任务已给入口 URL 就直接进第 2 步;否则按项目文档(CLAUDE.md/README/package.json scripts)用 bash 起 dev 服务(后台起),等到能访问再继续。起不来 → 如实报告"服务起不来+报错原文"并停止,不要编造验证结果。
+2. browser_navigate 打开入口 URL,记下页面标题与最终 URL。
+3. 装错误收集器并刷新:browser_eval 执行
+   window.__errlog=[];addEventListener('error',e=>__errlog.push(String(e.message||e)));addEventListener('unhandledrejection',e=>__errlog.push('Promise:'+String(e.reason)));location.reload();'ok'
+4. 等页面加载(bash sleep 3),然后 browser_eval 收集:
+   JSON.stringify({errors:window.__errlog||[],failedRes:performance.getEntriesByType('resource').filter(r=>r.responseStatus>=400).map(r=>r.name).slice(0,10),bodyLen:document.body.innerText.trim().length,title:document.title})
+5. 若改动涉及交互(按钮/表单/跳转):用 browser_click / browser_type 走一遍关键交互,再按第 4 步收集一次。
+6. browser_screenshot 截图,记下返回的图片路径(作为证据随回报给出)。
+7. browser_close 关闭浏览器。
+
+【判定】
+- 通过:errors 为空 且 failedRes 为空 且 bodyLen > 50(不是白屏)。
+- 失败:任一不满足 → 把 errors/failedRes 原文 + 截图路径带回,先修代码,再重新自验一遍;修不好就如实说"没验过,卡在 X",不许说"完成了"。
+
+【纪律】
+- 不许用"代码逻辑上看没问题"代替打开页面。
+- 截图路径必须随最终回报给出(别人要点开看)。`,
   }
   function ensureDefaultSkills() {
     try {
@@ -513,6 +537,10 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
           } else if (/^bash$/i.test(tname)) {
             const cmd = String(inp.command || inp.cmd || '').replace(/\s+/g, ' ').trim()
             if (cmd) S.wfAction(si.wc.id, { kind: 'cmd', label: cmd.slice(0, 120), detail: '' })
+          // browser_* 浏览器动作(验证证据闸的原料之二:前端"浏览器自验"据此机判 —— 打开过页面/截过图/跑过页面断言才算验过前端)
+          } else if (/(^|[._-])browser_(navigate|screenshot|eval|click|type)$/i.test(tname)) {
+            const brief = String(inp.url || inp.selector || inp.expression || '').replace(/\s+/g, ' ').slice(0, 80)
+            S.wfAction(si.wc.id, { kind: 'browser', label: '浏览器:' + (tname.match(/browser_\w+$/) || [tname])[0] + (brief ? ' ' + brief : ''), detail: String(inp.url || '') })
           }
         } catch {}
       }

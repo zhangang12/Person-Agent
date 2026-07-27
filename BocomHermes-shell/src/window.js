@@ -548,7 +548,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   const VERIFY_CMD = /(npm|pnpm|yarn)\s+(run\s+)?(test|build|lint|typecheck|tsc|ci)\b|\b(pytest|vitest|jest|go test|cargo test|mvn|gradle|make)\b/i
   function hasVerifyEvidence(reg) {
     const acts = Array.isArray(reg.actions) ? reg.actions : []
-    return acts.some((a) => a && a.kind === 'cmd' && VERIFY_CMD.test(String(a.label || '')))
+    // 两轨都算证据:构建/测试命令轨(bash 流水)+ 浏览器动作轨(前端自验:browser_navigate/eval/screenshot 等)
+    return acts.some((a) => a && ((a.kind === 'cmd' && VERIFY_CMD.test(String(a.label || ''))) || a.kind === 'browser'))
   }
   // 多层派发唤醒钩:带 parentOrch 的分片收官(完成/中断,一次)→ 给主控卡注入进度消息(N/M)把它唤醒。
   // 主控只装清单,收到后自己对照 todo:齐了按规程派索引棒,没齐结束本轮继续等 —— 事件驱动,不轮询。
@@ -592,7 +593,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         if (needVerify && !S.orchVerifyDone.has(tag0)) {
           S.orchVerifyDone.add(tag0)
           try {
-            const vGoal = '[orch:' + tag0 + ']【集成验证】在 ' + (S.settings.projectDir || '项目目录') + ' 按仓库文档(CLAUDE.md/README/交接文档)的命令跑全量构建/测试;失败按写归属回派对应分片修复(同标记 [orch:' + tag0 + ']);只汇报:命令 + 通过/失败数 + 失败归属文件。'
+            // 前端命中检测:任一分片写归属含前端文件 → 验证棒除构建/测试外还必须浏览器自验(治"build 过了但页面根本没打开过")
+            const frontendHit = sibs.some((r) => (Array.isArray(r.writeScope) ? r.writeScope : []).some((p) => /\.(vue|tsx?|jsx|css|less|scss|html?)($|\?)/i.test(String(p)) || /\/(ui|web|frontend|fe|pages|views|components)\//i.test(String(p))))
+            const feSteps = frontendHit ? '本次改动含前端文件,构建/测试之外【必须浏览器自验】(不许只凭代码说能跑):① 起 dev 服务或按仓库文档找入口 URL;② browser_navigate 打开;③ browser_eval 装错误收集(window.__errlog 记录 error 与 unhandledrejection)并 location.reload();④ 等 3s 后 browser_eval 收集 errors/失败资源(responseStatus>=400)/正文长度;⑤ browser_screenshot 截图留证;⑥ browser_close。console 有错、资源 4xx、正文不足 50 字(白屏)任一即按失败处理;截图路径随回报给出(完整步骤见【浏览器自验】技能)。' : ''
+            const vGoal = '[orch:' + tag0 + ']【集成验证】在 ' + (S.settings.projectDir || '项目目录') + ' 按仓库文档(CLAUDE.md/README/交接文档)的命令跑全量构建/测试;' + feSteps + '失败按写归属回派对应分片修复(同标记 [orch:' + tag0 + ']);只汇报:命令 + 通过/失败数 + 失败归属文件' + (frontendHit ? ' + 自验截图路径' : '') + '。'
             const vid = spawnWorkflow(vGoal)
             log('[harness-verify] 自动集成验证棒已派出 (tag ' + tag0 + ', card ' + JSON.stringify(vid) + ')')
             const owin2 = wcById(oreg.wcId)
