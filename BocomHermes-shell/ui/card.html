@@ -1798,7 +1798,22 @@
   const bsub = document.getElementById('bsub'), bsubBadge = document.getElementById('bsubBadge')
   const subDraw = document.getElementById('subdraw'), sdList = document.getElementById('sd-list'), sdPane = document.getElementById('sd-pane')
   const saMeta = (s) => (s.count ? s.count + ' 次调用 · ' : '') + Math.max(0, Math.round(((s.done ? s.doneAt : Date.now()) - s.t0) / 1000)) + 's' + (s.done ? '' : ' · 运行中')
-  function saTick() { let run = false; for (const s of subAgents.values()) if (!s.done) { run = true; s.meta.textContent = saMeta(s) } if (!run && _saTick) { clearInterval(_saTick); _saTick = null } }
+  let _saPollAt = 0, _saPolling = false
+  function saTick() {
+    let run = false
+    for (const s of subAgents.values()) if (!s.done) { run = true; s.meta.textContent = saMeta(s) }
+    if (!run && _saTick) { clearInterval(_saTick); _saTick = null }
+    // 完成态权威轮询(5s):serve 的 task 完成事件缺 taskChild 时 gid 对不上,子 Agent 一直"运行中"、计时永不封顶(实测)——
+    // 主进程按子会话消息判完成(sub-status IPC:最后一条 assistant 有文本且无未完成 tool part),兜底 gid 匹配失败的全部情形
+    if (run && !_saPolling && Date.now() - _saPollAt >= 5000 && typeof window.BocomHermes.subStatus === 'function') {
+      _saPolling = true; _saPollAt = Date.now()
+      const ids = [...subAgents.keys()].filter((id) => !subAgents.get(id).done && id !== '_')
+      if (ids.length) window.BocomHermes.subStatus(ids).then((st) => {
+        try { for (const [id, fin] of Object.entries(st || {})) { if (fin && subAgents.has(id) && !subAgents.get(id).done) subAgentDone(id, 'done') } } catch {}
+      }).catch(() => {}).finally(() => { _saPolling = false })
+      else _saPolling = false
+    }
+  }
   function sdPaintBadge() {   // 徽标=还在跑的个数;没有子 Agent 时按钮整个藏起来
     let run = 0; for (const s of subAgents.values()) if (!s.done) run++
     if (bsub) bsub.hidden = subAgents.size === 0

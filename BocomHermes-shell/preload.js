@@ -92,7 +92,8 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   getDropPath: (file) => { try { return webUtils.getPathForFile(file) } catch (e) { return (file && file.path) || '' } },
   listModels: () => ipcRenderer.invoke('list-models'),
   cardSetModel: (m) => ipcRenderer.invoke('card-set-model', m),
-  cardUsage: () => ipcRenderer.invoke('card-usage'),   // 本卡会话真实 token 用量(serve 实测;无数据返回 null,前端回落字符估算)
+  cardUsage: () => ipcRenderer.invoke('card-usage'),
+  subStatus: (ids) => ipcRenderer.invoke('sub-status', ids),   // 本卡会话真实 token 用量(serve 实测;无数据返回 null,前端回落字符估算)
   cardAbort: () => ipcRenderer.send('card-abort'),
   onStream: (cb) => ipcRenderer.on('card-stream', (_e, p) => cb(p)),
   onServeHealth: (cb) => ipcRenderer.on('serve-health', (_e, p) => cb(p)),

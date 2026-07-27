@@ -1150,6 +1150,24 @@ desc: 让 HTML 文档/页面产出达到可直接汇报交付的水准(自包含
     return u ? { tokens: u.prompt, total: u.total, limit: null, cacheRead: u.cacheRead || 0, cacheWrite: u.cacheWrite || 0 } : null   // cacheRead/Write 给 chip 算 KV-cache 命中率(Manus:命中率是生产 Agent 第一指标,前缀稳定性没度量=瞎调)
   })
 
+  // 子 Agent 完成态权威查询(卡片侧边栏用):serve 的 task 完成事件常缺 taskChild(尤其 fork),gid 对不上时
+  // 子 Agent 一直"运行中"、计时永不封顶(实测)。改为按子会话消息判:最后一条 assistant 有文本且无未完成 tool part = 完成。
+  ipcMain.handle('sub-status', async (e, ids) => {
+    const out = {}
+    const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
+    if (!si) return out
+    for (const id of (Array.isArray(ids) ? ids : []).slice(0, 24)) {
+      try {
+        const msgs = await oc.getMessages(si.serve, String(id))
+        const last = [...(msgs || [])].reverse().find((m) => m && m.role === 'assistant')
+        if (!last) { out[id] = false; continue }
+        const toolsRunning = (last.tools || []).some((t) => !/complet|success|done|finish|error|fail|cancel|abort|deny|reject/i.test(String(t.status || '')))
+        out[id] = !toolsRunning && !!String(last.text || '').trim()
+      } catch { out[id] = false }
+    }
+    return out
+  })
+
   ipcMain.on('permission-reply', (_e, { requestId, decision }) => {
     const sessionId = S.pendingPerm.get(requestId); const meta = S.pendingPerm.get(requestId + ':meta'); S.pendingPerm.delete(requestId); S.pendingPerm.delete(requestId + ':meta')
     const si = sessionId && S.sessionInfo.get(sessionId)
