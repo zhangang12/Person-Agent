@@ -310,6 +310,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       '   · 只有一句话能答完的极简单目标才可免落盘 —— 免落盘要在回答里明说理由。首次写文件弹权限确认,用户批准即可。',
       '8. 【收尾必验证,不靠信念交差】改了代码就跑测试 / 构建 / 驱动一遍看真过(测试是交付的一部分:关键逻辑必须补/改测试,能跑就跑,没框架就为关键路径写最小验证脚本);下了关键结论就派子 Agent 交叉核实,别自证。一波不够深、或冒出新待挖点就【再派一波】—— 目标是把事做透,不是一遍浅 pass 交差。',
       '   【交付自检 —— 防"看上去完成"】交付前必须输出【要求-证据对照表】:总目标的每个要求点逐项给证据(file:行号 / 命令输出 / 测试通过)—— 给不出证据的项 = 没做完,继续干,不许"看上去做完了"就交。',
+      '   【禁标完成的情形】四种情况不许标完成:测试在挂 / 只做了一半 / 有未解决的错误 / 找不到需要的文件或依赖;卡住时保持 in_progress,并新建一条"要解决什么"的任务接着干 —— 不许把阻塞说成做完(CC TodoWrite 诚信条款改写,依据 external/claude-code-提示词工程借鉴.md §4.2)。',
       '   【不确定就问】关键不确定(需求歧义/两种以上合理做法/不可逆操作/数据口径不明)→ 用 question 工具问用户再继续(有应答通道);只有影响产出正确性才问,琐碎自定。交付前自查产出:还没有任何落盘文件 = 没完成,按第 7 条补上 MD 文档再交付。',
       '9. 【规划先行,批准再跑】你的第一轮只做规划:轻量勘察后用 todowrite 列出执行计划,并输出简短拆解思路(怎么拆 / 哪些并行派子 Agent / 预计产出形态)。然后【直接结束这轮回答】等用户批准 —— 批准或调整意见会以新消息进来,界面上有批准按钮。【不要】调用 question / ask 之类的交互提问工具去等批准:批准走卡片上的【开始执行】按钮,提问通道不是为批准设的。第一轮不做实质执行(不写文件、不改代码、不派执行型子 Agent);用户批准后,再按(修订后的)计划开跑。',
       '10. 【收尾必蒸馏】交付前,回顾这一程挖到的真相,用 memory_add 把【关于该系统、三个月后大概率仍成立】的事实写进项目知识库(下次开卡自动注入):每条一句话 + anchors 挂证据(file:行号) + scene 写重用场景。任务进度、本次改了哪些文件【不要】写 —— 只留系统级知识;没有够格的事实就跳过,宁缺勿滥。',
@@ -551,6 +552,19 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     // 两轨都算证据:构建/测试命令轨(bash 流水)+ 浏览器动作轨(前端自验:browser_navigate/eval/screenshot 等)
     return acts.some((a) => a && ((a.kind === 'cmd' && VERIFY_CMD.test(String(a.label || ''))) || a.kind === 'browser'))
   }
+  // 验证棒目标文本(V1,CC verification agent 五件套改写):角色翻转(试图搞挂它)/借口反驳(读过不算验证)/VERDICT 字面量契约/
+  // Command run 证据块强制/壳层机判预告。note = 回派时注明的拒收原因;frontendHit 追加浏览器自验六步(cd07fbe)。
+  // 验证恒由新分片执行(V4:新眼睛防锚定,不由原分片自查)——验证棒本来就是新派的工作流卡。
+  function verifyFrontendHit(tag) {
+    return [...S.wfRegistry.values()].filter((r) => r.parentOrch === tag).some((r) => (Array.isArray(r.writeScope) ? r.writeScope : []).some((p) => /\.(vue|tsx?|jsx|css|less|scss|html?)($|\?)/i.test(String(p)) || /\/(ui|web|frontend|fe|pages|views|components)\//i.test(String(p))))
+  }
+  function verifyGoalFor(tag, frontendHit, note) {
+    const feSteps = frontendHit ? '本次改动含前端文件,构建/测试之外【必须浏览器自验】(不许只凭代码说能跑):① 起 dev 服务或按仓库文档找入口 URL;② browser_navigate 打开;③ browser_eval 装错误收集(window.__errlog 记录 error 与 unhandledrejection)并 location.reload();④ 等 3s 后 browser_eval 收集 errors/失败资源(responseStatus>=400)/正文长度;⑤ browser_screenshot 截图留证;⑥ browser_close。console 有错、资源 4xx、正文不足 50 字(白屏)任一即按失败处理;截图路径随回报给出(完整步骤见【浏览器自验】技能)。' : ''
+    return '[orch:' + tag + ']【集成验证】' + (note ? '(回派:' + note + ')' : '') + '在 ' + (S.settings.projectDir || '项目目录') + ' 按仓库文档(CLAUDE.md/README/交接文档)的命令跑全量构建/测试。' + feSteps
+      + '【验证纪律】你的任务不是确认它能跑,是试图搞挂它——读过代码不算验证,跑一遍才算;别被前 80% 迷惑,最后 20% 才是问题藏身处。'
+      + '【输出契约】最终回报第一行必须是字面量 VERDICT: PASS|FAIL|PARTIAL(不加粗不变体);每项检查必须带两行 Command run: <你实际跑的命令> / Output observed: <关键输出原文> —— 没有 Command run 块的 PASS 是跳过不是通过;壳层会机判 VERDICT 与 Command run 块,缺了一律拒收回派。'
+      + '失败按写归属回派对应分片修复(同标记 [orch:' + tag + ']);汇报只给:VERDICT 行 + 各检查的 Command run/Output observed + 失败归属文件' + (frontendHit ? ' + 自验截图路径' : '') + '。'
+  }
   // 多层派发唤醒钩:带 parentOrch 的分片收官(完成/中断,一次)→ 给主控卡注入进度消息(N/M)把它唤醒。
   // 主控只装清单,收到后自己对照 todo:齐了按规程派索引棒,没齐结束本轮继续等 —— 事件驱动,不轮询。
   function shardSettled(reg) {
@@ -560,6 +574,29 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (reg.status === 'done' && Array.isArray(reg.writeScope) && reg.writeScope.length && !hasVerifyEvidence(reg)) {
       reg.unverified = true   // 编码分片零验证证据:标【未验证】随唤醒报主控(契约核对管"签名在不在",这条管"跑没跑过")
       log('[harness-verify] shard ' + reg.id + ' 无构建/测试执行证据,标未验证: ' + String(reg.goal).slice(0, 50))
+    }
+    // VERDICT 机判(V2,CC verification agent"report gets rejected"壳层落地):验证棒(【集成验证】分片)收官解析 reg.final——
+    // 无 VERDICT 字面量,或 VERDICT: PASS 但全文没有 Command run 块(没跑就写 PASS)→ 拒收:自动回派一次(带拒因);
+    // 连撞 2 次标【验证未完成】转人工。VERDICT: FAIL/PARTIAL 是合法结果(失败按归属回派),不拒。
+    let verifyRejectNote = ''
+    if (reg.status === 'done' && /集成验证/.test(String(reg.goal || ''))) {
+      const rep = String(reg.final || '')
+      const vm = rep.match(/VERDICT:\s*(PASS|FAIL|PARTIAL)\b/)
+      const rejectWhy = !vm ? '回报缺 VERDICT 字面量' : (vm[1] === 'PASS' && !/Command run\s*[:：]/i.test(rep) ? 'VERDICT: PASS 但全文没有 Command run 块(没跑就写 PASS)' : '')
+      if (rejectWhy) {
+        reg.verifyRejected = true
+        S.orchVerifyRetry = S.orchVerifyRetry || new Map()
+        const rn = (S.orchVerifyRetry.get(reg.parentOrch) || 0) + 1
+        S.orchVerifyRetry.set(reg.parentOrch, rn)
+        if (rn >= 2) {
+          verifyRejectNote = '【验证未完成:验证棒连续 ' + rn + ' 次被壳层拒收(' + rejectWhy + ') —— 别当完成,需人工核验或重派。】'
+          log('[harness-verify] 验证棒连续 ' + rn + ' 次拒收(tag ' + reg.parentOrch + '):' + rejectWhy + ' → 转人工')
+        } else {
+          verifyRejectNote = '【验证回报被壳层拒收:' + rejectWhy + ' —— 已自动回派一根验证棒,等它收官再收口。】'
+          log('[harness-verify] 验证棒拒收(tag ' + reg.parentOrch + '):' + rejectWhy + ' → 自动回派一次')
+          try { spawnWorkflow(verifyGoalFor(reg.parentOrch, verifyFrontendHit(reg.parentOrch), rejectWhy)) } catch (e) { log('verify retry dispatch err: ' + e.message) }
+        }
+      }
     }
     // 先确认主控窗真的在,再置一次性标志 —— 以前是"先置标志再找窗",窗没了(tag 查无/主控已关)静默跳过且永不重试,主控变聋
     const oref = S.orchByTag && S.orchByTag.get(reg.parentOrch)
@@ -576,7 +613,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       const miss = (reg.contractMiss && reg.contractMiss.length) ? reg.contractMiss : null
       const gapTxt = miss ? ('【契约缺口:' + miss.slice(0, 10).join('、') + ' —— 该片号称完成但归属文件里找不到这些签名;按缺口对待:重派补缺或索引显著标注,别当完成。】') : ''
       const unverTxt = reg.unverified ? '【未验证:该片号称完成但无构建/测试执行证据,按未验证对待 —— 别当完成;壳层将自动补派集成验证棒。】' : ''
-      win.send('card-inject', { text: '<主控进度>分片「' + String(reg.goal).slice(0, 60) + '」已' + (reg.status === 'done' ? '完成' : '中断') + ' (' + doneN + '/' + total + ')。' + gapTxt + unverTxt + '调 workflow_result(id="' + reg.id + '") 取回它的成果;对照你的 todo 清单 —— 全部 ' + total + ' 个分片齐了,就按规程第 6 条派【索引棒】收口;还没齐,结束本轮继续等。</主控进度>', disp: '分片 ' + doneN + '/' + total + ' 已' + (reg.status === 'done' ? '完成' : '中断') + (miss ? '(契约缺口)' : '') + (reg.unverified ? '(未验证)' : '') + ':' + String(reg.goal).slice(0, 40) })
+      win.send('card-inject', { text: '<主控进度>分片「' + String(reg.goal).slice(0, 60) + '」已' + (reg.status === 'done' ? '完成' : '中断') + ' (' + doneN + '/' + total + ')。' + gapTxt + unverTxt + verifyRejectNote + '调 workflow_result(id="' + reg.id + '") 取回它的成果;对照你的 todo 清单 —— 全部 ' + total + ' 个分片齐了,就按规程第 6 条派【索引棒】收口;还没齐,结束本轮继续等。</主控进度>', disp: '分片 ' + doneN + '/' + total + ' 已' + (reg.status === 'done' ? '完成' : '中断') + (miss ? '(契约缺口)' : '') + (reg.unverified ? '(未验证)' : '') + (reg.verifyRejected ? '(验证被拒)' : '') + ':' + String(reg.goal).slice(0, 40) })
       if (!queuedN && doneN === sibs.length) {   // 全部收官(且无排队片)
         for (const r of sibs) {   // 还活着的分片窗口一律关掉(隐藏工人不停下就一直烧 token);忙着的别杀 —— 可能正在交棒/补零产出文档,杀了就毁在半路
           if (S.isCardBusy && S.isCardBusy(r.wcId)) continue
@@ -593,10 +630,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         if (needVerify && !S.orchVerifyDone.has(tag0)) {
           S.orchVerifyDone.add(tag0)
           try {
-            // 前端命中检测:任一分片写归属含前端文件 → 验证棒除构建/测试外还必须浏览器自验(治"build 过了但页面根本没打开过")
-            const frontendHit = sibs.some((r) => (Array.isArray(r.writeScope) ? r.writeScope : []).some((p) => /\.(vue|tsx?|jsx|css|less|scss|html?)($|\?)/i.test(String(p)) || /\/(ui|web|frontend|fe|pages|views|components)\//i.test(String(p))))
-            const feSteps = frontendHit ? '本次改动含前端文件,构建/测试之外【必须浏览器自验】(不许只凭代码说能跑):① 起 dev 服务或按仓库文档找入口 URL;② browser_navigate 打开;③ browser_eval 装错误收集(window.__errlog 记录 error 与 unhandledrejection)并 location.reload();④ 等 3s 后 browser_eval 收集 errors/失败资源(responseStatus>=400)/正文长度;⑤ browser_screenshot 截图留证;⑥ browser_close。console 有错、资源 4xx、正文不足 50 字(白屏)任一即按失败处理;截图路径随回报给出(完整步骤见【浏览器自验】技能)。' : ''
-            const vGoal = '[orch:' + tag0 + ']【集成验证】在 ' + (S.settings.projectDir || '项目目录') + ' 按仓库文档(CLAUDE.md/README/交接文档)的命令跑全量构建/测试;' + feSteps + '失败按写归属回派对应分片修复(同标记 [orch:' + tag0 + ']);只汇报:命令 + 通过/失败数 + 失败归属文件' + (frontendHit ? ' + 自验截图路径' : '') + '。'
+            const vGoal = verifyGoalFor(tag0, verifyFrontendHit(tag0))   // V1 五件套;前端命中自动追加浏览器自验六步
             const vid = spawnWorkflow(vGoal)
             log('[harness-verify] 自动集成验证棒已派出 (tag ' + tag0 + ', card ' + JSON.stringify(vid) + ')')
             const owin2 = wcById(oreg.wcId)

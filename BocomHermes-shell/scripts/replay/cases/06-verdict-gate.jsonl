@@ -1,0 +1,10 @@
+# 用例⑥ transcript:会话按 cardInit 顺序绑定别名 —— $s1=A首棒 $s2=B首棒 $s3=C首棒 $s4=A回派棒。
+# 前 4 行 = 各自的 todowrite(全勾);respond 规则按定稿文本给每棒不同的回报文本。
+{"t":0,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s1","part":{"id":"prt_td1","callID":"c1","type":"tool","tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"跑构建/测试","status":"completed"}]}}}}}}
+{"t":1,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s2","part":{"id":"prt_td2","callID":"c2","type":"tool","tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"跑构建/测试","status":"completed"}]}}}}}}
+{"t":2,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s3","part":{"id":"prt_td3","callID":"c3","type":"tool","tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"跑构建/测试","status":"completed"}]}}}}}}
+{"t":3,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s4","part":{"id":"prt_td4","callID":"c4","type":"tool","tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"跑构建/测试","status":"completed"}]}}}}}}
+{"t":4,"op":"respond","method":"POST","path":"/session/.*/message","bodyIncludes":"A1定稿","appendAssistant":"验证完成,没问题"}
+{"t":5,"op":"respond","method":"POST","path":"/session/.*/message","bodyIncludes":"A2定稿","appendAssistant":"已验证一切正常"}
+{"t":6,"op":"respond","method":"POST","path":"/session/.*/message","bodyIncludes":"B1定稿","appendAssistant":"VERDICT: PASS\n构建通过,测试通过"}
+{"t":7,"op":"respond","method":"POST","path":"/session/.*/message","bodyIncludes":"C1定稿","appendAssistant":"VERDICT: PASS\nCommand run: npm test\nOutput observed: 12 passed"}
