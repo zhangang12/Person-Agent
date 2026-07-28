@@ -509,6 +509,29 @@ console.log('用例14:P3.4 promptAsync knob —— truthy 透传 opts.promptAsyn
   ok('knobs 缺席 → 不带 promptAsync(原路径)', !!(opts2 && !('promptAsync' in opts2)), opts2)
 }
 
+console.log('用例15:提问兜底轮询 —— serve 不推 question.asked 时,GET /question 待答清单发现即弹卡(同 id 不重复弹)')
+{
+  intervals.length = 0
+  let release = null
+  const h = makeHarness({ oc: {
+    sendMessage: async () => new Promise((r) => { release = () => r('ok') }),
+    listPendingQuestions: async () => [{ id: 'q1', questions: [{ question: '选哪个框架?' }] }],
+  } })
+  h.S.settings.projectDir = PROJ
+  const { ev, sid } = await openCard(h, 113)
+  const p = h.handlers['card-send'](ev, { text: '继续' })
+  await tick()
+  const iv = intervals.find((t) => t.ms === 3000)
+  ok('提问兜底轮询已注册(3s)', !!iv)
+  await iv.fn()
+  const qr = ev.sent.filter((s) => s.ch === 'question-request')
+  ok('兜底轮询发现待答 → 弹 question-request', qr.length === 1 && qr[0].p.requestId === 'q1', ev.sent.map((s) => s.ch))
+  ok('pendingQuestion 登记', h.S.pendingQuestion.has('q1'))
+  await iv.fn()
+  ok('同一待答不重复弹', ev.sent.filter((s) => s.ch === 'question-request').length === 1)
+  release(); await p
+}
+
   console.log('\n' + (fail ? '❌ 有失败' : '✅ 全部通过') + '  ' + pass + ' passed, ' + fail + ' failed')
   Module._load = origLoad
   global.setInterval = realSetInterval

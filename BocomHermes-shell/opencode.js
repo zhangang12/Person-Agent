@@ -674,6 +674,21 @@ async function getRawMessages(info, sid) {
 const unsupportedChildren = new Set()   // base → /session/:id/children 404 熔断
 const unsupportedTodo = new Set()       // base → /session/:id/todo 404 熔断
 const is404 = (e) => /->\s*404\b/.test(String(e && e.message || ''))   // api 错误形如 "GET /session/x -> 404: ..."
+// 待答提问兜底清单:这台 serve 的 /event 可能不推 question.asked(与流式静默同源,实测 question 工具干等 93s 无选项挂死)——
+// 回合期间轮询 GET /question 待答清单就是发现通道;404 记 Set 熔断(fork 缺端点不每回合白打)。第一参容忍传 info 对象或 base 串。
+const unsupportedQuestionList = new Set()   // base → GET /question 404 熔断
+async function listPendingQuestions(base) {
+  base = (base && base.base) || base
+  if (!base || unsupportedQuestionList.has(base)) return null
+  try {
+    const r = await api(base, 'GET', '/question')
+    const arr = Array.isArray(r) ? r : (r && (Array.isArray(r.data) ? r.data : (Array.isArray(r.questions) ? r.questions : null)))
+    return arr
+  } catch (e) {
+    if (is404(e)) { if (unsupportedQuestionList.size > 100) unsupportedQuestionList.clear(); unsupportedQuestionList.add(base) }
+    return null
+  }
+}
 // 子会话权威清单:成功且有数组(兼容 {data} 包装)→ 对每个带 id 的子会话 noteChild 登记
 // (子 Agent 路由不再依赖 SSE 事件是否早发);返回数组。第一参容忍传 info 对象(session.js 惯例)或 base 串。
 async function getSessionChildren(base, sid) {
@@ -1205,7 +1220,7 @@ function anyHealthyServe() {
   return null
 }
 
-module.exports = { ensureServe, createSession, sendMessage, listModels, checkMcp, abort, replyPermission, replyQuestion, rejectQuestion, sessionExists, listSessions, getMessages, getRawMessages, getSessionChildren, getSessionTodo, generationStalled, pollTurnParts, getSessionUsage, getStreamState, consumeAbortFlag, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, anyHealthyServe, AUTO_ALLOW,
+module.exports = { ensureServe, createSession, sendMessage, listModels, checkMcp, abort, replyPermission, replyQuestion, rejectQuestion, sessionExists, listSessions, getMessages, getRawMessages, getSessionChildren, getSessionTodo, listPendingQuestions, generationStalled, pollTurnParts, getSessionUsage, getStreamState, consumeAbortFlag, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, anyHealthyServe, AUTO_ALLOW,
   __test: { dispatch, waitAssistantText, extractText, pickTurnText, abortedSince, abortedSids, normalizeMessages, stripInjected, splitThink,
     normDirKey, sameDir, inflight, noteChild, noteModelBlacklist, modelBlacklist, refreshSessionTree, runEventLoop, turnTextCache, stoppedSids, lastUserMatches, noteUsage,
     maps: { pool, baseToEntry, childToParent, childTitle, classifiedSessions, sidBase },

@@ -1114,6 +1114,24 @@ desc: 改完前端代码后,用内嵌浏览器真正打开页面验证(加载/�
         }
       }
     }
+    // 提问兜底轮询(这台 serve 的 /event 可能不推 question.asked——与流式静默同源,实测 question 工具干等 93s 无选项挂死):
+    // 回合期间每 3s 拉 GET /question 待答清单,发现新待答就弹交互提问卡;SSE 若也推了,靠 questionSeen + pendingQuestion 双去重不重复弹。
+    const questionSeen = new Set()
+    let qPoll = null
+    const startQPoll = () => { if (qPoll) return; qPoll = setInterval(async () => {
+      try {
+        const si2 = S.sessionInfo.get(sessionId); if (!si2 || !si2.wc || si2.wc.isDestroyed()) return
+        const list = typeof oc.listPendingQuestions === 'function' ? await oc.listPendingQuestions(si2.serve) : null
+        for (const q of (Array.isArray(list) ? list : [])) {
+          const rid = q && (q.id ?? q.requestID ?? q.questionID ?? q.requestId)
+          if (!rid || questionSeen.has(rid) || S.pendingQuestion.has(rid)) continue
+          questionSeen.add(rid)
+          log('question ' + rid + ' 经兜底轮询发现 → 弹到卡片')
+          onQuestion({ sessionId, requestId: rid, questions: Array.isArray(q.questions) ? q.questions : [], v2: false, serve: si2.serve })
+        }
+      } catch {}
+    }, 3000) }
+    const stopQPoll = () => { if (qPoll) { clearInterval(qPoll); qPoll = null } }
     const startChildPoll = () => { if (childPoll) return; childPoll = setInterval(() => { pollChildren().catch(() => {}) }, 1500) }
     const stopChildPoll = () => { if (childPoll) { clearInterval(childPoll); childPoll = null } }
     const onRaw = (list) => {   // oc 新版 hook:原始消息列表直达 → 同构映射喂 onText;首火后轮询降 5s
@@ -1123,6 +1141,7 @@ desc: 改完前端代码后,用内嵌浏览器真正打开页面验证(加载/�
       } catch {}
     }
     startPoll()
+    startQPoll()   // 提问兜底轮询(serve 可能不推 question.asked)
     startChildPoll()   // 子 Agent 实况轮询(/event 不推子会话 message 事件,侧边栏靠它填)
     try {
       // P3.4:knobs.promptAsync truthy → 走 prompt_async 发送通道(POST 立即返回不挂起等回合;fork 无端点 404 自动回落,见 opencode.js)
@@ -1211,7 +1230,7 @@ desc: 改完前端代码后,用内嵌浏览器真正打开页面验证(加载/�
         throw new Error('引擎连接中断（serve 可能已退出）。关掉这张卡重开即可（已自动准备重启 serve）。')
       throw err
     } finally {
-      stopPoll(); stopChildPoll(); turnBusy.delete(sessionId)
+      stopPoll(); stopQPoll(); stopChildPoll(); turnBusy.delete(sessionId)
       // P3.3 todo 权威数据源:serve 的 GET /session/:id/todo 比解析 todowrite 工具入参可靠(弱模型参数畸形会漏判)。
       // fire-and-forget:仅 wf 卡打;返回非空数组才覆盖注册表,空/异常一律不动(保留现有工具入参学习兜底);
       // oc 缺该函数(老版本)也可选链安全跳过。全程 try/catch,绝不阻塞回合收尾。
