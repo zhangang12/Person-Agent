@@ -7,7 +7,7 @@
 'use strict'
 module.exports = function initPluginInstall(ctx) {
   const { app, path, fs, log } = ctx
-  const PLUGINS = ['read-spill.js', 'bocomhermes-context-guard.js']
+  const PLUGINS = ['read-spill.js', 'bocomhermes-context-guard.js', 'edit-guard.js']
   function autoInstall() {
     const out = { ok: true, installed: [] }
     for (const name of PLUGINS) {

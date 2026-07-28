@@ -1121,6 +1121,34 @@ desc: 改完前端代码后,用内嵌浏览器真正打开页面验证(加载/�
           S.wfTurnDone(e.sender.id, full, { aborted: abortedFlag })
         }
       } catch {}
+      // max_tokens 截断续写(CC query.ts 同款恢复注入):本轮 assistant 的 step-finish reason=length/max_tokens →
+      // 注入"直接从断点接着写,剩余拆小"(每会话至多 3 次,断点连续命中防死循环;非截断轮复位计数)。
+      // 之前只有轮末催"继续",弱模型从断点续写不精确、常重头再来(调研:CC 撞上限先升 64k 原样重试,仍截断才注入)。
+      try {
+        if (msgs && msgs.length) {
+          const raw = await oc.getRawMessages(si.serve, sessionId)
+          const list = Array.isArray(raw) ? raw : (raw && raw.data) || []
+          let stopLen = false
+          for (let i = list.length - 1; i >= 0; i--) {
+            const m = list[i]
+            const role = (m && m.info && m.info.role) || (m && m.role)
+            if (role !== 'assistant') continue
+            for (const p of (m.parts || (m.data && m.data.parts) || [])) {
+              if (p && (p.type === 'step-finish' || p.type === 'finish' || p.type === 'finish-step') && /length|max.?tokens|max.?output/i.test(String(p.reason || (p.state && p.state.reason) || ''))) stopLen = true
+            }
+            break   // 只看最后一条 assistant
+          }
+          if (stopLen) {
+            si.maxTokResumeN = (si.maxTokResumeN || 0) + 1
+            if (si.maxTokResumeN <= 3) {
+              log('[ctx-resume] max_tokens 截断续写(' + si.maxTokResumeN + '/3) sid=' + sessionId)
+              if (!si.wc.isDestroyed()) si.wc.send('card-inject', { text: '(系统提醒:输出 token 到上限被截断 —— 不要道歉、不要复述前文,直接从被切断的那一点接着写;把剩余工作拆得更小。)', disp: '输出被截断,自动续写(' + si.maxTokResumeN + '/3)' })
+            } else if (!si.wc.isDestroyed()) {
+              si.wc.send('card-note', { text: '输出已连续 3 次被 max_tokens 截断 —— 建议手动把任务拆小,或点「重试本轮」', tone: 'muted' })
+            }
+          } else if (si.maxTokResumeN) si.maxTokResumeN = 0   // 非截断轮复位计数
+        }
+      } catch {}
       return out
     }
     catch (err) {

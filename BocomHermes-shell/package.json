@@ -22,6 +22,7 @@
     "lsp:test": "node scripts/lsp-smoke.mjs",
     "forkcheck": "node scripts/fork-capability-probe.mjs",
     "readspill:test": "node scripts/electron-node.cjs scripts/read-spill-selftest.mjs",
+    "editguard:test": "node scripts/edit-guard-selftest.mjs",
     "ctxguard:test": "node scripts/electron-node.cjs scripts/context-guard-selftest.mjs",
     "agentmd:test": "node scripts/agent-md-selftest.mjs",
     "lspmcp:test": "node scripts/lsp-mcp-selftest.mjs",
