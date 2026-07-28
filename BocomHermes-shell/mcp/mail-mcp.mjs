@@ -53,71 +53,71 @@ function relayPost(urlPath, body) {
 }
 
 const TOOLS = [
-  { name: 'mail_list', description: '抓取邮件清单(默认最近 1 天未读,一次最多返回 10 封摘要)。每封含 from/subject/date/messageId/attachments(metadata)/body(前 600 字摘要)。长邮件全文用 mail_get_full(messageId)。', inputSchema: { type: 'object', properties: {
-    from:       { type: 'string', description: '发件人邮箱或名字关键词(IMAP 服务端 FROM 筛选)' },
-    subject:    { type: 'string', description: '主题关键词(IMAP 服务端 SUBJECT 筛选)' },
-    days:       { type: 'number', description: '回看多少天(默认 1,信贷场景同事一般当天处理;查上周设 7)' },
-    onlyUnseen: { type: 'boolean', description: '默认 true 只看未读;设 false 看所有(配合 from/subject 找历史邮件)' },
-    limit:      { type: 'number', description: '本次返回多少封,默认 10,最大 30。一次性塞太多会撑爆 128K 上下文' },
-    cursor:     { type: 'number', description: '分页游标。第一次不传;之后传上次返回的 nextCursor 继续翻页' },
-    folder:     { type: 'string', description: '从哪个文件夹读,默认 INBOX。可填 Sent/已发送/Archive 等(用 mail_list_folders 查实际名)' },
+  { name: 'mail_list', description: '抓邮件清单(默认最近 1 天未读,最多 10 封摘要)。长邮件全文用 mail_get_full(messageId)。', inputSchema: { type: 'object', properties: {
+    from:       { type: 'string', description: '发件人关键词' },
+    subject:    { type: 'string', description: '主题关键词' },
+    days:       { type: 'number', description: '回看天数,默认 1' },
+    onlyUnseen: { type: 'boolean', description: '默认 true 只看未读;设 false 看所有' },
+    limit:      { type: 'number', description: '默认 10,最大 30' },
+    cursor:     { type: 'number', description: '分页游标,续传上次返回的 nextCursor' },
+    folder:     { type: 'string', description: '默认 INBOX;其它文件夹名用 mail_list_folders 查' },
   } } },
-  { name: 'mail_search', description: '在邮箱里搜邮件(比 mail_list 更全的检索条件,默认搜全部已读未读)。常用:找"上个月某人发的/我发给谁的/正文提到 X 的"邮件。可跨文件夹(folder)。返回同 mail_list 格式,带 [msgId:xxx] 可继续 mail_get_full/mail_reply。', inputSchema: { type: 'object', properties: {
-    from:    { type: 'string', description: '发件人邮箱/名字关键词(IMAP FROM)' },
-    to:      { type: 'string', description: '收件人邮箱/名字关键词(IMAP TO)—— 找"我发给谁"的邮件配合 folder=Sent' },
-    subject: { type: 'string', description: '主题关键词(IMAP SUBJECT)' },
-    body:    { type: 'string', description: '正文关键词(IMAP BODY,服务端全文搜,可能较慢)' },
-    days:    { type: 'number', description: '回看多少天,默认 30。查更早就调大(如 365)' },
-    before:  { type: 'string', description: '只要此日期之前的,YYYY-MM-DD(配合 days 圈定区间)' },
-    onlyUnseen: { type: 'boolean', description: '默认 false(搜全部);只搜未读设 true' },
-    folder:  { type: 'string', description: '搜哪个文件夹,默认 INBOX。Sent/Archive/Drafts 等' },
-    limit:   { type: 'number', description: '返回多少封,默认 10,最大 30' },
+  { name: 'mail_search', description: '搜邮件(条件比 mail_list 全,默认搜全部已读未读,可跨文件夹 folder)。找"某人发的/我发给谁的/正文提到 X 的"邮件用它。返回带 [msgId:xxx]。', inputSchema: { type: 'object', properties: {
+    from:    { type: 'string', description: '发件人关键词' },
+    to:      { type: 'string', description: '收件人关键词;找"我发给谁"配 folder=Sent' },
+    subject: { type: 'string', description: '主题关键词' },
+    body:    { type: 'string', description: '正文关键词(全文搜,较慢)' },
+    days:    { type: 'number', description: '回看天数,默认 30' },
+    before:  { type: 'string', description: '只要此日期之前,YYYY-MM-DD' },
+    onlyUnseen: { type: 'boolean', description: '默认 false 搜全部;只搜未读设 true' },
+    folder:  { type: 'string', description: '默认 INBOX;Sent/Archive/Drafts 等' },
+    limit:   { type: 'number', description: '默认 10,最大 30' },
     cursor:  { type: 'number', description: '分页游标,续传上次 nextCursor' },
   } } },
-  { name: 'mail_list_folders', description: '列出邮箱服务器上的所有文件夹(IMAP LIST)。在跨文件夹读取/搜索/归档前用它拿到准确的文件夹名(不同邮箱叫法不同:Sent / 已发送 / [Gmail]/All Mail)。', inputSchema: { type: 'object', properties: {} } },
-  { name: 'mail_send', description: '发送一封邮件(默认 multipart/alternative:text + 自动生成 html)。要保留格式发 → 传 html 字段直接发 HTML;附件传本地路径不要传 base64(base64 会撑爆 128K 上下文)。注意:发信经"发件箱"延迟发出(默认 15 秒,用户可撤销/立即发送),返回会注明几秒后发出;校验失败/未发出会抛错。', inputSchema: { type: 'object', properties: {
+  { name: 'mail_list_folders', description: '列出邮箱所有文件夹。跨文件夹读/搜/归档前先用它拿准确文件夹名(各邮箱叫法不同:Sent/已发送等)。', inputSchema: { type: 'object', properties: {} } },
+  { name: 'mail_send', description: '发送邮件。要保留格式传 html;附件传本地路径,不要传 base64。注意:经"发件箱"延迟发出(默认 15 秒,用户可撤销/立即发送),返回注明几秒后发出;校验失败/未发出会抛错。', inputSchema: { type: 'object', properties: {
     to:      { type: 'string', description: '收件人,多个用逗号分隔' },
     subject: { type: 'string' },
-    text:    { type: 'string', description: '纯文本正文(plain 段)。没传 html 时,html 段自动用此文本生成(\\n→<br>+escape)' },
-    html:    { type: 'string', description: '可选 HTML 正文。传了就直接用,不再从 text 自动生成。Outlook 会显示 HTML 段;纯文本客户端 fallback 显示 text 段' },
+    text:    { type: 'string', description: '纯文本正文;没传 html 时自动转成 html' },
+    html:    { type: 'string', description: '可选 HTML 正文,传了直接用' },
     cc:      { type: 'string', description: '可选抄送,多个用逗号' },
-    bcc:     { type: 'string', description: '可选密抄,多个用逗号(不在收件人头里)' },
-    attachments: { type: 'array', description: '附件列表(本地文件路径,主进程读盘 base64 编码)', items: { type: 'object', properties: {
+    bcc:     { type: 'string', description: '可选密抄,多个用逗号' },
+    attachments: { type: 'array', description: '附件列表(本地文件路径)', items: { type: 'object', properties: {
       path:     { type: 'string', description: '本地文件绝对路径' },
-      filename: { type: 'string', description: '可选,显示给收件人的文件名,默认取 basename(path)' },
+      filename: { type: 'string', description: '可选,默认取 basename(path)' },
       mime:     { type: 'string', description: '可选,默认按扩展名猜' },
     }, required: ['path'] } },
   }, required: ['to', 'subject'] } },
-  { name: 'mail_get_full', description: '取某封邮件的完整正文(可分段读)。先 mail_list 拿 [msgId:xxx],再用本工具按需取全文。短邮件(<8KB)一次性给完,长邮件返回 hasMore=true,你按 nextOffset 继续取。', inputSchema: { type: 'object', properties: {
+  { name: 'mail_get_full', description: '取邮件完整正文:先 mail_list 拿 [msgId:xxx];长邮件按 hasMore/nextOffset 分段续取。', inputSchema: { type: 'object', properties: {
     messageId: { type: 'string', description: 'mail_list 输出里 [msgId:xxx] 的 xxx' },
-    part:      { type: 'string', enum: ['text', 'html'], description: 'text=纯文本(默认,适合读内容);html=原始 HTML 源码(只在你要回复时取,mail_reply 会自动 quote 这段)' },
+    part:      { type: 'string', enum: ['text', 'html'], description: 'text=纯文本(默认);html=原始 HTML(要回复时才取)' },
     offset:    { type: 'number', description: '从第几个字符开始,默认 0' },
-    limit:     { type: 'number', description: '本次取多少字符,默认 8000,最大 50000。返回有 hasMore + nextOffset 让你翻下一段' },
-    folder:    { type: 'string', description: '邮件所在文件夹,默认自动(命中过 mail_search 的非 INBOX 邮件需带上,如 Sent)' },
+    limit:     { type: 'number', description: '默认 8000,最大 50000' },
+    folder:    { type: 'string', description: '默认自动;非 INBOX 的邮件需带上(如 Sent)' },
   }, required: ['messageId'] } },
-  { name: 'mail_get_attachment_text', description: '读某封邮件某个附件的文本内容(已自动提取:PDF/Word/Excel/CSV/TXT/HTML/JSON/XML;Excel 转 CSV)。支持分段。> 3MB 或非文本格式的附件无文本可读,会返回 extractError 提示。', inputSchema: { type: 'object', properties: {
+  { name: 'mail_get_attachment_text', description: '读邮件某附件的文本(PDF/Word/Excel/CSV/TXT 等自动提取;Excel 转 CSV)。>3MB 或非文本格式返回 extractError。', inputSchema: { type: 'object', properties: {
     messageId: { type: 'string', description: 'mail_list 输出里 [msgId:xxx] 的 xxx' },
-    filename:  { type: 'string', description: 'mail_list 或 mail_get_full 输出的附件文件名(原名,会自动 sanitize)' },
+    filename:  { type: 'string', description: '附件文件名(mail_list/mail_get_full 输出的原名)' },
     offset:    { type: 'number', description: '从第几个字符开始,默认 0' },
-    limit:     { type: 'number', description: '本次取多少字符,默认 8000,最大 50000' },
+    limit:     { type: 'number', description: '默认 8000,最大 50000' },
   }, required: ['messageId', 'filename'] } },
-  { name: 'mail_reply', description: '回复某封邮件 — 主进程自动:① To 原发件人 ② 主题加 Re: 前缀 ③ In-Reply-To/References 头(Outlook 归并对话串)④ **HTML quote 原邮件(必带原文格式,Outlook 风格 blockquote)** ⑤ multipart/alternative 双段。你只填 messageId + text(或 html);要带附件传 attachments 路径。', inputSchema: { type: 'object', properties: {
-    messageId:   { type: 'string', description: 'mail_list 输出里 [msgId:xxx] 的 xxx — 原邮件 Message-ID' },
-    text:        { type: 'string', description: '你的回复正文(纯文本)。系统自动生成 HTML 版并 quote 原邮件' },
-    html:        { type: 'string', description: '可选,显式 HTML 回复(传了就直接用,不再从 text 转;系统仍会在下面 quote 原邮件 HTML)' },
+  { name: 'mail_reply', description: '回复某封邮件 — 自动 To 原发件人、主题加 Re:、挂对话头、HTML quote 原邮件。你只填 messageId + text(或 html);附件传 attachments 路径。', inputSchema: { type: 'object', properties: {
+    messageId:   { type: 'string', description: '原邮件 Message-ID(mail_list 的 [msgId:xxx])' },
+    text:        { type: 'string', description: '回复正文(纯文本)' },
+    html:        { type: 'string', description: '可选 HTML 回复,传了直接用' },
     cc:          { type: 'string', description: '可选抄送,多个用逗号' },
     bcc:         { type: 'string', description: '可选密抄,多个用逗号' },
-    folder:      { type: 'string', description: '原邮件所在文件夹,默认自动(回复非 INBOX 里搜到的邮件需带上)' },
+    folder:      { type: 'string', description: '默认自动;回复非 INBOX 邮件需带上' },
     attachments: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, filename: { type: 'string' }, mime: { type: 'string' } }, required: ['path'] } },
   }, required: ['messageId'] } },
-  { name: 'mail_mark_read', description: '把一批邮件标已读(IMAP +Flags \\Seen)。处理完一封别忘了标,下次 mail_list 才不会重复返回。', inputSchema: { type: 'object', properties: {
-    messageIds: { type: 'array', items: { type: 'string' }, description: 'mail_list 里 [msgId:xxx] 的 xxx 列表;一次最多 30 个' },
+  { name: 'mail_mark_read', description: '把一批邮件标已读。处理完就标,下次 mail_list 不重复返回。', inputSchema: { type: 'object', properties: {
+    messageIds: { type: 'array', items: { type: 'string' }, description: '[msgId:xxx] 列表,一次最多 30 个' },
   }, required: ['messageIds'] } },
-  { name: 'mail_archive', description: '把一批邮件归档(MOVE 到指定文件夹,默认 Archive;MOVE 不支持时 COPY+DEL+EXPUNGE)。不可逆,先想清楚。', inputSchema: { type: 'object', properties: {
-    messageIds: { type: 'array', items: { type: 'string' }, description: 'mail_list 里 [msgId:xxx] 的 xxx 列表' },
-    folder:     { type: 'string', description: '目标文件夹,默认 "Archive"。常见: Archive / 已归档 / [Gmail]/All Mail。' },
+  { name: 'mail_archive', description: '把一批邮件归档(MOVE 到指定文件夹,默认 Archive)。不可逆,先想清楚。', inputSchema: { type: 'object', properties: {
+    messageIds: { type: 'array', items: { type: 'string' }, description: '[msgId:xxx] 列表' },
+    folder:     { type: 'string', description: '目标文件夹,默认 Archive' },
   }, required: ['messageIds'] } },
-  { name: 'todo_add', description: '加一条待办。urgency 可选 高/中/低(默认中)。关联邮件:传 mailMsgId(推荐,跨会话稳定;从 mail_list 的 [msgId:xxx] 抠出)→ 自动回填主题/日期/正文。或显式传 mailSubject/mailDate/mailBody。', inputSchema: { type: 'object', properties: { text: { type: 'string' }, from: { type: 'string', description: '来源(发件人 / 项目 / 自填)' }, urgency: { type: 'string', enum: ['高', '中', '低'] }, mailMsgId: { type: 'string', description: '关联邮件的 Message-ID(从 mail_list 输出抠);系统会自动回填邮件主题/日期/正文' }, mailSubject: { type: 'string' }, mailDate: { type: 'string' }, mailBody: { type: 'string' } }, required: ['text'] } },
+  { name: 'todo_add', description: '加一条待办。关联邮件传 mailMsgId(mail_list 的 [msgId:xxx])自动回填主题/日期/正文。', inputSchema: { type: 'object', properties: { text: { type: 'string' }, from: { type: 'string', description: '来源(发件人 / 项目 / 自填)' }, urgency: { type: 'string', enum: ['高', '中', '低'] }, mailMsgId: { type: 'string', description: '关联邮件的 Message-ID,自动回填主题/日期/正文' }, mailSubject: { type: 'string' }, mailDate: { type: 'string' }, mailBody: { type: 'string' } }, required: ['text'] } },
   { name: 'todo_list', description: '列出所有待办(未完成在前)。可按 onlyPending 过滤。', inputSchema: { type: 'object', properties: { onlyPending: { type: 'boolean' }, limit: { type: 'number' } } } },
   { name: 'todo_complete', description: '把某条待办标为完成。传 id(从 todo_list 返回)。', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
 ]

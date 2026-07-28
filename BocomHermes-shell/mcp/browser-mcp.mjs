@@ -1,4 +1,4 @@
-﻿// BocomHermes · 浏览器自动化 MCP（本地 stdio 服务，零依赖）
+// BocomHermes · 浏览器自动化 MCP（本地 stdio 服务，零依赖）
 // 给 opencode/bocomcode 的 agent 扩能：导航/取文本/点击/输入/执行JS/截图。
 // 实现：用 CDP(Chrome DevTools Protocol) 驱动【系统已装的 Edge/Chrome】，
 //   不依赖 playwright、不下载浏览器；WebSocket 用 Node 内置全局(需 Node 22+)。
@@ -125,45 +125,45 @@ function relayPost(urlPath, body) {
 const TOOLS = [
   {
     name: 'skill_list',
-    description: '列出用户录制并保存的浏览器自动化技能(名称/说明/参数)。用户提到"用XX技能/按我录的流程跑一遍"或你想复用一条已录好的页面操作时,先调这个看有哪些。',
+    description: '列出用户已保存的浏览器自动化技能(名称/说明/参数)。用户说"用XX技能/按我录的流程跑"或要复用已录页面操作时,先调它看有哪些。',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'skill_run',
-    description: '按名字运行一条已保存的浏览器技能:在用户可见的内嵌浏览器里逐步自动回放(窗口没开会自动打开),跑完返回每步结果、成功断言与成败结论。params 按 skill_list 给的参数键传值,不传就用录制时的默认值(select 下拉参数传 option 的 value 字典码;跨环境字典不同时建议不传,走录制文本回退)。',
+    description: '按名字运行已保存的浏览器技能:在用户可见的内嵌浏览器里逐步回放,返回每步结果与成败结论。params 按 skill_list 的参数键传,不传用录制默认值(select 参数传 option 的 value 字典码;跨环境字典不同则不传)。',
     inputSchema: { type: 'object', properties: {
       name: { type: 'string', description: '技能名(skill_list 返回的 name)' },
       params: { type: 'object', description: '运行时参数,如 {"p1":"6222..."}' },
-      baseUrl: { type: 'string', description: '可选,环境根地址(仅 http/https origin,如 https://uat.example.com):替换录制时的环境跑 dev/uat/prod;不传用录制环境。切环境不恢复录制登录态' },
+      baseUrl: { type: 'string', description: '可选,环境根地址(仅 http/https origin);不传用录制环境。切环境不恢复录制登录态' },
     }, required: ['name'] },
   },
   {
     name: 'skill_run_batch',
-    description: '用一批数据循环运行同一条技能(数据集批跑):dataset 每行 = {参数label或key: 值},每行独立回放一遍并汇总 PASS/FAIL。适合"按物料表跑 N 条测试案例 / 批量录入"。用法:先 skill_list 看参数名 → 从 Excel/DB/文件读出数据 → 按参数 label 组行 → 调本工具。默认某行失败继续跑下一行(onError="stop" 则中止);上限 200 行,更多请分批。',
+    description: '用数据集循环跑同一条技能:dataset 每行 = {参数label或key: 值},逐行回放并汇总 PASS/FAIL,适合批量录入/N 条案例。先 skill_list 看参数名再组行。行失败默认继续(onError="stop" 中止);上限 200 行。',
     inputSchema: { type: 'object', properties: {
       name: { type: 'string', description: '技能名(skill_list 返回的 name)' },
-      dataset: { type: 'array', items: { type: 'object' }, description: '每行一个对象,键=参数 label(或 key),如 [{"客户手机号":"138…","金额":"8000"}, …]' },
+      dataset: { type: 'array', items: { type: 'object' }, description: '每行一个对象,键=参数 label(或 key)' },
       baseUrl: { type: 'string', description: '可选,环境根地址(http/https origin);切环境不恢复录制登录态' },
       onError: { type: 'string', enum: ['skip', 'stop'], description: '某行失败后:skip=继续下一行(默认)/ stop=中止' },
     }, required: ['name', 'dataset'] },
   },
   {
     name: 'doc_read',
-    description: '读一个本地文档文件的文本内容(Excel/CSV/Word/PDF/TXT/MD/HTML/JSON/XML;Excel 转成 CSV 文本,每个 Sheet 一段)。【任务编排】链路的加工环节用它:skill_run 回放导出的文件路径在其报告的「导出/下载文件」行里,拿路径直接读,不要自己写脚本解析二进制。支持 offset/limit 分段读大文件。',
+    description: '读本地文档文本(Excel/CSV/Word/PDF/TXT/MD/JSON 等;Excel 转 CSV 按 Sheet 分段)。skill_run 报告的导出/下载文件路径拿它直接读,别自写脚本解析。支持 offset/limit 分段读。',
     inputSchema: { type: 'object', properties: {
-      path:   { type: 'string', description: '本地文件绝对路径(如 skill_run 报告里给的下载路径)' },
+      path:   { type: 'string', description: '本地文件绝对路径' },
       offset: { type: 'number', description: '从第几个字符开始,默认 0' },
-      limit:  { type: 'number', description: '本次取多少字符,默认 8000,最大 50000(大表分段翻,别一口吞)' },
+      limit:  { type: 'number', description: '本次取多少字符,默认 8000,最大 50000' },
     }, required: ['path'] },
   },
   {
     name: 'skill_page_read',
-    description: '【混合执行】读用户可见的内嵌浏览器当前页:URL/标题/可交互元素清单(带现成可用的选择器)/正文节选。技能回放失败被点名接管时,每步操作前先调这个确认页面状态。',
+    description: '【混合执行】读内嵌浏览器当前页:URL/标题/可交互元素清单(带现成选择器)/正文节选。接管期每步操作前先调它确认页面状态。',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'skill_page_act',
-    description: '【混合执行·仅接管期可用】在内嵌浏览器执行一步操作(与回放引擎同一套加固原语,框架事件触发正确)。action: click|type|type_param|select|check|enter|navigate|wait。selector 用 skill_page_read 给的现成选择器,或 __text__:tag|文本(按可见文本);严禁 :has-text()/xpath。secret 参数(密码)用 type_param+key,引擎代填,值不经过你。',
+    description: '【混合执行·仅接管期可用】在内嵌浏览器执行一步操作。selector 用 skill_page_read 给的现成选择器或 __text__:tag|文本(按可见文本);严禁 :has-text()/xpath。secret(密码)用 type_param+key,引擎代填,值不经过你。',
     inputSchema: { type: 'object', properties: {
       action: { type: 'string', enum: ['click', 'type', 'type_param', 'select', 'check', 'enter', 'navigate', 'wait'] },
       selector: { type: 'string', description: '目标元素(click/type/type_param/select/check/enter 用)' },
@@ -177,7 +177,7 @@ const TOOLS = [
   },
   {
     name: 'skill_takeover_done',
-    description: '【混合执行】接管收口:剩余流程做完(或确认无法完成)时必须调用,回放据此出报告。status: done=目标达成 / failed=无法完成(note 说明原因)。',
+    description: '【混合执行】接管收口:做完或确认无法完成时必须调用,回放据此出报告。status: done=达成 / failed=无法完成(note 写原因)。',
     inputSchema: { type: 'object', properties: { gateId: { type: 'string', description: '接管请求 id(来自接管通知)' }, status: { type: 'string', enum: ['done', 'failed'] }, note: { type: 'string', description: '一句话:做了什么/为何失败' } }, required: ['gateId', 'status'] },
   },
   { name: 'browser_navigate', description: '打开一个网址（在内置无头浏览器里），返回页面标题与最终URL', inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } },
