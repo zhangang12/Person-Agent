@@ -1760,6 +1760,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       planMode: S.settings.planMode !== false,
       knobs: mergeKnobs(S.settings.knobs),   // 阈值旋钮(治理波次):完整 9 键随设置下发,渲染端不必各自兜底
       permRules: (S.settings.permRules && typeof S.settings.permRules === 'object') ? S.settings.permRules : { allow: [], deny: [] },   // 用户权限规则(P2.3):设置页两个文本域读写
+      permMode: S.settings.permMode === 'auto' ? 'auto' : 'default',   // 权限模式:default=写/执行逐次确认;auto=全部自动放行(deny 规则仍兜底,审计留痕)
       model: S.settings.model || null,   // 全局默认模型(对话坞设)
       modelMain: S.settings.modelMain || null,     // 双模型·干活主模型(会话默认;缺省回 model)
       modelVision: S.settings.modelVision || null, // 双模型·读图模型(带图消息/验证棒整卡;候选按 serve 模型元数据 image:true 过滤)
@@ -2415,6 +2416,8 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       const clean = (a) => (Array.isArray(a) ? a.map((x) => String(x).slice(0, 200).trim()).filter(Boolean).slice(0, 100) : [])
       S.settings.permRules = { allow: clean(patch.permRules.allow), deny: clean(patch.permRules.deny) }
     }
+    // 权限模式(P2.4):'default'|'auto',非法值一律回 default(auto=写/执行全部自动放行,deny 规则仍兜底)
+    if (patch && patch.permMode !== undefined) S.settings.permMode = patch.permMode === 'auto' ? 'auto' : 'default'
     // 双模型(M1):modelMain/modelVision,形状同 model({providerID,modelID,name} 或 null)
     if (patch && 'modelMain' in patch) S.settings.modelMain = (patch.modelMain && patch.modelMain.modelID) ? { providerID: patch.modelMain.providerID, modelID: patch.modelMain.modelID, name: patch.modelMain.name } : null
     if (patch && 'modelVision' in patch) S.settings.modelVision = (patch.modelVision && patch.modelVision.modelID) ? { providerID: patch.modelVision.providerID, modelID: patch.modelVision.modelID, name: patch.modelVision.name } : null

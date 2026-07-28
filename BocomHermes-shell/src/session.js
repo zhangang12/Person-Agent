@@ -345,6 +345,25 @@ desc: 改完前端代码后,用内嵌浏览器真正打开页面验证(加载/�
       oc.replyPermission(si.serve, sessionId, requestId, 'once'); return
     }
     if (!si.wc || si.wc.isDestroyed()) { oc.replyPermission(si.serve, sessionId, requestId, 'reject'); return }
+    // ── auto 模式(settings.permMode='auto'):写/执行全部自动放行 —— 位置刻意在 deny 规则之后(红线不可翻)、
+    // 分片分支之后(分片写归属闸不受影响)、allow 规则之前(语义更宽);edit 同享预检(oldString 未命中照样拒带纠偏)。
+    // 每次放行记审计 + 卡内一行灰字(用户看得见放了什么,不发批准确认框)。
+    if (S.settings.permMode === 'auto') {
+      try { S.audit && S.audit('permission', 'auto 模式放行', { tool: String(tool || ''), detail: String(detail || '').slice(0, 200) }) } catch {}
+      if (/^edit(_[a-z]+)*$/i.test(String(tool || ''))) {
+        ;(async () => {
+          try {
+            const peek = await buildPermPeek(si, sessionId, tool, detail)
+            if (peek && peek.miss) { log('auto 模式 edit 预检拦截:' + peek.miss.filePath); oc.replyPermission(si.serve, sessionId, requestId, 'reject'); return }
+          } catch {}
+          oc.replyPermission(si.serve, sessionId, requestId, 'once')
+        })()
+        return
+      }
+      oc.replyPermission(si.serve, sessionId, requestId, 'once')
+      try { si.wc.send('card-note', { text: 'auto 模式已自动放行：' + tool + (detail ? ' — ' + String(detail).slice(0, 80) : ''), tone: 'muted' }) } catch {}
+      return
+    }
     // 用户权限规则 allow(少弹框 UX 层):命中即放行一次,不再弹批准框(红线在前的 deny 已先判)
     const permAllowHit = permRulesHit('allow', tool, detail)
     if (permAllowHit) { log('权限规则放行(allow):' + permAllowHit + ' 命中 ' + String(tool)); oc.replyPermission(si.serve, sessionId, requestId, 'once'); return }

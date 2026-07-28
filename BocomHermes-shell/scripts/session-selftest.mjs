@@ -380,6 +380,55 @@ console.log('用例12:用户权限规则(P2.3 壳层轨) —— deny 先判/allo
   ok('分片卡非 deny 维持自动放行(once)', replies2[1] && replies2[1].d === 'once', replies2[1])
 }
 
+console.log('用例12b:permMode auto —— 写/执行自动放行;deny 红线仍先判;edit 预检未命中仍拒/命中放行;审计留痕不弹框')
+{
+  const mkWc = (id) => ({ id, isDestroyed: () => false, send: () => {} })
+  const h = makeHarness()
+  const wc = mkWc(993)
+  const sid = 'ses_auto1'
+  h.S.sessionByWc.set(wc.id, sid)
+  h.S.sessionInfo.set(sid, { serve: h.serve, wc })
+  h.S.settings.permMode = 'auto'
+  h.S.settings.permRules = { deny: ['bash(rm -rf*)'] }
+  const audits = []
+  h.S.audit = (...a) => audits.push(a)
+  const replies = []
+  h.oc.replyPermission = (serve, sessionId, requestId, d) => replies.push({ requestId, d })
+
+  h.S.handlers.onPermission({ sessionId: sid, requestId: 'a1', tool: 'bash', detail: 'npm test' })
+  ok('auto:bash 自动放行(once)', replies[0] && replies[0].d === 'once', replies[0])
+  ok('auto:不登记 pendingPerm(不弹框)', !h.S.pendingPerm.has('a1'))
+  ok('auto:放行记审计', audits.some((a) => a[0] === 'permission' && /auto/.test(String(a[1]))), audits)
+
+  h.S.handlers.onPermission({ sessionId: sid, requestId: 'a2', tool: 'bash', detail: 'rm -rf /tmp/x' })
+  ok('auto:deny 红线仍先判(reject)', !!replies.find((x) => x.requestId === 'a2' && x.d === 'reject'), replies)
+
+  // edit 预检(async 链,等两拍落停):真文件不含 oldString → 拒;含 → 放行
+  fs.writeFileSync(path.join(PROJ, 'target-file.txt'), 'line1 actual content\nline2\n')
+  h.oc.getRawMessages = async () => [{ parts: [{ type: 'tool', tool: 'edit', state: { status: 'running', input: { filePath: 'target-file.txt', oldString: '根本不存在的旧内容', newString: 'x' } } }] }]
+  h.S.handlers.onPermission({ sessionId: sid, requestId: 'a3', tool: 'edit', detail: 'target-file.txt' })
+  await tick(); await tick()
+  ok('auto:edit 预检未命中仍拒(reject)', !!replies.find((x) => x.requestId === 'a3' && x.d === 'reject'), replies)
+  h.oc.getRawMessages = async () => [{ parts: [{ type: 'tool', tool: 'edit', state: { status: 'running', input: { filePath: 'target-file.txt', oldString: 'line1 actual content', newString: 'x' } } }] }]
+  h.S.handlers.onPermission({ sessionId: sid, requestId: 'a4', tool: 'edit', detail: 'target-file.txt' })
+  await tick(); await tick()
+  ok('auto:edit 预检通过自动放行(once)', !!replies.find((x) => x.requestId === 'a4' && x.d === 'once'), replies)
+
+  // 分片卡不受 auto 影响(分片分支在前,本就自动放行 + 写归属闸)—— 这里只验 auto 不把 deny 翻掉
+  const h2 = makeHarness()
+  const wc2 = mkWc(994)
+  const sid2 = 'ses_auto2'
+  h2.S.sessionByWc.set(wc2.id, sid2)
+  h2.S.sessionInfo.set(sid2, { serve: h2.serve, wc: wc2 })
+  h2.S.shardWc = new Set([wc2.id])
+  h2.S.settings.permMode = 'auto'
+  h2.S.settings.permRules = { deny: ['write(*.env)'] }
+  const replies2 = []
+  h2.oc.replyPermission = (serve, sessionId, requestId, d) => replies2.push({ requestId, d })
+  h2.S.handlers.onPermission({ sessionId: sid2, requestId: 'b1', tool: 'write', detail: '/proj/.env' })
+  ok('auto+分片:deny 仍不可翻(reject)', replies2[0] && replies2[0].d === 'reject', replies2[0])
+}
+
 console.log('用例13:P3.3 todo 权威数据源 —— 回合收尾 getSessionTodo 非空才覆盖注册表;空/异常/无桩/非wf卡一律不动不炸')
 {
   // 非空 → wfTodos(本卡, 权威清单) 被调一次,注册表被覆盖

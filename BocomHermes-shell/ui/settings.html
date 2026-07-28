@@ -126,6 +126,15 @@
       </div>
 
       <div class="fld">
+        <span class="lbl">权限模式 <span class="hint" style="font-weight:400">（保存即生效，对话卡下一条消息起用新值）</span></span>
+        <select id="permMode" class="in">
+          <option value="default">default · 写/执行逐次确认（推荐）</option>
+          <option value="auto">auto · 写/执行全部自动放行</option>
+        </select>
+        <span class="hint" style="color:var(--diff-del)">auto 模式有风险：Agent 的写文件/执行命令不再弹框确认（下方 deny 红线仍兜底、edit 预检仍生效、每次放行都记审计）。请仅在可信任务上开启。</span>
+      </div>
+
+      <div class="fld">
         <span class="lbl">权限规则 <span class="hint" style="font-weight:400">（每行一条 · 语法 <code>工具名(通配)</code>，如 <code>bash(git *)</code>、<code>write(src/*)</code> · 保存即生效）</span></span>
         <span class="hint">deny · 永远拒绝（用户红线：命中直接拒、不弹框；分片卡同样生效）</span>
         <textarea id="permDeny" class="in" rows="3" placeholder="bash(rm -rf*)&#10;bash(curl *)&#10;bash(wget *)" spellcheck="false"></textarea>
@@ -222,7 +231,7 @@
   ;(function initTabs() {
     const MAP = [
       [/^(主题|编辑器命令|serve 二进制|修复流程|邮件|OceanBase|注册 MCP|内网 serve 优化)/, 'general'],
-      [/^(智能体旋钮|权限规则|双模型|当前项目目录|后端代码仓库)/, 'agent'],
+      [/^(智能体旋钮|权限模式|权限规则|双模型|当前项目目录|后端代码仓库)/, 'agent'],
       [/^(项目知识库)/, 'knowledge'],
     ]
     const flds = [...document.querySelectorAll('.body > .fld')]
@@ -301,6 +310,7 @@
   // 权限规则(P2.3):allow/deny 各一个文本域,读不到一律空
   $('permAllow').value = (cur.permRules && Array.isArray(cur.permRules.allow) ? cur.permRules.allow : []).join('\n')
   $('permDeny').value = (cur.permRules && Array.isArray(cur.permRules.deny) ? cur.permRules.deny : []).join('\n')
+  $('permMode').value = cur.permMode === 'auto' ? 'auto' : 'default'
 
   // 当前项目 + 最近仓库
   const proj = $('proj'); proj.textContent = cur.project || '未选目录'; proj.title = cur.projectDir || ''
@@ -459,7 +469,7 @@
   // 保存（IMAP/SMTP/代理/启动参数已分别移到「邮件中心」「浏览器」，此处不再处理）
   const msg = $('msg')
   async function save(silent) {
-    const patch = { editorCmd: editorCmd.value, planMode: !!planMode.checked, knobs: collectKnobs(), permRules: { allow: $('permAllow').value.split('\n'), deny: $('permDeny').value.split('\n') } }
+    const patch = { editorCmd: editorCmd.value, planMode: !!planMode.checked, knobs: collectKnobs(), permMode: $('permMode').value, permRules: { allow: $('permAllow').value.split('\n'), deny: $('permDeny').value.split('\n') } }
     const pickModel = (id) => { try { return $(id).value ? JSON.parse($(id).value) : null } catch { return null } }
     patch.modelMain = pickModel('modelMain'); patch.modelVision = pickModel('modelVision')   // 双模型(null=未设置)
     if (!cur.serveBinLocked) patch.serveBin = serveBin.value
