@@ -36,14 +36,15 @@ interface BaseItem { id: number }
 export interface UserItem extends BaseItem { kind: 'user'; text: string; queued: boolean }
 /** 分诊/提示行(非对话轮);retry=true 时带「重试本轮」按钮 */
 export interface NoteItem extends BaseItem { kind: 'note'; text: string; muted: boolean; retry: boolean }
-/** 思考块:每轮一个,答完不折叠不移除(open 保持);title 缺省「思考过程」,压缩续聊的接力摘要复用同壳 */
-export interface ReasonItem extends BaseItem { kind: 'reason'; body: string; open: boolean; title?: string }
-/** AI 气泡:流式期 = segs(冻结段,只增) + tail(每帧重渲);收尾后 = finalHtml 全量一次 */
+/** 思考块:每轮一个,答完不折叠不移除(open 保持);title 缺省「思考过程」,压缩续聊的接力摘要复用同壳;displayLen=打字机已吐字符数(可缺省=0) */
+export interface ReasonItem extends BaseItem { kind: 'reason'; body: string; open: boolean; title?: string; displayLen?: number }
+/** AI 气泡:流式期 = segs(冻结段,只增) + tail(每帧重渲);收尾后 = finalHtml 全量一次;displayLen=打字机已吐字符数(快照→匀速吐的游标) */
 export interface AiItem extends BaseItem {
   kind: 'ai'
   status: 'streaming' | 'done' | 'aborted' | 'error'
   segs: { id: number; html: string }[]
   frozenLen: number
+  displayLen: number
   tail: string
   finalHtml: string
   /** 复制原文(渲染前 markdown) */
@@ -257,7 +258,6 @@ let curAnswer: AiItem | null = null
 let curReason: ReasonItem | null = null
 let answerParts = new Map<string, string>()
 let reasonParts = new Map<string, string>()
-let flushQueued = false, needAnswer = false
 // target 轮(命令块「运行」,P2b):回答渲染进命令块下的输出区 DOM,不进 feed(旧页 turn(text, target) 平移)
 let targetParts: Map<string, string> | null = null
 let targetEl: HTMLElement | null = null
@@ -283,14 +283,14 @@ export function addAiStatic(markdown: string): AiItem {
 function addAi(): AiItem {
   const it: AiItem = {
     id: nextId(), kind: 'ai', status: 'streaming',
-    segs: [], frozenLen: 0, tail: '', finalHtml: '', raw: '', plainText: '',
+    segs: [], frozenLen: 0, displayLen: 0, tail: '', finalHtml: '', raw: '', plainText: '',
     retryText: '', retryFiles: null,
   }
   s.items.push(it); return s.items[s.items.length - 1] as AiItem
 }
 function ensureReason(): ReasonItem {
   if (!curReason) {
-    const r: ReasonItem = { id: nextId(), kind: 'reason', body: '', open: true }
+    const r: ReasonItem = { id: nextId(), kind: 'reason', body: '', open: true, displayLen: 0 }
     const at = curAnswer ? s.items.indexOf(curAnswer) : s.items.length
     const i = at < 0 ? s.items.length : at
     s.items.splice(i, 0, r)
@@ -299,20 +299,40 @@ function ensureReason(): ReasonItem {
   return curReason
 }
 
-// ── 流式增量渲染(防 O(n²):冻结段只增,尾巴每帧重渲;rAF 合帧) ──────────────
-function flushStream(): void {
-  flushQueued = false
+// ── 流式增量渲染(防 O(n²):冻结段只增,尾巴每帧重渲) + 打字机平滑 ──────────────
+// 数据侧是快照流(1.2s 轮询 / SSE 增量 / POST 一次性返回),直接渲会"一坨一坨跳"。
+// 这里加匀速缓冲:快照只记账(displayLen 游标),40ms 一拍按 backlog/4(≥2 字符)匀速吐出 ——
+// 任何来源看起来都是连续打字;思考块同款平滑。用 setTimeout 不用 rAF:隐藏分片卡 rAF 会冻结。
+const TW_MS = 40
+let twTimer: ReturnType<typeof setTimeout> | null = null
+function twStop(): void { if (twTimer) { clearTimeout(twTimer); twTimer = null } }
+function twTick(): void {
+  twTimer = null
   const ai = curAnswer
-  if (!ai) { needAnswer = false; return }
+  if (!ai) return
   const st = splitThink(joinParts(answerParts))
   const reasonBody = [joinParts(reasonParts), st.think].filter(Boolean).join('\n')
-  if (reasonBody) { const r = ensureReason(); r.body = reasonBody; r.open = true }
-  if (needAnswer) {
-    // 纯思考阶段(rest 还空)不清占位符,气泡不闪空白(对齐旧页)
-    if (st.rest) {
-      const plan = planIncremental(st.rest, ai.frozenLen)
+  const full = st.rest
+  // 思考块平滑:匀速推进 displayLen,块内只显示已吐部分
+  let reasonCaughtUp = true
+  if (reasonBody) {
+    const r = ensureReason()
+    const rd = r.displayLen || 0
+    if (rd < reasonBody.length) {
+      r.displayLen = Math.min(reasonBody.length, rd + Math.max(2, Math.ceil((reasonBody.length - rd) / 4)))
+      reasonCaughtUp = false
+    }
+    r.body = reasonBody.slice(0, r.displayLen)
+    r.open = true
+  }
+  // 正文平滑:先推进游标,再把"已吐前缀"走 planIncremental(冻结段只增+尾巴重渲)
+  if (ai.displayLen < full.length) {
+    ai.displayLen = Math.min(full.length, ai.displayLen + Math.max(2, Math.ceil((full.length - ai.displayLen) / 4)))
+    const dispRest = full.slice(0, ai.displayLen)
+    if (dispRest) {
+      const plan = planIncremental(dispRest, ai.frozenLen)
       if (plan.reset) {
-        ai.segs = []; ai.frozenLen = 0; ai.tail = st.rest
+        ai.segs = []; ai.frozenLen = 0; ai.tail = dispRest
       } else {
         if (plan.newSeg) {
           // 分隔线跨段去重:冻结段各自独立渲染(每段一次 renderMarkdown),连发 --- 被切成多段时
@@ -325,11 +345,11 @@ function flushStream(): void {
         ai.tail = plan.tail
       }
     }
-    needAnswer = false
   }
+  if (ai.displayLen < full.length || !reasonCaughtUp) twTimer = setTimeout(twTick, TW_MS)
 }
 function scheduleFlush(): void {
-  if (!flushQueued) { flushQueued = true; requestAnimationFrame(flushStream) }
+  if (!twTimer) twTimer = setTimeout(twTick, TW_MS)
 }
 // target 轮流式渲染(rAF 合帧;输出区是 v-html 之外的自由 DOM,直接写不碍 Vue)
 function flushTarget(): void {
@@ -389,7 +409,6 @@ export function wireStream(): void {
         scheduleFlush()
       } else {
         answerParts.set(key, String(ev.text || ''))
-        needAnswer = true
         scheduleFlush()
       }
     })
@@ -685,7 +704,7 @@ export async function turn(text: string, files?: any[] | null): Promise<boolean>
   const ai = addAi()
   curAnswer = ai; curReason = null
   answerParts = new Map(); reasonParts = new Map()
-  needAnswer = false; flushQueued = false
+  twStop()   // 新一轮:打字机游标随新 AiItem 归零(displayLen 在 addAi 初始化),旧 ticker 停掉
   s.busy = true; s.done = false
   lastSend = { text, files: files || null }
   if (draftKey) draftClear(localStorage, draftKey)   // 草稿发送即清
@@ -693,7 +712,7 @@ export async function turn(text: string, files?: any[] | null): Promise<boolean>
   let ok = true, gotText = false
   try {
     const reply = await BH()!.cardSend(text, files || [], s.activeSkill ? s.activeSkill.id : null)   // 挂载技能(作答方法论预置,对齐旧页 submit 第三参)
-    flushStream()   // 末帧兜底:rAF 还没跑的增量先落上(马上要被 finalHtml 盖掉,主要为思考块)
+    twStop()   // 末帧:停打字机 ticker(终态由 finalHtml 全量接管;思考块在下方补全)
     const raw = reply || joinParts(answerParts)
     const st = splitThink(raw)
     if (st.think) { const r = ensureReason(); r.body = [joinParts(reasonParts), st.think].filter(Boolean).join('\n'); r.open = true }
@@ -729,6 +748,7 @@ export async function turn(text: string, files?: any[] | null): Promise<boolean>
       addRetryNote('内网网关抖动是常态，可直接重试（同一条消息，不用重打）')
     }
   } finally {
+    twStop()   // 回合收尾:停打字机 ticker(终态已用 finalHtml 全量渲染,游标不再推进)
     curAnswer = null; curReason = null
     s.busy = false
     if (ok) { s.done = true; maybeAutoTitle() }   // 首轮成功 → 默认名自动换成首条消息前 24 字
