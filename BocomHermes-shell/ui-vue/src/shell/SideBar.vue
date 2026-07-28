@@ -48,8 +48,7 @@ function onMenu(c: ChatEntry, key: string) {
 <template>
   <aside id="side">
     <div id="logo">
-      <!-- 品牌标:桌面版悬浮球同款「动态眼睛」(迷你 orb + 眨眼动画,orb 退役后的品牌延续) -->
-      <span class="miniorb" aria-hidden="true"><span class="meye"></span><span class="meye"></span></span>
+      <!-- 品牌标:纯文字(会话头像已有同款眼睛小球,侧栏不再重复) -->
       <b>BocomHermes</b>
     </div>
     <button id="newChat" @click="spawnChat({ title: '新会话' })">
