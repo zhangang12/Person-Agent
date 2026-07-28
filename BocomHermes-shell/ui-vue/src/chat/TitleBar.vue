@@ -3,7 +3,7 @@
 // ctx chip:<5% 隐藏;<60% 绿 / 60-80% 橙 / >80% 红(设计稿口径);点击 = 压缩续聊确认(KDialog 挂 ChatApp)。
 // embedded 模式:去窗口控件(宿主窗口的系统边框负责)。
 import { ref, computed } from 'vue'
-import { s, toggleVerbose, listModels, setModel, subToggle, subRunningCount, pickProject, setSessionTitle } from './store'
+import { s, toggleVerbose, listModels, setModel, subToggle, subRunningCount, pickProject, setSessionTitle, togglePermMode } from './store'
 import { ctxPctVal, ctxLevel, ctxChipText, ctxChipTitle } from './lib/ctxchip'
 import { BH } from './bridge'
 import KMenu from '../components/KMenu.vue'
@@ -76,6 +76,9 @@ function commitEdit() {
     <KMenu :items="modelItems" placement="bottom-end" @select="onModelSelect" @update:open="(v) => v && loadModels()">
       <span class="k-chip clickable" :title="'当前模型：' + s.modelLabel + '(点击切换)'">{{ s.modelLabel }}</span>
     </KMenu>
+    <span class="k-chip clickable permchip" :class="{ auto: s.permMode === 'auto' }"
+          :title="s.permMode === 'auto' ? '权限模式：自动放行（写文件/执行命令不再弹框 · deny 红线兜底 · edit 预检生效 · 放行记审计）｜点击切回逐次确认' : '权限模式：逐次确认（写文件/执行命令逐次弹框批准）｜点击切到自动放行'"
+          @click="togglePermMode">{{ s.permMode === 'auto' ? '自动放行' : '逐次确认' }}</span>
     <span v-if="ctxLv !== 'hidden'" class="k-chip ctxchip clickable" :class="ctxLv" :title="ctxTitle" @click="s.compactAsk = true">{{ ctxText }}</span>
     <button class="ibtn" :class="{ on: s.verbose }" title="过程详情(verbose):工具块自动展开入参/结果" aria-label="过程详情" @click="toggleVerbose">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>

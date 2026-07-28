@@ -144,6 +144,8 @@ export const s = reactive({
   items: [] as FeedItem[],
   /** 展示层回收:前 archived 条不渲染(数据还在 items 里,重开卡可从历史恢复) */
   archived: 0,
+  /** 权限模式:default=写/执行逐次确认;auto=全部自动放行(deny 红线兜底)。会话卡 TitleBar 可切(不再只藏设置页) */
+  permMode: 'default' as 'default' | 'auto',
   busy: false,
   ready: false,
   /** 本轮成功结束(标题 ✓,多卡扫一眼就知道谁跑完了) */
@@ -382,6 +384,15 @@ export async function turnToEl(text: string, el: HTMLElement): Promise<boolean> 
     drain()
   }
   return ok
+}
+
+/** 权限模式开关(TitleBar chip):default ↔ auto;写 settings 即时生效(下一条权限请求起用新档) */
+export function togglePermMode(): void {
+  s.permMode = s.permMode === 'auto' ? 'default' : 'auto'
+  try { BH()?.setSettings?.({ permMode: s.permMode }) } catch { /* 静默 */ }
+  addNote(s.permMode === 'auto'
+    ? '权限模式已切到【自动放行】：写文件/执行命令不再弹框（deny 红线仍兜底、edit 预检仍生效、每次放行记审计）'
+    : '权限模式已切回【逐次确认】：写文件/执行命令会弹框等你批准', { muted: true })
 }
 
 // ── 主进程流事件(渲染端不碰 SSE,协议不变) ────────────────────────────────
@@ -1336,6 +1347,7 @@ export async function boot(): Promise<void> {
     s.modelLabel = (r.model && (r.model.name || r.model.modelID)) || '默认模型'
     s.modelKey = r.model ? (r.model.providerID + '/' + r.model.modelID) : ''
     s.sessionId = r.sessionId || ''
+    try { const st = BH()?.getSettings?.() || {}; s.permMode = st.permMode === 'auto' ? 'auto' : 'default' } catch { /* 静默 */ }   // 权限模式(chip 与设置页同源)
     refreshCtxLimit()   // ctx chip 上限(listModels → 型号兜底 → 128k 硬顶;fire-and-forget)
     draftKey = draftKeyOf(s.sessionId)
     // 续接/调试卡恢复草稿;新卡自动发首条消息,不恢复(对齐旧页)

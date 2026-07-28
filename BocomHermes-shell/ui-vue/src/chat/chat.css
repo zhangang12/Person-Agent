@@ -424,6 +424,8 @@ html[data-theme="dark"] .a-avatar { box-shadow: 0 0 0 1px rgba(91, 157, 255, .28
 .k-chip.ctxchip.ok { color: var(--green); }
 .k-chip.ctxchip.warn { color: var(--orange); }
 .k-chip.ctxchip.danger { color: var(--danger); }
+.k-chip.permchip { flex: none; }
+.k-chip.permchip.auto { color: var(--orange); border-color: var(--orange); background: var(--orange-10); }
 .hb-dot.ok { background: var(--green); }
 .hb-dot.bad { background: var(--danger); }
 .hb-dot.gray { background: var(--label-4); }
