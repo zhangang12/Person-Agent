@@ -75,7 +75,7 @@ watch(() => store.quick.open, async (v) => {
 }
 #quickIn textarea::placeholder { color: var(--label-4); }
 #qiBar { margin-top: 6px; display: flex; align-items: center; gap: 12px; }
-#qiHint { font-size: 10.5px; color: var(--label-3); display: flex; gap: 12px; }
+#qiHint { font-size: 11px; color: var(--label-3); display: flex; gap: 12px; }
 .sp { flex: 1; }
 .k-send {
   width: 28px; height: 28px; border-radius: 50%; background: var(--brand); color: var(--brand-text);

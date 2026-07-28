@@ -203,8 +203,8 @@ function renderTodoLine(line: string): string | null {
   const mi = text.match(MAILIDX_RE); if (mi) { mailIdx = mi[1]; text = text.replace(MAILIDX_RE, '').trim() }
   const urgCls = urgency === '高' ? 'sev-must' : urgency === '中' ? 'sev-sugg' : 'sev-info'
   const mailTag = mailMsgId
-    ? `<span style="font-size:10.5px;color:var(--blue);margin-right:6px" title="关联邮件 msgId=${esc(mailMsgId)}">✉</span>`
-    : mailIdx ? `<span style="font-size:10.5px;color:var(--blue);margin-right:6px" title="关联原邮件 #${esc(mailIdx)}">✉ #${esc(mailIdx)}</span>` : ''
+    ? `<span style="font-size:11px;color:var(--blue);margin-right:6px" title="关联邮件 msgId=${esc(mailMsgId)}">✉</span>`
+    : mailIdx ? `<span style="font-size:11px;color:var(--blue);margin-right:6px" title="关联原邮件 #${esc(mailIdx)}">✉ #${esc(mailIdx)}</span>` : ''
   return `<div class="todo-blk" data-act="todo" data-urgency="${esc(urgency)}" data-from="${esc(from)}" data-text="${esc(text)}"${mailIdx ? ' data-mailidx="' + esc(mailIdx) + '"' : ''}${mailMsgId ? ' data-mailmsgid="' + esc(mailMsgId) + '"' : ''}>`
     + `<span class="sev ${urgCls}">${esc(urgency)}</span>`
     + (from ? `<span style="font-size:11px;color:var(--label-3);margin-right:6px">来自：${esc(from)}</span>` : '')

@@ -208,7 +208,7 @@ function onMenu(c: ChatEntry, key: string) {
 .sess:hover .pin, .sess:hover .x { display: inline-flex; }
 .sess .x.hx { display: none; }
 .sess.hist:hover .x.hx { display: inline-flex; }
-.sess .x.hx.arm { display: inline-flex; width: auto; padding: 0 5px; color: var(--danger); font-size: 10px; font-weight: 600; }
+.sess .x.hx.arm { display: inline-flex; width: auto; padding: 0 5px; color: var(--danger); font-size: 11px; font-weight: 600; }
 .sess:hover :deep(.k-menu-wrap) .more { display: inline-flex; }
 .sess .pin:hover, .sess .x:hover, .sess .more:hover { background: var(--fill-3); color: var(--label-1); }
 .sess :deep(.k-menu-wrap) { flex: none; display: none; }

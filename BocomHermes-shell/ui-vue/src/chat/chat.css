@@ -105,6 +105,7 @@ html[data-embed="1"] .hl { display: none; }
 /* AI 无气泡:正文直排(S2),markdown 16/26;左侧小球头像(应用图标同款) */
 .msg-a { align-self: stretch; position: relative; font: var(--md-body); color: var(--label-1); overflow-wrap: anywhere; display: flex; gap: 10px; align-items: flex-start; }
 .a-avatar { flex: none; width: 30px; height: 30px; margin-top: 1px; border-radius: 50%; box-shadow: 0 1px 4px rgba(11, 21, 38, .35); user-select: none; }
+html[data-theme="dark"] .a-avatar { box-shadow: 0 0 0 1px rgba(91, 157, 255, .28), 0 1px 6px rgba(0, 0, 0, .55); }
 .a-avatar svg { display: block; width: 30px; height: 30px; }
 .a-body { flex: 1; min-width: 0; position: relative; }
 .msg-a .ph { color: var(--label-3); font: var(--b1); }
