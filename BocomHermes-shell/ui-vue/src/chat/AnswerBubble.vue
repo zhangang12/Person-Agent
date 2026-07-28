@@ -34,12 +34,15 @@ function onRegen(e: MouseEvent) {
 .a-avatar .av-rim { animation: avSpin 10s linear infinite; transform-box: fill-box; transform-origin: center; }
 .a-avatar .av-star { animation: avTwinkle 2.6s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
 .a-avatar .av-star.s2 { animation-delay: 1.1s; }
+.a-avatar .av-eye { animation: avBlink 4.2s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+.a-avatar .av-eye.e2 { animation-delay: .06s; }
 .a-avatar.live .av-halo { animation-duration: 1.4s; }
 .a-avatar.live .av-rim { animation-duration: 2.8s; }
 .a-avatar.live .av-star { animation-duration: 1.2s; }
 @keyframes avBreath { 0%, 100% { opacity: .5; transform: scale(.94); } 50% { opacity: 1; transform: scale(1.07); } }
 @keyframes avSpin { to { transform: rotate(360deg); } }
 @keyframes avTwinkle { 0%, 100% { opacity: .35; transform: scale(.85); } 50% { opacity: 1; transform: scale(1.1); } }
+@keyframes avBlink { 0%, 90%, 100% { transform: scaleY(1); } 95% { transform: scaleY(.08); } }
 </style>
 
 <template>
@@ -58,6 +61,8 @@ function onRegen(e: MouseEvent) {
         <circle cx="32" cy="32" r="24" fill="url(#avbg)"/>
         <circle class="av-rim" cx="32" cy="32" r="24" fill="none" stroke="url(#avrim)" stroke-width="3" stroke-linecap="round" stroke-dasharray="100 52"/>
         <ellipse cx="24" cy="21" rx="9" ry="6" fill="url(#avspec)" opacity=".45" transform="rotate(-28 24 21)"/>
+        <ellipse class="av-eye e1" cx="24" cy="30" rx="3.4" ry="5.4" fill="#fff"/>
+        <ellipse class="av-eye e2" cx="40" cy="30" rx="3.4" ry="5.4" fill="#fff"/>
         <path class="av-star s1" d="M48 8l2 5 5 2-5 2-2 5-2-5-5-2 5-2z" fill="#eafaff"/>
         <path class="av-star s2" d="M17 45l1.4 3.4 3.4 1.4-3.4 1.4L17 54.2l-1.4-3.4-3.4-1.4 3.4-1.4z" fill="#dff4ff" opacity=".85"/>
       </svg>
