@@ -9,10 +9,10 @@
 :root {
   --bg-primary: #ffffff;
   --bg-primary-90: rgba(255,255,255,0.9);
-  --bg-secondary: #f5f5f5;
+  --bg-secondary: #f6f4ef;               /* 暖纸(设计稿审美:侧栏/次底色,比 #f5 更柔) */
   --bg-tertiary: #ffffff;
   --bg-quaternary: #ffffff;
-  --bg-ground: #f9fbfc;
+  --bg-ground: #f7f6f2;                  /* 暖纸主底(设计稿同值) */
 
   --label-1: rgba(0,0,0,0.9);
   --label-2: rgba(0,0,0,0.6);
@@ -24,7 +24,7 @@
   --fill-3: rgba(0,0,0,0.15);
   --fill-4: rgba(0,0,0,0.25);
 
-  --sep: rgba(0,0,0,0.13);
+  --sep: rgba(0,0,0,0.10);               /* 边框减淡(0.13→0.10,干净不硬) */
 
   --blue: #1783ff;
   --green: #16c456;
@@ -42,16 +42,16 @@
   --yellow-10: rgba(255,200,0,0.2);
   --selected: rgba(23,131,255,0.2);
 
-  --bubble-user: #f5f5f5;
+  --bubble-user: #f0f0f0;
   --toast-bg: #2b2b2b;                 /* toastPc 恒定深底,不随主题变 */
   --mask: rgba(0,0,0,0.4);
 
   --syn-kw: #034C7C; --syn-str: #A44185; --syn-cmt: #B2B2B2;
   --syn-fn: #7EB233; --syn-var: #2F86D2; --syn-num: #174781; --syn-op: #0991B6;
 
-  --shadow-input: 0 5px 16px -4px rgba(0,0,0,0.07);
-  --shadow-small: 0 4px 16.4px rgba(0,0,0,0.1);
-  --shadow-medium: 0 4px 15px 2px rgba(0,0,0,0.15);
+  --shadow-input: 0 5px 16px -4px rgba(0,0,0,0.06);
+  --shadow-small: 0 4px 16.4px rgba(0,0,0,0.08);
+  --shadow-medium: 0 4px 15px 2px rgba(0,0,0,0.10);
   --blur-heavy: 30px;
 }
 

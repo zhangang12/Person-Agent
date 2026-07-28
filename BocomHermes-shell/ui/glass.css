@@ -12,9 +12,9 @@
 
   /* 文字四档(color.labels.*) */
   --txt: rgba(0,0,0,0.9); --txt2: rgba(0,0,0,0.6); --txt3: rgba(0,0,0,0.45); --txt4: rgba(0,0,0,0.3);
-  /* 填充/分隔(color.fills.* / color.separator.s1) */
+  /* 填充/分隔(color.fills.* / color.separator.s1)——审美对齐设计稿:边框减淡(0.13→0.10,干净不硬) */
   --fill-1: rgba(0,0,0,0.03); --fill-2: rgba(0,0,0,0.05); --fill-3: rgba(0,0,0,0.15);
-  --sep: rgba(0,0,0,0.13);
+  --sep: rgba(0,0,0,0.10);
   /* 状态色(color.status.*) */
   --blue: #1783ff; --green: #16c456; --danger: #ff3849; --orange: #ff9500; --yellow: #ffd230; --purple: #985ffb;
   /* 10% 铺色(color.others.*:徽标/浅底警示专用) */
@@ -33,17 +33,17 @@
   --glass-bg: #f7f6f2;
   --glass-float: rgba(255,255,255,0.9);
   --glass-border: var(--sep);
-  /* 阴影(effect.shadow.* 族) */
-  --shadow-input: 0 5px 16px -4px rgba(0,0,0,0.07);
-  --shadow-small: 0 4px 16.4px rgba(0,0,0,0.1);
-  --shadow-medium: 0 4px 15px 2px rgba(0,0,0,0.15);
-  --glass-shadow: var(--shadow-medium), 0 16px 44px rgba(0,0,0,0.12);   /* 窗口级悬浮影:medium 打底 + 一层远影 */
-  --me-bg: #f5f5f5; --me-border: var(--sep); --me-txt: var(--txt);      /* 用户气泡 = color.others.bubbleGrayPc */
+  /* 阴影(effect.shadow.* 族)——审美对齐设计稿:更柔更远(硬影→空气感) */
+  --shadow-input: 0 5px 16px -4px rgba(0,0,0,0.06);
+  --shadow-small: 0 4px 16.4px rgba(0,0,0,0.08);
+  --shadow-medium: 0 4px 15px 2px rgba(0,0,0,0.10);
+  --glass-shadow: var(--shadow-medium), 0 16px 44px rgba(0,0,0,0.09);   /* 窗口级悬浮影:medium 打底 + 一层远影 */
+  --me-bg: #f0f0f0; --me-border: var(--sep); --me-txt: var(--txt);      /* 用户气泡:暖灰(设计稿同值),比 #f5 更柔 */
   --ai-bg: #ffffff; --ai-border: var(--sep); --ai-txt: var(--txt);
   /* 富文本 / 角色配色 → 设计 syntax 浅色组(color.syntax.* light) */
   --syn-kw: #034C7C; --syn-str: #A44185; --syn-cmt: #B2B2B2;
   --syn-fn: #7EB233; --syn-var: #2F86D2; --syn-num: #174781; --syn-op: #0991B6;
-  --c-heading: var(--blue); --c-code: var(--syn-kw); --c-codebg: var(--fill-1);
+  --c-heading: var(--blue); --c-code: var(--syn-kw); --c-codebg: rgba(127,127,127,0.08);   /* 代码块:中性灰底(设计稿同值),比纯 fill 更有层次 */
   --c-think: var(--purple); --c-think-bg: rgba(152,95,251,0.1); --c-quote: var(--syn-op); --c-strong: var(--syn-str);
   --composer-bg: var(--fill-1); --composer-border: var(--sep);
   --kbd-border: var(--sep);
@@ -79,7 +79,7 @@ html[data-theme="dark"] {
   --ai-bg: rgba(26,34,47,.92); --ai-border: var(--sep); --ai-txt: var(--txt);
   --syn-kw: #7fb3e8; --syn-str: #d48ac0; --syn-cmt: #6b7686;
   --syn-fn: #9fd16b; --syn-var: #6fb3f0; --syn-num: #6ba3e8; --syn-op: #4fc3d8;
-  --c-heading: var(--blue); --c-code: var(--syn-kw); --c-codebg: var(--fill-1);
+  --c-heading: var(--blue); --c-code: var(--syn-kw); --c-codebg: rgba(127,127,127,0.08);   /* 代码块:中性灰底(设计稿同值),比纯 fill 更有层次 */
   --c-think: var(--purple); --c-think-bg: rgba(167,139,250,.12); --c-quote: var(--syn-op); --c-strong: var(--syn-str);
   --composer-bg: var(--fill-1); --composer-border: var(--sep);
   --kbd-border: var(--sep);
@@ -132,13 +132,13 @@ body { padding: 24px; }
 .nodrag { -webkit-app-region: no-drag; }
 
 /* ===== 消息气泡 ===== */
-.msg { max-width: 86%; font-size: 14px; line-height: 1.65; padding: 9px 12px; border-radius: 13px; word-break: break-word; animation: msgIn .16s ease-out; }
+.msg { max-width: 86%; font-size: 14px; line-height: 1.65; padding: 10px 14px; border-radius: 13px; word-break: break-word; animation: msgIn .16s ease-out; }
 .me { align-self: flex-end; background: var(--me-bg); border: .5px solid var(--me-border); border-bottom-right-radius: 5px; color: var(--me-txt); }
 .ai { align-self: flex-start; background: var(--ai-bg); border: .5px solid var(--ai-border); border-bottom-left-radius: 5px; color: var(--ai-txt); }
 @keyframes msgIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }   /* 新消息轻入场:3px 上浮,快到不构成等待 */
 
 /* ===== 消息流 + 滚动条 ===== */
-.feed { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 2px 4px 2px 0; cursor: auto; -webkit-user-select: text; user-select: text; }
+.feed { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 2px 4px 2px 0; cursor: auto; -webkit-user-select: text; user-select: text; }
 .feed button, .feed a, .feed summary { -webkit-user-select: none; user-select: none; }   /* 动作按钮本身不参与选区 */
 .feed::-webkit-scrollbar { width: 6px; }
 .feed::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
