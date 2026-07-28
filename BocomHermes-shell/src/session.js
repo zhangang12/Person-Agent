@@ -570,22 +570,28 @@ desc: 改完前端代码后,用内嵌浏览器真正打开页面验证(加载/�
       }
       // 上下文工程·读文件字节计量:readN 只数文件个数,但"没读几个文件上下文就没了"的杀手是【字节】(内网实测反馈)。
       // 单次 read 输出 >12k 字 → 提醒分段读(纪律①单次 ≤400 行是软约定,弱模型不守,这里即时纠偏);
-      // 会话累计读字节 >60k(≈128k 的三成) → 提醒停止亲自深读、改派 task 子 Agent(回报一句话+路径)。
-      // 工作流/分片卡走 card-inject(真消息进会话,隐藏卡也收得到),普通卡走 card-note(可见灰字)。每档每会话只提醒一次。
+      // 会话【按文件去重】累计读字节超 knobs.readWarnMax(默认 100k,≈口径一半) → 提醒后续大文件改派 task 子 Agent。
+      // 两条例律与时代同步:重读同一文件不重复计账(取该文件历史最大一次);老内容会被 context-guard 清出上下文,
+      // 这里只拦"还在读"的节奏,不喊停(措辞引导式,防弱模型吓得不敢读了开始瞎编)。
       try {
         if (/^read$/i.test(String(text || '')) && !subagent && toolOutput && !toolError) {
           const isWf = S.wfCardByWc && S.wfCardByWc.has(si.wc.id)
           const n = String(toolOutput).length
-          si.readBytes = (si.readBytes || 0) + n
+          const fp = (() => { try { const inp = typeof toolInput === 'string' ? JSON.parse(toolInput) : (toolInput || {}); return String(inp.filePath || inp.path || '') } catch { return '' } })()
+          si.readMap = si.readMap || new Map()
+          si.readMap.set(fp || ('_nopath_' + (si._npSeq = (si._npSeq || 0) + 1)), Math.max(si.readMap.get(fp) || 0, n))
+          si.readBytes = [...si.readMap.values()].reduce((a, b) => a + b, 0)
           if (n > 12000 && !si._bigReadWarned) {
             si._bigReadWarned = true
             const tip = '单次 read 读入 ' + n + ' 字 —— 大文件请用 offset/limit 分段精读（单次 ≤400 行），或派 task 子 Agent 深读'
             if (isWf) si.wc.send('card-inject', { text: '(系统提醒:' + tip + '。子 Agent 结论落盘成文档,上下文里只留路径+一句话。)', disp: '上下文提醒:' + tip })
             else si.wc.send('card-note', { text: tip, tone: 'muted' })
           }
-          if (si.readBytes > 60000 && !si._readBytesWarned) {
+          const readWarnMax = Math.max(20000, Math.round(+(S.settings.knobs && S.settings.knobs.readWarnMax) || 100000))
+          if (si.readBytes > readWarnMax && !si._readBytesWarned) {
             si._readBytesWarned = true
-            const tip2 = '本会话已累计读入 ' + Math.round(si.readBytes / 1000) + 'k 字文件内容（约占 128k 上下文三成）—— 停止亲自深读：改造/转换/迁移类任务应【逐文件派 task 子 Agent】（它读原文 → 写目标文件 → 只回路径+一句差异），源码全文只许进叶子子 Agent 的上下文'
+            const ck = Math.round((+(S.settings.knobs && S.settings.knobs.ctxLimitMax) || 192000) / 1000) + 'k'
+            const tip2 = '本会话已累计读入约 ' + Math.round(si.readBytes / 1000) + 'k 字文件内容（' + ck + ' 上下文的一半）—— 后续大文件的改造/转换/迁移建议【逐文件派 task 子 Agent】读（它读原文 → 写目标文件 → 只回路径+一句差异），你的上下文留给判断与整合'
             if (isWf) si.wc.send('card-inject', { text: '(系统提醒:' + tip2 + '。)', disp: '上下文提醒:' + tip2 })
             else si.wc.send('card-note', { text: tip2, tone: 'muted' })
           }

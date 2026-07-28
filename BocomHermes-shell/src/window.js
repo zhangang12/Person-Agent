@@ -49,6 +49,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     taskPromptMax: 20000,         // 委派指令(task/delegate_task)硬上限(字符,128k 口径):只拦"贴原文"级病态指令,精确拦停该子会话
     ctxLimitMax: 192000,          // 水位上限硬顶(MiniMax M2.5 实测 192k):生效上限=min(serve 上报 limit.context, 此值) —— serve 报 192k 就用满 192k,报更大(公网 256k/1M)按此收口,防阈值线算到真实上限之外
     promptAsync: 0,               // prompt_async 发送通道（1=开）：POST 不再挂起等回合，R4 类在飞断开问题免疫；内网 fork 无该端点自动回落
+    readWarnMax: 100000,          // 读字节提醒线(按文件去重累计,字符):正常编码 3-5 个中等文件不报警;老内容已被 context-guard 清理,这里只拦"还在读"的节奏
   }
   const mergeKnobs = (k) => ({ ...DEFAULT_KNOBS, ...((k && typeof k === 'object') ? k : {}) })
   function loadSettings() {

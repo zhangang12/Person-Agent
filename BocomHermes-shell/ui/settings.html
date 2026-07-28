@@ -416,7 +416,7 @@
   })
 
   // ── 智能体旋钮(settings.knobs.*):读不到/输坏一律回默认,绝不写脏值 ──────────
-  const KNOB_DEFAULTS = { approvalTimeoutMin: 0, watchdogRounds: 3, watchdogOverlap: 0.7, watchdogEscalateRounds: 2, ctxHandoffPct: 0.55, chatHandoffPct: 0.9, autoCompactMax: 20, todoNudgeRounds: 3, knowledgeChurnMax: 300, wfConcurrency: 4 }
+  const KNOB_DEFAULTS = { approvalTimeoutMin: 0, watchdogRounds: 3, watchdogOverlap: 0.7, watchdogEscalateRounds: 2, ctxHandoffPct: 0.55, chatHandoffPct: 0.9, autoCompactMax: 20, todoNudgeRounds: 3, knowledgeChurnMax: 300, wfConcurrency: 4, readWarnMax: 100000 }
   const KNOB_DEFS = [
     { k: 'approvalTimeoutMin', name: '批准闸超时', step: 1, min: 0, hint: '工作流计划批准闸超过该分钟数自动开跑；0 = 永不自动批准（保守默认）' },
     { k: 'watchdogRounds', name: '看门狗判绕圈轮数', step: 1, min: 2, hint: '连续这么多轮读同一批文件且 todo 无进展，判定在绕圈并注入提醒' },
@@ -428,6 +428,7 @@
     { k: 'todoNudgeRounds', name: 'todo 停滞提醒', step: 1, min: 1, hint: 'todo 清单连续这么多轮未更新，下一条消息尾部附系统提醒' },
     { k: 'knowledgeChurnMax', name: '知识库翻腾上限', step: 10, min: 50, hint: '项目知识库条目达到该规模触发蒸馏整理（条目数，见下方知识库面板）' },
     { k: 'wfConcurrency', name: '工作流并发度', step: 1, min: 1, hint: '同时运行的动态工作流数量，超出部分排队（卡坞可见排队位）' },
+    { k: 'readWarnMax', name: '读文件提醒线', step: 10000, min: 20000, hint: '按文件去重累计读入字符数到该线，提醒后续大文件派子 Agent 读；默认 100000（≈上下文一半），正常编码读几个文件不会触发' },
   ]
   const knobInputs = {}
   ;(function buildKnobs() {
