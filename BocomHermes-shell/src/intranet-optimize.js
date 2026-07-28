@@ -8,7 +8,7 @@
 // 与 mcp-config.js 同款候选路径/备份风格;纯自足,不碰 window.js 内其它函数。
 'use strict'
 module.exports = function initIntranetOptimize(ctx) {
-  const { app, path, fs, ipcMain, log, getPermRules, getServeBases } = ctx
+  const { app, path, fs, ipcMain, log, getPermRules, getServeBases, getModelVision } = ctx
 
   function configCandidates() {
     const home = app.getPath('home')
@@ -55,6 +55,10 @@ module.exports = function initIntranetOptimize(ctx) {
     cfg.agent = (cfg.agent && typeof cfg.agent === 'object') ? cfg.agent : {}
     cfg.agent.explore = Object.assign({ maxSteps: 30 }, (cfg.agent.explore && typeof cfg.agent.explore === 'object' ? cfg.agent.explore : {}))
     if (!cfg.agent.explore.maxSteps) cfg.agent.explore.maxSteps = 30
+    // small_model(轻任务小模型,性能审查③):已配读图模型(modelVision)就让它兼任标题生成等轻任务
+    // (多为快模型;已显式配置 small_model 不覆盖,不合适可在 jsonc 手改)
+    const mv = (getModelVision && getModelVision()) || null
+    if (mv && mv.providerID && mv.modelID && !cfg.small_model) cfg.small_model = mv.providerID + '/' + mv.modelID
     return cfg
   }
 

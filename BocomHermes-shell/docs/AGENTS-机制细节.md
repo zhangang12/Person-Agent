@@ -1,0 +1,31 @@
+# AGENTS.md — BocomHermes 机制细节（原文留存）
+
+> 本文收编从根 `AGENTS.md` 迁出的机制详解（性能优化：根 AGENTS.md 只留高频必读，serve 每轮全量注入要控制体积）。改对应机制时回这里看完整约束。
+
+## 多层派发（主控卡，window.js `spawnOrchestrator`）
+
+复杂目标的统一入口，**卡坞「动态工作流」模式即走此路**（`start-conversation` mode=`wf`/`orch` → 主控；MCP `run_orchestration` → relay `/orch/run-orch`）——L0 主控卡（kind `orch`，不占并发位）先【预检路由】（只扫清单不读内容：相关文件 ≤20 且 ≤150KB 就改用单工作流，超线才拆）→ 出拆分方案（规划闸批准）→ 用 `run_workflow` 派 N 个分片工作流卡（各自全新 128k + task 扇出 + 55% 交棒）→ 分片 goal 带 `[orch:TAG]` 前缀登记 `reg.parentOrch`——**分片是隐藏卡**（不开窗、不占任务栏、自动过规划闸、权限自动放行——无人值守，否则 task 子 Agent/写文档卡死在看不见的批准框上）；**会话经 `session.js mirrorToOrch` 镜像回流主控卡**：主控卡顶部「分片进度」面板（`pushShardProgress`）点一片即在主区域就地渲染该分片的会话（shard 视图，不另开空间）；`wfTurnDone` 判收官后给主控卡注入进度消息（N/M）事件唤醒 → 主控派【索引棒】把各分片结论关联成两级索引 README（分片收官判定 = todowrite 全勾；兜底 = 轮末/回合报错后 45s 无新回合由 `armShardSettle` 补判 done/interrupted——内网模型常不收尾 todowrite，无兜底会永远卡 running；新回合经 `S.wfTurnStart` 解除计时，报错路径经 `S.wfTurnError` 起兜底，card-init/card-reinit 失败同样补回调，reinit 入口先解计时防交棒误杀）。`wfConcurrency` 只数"正在干活"的卡（`isCardBusyLately`：在跑或 3s 内刚闲——分片轮间空窗是假象，曾机制性超发；pipeline/orch 不占位，起卡 15s 宽限）。**健壮性口径（逻辑审查后落地）**：批准升级为壳层状态位（`reg.planApproved`，卡片 approvePlan 经 `wf-plan-approved` 上报，relay `/orch/run` 拦主控未批派发——以前批准只是会话文案，模型不守规程直接派也照单全收）；`[orch:TAG]` 解析统一走 `parseOrchTag`（行首前缀 + 全文二次扫描，全角括号也认）；唤醒目标缺失不置 `orchNotified`（留待重试，不再一次性聋掉）；`session.js` 主回合挂死看门狗（分片/主控 300s 静默自动 abort，45s tick；可见卡不代劳）；分片/主控空答自动重试经 setTimeout 排期 + `autoRetryPending` 保 busy（防旧 finally 踩出并发双回合）；interrupted 收官也出队，"全部收官"分母含排队片；settle 判 done 三判据（最后一轮被中止/全程零产出 → interrupted）；全收官 5min 未派索引棒壳层催办一次（只催不代派）；**验证证据闸（编码 harness 核心）**：编码分片（有写归属）收官时机判 bash 命令流水（`session.js wfAction 'cmd' 轨`）有无构建/测试命令（`VERIFY_CMD`），无证据标 `reg.unverified` 随唤醒报主控按【未验证】对待，全片齐后壳层自动补派【集成验证】分片（`spawnWorkflow` 同 tag，`S.orchVerifyDone` 防循环）——弱模型"号称完成但从不验证"不再靠自觉；连带关窗跳过忙卡、关窗即埋 settle 计时；长任务防停（`card.html maybeContinueNudge`）：成功轮末 todo 还有未完项 → wf/orch/shard 卡自动注入"继续执行"（停=链死；连催 3 次未完项没降就停催转人工，防死循环；有进展即复位），普通对话卡出可见「继续执行」按钮（判动权给人）；委派驱动（`maybeDelegateNudge`）：todo ≥3 步且已实质干活且 ≥2 轮未派 task → wf 卡自动注入"按规程第 4 条派子 Agent 并行"，普通卡给可见建议（每任务只催一次，派过/催过不再管）；出错轮不挂批准条（防预检没做完就批）；递归硬禁（relay `/orch/run-orch` 拦带已有 [orch:TAG] 的 goal——下级主控派出的分片会回报到别的 Tag 名下，唤醒回流错乱，整条链黑盒停摆（实测），正确做法是把分片拆得更小由你直接用 run_workflow 一次派够）。
+
+## serve 池架构（`opencode.js`）
+
+一个项目目录 = 一个独立 serve 进程（端口从 4096 起自动找空闲），因为此版 opencode 的 `POST /session` 不支持会话级目录。同项目多卡复用同一 serve 的并发会话；每个 serve 一条 `/event` SSE。只读工具(read/grep/glob/list/ls/find/tree)自动放行，写/执行转卡片内联确认（允许一次/总是/拒绝）。逐 token 流式靠 SSE `message.part`，POST 结果作权威兜底。**主窗口化后的发卡与清理**：所有发卡收口在 `window.js spawnCard`——主窗口活着就转发 `shell-spawn` 由 shell 对话视图内嵌 webview 开卡（`opts.window`=钉出、`opts.hidden`=无人值守工人才走真 BrowserWindow）；关会话/关卡的清理链统一走 `src/card-cleanup.js` 的 `cleanupCardContext`（窗口 `closed`、主窗视图关闭、钉出收回分流都复用它）。
+
+## 上下文口径（所有 Agent 同规，MiniMax M2.5 = 192k）
+
+subAgent 由 serve 内置 `task` 工具（或 oh-my-openagent 插件的 `delegate_task`，带必填参 `load_skills`）创建、隔离上下文，不进卡片水位；两族委派工具壳层同待（计量/硬闸/子agent窗格）。口径数值 = `knobs.ctxLimitMax`（默认 192000），生效上限 = min(serve 上报 limit.context, 该值)——报 192k 用满 192k，报更大（公网 256k/1M）按 192k 收口，防阈值线算到真实上限之外；纪律/规程文本按该旋钮动态注入（`window.js ctxK()`），不再写死 128k。改这几处时保持数值口径一致。四道防线——①纪律注入：`session.js` 项目背景锚携带 `<上下文纪律(Nk)>`（N=knob 口径，所有卡），`window.js workflowSystemPrompt` 第4条是工作流卡的加强版（指令≤2000字、只给路径不贴原文、回报≤400字、delegate_task 必传 load_skills，不需要就 []），第3条附【编码/转换/迁移铁律】（源码不进主上下文：逐文件派子 Agent 读原文→写目标文件→只回路径，主 Agent 只验收；琐碎目标禁派单），主控编码模式 A2 同口径（按文件清单分片、片内逐文件派单）；①b 周期目标背诵（Manus recitation 抗 lost-in-middle）：wf/orch/shard 卡每 5 轮把总目标+未完事项附到下一条消息尾部（单会话卡不加——用户在场人就是锚）；①c KV-cache 度量：ctx chip 悬停显示命中率（cacheRead/实际进上下文量，serve 报缓存字段才有），注入顺序铁律=稳定块在前动态内容只追加尾部；②硬闸：`knobs.taskPromptMax`（默认 20000 字，只拦"贴原文"级病态指令），`session.js onText` 检出超限 task/delegate_task → 精确 abort 该调用的子会话（taskChild 可解析才杀，绝不株连并行兄弟；解析不到降级为只警告，挂死交看门狗），主 Agent 收 cancelled 后拆小重派；③看门狗（`session.js`）：子会话用量 ≥80%×口径（默认 192k）预警一次，静默 5min 且生成挂死自动中止；③b 读文件字节计量（`session.js`）：单次 read 输出 >12k 字提醒 offset/limit 分段读、会话按文件去重累计超 `knobs.readWarnMax`（默认 100k）提醒后续大文件派 task 子 Agent（重读同一文件不重复计账），工作流/分片卡走 card-inject、普通卡走 card-note；③c read-spill 插件（`plugin/read-spill.js`）：read/grep 输出 >8000 字符（`BOCOMHERMES_READ_SPILL_MAX` 可调，0=关）自动写临时文件、上下文只留头 40 行+路径+总量；③d edit-guard 插件（`plugin/edit-guard.js`，CC Read-before-Edit 同款）：会话内没 read 过的文件不许 edit/write（write 新文件放行；`BOCOMHERMES_EDIT_GUARD=0` 关）；③e max_tokens 截断续写（`session.js`，CC query.ts 同款）：step-finish reason=length 检出后注入"直接从断点接着写，剩余拆小"（每会话 ≤3 次，非截断轮复位）；模型降级路由（`session.js`：同模型连错 ≥2 次且 `settings.modelFallback` 已配 → 本会话切降级模型一次，CC FallbackTriggeredError 同款）；交棒工作现场回填（compactCore：最近 write/edit 落盘的 5 个文件随接力摘要注入，CC buildPostCompactMessages 同款防换棒失忆；摘要模型可先打 `<analysis>` 草稿，定稿前机械剥离）。
+
+## 提示词改动纪律（内网×弱模型专项，2026-07 整改起生效）
+
+> 依据：`external/claude-code-提示词工程借鉴.md` §8.3/§9.5——CC 的 eval 反复证明弱模型对提示词的服从率对**位置、标题、措辞**极度敏感（行动 cue 标题 3/3 vs 抽象标题 0/3）。
+
+- **小步单变量**：提示词/注入文本改动一次只改一处，合并成一波进观测期（两周），不与其他机制改动混在一起——否则出病灶无法归因。
+- **每条补丁进台账**：落 `docs/项目记忆/弱模型行为台账.md`（病灶/失败样本/落点/依据/观测期/去留）；观测到期写"保留/改写/删除"结论，**无效条款靠观测淘汰**。
+- **提示词长度是一等资源**：新增注入条款先过"值不值这个上下文"的秤；清单类常驻文本必须有硬预算（技能摘要 ≤800 字、技能全文 ≤4000 字同款风格）。
+- **写法库**：负面指令给可判定颗粒度、禁令附理由、双向纠偏（不粉饰也不许防御性打折）、行动 cue 标题、定量优于定性——模板见提示词借鉴文档 §8，照那个风格写。
+- **纪律注入的位置纪律**：壳层首发注入拼在首条 user 消息（session.js）；serve 系统提示纪律走 context-guard 插件追加在 system 数组**尾部**（保 KV-cache 前缀），不插入、不替换既有元素。
+
+## 验证闭环与双模型（2026-07 起，改验证相关代码前必读）
+
+- **双模型**：`settings.modelMain`（干活）/ `modelVision`（读图），设置页两个下拉（候选=serve 已配模型，读图位按 `image:true` 过滤）。路由：会话默认主模型（`session.js card-send`）；带图消息自动切读图模型（未配则回退"清单找 image 模型"老行为）；**验证棒整卡跑读图模型**（`spawnWorkflow(goal, forceModel)`）。多模态读完图后，context-guard 插件把历史图片 part 替换成 `[图片已读:结论见下文]`（防非多模态模型读图报错+省上下文，`BOCOMHERMES_CTX_GUARD_IMG_PURGE=0` 关）。
+- **验证闭环**（全链路在 `window.js shardSettled`）：编码分片收官 → 证据闸（无构建/测试/浏览器证据标【未验证】，验证棒自身豁免）→ 壳层自动派【集成验证】分片（CC verificationAgent 全量提示词，见 `verifyGoalFor`：基线五步/分型动作链/对抗探针/FAIL 三查/只读沙箱 writeScope=/tmp）→ 收官解析 `reg.final` 的 VERDICT 机判（无字面量/PASS 无 Command run 块=拒收，自动回派一次，连撞 2 次转人工）→ **FAIL 保留同棒复验**（`verifyOpen/verifyRounds`，修复分片收官喂"复验"，喂之前**必须复位 `reg.orchNotified`**，否则复验收官被一次性标志吞掉——实测坑）→ PASS 清账 + **抽查重放**（抽只读白名单命令真跑，不符拒收）；FAIL 循环 ≤3 轮到顶转人工。
+- **验证棒只读沙箱**：`assignVerifyScope` 把验证棒 writeScope 限定为系统临时目录（write/edit 项目文件被拒、bash 重定向越界被拒、一次性验证脚本可写、npm test 这类无显式文件目标的命令不受影响）——别再给验证棒项目写权限，那是"又当裁判又当运动员"。

@@ -52,6 +52,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     readWarnMax: 100000,          // 读字节提醒线(按文件去重累计,字符):正常编码 3-5 个中等文件不报警;老内容已被 context-guard 清理,这里只拦"还在读"的节奏
   }
   const mergeKnobs = (k) => ({ ...DEFAULT_KNOBS, ...((k && typeof k === 'object') ? k : {}) })
+  // 弱模型拖尾收口(性能审查⑤):context-guard 插件的 chat.params 钳制读 serve 进程环境——
+  // spawn 的 serve 继承本进程 env,这里给默认值(已被显式设置的不覆盖;8192≈一次长答,防 JSON 截断与回合拖沓)
+  if (!process.env.BOCOMHERMES_MAX_OUTPUT_TOKENS) process.env.BOCOMHERMES_MAX_OUTPUT_TOKENS = '8192'
   function loadSettings() {
     // 浅色单主题:无论 settings.json 里存的是什么,theme 恒为 'light'(主题机制已锁定)
     try {
@@ -2358,7 +2361,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   // 把自带 8 个本地 MCP server 写进 opencode/bocomcode 配置,整块搬进 ./mcp-config 的 initMcpConfig(ctx)。
   // 启动即确保已注册:缺失/路径过期自动补写(带备份)——否则 Agent 静默没有任何天枢工具(技能解析/自愈/接管全空转)。
   const mcpCfg = initMcpConfig({ app, path, fs, ipcMain, log })
-  initIntranetOptimize({ app, path, fs, ipcMain, log, getPermRules: () => S.settings.permRules, getServeBases: () => [...new Set([...S.sessionInfo.values()].map((si) => si && si.serve && si.serve.base).filter(Boolean))] })
+  initIntranetOptimize({ app, path, fs, ipcMain, log, getPermRules: () => S.settings.permRules, getServeBases: () => [...new Set([...S.sessionInfo.values()].map((si) => si && si.serve && si.serve.base).filter(Boolean))], getModelVision: () => S.settings.modelVision })
   const agentMd = initAgentMd({ app, path, fs, ipcMain, log })
   setTimeout(() => {
     try {
