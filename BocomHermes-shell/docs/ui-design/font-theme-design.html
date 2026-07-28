@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<title>BocomHermes 字体与主题 · 设计方案稿</title>
+<style>
+/* ══════════════════════════════════════════════════════════════
+   BocomHermes 设计方案:字体焕新 + 双主题回归
+   ① 字体栈按 Windows 内网重写(雅黑UI/Segoe UI Variable/Cascadia 优先,系统自带零打包)
+   ② 字级统一:正文 14px 基准,次级信息 ≥11px(告别 9px 费眼小字)
+   ③ 双主题:暖纸白(不是刺眼纯白) + 深空蓝灰(玻璃拟态),一键切换预览
+   ══════════════════════════════════════════════════════════════ */
+:root, html[data-theme="light"] {
+  --font-ui: "Microsoft YaHei UI", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+
+  --bg: #f4f3ef;                 /* 暖纸白底(比纯白 #fff 长时间看不刺眼) */
+  --bg-grad: radial-gradient(1200px 600px at 80% -10%, #e8eefb 0%, transparent 55%),
+             radial-gradient(900px 500px at -10% 110%, #eef3ea 0%, transparent 50%);
+  --glass: rgba(255, 255, 255, .78);
+  --glass-strong: rgba(255, 255, 255, .92);
+  --line: rgba(31, 41, 61, .10);
+  --txt: #1f2933;
+  --txt2: #4b5565;
+  --txt3: #75808f;               /* 次级文字(≥11px,对比度抬过 AA) */
+  --accent: #3b82f6;
+  --accent-soft: rgba(59, 130, 246, .10);
+  --think: #8b5cf6;
+  --green: #1f9d66;
+  --warn-bg: #fdf4e3; --warn-txt: #9a6a12;
+  --code-bg: #f6f7f9;
+  --shadow: 0 10px 30px rgba(31, 41, 61, .08), 0 2px 8px rgba(31, 41, 61, .05);
+  --msg-me: #dceaff;
+}
+html[data-theme="dark"] {
+  --bg: #10151d;
+  --bg-grad: radial-gradient(1200px 600px at 85% -10%, rgba(59,130,246,.14) 0%, transparent 55%),
+             radial-gradient(900px 500px at -10% 110%, rgba(31,157,102,.10) 0%, transparent 50%);
+  --glass: rgba(22, 29, 40, .72);
+  --glass-strong: rgba(26, 34, 47, .92);
+  --line: rgba(148, 163, 184, .14);
+  --txt: #e5eaf1;
+  --txt2: #a7b2c1;
+  --txt3: #7d8a9c;
+  --accent: #5b9dff;
+  --accent-soft: rgba(91, 157, 255, .14);
+  --think: #a78bfa;
+  --green: #34c785;
+  --warn-bg: rgba(253, 230, 170, .10); --warn-txt: #e6c26a;
+  --code-bg: rgba(9, 13, 19, .55);
+  --shadow: 0 12px 34px rgba(0, 0, 0, .45), 0 2px 8px rgba(0, 0, 0, .3);
+  --msg-me: #2b4d7d;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font-ui); color: var(--txt); background: var(--bg);
+  background-image: var(--bg-grad); background-attachment: fixed;
+  font-size: 14px; line-height: 1.65; min-height: 100vh;
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+}
+.wrap { max-width: 1060px; margin: 0 auto; padding: 28px 24px 80px; }
+
+/* ── 顶部:标题 + 主题切换 ── */
+.hd { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
+.hd h1 { font-size: 20px; font-weight: 600; letter-spacing: .01em; margin: 0; }
+.hd .sub { color: var(--txt3); font-size: 12px; margin-top: 2px; }
+.seg { margin-left: auto; display: inline-flex; background: var(--glass); border: 1px solid var(--line); border-radius: 999px; padding: 3px; box-shadow: var(--shadow); }
+.seg button { border: none; background: transparent; color: var(--txt2); font: 500 12px/1 var(--font-ui); padding: 7px 16px; border-radius: 999px; cursor: pointer; }
+.seg button.on { background: var(--accent); color: #fff; }
+
+/* ── 字体样张 ── */
+.panel { background: var(--glass); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); backdrop-filter: blur(14px); padding: 20px 22px; margin-bottom: 22px; }
+.panel h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+.panel .note { color: var(--txt3); font-size: 12px; margin-bottom: 14px; }
+.spec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.spec { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; background: var(--glass-strong); }
+.spec .k { font-size: 11px; color: var(--txt3); letter-spacing: .06em; margin-bottom: 8px; }
+.spec .ui-sample { font-size: 15px; line-height: 1.7; }
+.spec .mono-sample { font-family: var(--font-mono); font-size: 13px; line-height: 1.6; background: var(--code-bg); border-radius: 8px; padding: 10px 12px; margin-top: 8px; white-space: pre; overflow-x: auto; }
+.spec .stack { font-family: var(--font-mono); font-size: 11px; color: var(--txt3); margin-top: 10px; word-break: break-all; }
+
+/* 字级表 */
+.scale { display: flex; flex-direction: column; gap: 8px; }
+.scale .row { display: flex; align-items: baseline; gap: 12px; border-bottom: 1px dashed var(--line); padding-bottom: 7px; }
+.scale .row:last-child { border-bottom: none; }
+.scale .tag { flex: none; width: 130px; font-size: 11px; color: var(--txt3); }
+.s-largeTitle { font-size: 20px; font-weight: 600; }
+.s-title { font-size: 16px; font-weight: 600; }
+.s-body { font-size: 14px; }
+.s-body-em { font-size: 14px; font-weight: 500; }
+.s-sub { font-size: 12px; color: var(--txt2); }
+.s-cap { font-size: 11px; color: var(--txt3); }
+
+/* ── 对话卡样张 ── */
+.card { background: var(--glass); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); backdrop-filter: blur(16px); overflow: hidden; }
+.card-hd { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--glass-strong); }
+.card-hd .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.card-hd .t { font-size: 13px; font-weight: 600; }
+.card-hd .chip { margin-left: auto; font-size: 11px; color: var(--txt2); background: var(--accent-soft); border: 1px solid var(--line); padding: 2px 9px; border-radius: 999px; }
+.card-bd { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.msg { max-width: 84%; padding: 9px 13px; border-radius: 13px; font-size: 14px; line-height: 1.65; }
+.msg.me { align-self: flex-end; background: var(--msg-me); border-bottom-right-radius: 5px; }
+.msg.ai { align-self: flex-start; background: var(--glass-strong); border: 1px solid var(--line); border-bottom-left-radius: 5px; }
+.msg.ai p { margin: 0 0 8px; } .msg.ai p:last-child { margin: 0; }
+.reason { border-left: 2px solid var(--think); padding: 2px 0 2px 11px; color: var(--txt2); font-size: 12.5px; }
+.reason .rh { color: var(--think); font-weight: 600; font-size: 12px; display: flex; align-items: center; gap: 5px; }
+.todo { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 0 10px 10px 0; padding: 8px 12px; background: var(--glass-strong); font-size: 12.5px; }
+.todo .th { font-size: 11px; color: var(--txt3); font-weight: 700; letter-spacing: .04em; margin-bottom: 4px; }
+.todo .done { color: var(--txt3); text-decoration: line-through; }
+.todo .doing { font-weight: 600; }
+.todo .doing::before { content: '◐ '; color: var(--accent); }
+.toolbox { border: 1px solid var(--line); border-radius: 10px; background: var(--glass-strong); overflow: hidden; }
+.toolbox summary { list-style: none; cursor: pointer; padding: 7px 12px; font-size: 12px; color: var(--txt2); display: flex; gap: 7px; align-items: center; }
+.toolbox summary::before { content: '⏺'; color: var(--green); font-size: 9px; }
+.toolbox pre { margin: 0; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.6; background: var(--code-bg); padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 150px; overflow-y: auto; }
+.note-line { font-size: 11.5px; color: var(--txt3); border-left: 2.5px solid var(--accent); background: var(--glass-strong); border-radius: 0 8px 8px 0; padding: 5px 10px; }
+.notice { font-size: 12px; color: var(--warn-txt); background: var(--warn-bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; display: flex; gap: 10px; align-items: center; }
+.notice button { border: 1px solid var(--line); background: var(--glass-strong); color: var(--txt); font: 500 11px/1 var(--font-ui); padding: 5px 12px; border-radius: 999px; cursor: pointer; }
+.notice button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.composer { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--line); background: var(--glass-strong); }
+.composer .inp { flex: 1; border: 1px solid var(--line); border-radius: 10px; background: var(--glass); padding: 9px 12px; color: var(--txt3); font-size: 13.5px; }
+.composer .send { border: none; background: var(--accent); color: #fff; font: 600 13px/1 var(--font-ui); padding: 10px 18px; border-radius: 10px; cursor: pointer; }
+
+/* 分片进度条样张 */
+.shards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+.shard { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--glass-strong); font-size: 12px; }
+.shard .m { font-size: 11px; color: var(--txt3); margin-top: 3px; }
+
+h3.sec { font-size: 13px; color: var(--txt3); font-weight: 600; letter-spacing: .08em; margin: 26px 0 10px; }
+.kv { display: grid; grid-template-columns: 200px 1fr; gap: 6px 14px; font-size: 12.5px; }
+.kv b { font-weight: 600; }
+.kv span { color: var(--txt2); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="hd">
+    <div>
+      <h1>字体与主题 · 设计方案稿</h1>
+      <div class="sub">BocomHermes · Windows 内网字体焕新 + 双主题回归</div>
+    </div>
+    <div class="seg">
+      <button id="bLight" class="on" onclick="setTheme('light')">☀ 浅色(暖纸)</button>
+      <button id="bDark" onclick="setTheme('dark')">☾ 深色(深空)</button>
+    </div>
+  </div>
+
+  <!-- ① 字体样张 -->
+  <h3 class="sec">① 字体方案(系统自带,零打包,内网可用)</h3>
+  <div class="panel">
+    <div class="spec-grid">
+      <div class="spec">
+        <div class="k">正文 / UI —— Microsoft YaHei UI 优先</div>
+        <div class="ui-sample">样衣订单状态机共有 8 个状态,转移守卫集中在 sample.service.ts。Agent 已派 4 个子任务并行勘察,回报只留路径与一句话。0O o 1lI 中文混排 ABCabc123</div>
+        <div class="stack">"Microsoft YaHei UI" → "Segoe UI Variable Text" → "Segoe UI" → "Microsoft YaHei" → "Noto Sans SC" → system-ui</div>
+      </div>
+      <div class="spec">
+        <div class="k">等宽 / 代码 —— Cascadia Code 优先(Win11 自带)</div>
+        <div class="mono-sample">const reg = { id: String(id), wcId, kind: wfKind }
+if (parentOrch && !open) reg.status = 'done'  // 0O1lI|{}[]</div>
+        <div class="stack">"Cascadia Code" → "Cascadia Mono" → "JetBrains Mono" → Consolas → monospace</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ② 字级表 -->
+  <h3 class="sec">② 字级统一(正文 14 基准,次级 ≥11,告别 9px 小字)</h3>
+  <div class="panel">
+    <div class="scale">
+      <div class="row"><span class="tag">大标题 20/600</span><span class="s-largeTitle">多层派发 · 主控</span></div>
+      <div class="row"><span class="tag">标题 16/600</span><span class="s-title">样衣模块深度分析</span></div>
+      <div class="row"><span class="tag">正文 14/400</span><span class="s-body">预检完成:候选集 34 个文件 / 1.0MB,超线,走多层拆分,预算演算 M=7。</span></div>
+      <div class="row"><span class="tag">正文强调 14/500</span><span class="s-body-em">分片 3/7 已完成,索引棒待派出</span></div>
+      <div class="row"><span class="tag">辅助 12/400</span><span class="s-sub">工具调用 12 次 · 读文件 6 个 · 第 2 轮</span></div>
+      <div class="row"><span class="tag">说明 11/400(原 9-10px)</span><span class="s-cap">已随首条消息注入背景:项目背景 + 项目知识(场景命中)(6,321 字)</span></div>
+    </div>
+  </div>
+
+  <!-- ③ 对话卡全组件样张 -->
+  <h3 class="sec">③ 对话卡全组件样张(当前主题实时预览)</h3>
+  <div class="card">
+    <div class="card-hd">
+      <span class="dot"></span>
+      <span class="t">✓ 工作流 · 深度分析样衣模块</span>
+      <span class="chip">上下文 41% · KV-cache 86%</span>
+    </div>
+    <div style="padding:10px 14px 0;">
+      <div class="shards">
+        <div class="shard">✅ 后端业务逻辑<div class="m">已完成 · 4 轮 · 点击查看会话 ⧉</div></div>
+        <div class="shard">✅ 前端架构与视图<div class="m">已完成 · 3 轮 · 点击查看会话 ⧉</div></div>
+        <div class="shard">⏳ 数据迁移与字典<div class="m">运行中 · 第 2 轮 · 点击查看会话 ⧉</div></div>
+        <div class="shard">🕐 测试套件<div class="m">排队中</div></div>
+      </div>
+    </div>
+    <div class="card-bd">
+      <div class="msg me">深度分析样衣模块的后端业务逻辑</div>
+      <div class="reason"><div class="rh">⌄ 思考过程</div>先看目录结构确认模块边界,再 grep 状态机转移点,最后对照数据库约束。候选 12 个文件,预算内,无需再拆。</div>
+      <div class="todo">
+        <div class="th">任务清单 2/4</div>
+        <div class="done">☒ 勘察模块边界与入口</div>
+        <div class="done">☒ 状态机与守卫梳理</div>
+        <div class="doing">材料链路数据流(读 quote/order 服务)</div>
+        <div>☐ 汇总成文档落盘 docs/样衣.md</div>
+      </div>
+      <details class="toolbox" open>
+        <summary>read · backend/app/services/sample.service.ts · completed</summary>
+        <pre>入参
+{ "filePath": "backend/app/services/sample.service.ts", "offset": 430, "limit": 60 }
+
+结果
+markOrdered()(L439-442) 零守卫:直接 repo.update 无条件覆盖
+任何状态为 ORDERED,可覆盖 ABANDONED/已完成等终态……</pre>
+      </details>
+      <div class="msg ai">
+        <p>状态机梳理完成,发现 3 个守卫缺口:</p>
+        <p>1. <b>markOrdered 零守卫</b>——可覆盖终态,且不记录版本日志;<br>2. 写操作未校验客户机密可见性(对比 customer 模块);<br>3. syncFromSample 在事务外触发,同步失败不回滚。</p>
+        <p>详细证据与 file:行号 已落盘 <code>docs/样衣/状态机缺口.md</code>。</p>
+      </div>
+      <div class="note-line">看门狗:连续 3 轮读同一批文件且无进展,已提醒 Agent 换策略</div>
+      <div class="notice">⚠ 上下文已用 55% —— 到达交棒水位,正在写交接单… <button>立即交棒</button><button class="primary">继续观察</button></div>
+      <div class="notice">计划已出 —— 批准后开跑;要改就直接输入调整意见 <button class="primary">开始执行</button><button>取消自动</button></div>
+    </div>
+    <div class="composer">
+      <div class="inp">输入消息,Enter 发送 / Shift+Enter 换行;贴窗缘 6px 拖拽可缩放卡片</div>
+      <button class="send">发送</button>
+    </div>
+  </div>
+
+  <!-- ④ 设计决策清单 -->
+  <h3 class="sec">④ 落地决策(评审通过后映射进 glass.css + ui-vue tokens.css)</h3>
+  <div class="panel">
+    <div class="kv">
+      <b>字体栈原则</b><span>Windows 原生优先,系统自带零打包;CJK/英文/数字基线对齐(雅黑 UI 与 Cascadia 同出微软,混排协调)</span>
+      <b>字级</b><span>正文 14/1.65;辅助 12;说明 11(原 9-10.5px 全部淘汰);代码 12.5-13/1.6</span>
+      <b>浅色主题</b><span>暖纸白 #f4f3ef(非纯白),玻璃卡 rgba(255,255,255,.78),减少长时间阅读刺眼</span>
+      <b>深色主题</b><span>深空蓝灰 #10151d 玻璃拟态,accent 提亮到 #5b9dff 保对比度;双主题 token 完全同名映射</span>
+      <b>字号三档(可选 A3)</b><span>紧凑 13 / 标准 14 / 舒适 15.5,设置页切换,--font-size-base 一处驱动</span>
+      <b>不动的</b><span>ui-vue 整体版式与组件结构(只换 token);玻璃拟态语言;accent 品牌蓝</span>
+    </div>
+  </div>
+
+</div>
+<script>
+function setTheme(t) {
+  document.documentElement.dataset.theme = t
+  document.getElementById('bLight').classList.toggle('on', t === 'light')
+  document.getElementById('bDark').classList.toggle('on', t === 'dark')
+}
+</script>
+</body>
+</html>

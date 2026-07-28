@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<title>会话字体候选对比 · BocomHermes</title>
+<style>
+:root, html[data-theme="light"] {
+  --bg:#f7f6f2; --card:#ffffff; --line:rgba(0,0,0,.12); --txt:rgba(0,0,0,.9); --txt2:rgba(0,0,0,.6); --txt3:rgba(0,0,0,.45);
+  --me:#f0f0f0; --accent:#1783ff; --mono:"Cascadia Code","Cascadia Mono",Consolas,monospace;
+}
+html[data-theme="dark"] {
+  --bg:#10151d; --card:#1a2230; --line:rgba(148,163,184,.16); --txt:#e5eaf1; --txt2:#a7b2c1; --txt3:#7d8a9c;
+  --me:#2b4d7d; --accent:#5b9dff;
+}
+* { box-sizing:border-box; margin:0; padding:0; }
+body { background:var(--bg); color:var(--txt); padding:24px; font-size:14px; line-height:1.65; }
+.hd { max-width:1100px; margin:0 auto 18px; display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+.hd h1 { font-size:19px; font-weight:600; }
+.hd .sub { color:var(--txt3); font-size:12px; }
+.seg { margin-left:auto; display:inline-flex; background:var(--card); border:1px solid var(--line); border-radius:999px; padding:3px; }
+.seg button { border:none; background:transparent; color:var(--txt2); font-size:12px; padding:6px 14px; border-radius:999px; cursor:pointer; }
+.seg button.on { background:var(--accent); color:#fff; }
+.grid { max-width:1100px; margin:0 auto; display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+@media (max-width: 900px) { .grid { grid-template-columns:1fr; } }
+.cand { background:var(--card); border:1px solid var(--line); border-radius:14px; overflow:hidden; box-shadow:0 6px 20px rgba(0,0,0,.06); }
+.cand .chd { display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--line); }
+.cand .chd .name { font-size:15px; font-weight:600; }
+.cand .chd .meta { font-size:11px; color:var(--txt3); }
+.cand .pick { margin-left:auto; border:1px solid var(--line); background:transparent; color:var(--txt2); font-size:12px; padding:5px 14px; border-radius:999px; cursor:pointer; }
+.cand .pick:hover { border-color:var(--accent); color:var(--accent); }
+.cand .cbd { padding:14px 16px; display:flex; flex-direction:column; gap:10px; }
+.msg { max-width:86%; padding:8px 12px; border-radius:12px; font-size:14px; line-height:1.65; }
+.msg.me { align-self:flex-end; background:var(--me); border-bottom-right-radius:4px; }
+.msg.ai { align-self:flex-start; background:var(--card); border:1px solid var(--line); border-bottom-left-radius:4px; }
+.msg.ai b { font-weight:600; }
+.code { font-family:var(--mono); font-size:12.5px; line-height:1.6; background:rgba(127,127,127,.08); border-radius:8px; padding:9px 11px; white-space:pre; overflow-x:auto; }
+.meta-line { font-size:12px; color:var(--txt2); }
+.small { font-size:11px; color:var(--txt3); }
+.f1 { font-family:"Microsoft YaHei UI","Microsoft YaHei",sans-serif; }
+.f2 { font-family:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif; }
+.f3 { font-family:"Microsoft YaHei",sans-serif; }
+.f4 { font-family:"DengXian","Microsoft YaHei UI","Microsoft YaHei",sans-serif; }
+.f5 { font-family:"NSimSun","SimSun","Microsoft YaHei",sans-serif; }
+.verdict { max-width:1100px; margin:18px auto 0; background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px 18px; font-size:12.5px; color:var(--txt2); line-height:1.8; }
+.verdict b { color:var(--txt); }
+</style>
+</head>
+<body>
+<div class="hd">
+  <h1>会话字体候选对比</h1>
+  <span class="sub">同一对话卡渲染 · 全部系统自带零打包(内网可用)</span>
+  <div class="seg">
+    <button id="bLight" class="on" onclick="setTheme('light')">☀ 浅色</button>
+    <button id="bDark" onclick="setTheme('dark')">☾ 深色</button>
+  </div>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<div class="verdict">
+  <b>怎么选(建议):</b>
+  ① <b>A Microsoft YaHei UI</b> — 雅黑 UI 版,字距/数字最现代,混排最稳(当前在用,默认推荐);
+  ② <b>B Segoe UI Variable</b> — Win11 原生可变字体,拉丁/数字最漂亮,中文回落雅黑 UI(中英文混排多的选它);
+  ③ <b>C 经典雅黑</b> — 字形饱满、最耐看,但数字偏老派;
+  ④ <b>D 等线</b> — 笔画细、最清秀,大屏高分屏好看,低分屏慎选(细笔画发虚);
+  ⑤ <b>E 新宋体</b> — 衬线书卷气,长文档阅读感好,但界面感弱(喜欢"读文档感"的选)。
+  等宽代码统一 Cascadia Code(各卡一致,不随方案变)。
+</div>
+
+<script>
+const SAMPLE = {
+  me: '把样衣模块的状态机梳理一遍,重点看 markOrdered 的守卫',
+  ai: '状态机共 <b>8 个状态</b>,发现 3 个缺口:markOrdered()(L439-442)零守卫可覆盖终态;写操作未校验机密可见性;syncFromSample 在事务外触发。0O o 1lI | 数字 3.14159 与 ABCabc 混排测试。',
+  code: 'function markOrdered(id) {\n  return repo.update(id, { status: "ORDERED" })  // 零守卫\n}',
+  meta: '工具调用 12 次 · 读文件 6 个 · 第 2 轮',
+  small: '已随首条消息注入背景:项目背景 + 项目知识(场景命中)(6,321 字)',
+}
+const CANDS = [
+  { cls: 'f1', name: 'A · Microsoft YaHei UI', meta: '当前默认 · 雅黑 UI 版 · 混排最稳' },
+  { cls: 'f2', name: 'B · Segoe UI Variable', meta: 'Win11 原生可变 · 拉丁数字最美' },
+  { cls: 'f3', name: 'C · 经典雅黑', meta: '字形饱满耐看 · 数字偏老派' },
+  { cls: 'f4', name: 'D · 等线 DengXian', meta: '笔画细最清秀 · 高分屏友好' },
+  { cls: 'f5', name: 'E · 新宋体', meta: '衬线书卷气 · 长文阅读感' },
+]
+const grid = document.getElementById('grid')
+for (const c of CANDS) {
+  const d = document.createElement('div')
+  d.className = 'cand'
+  d.innerHTML = '<div class="chd"><span class="name ' + c.cls + '">' + c.name + '</span><span class="meta">' + c.meta + '</span><button class="pick">选这个</button></div>'
+    + '<div class="cbd ' + c.cls + '">'
+    + '<div class="msg me">' + SAMPLE.me + '</div>'
+    + '<div class="msg ai">' + SAMPLE.ai + '</div>'
+    + '<div class="code">' + SAMPLE.code + '</div>'
+    + '<div class="meta-line">' + SAMPLE.meta + '</div>'
+    + '<div class="small">' + SAMPLE.small + '</div>'
+    + '</div>'
+  d.querySelector('.pick').addEventListener('click', (e) => {
+    document.querySelectorAll('.pick').forEach((b) => { b.textContent = '选这个'; b.style.borderColor = ''; b.style.color = '' })
+    e.target.textContent = '✓ 已选'; e.target.style.borderColor = 'var(--accent)'; e.target.style.color = 'var(--accent)'
+    alert('记下这个选项(' + c.name + ')告诉我,我把全 App 字体栈换成它')
+  })
+  grid.appendChild(d)
+}
+function setTheme(t) {
+  document.documentElement.dataset.theme = t
+  document.getElementById('bLight').classList.toggle('on', t === 'light')
+  document.getElementById('bDark').classList.toggle('on', t === 'dark')
+}
+</script>
+</body>
+</html>
