@@ -50,7 +50,12 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
   // ── 项目上下文注入 ──────────────────────────────────────────────────────────
   function loadProjectContext(dir) {
     if (!dir) return ''
-    const candidates = ['CLAUDE.md', 'claude.md', 'README.md', 'readme.md', 'README']
+    // 去重(首轮基线 ~60k 治理):serve 会自动注入项目根的 AGENTS.md(opencode 上游行为)——
+    // 有 AGENTS.md 时壳层不再注入 README/CLAUDE(同一份项目文档不缴两遍税);
+    // 没有才由壳层兜底注入(弱 serve/fork 可能不注入,别让模型裸奔)。
+    let hasAgentsMd = false
+    for (const n of ['AGENTS.md', 'agents.md']) { try { if (fs.existsSync(path.join(dir, n))) { hasAgentsMd = true; break } } catch {} }
+    const candidates = hasAgentsMd ? [] : ['CLAUDE.md', 'claude.md', 'README.md', 'readme.md', 'README']
     const parts = []
     const seen = new Set()
     for (const name of candidates) {
@@ -60,9 +65,9 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
         if (seen.has(key)) continue
         seen.add(key)
         if (!fs.existsSync(p)) continue
-        const content = fs.readFileSync(p, 'utf8').slice(0, 4000)
+        const content = fs.readFileSync(p, 'utf8').slice(0, 2500)   // 预算收紧:单文件 4000→2500 字符
         parts.push(`## ${name}\n${content.trim()}`)
-        if (parts.join('').length > 5500) break
+        if (parts.join('').length > 3500) break   // 预算收紧:合计 5500→3500 字符
       } catch {}
     }
     // 显式锚定工作目录(唯一真相源):外部/global 模式的 serve 常忽略会话级 ?directory=,模型会漂到
@@ -146,7 +151,7 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
       if (audit.content && audit.content !== raw) {   // C3 行漂移重定位 → 回写知识库文件里的新锚点行号
         try { fs.writeFileSync(file, audit.content); log('knowledge: relocated anchors, rewrote ' + path.basename(file)) } catch {}
       }
-      return knowledge.injectText(raw, dir, { target: target || '', audit })
+      return knowledge.injectText(raw, dir, { target: target || '', audit, maxEntries: 40, maxChars: 4000 })   // 预算收紧:60 条/6000 字 → 40 条/4000 字(场景命中的优先占预算,长尾该舍就舍)
     } catch { return '' }
   }
 
