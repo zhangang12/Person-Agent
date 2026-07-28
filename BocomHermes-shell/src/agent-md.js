@@ -78,7 +78,7 @@ module.exports = function initAgentMd(ctx) {
   function draftAgentsMd(d) {
     const L = []
     L.push('# AGENTS.md — ' + d.name, '')
-    L.push('> 给 Agent 的项目说明书：怎么构建、怎么测试、怎么验证。只写可执行事实；命令失效时先报告再建议修改本文件。', '')
+    L.push('> 给 Agent 的项目说明书：怎么构建、怎么测试、怎么验证。只写可执行事实；命令失效时先报告再建议修改本文件。', '> 本文件刻意保持精简（serve 每轮全量注入 = token 成本，详细机制与背景放 docs/ 并在这里给路径，别把长文档搬进来）。', '')
     L.push('## 构建 / 检查')
     for (const c of li(d.build)) L.push('- 构建：`' + c + '`')
     for (const c of li(d.lint, '（无）')) L.push('- Lint/类型检查：`' + c + '`')
@@ -133,7 +133,10 @@ module.exports = function initAgentMd(ctx) {
       if (!dir || !fs.existsSync(dir)) return { ok: false, error: '目录不存在' }
       const d = detectProject(dir)
       const existing = fs.existsSync(targetFile(dir)) ? fs.readFileSync(targetFile(dir), 'utf8') : null
-      return { ok: true, draft: draftAgentsMd(d), detected: d, existing }
+      // 大小护栏(性能审查①):serve 会全量注入 AGENTS.md 到每轮请求——超 8KB 告警(≈5k tokens/轮白烧)
+      const sizeWarn = (existing && existing.length > 8192) ? '已有 AGENTS.md 偏大(' + Math.round(existing.length / 1024) + 'KB ≈ ' + Math.round(existing.length / 1.6 / 1000) + 'k tokens/轮),serve 每轮全量注入;建议精简或换生成段' : ''
+      if (sizeWarn) log('agent-md: ' + sizeWarn + ' (' + targetFile(dir) + ')')
+      return { ok: true, draft: draftAgentsMd(d), detected: d, existing, sizeWarn }
     } catch (e) { return { ok: false, error: e.message } }
   })
 

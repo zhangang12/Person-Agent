@@ -47,6 +47,8 @@ module.exports = function initIntranetOptimize(ctx) {
   // 合并优化包进已有配置对象(就地改;已存在的自定义一律保留,用户规则优先级最高)
   function applyBlock(cfg, uBash) {
     cfg.tools = Object.assign({}, (cfg.tools && typeof cfg.tools === 'object' ? cfg.tools : {}), { webfetch: false, websearch: false, codesearch: false })
+    // experimental.batch_tool:一次回合并行跑多个内置工具调用(opencode 原生,弱模型连发 read/grep 时一轮顶几轮;fork 不支持会被 schema 忽略,无害)
+    cfg.experimental = Object.assign({}, (cfg.experimental && typeof cfg.experimental === 'object' ? cfg.experimental : {}), { batch_tool: true })
     cfg.permission = (cfg.permission && typeof cfg.permission === 'object') ? cfg.permission : {}
     const curBash = (cfg.permission.bash && typeof cfg.permission.bash === 'object' && !Array.isArray(cfg.permission.bash)) ? cfg.permission.bash : {}
     cfg.permission.bash = Object.assign({ 'git *': 'allow', 'npm run *': 'allow', 'rm -rf*': 'deny', 'curl *': 'deny', 'wget *': 'deny' }, curBash, uBash)
