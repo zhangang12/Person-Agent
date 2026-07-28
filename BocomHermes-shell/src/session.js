@@ -1104,6 +1104,7 @@ desc: 改完前端代码后,用内嵌浏览器真正打开页面验证(加载/�
       const sendOpts = { onRawMessages: onRaw }
       try { if (S.settings && S.settings.knobs && S.settings.knobs.promptAsync) sendOpts.promptAsync = true } catch {}
       const out = await oc.sendMessage(si.serve, sessionId, msg, model, fileArr, onNote, sendOpts)
+      si.errStreak = 0   // 成功复位:模型降级路由的连错计数(见 catch)
       // 手动停止标记(opencode.js consumeAbortFlag,按形状防御调用):本轮被用户中止 → 卡内留一行灰字交代截断原因。
       // 标记同时透传给 wfTurnDone(snap.aborted):分片收官兜底据此判 interrupted 而不是 done(曾被中止≠干完)。
       let abortedFlag = false
@@ -1160,6 +1161,19 @@ desc: 改完前端代码后,用内嵌浏览器真正打开页面验证(加载/�
       // R7:发送失败把已消费的首条背景塞回 —— 下次重发(同一条消息)仍能完整注入,不丢项目背景/知识
       if (ctxPrefix) { try { S.firstMsgCtx.set(sessionId, ctxPrefix) } catch {} }
       const m = String((err && err.message) || err)
+      // 模型降级路由(CC FallbackTriggeredError 同款):同一模型连续出错 ≥2 次且 settings.modelFallback 已配 →
+      // 本会话切降级模型(仅切一次防乒乓);重试按钮/自动重试/后续发送都会走降级模型。
+      // 配置形态 settings.json: "modelFallback": { "providerID": "...", "modelID": "...", "name": "..." }(内网备模型)。
+      try {
+        const fb = S.settings.modelFallback
+        si.errStreak = (si.errStreak || 0) + 1
+        if (fb && fb.modelID && si.errStreak >= 2 && !si._fellBack) {
+          si._fellBack = true
+          si.model = { providerID: fb.providerID, modelID: fb.modelID, name: fb.name || fb.modelID }
+          log('[model-fallback] 主模型连续 ' + si.errStreak + ' 次出错,本会话切降级模型 ' + si.model.name + ' (sid=' + sessionId + ')')
+          if (!si.wc.isDestroyed()) si.wc.send('card-note', { text: '主模型连续 ' + si.errStreak + ' 次出错,本会话已切到降级模型「' + si.model.name + '」—— 点「重试本轮」或后续发送将用它', tone: 'muted' })
+        }
+      } catch {}
       try { if (S.wfTurnError && S.wfCardByWc && S.wfCardByWc.has(e.sender.id)) S.wfTurnError(e.sender.id) } catch {}   // 分片回合报错:wfTurnDone 到不了,也要起收官兜底(window.js),否则 serve 中断一次就永远卡 running
       // 错误码人话化(api 错误形如 "POST /session/... -> 429: ..."):先具体码,再超时,最后连接中断(原文案保留)
       if (/->\s*429\b|rate\s*limit|too many requests/i.test(m))
@@ -1217,8 +1231,27 @@ desc: 改完前端代码后,用内嵌浏览器真正打开页面验证(加载/�
 
   // 卡片上下文用量 chip:取本卡会话最近一次 assistant 调用的真实 token 用量(opencode.js 经 SSE/轮询登记)。
   // 无会话或无数据 → null(卡片静默回落字符估算);tokens=实际进上下文的量(input+cacheRead+cacheWrite),limit 留给后续模型元数据。
-  ipcMain.handle('card-usage', (e) => {
-    const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
+  // ── 滚动 session memory(CC 同款):每次交棒的交接单沉淀到 userData/compacts/<sid>.log,
+  // 下次压缩直接以它为基座增量合并(摘要不再每次从零重写,弱模型漂移更少、省一次全量总结) ──
+  const compactsDir = () => { const d = path.join(require('electron').app.getPath('userData'), 'compacts'); try { fs.mkdirSync(d, { recursive: true }) } catch {}; return d }
+  ipcMain.handle('compact-log-append', (_e, { sid, text }) => {
+    try {
+      const f = path.join(compactsDir(), String(sid || 'unknown').replace(/[^\w-]/g, '_') + '.log')
+      fs.appendFileSync(f, '\n\n===== ' + new Date().toISOString() + ' =====\n' + String(text || '').slice(0, 24000))
+      return { ok: true, path: f }
+    } catch (e) { return { ok: false, err: e.message } }
+  })
+  ipcMain.handle('compact-log-last', (_e, sid) => {
+    try {
+      const f = path.join(compactsDir(), String(sid || 'unknown').replace(/[^\w-]/g, '_') + '.log')
+      if (!fs.existsSync(f)) return ''
+      const t = fs.readFileSync(f, 'utf8')
+      const at = t.lastIndexOf('===== ')
+      return (at >= 0 ? t.slice(at) : t).replace(/^===== .*?=====\n/, '').trim().slice(0, 24000)
+    } catch { return '' }
+  })
+
+  ipcMain.handle('card-usage', (e) => {    const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
     if (!si) return null
     const u = oc.getSessionUsage(si.serve, sessionId)
     return u ? { tokens: u.prompt, total: u.total, limit: null, cacheRead: u.cacheRead || 0, cacheWrite: u.cacheWrite || 0 } : null   // cacheRead/Write 给 chip 算 KV-cache 命中率(Manus:命中率是生产 Agent 第一指标,前缀稳定性没度量=瞎调)

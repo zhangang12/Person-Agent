@@ -988,12 +988,21 @@
   const autoCompactMax = () => Math.max(1, Math.round(knobNum('autoCompactMax', AUTO_COMPACT_MAX)))   // 生效值(knobNum 见下,防御缺省)
   const SUM_PROMPT_CHAT = '请把我们这段对话压缩成一份「接力摘要」，供新会话继续用。包含：1) 正在做的事与目标 2) 已确认的关键结论/决定（保留文件路径、命令、数据） 3) 未完成事项与下一步 4) 已排除的思路与失败尝试（各附一句原因 —— 保错误证据，下一棒不重犯） 5) 需要沿用的约束与偏好 6) 用户消息清单：逐条列出本段对话中用户发过的所有消息（原话，不含工具结果） 7) 已读文件清单：本段精读过的文件路径，各附一句"读到了什么"，新会话直接采信结论、不要重读 8) 下一步：逐字引用最近一条进行中的对话原话，说明做到哪、接着做什么（防意图漂移）。可以先打 <analysis> 草稿再定稿，但只输出定稿后的摘要正文（草稿会被剥离）；本轮直接输出，不要调用任何工具。'
   const SUM_PROMPT_WF = '请把本工作流到目前为止压缩成一份「接力摘要」，供新会话无缝继续执行。必须包含：1) 总目标 2) todo 计划清单及各项当前状态（原样逐条列出） 3) 已确认的关键结论与产出（保留文件路径、file:行号、命令、数据；子 Agent 已回报的发现逐条保留） 4) 未完成事项与下一步打算 5) 已尝试与已排除路径（失败的方法/走过的死胡同/被否决的方案，各附一句原因 —— 保错误证据，下一棒不重犯） 6) 需沿用的约束 7) 用户消息清单：逐条列出本工作流中用户发过的所有消息（原话，不含工具结果） 8) 已读文件清单：本棒已精读过的文件路径，各附一句"读到了什么"，下一棒直接采信结论、不要重读 9) 下一步：逐字引用最近一条进行中的对话原话，说明做到哪、接着做什么（防意图漂移）。可以先打 <analysis> 草稿再定稿，但只输出定稿后的摘要正文（草稿会被剥离）；本轮直接输出，不要调用任何工具。'
+  // 滚动 session memory(CC 同款):上一棒交接单作基座只增量合并,摘要不再每次从零重写(弱模型漂移更少,也省一次全量总结)。
+  // 内存态随卡存活(交棒链同卡);落盘按卡 id 存 userData/compacts/(换会话不换卡,键稳定,重启也能找回基座)。
+  let lastCompactSummary = ''
   async function compactCore(auto) {
     if (compacting) return false
     compacting = true
     try {
       addNote(auto ? '到达主动交棒水位,接力给下一棒主 Agent(第 ' + autoCompactN + '/' + autoCompactMax() + ' 棒):正在写交接单…' : '压缩续聊:正在让模型总结本段对话…', 'muted')
-      const ok = await turn(wfMode ? SUM_PROMPT_WF : SUM_PROMPT_CHAT)
+      let sumPrompt = wfMode ? SUM_PROMPT_WF : SUM_PROMPT_CHAT
+      try {
+        const cardId = params.get('id') || 'card'
+        const prev = lastCompactSummary || (typeof window.BocomHermes.compactLogLast === 'function' ? await window.BocomHermes.compactLogLast(cardId) : '')
+        if (prev && String(prev).trim()) sumPrompt += '\n\n【上一棒交接单(基座,直接采信)】\n' + String(prev).trim() + '\n【/上一棒交接单】\n要求:以它为基座,只把本段新内容增量合并进来(保留仍成立的事实,删掉过期事实,别整段重写)。'
+      } catch {}
+      const ok = await turn(sumPrompt)
       const ais = feed.querySelectorAll('.msg.ai')
       let summary = ''
       if (ok) { for (let i = ais.length - 1; i >= 0; i--) { const r0 = String(ais[i].dataset.raw || '').trim(); if (r0) { summary = r0; break } } }   // 从尾找第一个有正文的泡:轮末催办可能顶起一个空的嵌套泡(实测"没拿到摘要"死循环)
@@ -1005,6 +1014,8 @@
       // 换棒失忆是弱模型最痛的一档(新棒不知道最近在改哪几个文件,要重摸);需要最新内容按路径重读,不许全部重读
       const siteFiles = artFileList.slice(-5)
       if (siteFiles.length) summary += '\n\n<工作现场回填>上一棒最近 write/edit 落盘的文件（需要最新内容时按路径重读，不要全部重读）：' + siteFiles.join('、') + '</工作现场回填>'
+      lastCompactSummary = summary   // 滚动 session memory:本棒交接单记为下一棒基座(内存态 + 落盘双写)
+      try { if (typeof window.BocomHermes.compactLogAppend === 'function') window.BocomHermes.compactLogAppend({ sid: params.get('id') || 'card', text: summary }) } catch {}
       try {
         setBusy(true)
         const r = await window.BocomHermes.cardReinit({ dir: curDir, carryCtx: summary, shard: shardMode })

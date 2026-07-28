@@ -95,7 +95,9 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   listModels: () => ipcRenderer.invoke('list-models'),
   cardSetModel: (m) => ipcRenderer.invoke('card-set-model', m),
   cardUsage: () => ipcRenderer.invoke('card-usage'),
-  subStatus: (ids) => ipcRenderer.invoke('sub-status', ids),   // 本卡会话真实 token 用量(serve 实测;无数据返回 null,前端回落字符估算)
+  subStatus: (ids) => ipcRenderer.invoke('sub-status', ids),
+  compactLogAppend: (p) => ipcRenderer.invoke('compact-log-append', p),
+  compactLogLast: (sid) => ipcRenderer.invoke('compact-log-last', sid),   // 本卡会话真实 token 用量(serve 实测;无数据返回 null,前端回落字符估算)
   cardAbort: () => ipcRenderer.send('card-abort'),
   onStream: (cb) => ipcRenderer.on('card-stream', (_e, p) => cb(p)),
   onServeHealth: (cb) => ipcRenderer.on('serve-health', (_e, p) => cb(p)),
