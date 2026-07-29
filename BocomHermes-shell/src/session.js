@@ -1,7 +1,14 @@
 'use strict'
 const { exec } = require('child_process')
+const os = require('os')
 const knowledge = require('./knowledge')
 const writescope = require('./writescope')   // 分片写归属硬闸(编码模式):write/edit 越界拒
+
+// 验证证据机判正则(构建/测试命令长什么样):bash 命令流水命中即算"跑过验证"。
+// ⚠ window.js 同款保持同步(证据闸 hasVerifyEvidence 用同一份)—— 改这里必须同步改那边,两边逐字一致。
+// 口径:npm/pnpm/yarn (run)?(test|build|lint|typecheck|tsc|check|e2e|verify)(npm ci 不算验证:装依赖≠跑验证)、
+// pytest/vitest/jest/mvn/mvnw/gradle/gradlew/make、dotnet test|build、go test|build|vet、cargo test|build|check、npx tsc|vue-tsc。
+const VERIFY_CMD = /(npm|pnpm|yarn)\s+(run\s+)?(test|build|lint|typecheck|tsc|check|e2e|verify)\b|\b(pytest|vitest|jest|mvnw?|gradlew?|make)\b|\bdotnet\s+(test|build)\b|\bgo\s+(test|build|vet)\b|\bcargo\s+(test|build|check)\b|\bnpx\s+(tsc|vue-tsc)\b/i
 
 // deps 可选项:replaceHistoryId(oldId, newId) —— stale 重开时把旧历史条目原地换 id(保留 created/title/model);
 // 没给就退化为现状(recordHistory 新增条目)。由 window.js 装配层接线。
@@ -393,6 +400,8 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
   // 交分片收官兜底判 interrupted,主控按规程拆小重派;预检通过一次即清零。
   // 普通对话卡不设:用户在场看得见黄牌,撞几次他自己会停/会教,别替人掐回合。
   const editMissStreak = new Map()
+  // 出仓写提醒去重(sessionId → 已提醒过):普通卡写项目目录外只提醒一次/会话,不刷屏(onPermission 里用)。
+  const outOfProjWarned = new Set()
   // ── 用户可配权限规则(P2.3 壳层轨):settings.permRules {allow:[],deny:[]},语法 `工具名(通配)`(与 CC 同构重写) ──
   // deny 先于一切自动放行(分片卡也生效 = 用户红线不分卡型);allow 只在弹框前拦一次 = 少弹框 UX 层。
   function parsePermRule(rule) {
@@ -412,13 +421,18 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     for (const r of rules) { if (matchPermRule(tool, detail, r)) return String(r) }
     return ''
   }
-  function onPermission({ sessionId, requestId, tool, detail }) {
-    const si = S.sessionInfo.get(sessionId); if (!si) return
-    if (oc.AUTO_ALLOW.has(tool)) { oc.replyPermission(si.serve, sessionId, requestId, 'once'); return }
-    // 天枢技能工具族(skill_*):回放接管/断点解析的 MCP 工具,引擎侧已有门禁(如 page_act 仅接管期可执行),
-    // 不再叠人工审批 —— 否则 Agent 接管每一步都弹批准框,混合执行没法用。MCP 工具名可能带服务前缀,按含 skill_ 匹配。
-    if (/(^|[._-])skill_/.test(String(tool || ''))) { oc.replyPermission(si.serve, sessionId, requestId, 'once'); return }
-    // 用户权限规则 deny(先于一切自动放行,分片卡同样生效):命中即拒 + 卡片留痕
+  function onPermission({ sessionId, requestId, tool, detail, serve }) {
+    const si = S.sessionInfo.get(sessionId)
+    if (!si) {
+      // 无主兜底(对齐 onQuestion 自动拒答口径):子 Agent 首个事件就是 permission(路由映射尚未学到子→父)或
+      // 无头会话(技能精修等壳外会话)—— 不答复 serve 会一直干等,回合永挂。保守 reject;
+      // serve 由派发侧透传(opencode.js dispatch),缺席时借任一健康 serve 回(不匹配 404 由 replyPermission 吞错打日志)。
+      log('permission ' + requestId + ' 会话无主(子agent路由未学到/无头会话)→ 保守拒绝,防 serve 干等挂死 (tool=' + String(tool || '') + ')')
+      try { const sv = serve || (typeof oc.anyHealthyServe === 'function' ? oc.anyHealthyServe() : null); if (sv) oc.replyPermission(sv, sessionId, requestId, 'reject') } catch {}
+      return
+    }
+    // 用户权限规则 deny(先于一切:AUTO_ALLOW/skill_ 短路/分片自动放行/auto 模式全部排在它后面,用户红线不可被任何快捷通道翻过):
+    // 命中即拒 + 卡片留痕。曾在 AUTO_ALLOW 之后,read 这类白名单工具的红线(如 read(*.env))永不命中(实测漏网)。
     const permDenyHit = permRulesHit('deny', tool, detail)
     if (permDenyHit) {
       log('权限规则拦截(deny):' + permDenyHit + ' 命中 ' + String(tool) + '(' + String(detail || '').slice(0, 80) + ')')
@@ -426,29 +440,38 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
       try { if (si.wc && !si.wc.isDestroyed()) si.wc.send('card-note', { text: '权限规则拦截(deny)：' + permDenyHit + ' —— 已拒绝 ' + tool, tone: 'muted' }) } catch {}
       oc.replyPermission(si.serve, sessionId, requestId, 'reject'); return
     }
+    if (oc.AUTO_ALLOW.has(tool)) { oc.replyPermission(si.serve, sessionId, requestId, 'once'); return }
+    // 天枢技能工具族(skill_*):回放接管/断点解析的 MCP 工具,引擎侧已有门禁(如 page_act 仅接管期可执行),
+    // 不再叠人工审批 —— 否则 Agent 接管每一步都弹批准框,混合执行没法用。MCP 工具名可能带服务前缀,按含 skill_ 匹配。
+    if (/(^|[._-])skill_/.test(String(tool || ''))) { oc.replyPermission(si.serve, sessionId, requestId, 'once'); return }
     // 多层派发分片卡:无人值守(按主控已批准的方案跑),权限请求自动放行 —— 否则 task 子 Agent/写文档都卡在看不见的批准框上,
     // 子 Agent 永远起不来(实测病灶)。范围限本卡会话,关卡即失效;全程工具日志留痕。
     if (S.shardWc && si.wc && S.shardWc.has(si.wc.id)) {
       // 写归属硬闸(编码模式):分片登记了 writeScope 时,write/edit 的目标文件必须在归属清单内 ——
-      // 并行分片写冲突的头号死因就是越界写别的片的文件(探查类分片无归属 → 不设闸)。
+      // 并行分片写冲突的头号死因就是越界写别的片的文件。
+      // 默认归属 = 本仓根目录:没登记写归属(探查类/文档片)也不许写项目目录外 —— serve 的 git 快照 work-tree 锚在本仓,
+      // 写到仓外的文件快照追踪不上、git 对仓外路径持续报错,会把 task 子 Agent 创建拖死(实测 subagent 全灭病灶同链);
+      // 双仓场景同理:卡目录是哪个仓快照就锚哪个仓,跨仓写两边都对不上(提示词的"副仓只读"弱模型不守,这里收死)。
+      // 显式归属(含验证棒的 tmpdir 沙箱)优先于默认归属;serve 目录拿不到时不设闸(没锚点没法判)。
       try {
         const mreg = S.wfCardByWc && S.wfCardByWc.get(si.wc.id)
-        const scope = mreg && Array.isArray(mreg.writeScope) ? mreg.writeScope : null
+        const dir = (si.serve && si.serve.dir) || ''
+        const declared = mreg && Array.isArray(mreg.writeScope) ? mreg.writeScope : null
+        const scope = (declared && declared.length) ? declared : (dir ? [dir] : null)
         if (scope && scope.length && /^(write|edit)(_[a-z]+)*$/i.test(String(tool || ''))
-            && !writescope.matchScope(scope, (si.serve && si.serve.dir) || '.', String(detail || ''))) {
-          log('write-scope 拦截:分片 ' + mreg.id + ' 越界写 ' + String(detail || '').slice(0, 80) + ' (归属: ' + scope.join(', ') + ')')
-          try { S.audit && S.audit('workflow', '写归属越界拦截', { shard: mreg.id, path: String(detail || '').slice(0, 200), scope: scope.join(', ') }) } catch {}
+            && !writescope.matchScope(scope, dir || '.', String(detail || ''))) {
+          log('write-scope 拦截:分片 ' + (mreg ? mreg.id : '?') + ' 越界写 ' + String(detail || '').slice(0, 80) + ' (归属: ' + scope.join(', ') + ')')
+          try { S.audit && S.audit('workflow', '写归属越界拦截', { shard: mreg && mreg.id, path: String(detail || '').slice(0, 200), scope: scope.join(', ') }) } catch {}
           oc.replyPermission(si.serve, sessionId, requestId, 'reject')
           return
         }
         // bash 写文件同一道闸:弱模型常绕到 cat > f / tee / sed -i 写文件(归属闸只管 write/edit = 形同虚设)。
         // 提取命令里的写目标逐个过归属;解析不出的(含 $/`/~ 或 detail 被 200 字截断)宁可放过 —— 提示词层还有"bash 写文件视为越权"的规矩兜底。
         if (scope && scope.length && /^bash(_[a-z]+)*$/i.test(String(tool || ''))) {
-          const dir = (si.serve && si.serve.dir) || '.'
-          const bad = writescope.bashWriteTargets(String(detail || '')).filter((t) => !writescope.matchScope(scope, dir, t))
+          const bad = writescope.bashWriteTargets(String(detail || '')).filter((t) => !writescope.matchScope(scope, dir || '.', t))
           if (bad.length) {
-            log('write-scope 拦截:分片 ' + mreg.id + ' bash 越界写 ' + bad[0] + ' (归属: ' + scope.join(', ') + ')')
-            try { S.audit && S.audit('workflow', '写归属越界拦截(bash)', { shard: mreg.id, path: String(bad[0]).slice(0, 200), scope: scope.join(', ') }) } catch {}
+            log('write-scope 拦截:分片 ' + (mreg ? mreg.id : '?') + ' bash 越界写 ' + bad[0] + ' (归属: ' + scope.join(', ') + ')')
+            try { S.audit && S.audit('workflow', '写归属越界拦截(bash)', { shard: mreg && mreg.id, path: String(bad[0]).slice(0, 200), scope: scope.join(', ') }) } catch {}
             oc.replyPermission(si.serve, sessionId, requestId, 'reject')
             return
           }
@@ -483,6 +506,28 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
       oc.replyPermission(si.serve, sessionId, requestId, 'once'); return
     }
     if (!si.wc || si.wc.isDestroyed()) { oc.replyPermission(si.serve, sessionId, requestId, 'reject'); return }
+    // 出仓写提醒(普通可见卡,用户在场不硬拦,每会话一次):write/edit/bash 的写目标落在项目目录外 →
+    // 卡内灰字 + 审计。serve 的 git 快照只锚本仓:仓外文件不受快照保护,fork 对仓外路径还会持续报错(拖死 task 子 Agent 的病灶同链)。
+    // 白名单:系统临时目录 + userData(一次性脚本/壳层自身落盘,提醒没意义)。分片卡在上面的分支已被默认归属硬闸收死,不走这里。
+    try {
+      const pdir = (si.serve && si.serve.dir) || ''
+      if (pdir && !outOfProjWarned.has(sessionId)) {
+        const targets = []
+        if (/^(write|edit)(_[a-z]+)*$/i.test(String(tool || ''))) targets.push(String(detail || ''))
+        else if (/^bash(_[a-z]+)*$/i.test(String(tool || ''))) targets.push(...writescope.bashWriteTargets(String(detail || '')))
+        let ud = ''
+        try { ud = require('electron').app.getPath('userData') } catch {}
+        const safe = [os.tmpdir()]; if (ud) safe.push(ud)
+        const bad = targets.filter((t) => t && !writescope.matchScope([pdir], pdir, t) && !writescope.matchScope(safe, pdir, t))
+        if (bad.length) {
+          outOfProjWarned.add(sessionId)
+          if (outOfProjWarned.size > 200) outOfProjWarned.delete(outOfProjWarned.keys().next().value)
+          log('出仓写提醒:' + sessionId + ' 目标在项目目录外 ' + bad[0])
+          try { S.audit && S.audit('permission', '出仓写提醒', { tool: String(tool || ''), path: String(bad[0]).slice(0, 200), projectDir: pdir }) } catch {}
+          try { si.wc.send('card-note', { text: '注意：本次写入目标在项目目录外（' + String(bad[0]).slice(0, 80) + '）——git 快照只覆盖本仓，仓外文件不受保护且可能引发快照持续失败。如非必要请改到项目目录内。', tone: 'muted' }) } catch {}
+        }
+      }
+    } catch {}
     // ── auto 模式(settings.permMode='auto'):写/执行全部自动放行 —— 位置刻意在 deny 规则之后(红线不可翻)、
     // 分片分支之后(分片写归属闸不受影响)、allow 规则之前(语义更宽);edit 同享预检(oldString 未命中照样拒带纠偏)。
     // 每次放行记审计 + 卡内一行灰字(用户看得见放了什么,不发批准确认框)。
@@ -565,12 +610,13 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     return out
   }
   // 交互提问路由:serve 的 question 工具需要用户点选回答 —— 弹到对话卡(交互提问卡),应答经 question-reply IPC 回 serve。
-  // 只路由到对话卡:管线/监控窗口(sessionInfo 带 tag.scope)没有提问 UI,会话无主/卡已毁同理 ——
-  // 一律自动 reject 兜底(不拒就把回合挂死,实测 88s 等用户 Esc)。子 agent 的提问会路由回父卡(dispatch 已归到根会话)。
+  // 只路由到对话卡:管线/监控窗口(sessionInfo 带 tag.scope)、分片隐藏卡(shardWc,无人值守)都没有提问 UI ——
+  // 工作流规程虽邀请分片"不确定就问用户",但隐藏卡的提问永远没人点(实测死锁病灶),必须当场拒,让模型按规程自己拿保守方案继续;
+  // 会话无主/卡已毁同理 —— 一律自动 reject 兜底(不拒就把回合挂死,实测 88s 等用户 Esc)。子 agent 的提问会路由回父卡(dispatch 已归到根会话)。
   function onQuestion({ sessionId, requestId, questions, v2, serve }) {
     const si = S.sessionInfo.get(sessionId)
-    if (!si || !si.wc || si.wc.isDestroyed() || (si.tag && si.tag.scope)) {
-      log('question ' + requestId + ' 自动拒答:' + (!si ? '会话无主' : si.wc && si.wc.isDestroyed() ? '卡已毁' : 'scope 窗口'))
+    if (!si || !si.wc || si.wc.isDestroyed() || (si.tag && si.tag.scope) || (S.shardWc && si.wc && S.shardWc.has(si.wc.id))) {
+      log('question ' + requestId + ' 自动拒答:' + (!si ? '会话无主' : si.wc && si.wc.isDestroyed() ? '卡已毁' : (S.shardWc && si.wc && S.shardWc.has(si.wc.id)) ? '分片隐藏卡(无人值守)' : 'scope 窗口'))
       try { oc.rejectQuestion((si && si.serve) || serve, sessionId, requestId, v2) } catch {}
       return
     }
@@ -601,10 +647,28 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
       }
     } catch {}
   }
+  // 内容签名判活(看门狗病灶修复):lastEventAt 以前无条件打点,而轮询补渲染每 1.2s 把【不变的 parts】全量重喂一遍 →
+  // 分片回合中段挂死(已产出≥1 part 后静默)时计时永远被刷新,"300s 无事件"判据永不满足,分片永远 running 还占并发位(内网实测)。
+  // 改为只在 part 内容真的变化时刷新:签名 = partID|kind|status|文本/输出/入参长度|文本尾(低成本,不哈希全文)。
+  // SSE 真实新事件(文本增长/状态迁移/工具出入参变长)必然变签名,照常刷新;不变的重喂不再给看门狗续命。
+  function partLivenessSig(ev) {
+    const t = typeof ev.text === 'string' ? ev.text : ''
+    const o = typeof ev.toolOutput === 'string' ? ev.toolOutput : (ev.toolOutput == null ? '' : String(ev.toolOutput))
+    const i = ev.toolInput == null ? '' : (typeof ev.toolInput === 'string' ? ev.toolInput : (() => { try { return JSON.stringify(ev.toolInput) } catch { return '' } })())
+    return String(ev.partID || '') + '|' + String(ev.kind || '') + '|' + String(ev.status || '') + '|' + t.length + '|' + o.length + '|' + i.length + '|' + t.slice(-16) + '|' + i.slice(-8)
+  }
   function onText({ sessionId, text, role, partID, kind, status, delta, toolInput, toolOutput, toolTitle, toolError, subagent, agentId, agentName, taskChild, taskDesc, taskChars }) {
     const si = S.sessionInfo.get(sessionId); if (!si || !si.wc || si.wc.isDestroyed()) return
     if (role && role !== 'assistant') return
-    si.lastEventAt = Date.now()   // 主回合活动探针:分片挂死看门狗(下方 setInterval)据此判静默
+    // 主回合活动探针:分片挂死看门狗(下方 setInterval)据此判静默 —— 只在内容签名变化时打点(见 partLivenessSig)
+    si.partSigs = si.partSigs || new Map()
+    const sigKey = String(partID || '')
+    const sigNow = partLivenessSig({ partID, kind, status, text, toolInput, toolOutput })
+    if (si.partSigs.get(sigKey) !== sigNow) {
+      if (si.partSigs.size > 500) si.partSigs.clear()   // 防长跑膨胀(清空代价只是多刷一次计时,无害)
+      si.partSigs.set(sigKey, sigNow)
+      si.lastEventAt = Date.now()
+    }
     const tag = si.tag || null   // 登记方自定义的任务身份(scope/kind/id…)：随 card-stream 下发,窗口可按并发任务分组
     // 诊断:分别确认子agent的【工具】和【文本/思考】是否路由到父卡片(排查"工具没进 🔍 组")
     if (subagent) {
@@ -699,6 +763,13 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
           } else if (/^bash$/i.test(tname)) {
             const cmd = String(inp.command || inp.cmd || '').replace(/\s+/g, ' ').trim()
             if (cmd) S.wfAction(si.wc.id, { kind: 'cmd', label: cmd.slice(0, 120), detail: '' })
+            // 证据粘性:cmd 流水在收官时才重扫(截 120 字、只留 50 条),早期构建命令会被挤出 → 误标【未验证】白派验证棒(实测病灶)。
+            // 收到 cmd 当场用 VERIFY_CMD(扩充版,与 window.js 同款保持同步)匹配,命中即置注册表 verifyEvidence=true,
+            // 收官证据闸先查这个标志再 fallback 重扫流水(window.js 侧另一波接线)。
+            if (cmd && VERIFY_CMD.test(cmd)) {
+              const vreg = S.wfCardByWc && S.wfCardByWc.get(si.wc.id)
+              if (vreg && !vreg.verifyEvidence) { vreg.verifyEvidence = true; log('[harness-verify] 验证证据当场登记:' + cmd.slice(0, 80) + ' (shard ' + vreg.id + ')') }
+            }
           // browser_* 浏览器动作(验证证据闸的原料之二:前端"浏览器自验"据此机判 —— 打开过页面/截过图/跑过页面断言才算验过前端)
           } else if (/(^|[._-])browser_(navigate|screenshot|eval|click|type)$/i.test(tname)) {
             const brief = String(inp.url || inp.selector || inp.expression || '').replace(/\s+/g, ' ').slice(0, 80)
@@ -759,7 +830,8 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
   // ── 分片主回合挂死看门狗(无人值守兜底;可见卡有人按 Esc,隐藏卡没有)──────────────────
   // 病灶:回合进行中无任何计时器(45s 落定只在轮末 arm),网关保持连接永不响应 → 分片永远 running+占并发位,
   // 主控永远等不到这片,整链静默卡死(审查实测)。挂死看门狗(子会话 5min 那只)只盯 task 子会话,不盯卡主回合。
-  // 判据:分片卡(或主控卡)有回合在飞(turnBusy)且 300s 无任何流事件(onText 探针)→ oc.abort,
+  // 判据:分片卡(或主控卡)有回合在飞(turnBusy)且 300s 无【内容变化】(onText 探针按 partLivenessSig 签名判活,
+  // 轮询重喂不变内容不续命 —— 曾因此判据永不满足,挂死分片永远 running)→ oc.abort,
   // 中止后走 aborted/报错通道按 interrupted 收官 —— 宁可误杀可重派,不可静默卡死无人知。
   setInterval(() => {
     try {
@@ -778,6 +850,17 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     } catch {}
   }, 45000)
 
+  // taskChild 提取(与 opencode.js extractChildSessionId 同口径的最小本地版,防跨层依赖):task/delegate_task 工具
+  // state 里刨子会话ID —— 128k 硬闸"先登记、后续推送带来 taskChild 再精确补杀"与卡片标子agent组完成都靠它。
+  // 轮询通道(pollTurnParts,opencode.js 侧提取)与原始消息通道(这里)两条路都带上;提不到就空串,不兜底不编造。
+  function extractTaskChild(st) {
+    if (!st || typeof st !== 'object') return ''
+    for (const c of [st.sessionID, st.sessionId, st.metadata && (st.metadata.sessionID || st.metadata.sessionId)]) {
+      if (typeof c === 'string' && c.startsWith('ses_')) return c
+    }
+    if (typeof st.output === 'string') { const m = st.output.match(/task_id:\s*(ses_[A-Za-z0-9]+)/); if (m) return m[1] }
+    return ''
+  }
   // P1:onRawMessages 回调拿到的原始消息列表 → 与 opencode.js pollTurnParts 同构的 part 映射(喂同一个 onText)。
   // partID 必须同构(工具 = (callID||id)+':tool'),否则同一工具调用会被渲染两行,卡片按 partID 幂等去重就失效。
   // 用量摘取(noteUsage)在 oc 侧拉取时已顺手做,这里只管映射。只取最后一个 user 之后的 assistant(当前回合)。
@@ -798,7 +881,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
         } else if (p.type === 'tool') {
           const st = p.state || {}
           const cid = String(p.callID || p.id || p.partID || p.tool || '')
-          out.push({ partID: cid + ':tool', kind: 'tool', text: p.tool || 'tool', status: st.status || '', input: st.input, output: st.output, title: st.title, error: st.error })
+          out.push({ partID: cid + ':tool', kind: 'tool', text: p.tool || 'tool', status: st.status || '', input: st.input, output: st.output, title: st.title, error: st.error, taskChild: extractTaskChild(st) })
         }
       }
     }
@@ -1004,6 +1087,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
   const KNOWLEDGE_SLOT = '<!--KNOWLEDGE_SLOT-->'
   const knowledgeSeed = new Map()
   const turnBusy = new Set()   // 进行中的回合 sid:card-init/reattach 回包带 running,卡片重载后知道"还在跑"
+  S.turnBusy = turnBusy   // 挂到 S 上:window.js 从回合状态推导 isCardBusy(不再依赖渲染端上报)直接读这份权威记录。形态:Set<根会话sid>,成员资格即"该会话有回合在飞"(无值对象);加入=card-send 起手,移除=card-send finally/card-reinit 清旧会话。
   // 会话就绪/重建时把 per-card 模型回放进 sessionInfo;返回给 UI 的是"实际生效"的模型
   function replayModel(wcId, sid) {
     const si = S.sessionInfo.get(sid); if (!si) return null
@@ -1043,14 +1127,31 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
       if (S.shardWc && S.shardWc.has(wcId)) { S.shardSids = S.shardSids || new Set(); S.shardSids.add(sessionId) }
     } catch {}
   }
+  // card-init 回包附带:本卡若是主控(orch)卡 → 它名下分片的快照数组(渲染端另一波灌分片面板用;不是主控/拿不到 → 空数组)。
+  // 本卡 tag 反查:wfCardByWc 找到本卡注册项 → orchByTag 里 id 相同的那条 → wfRegistry 里 parentOrch=tag 的项(id/goal/status/at)。
+  function shardSnapshot(wcId) {
+    const out = []
+    try {
+      const reg = S.wfCardByWc && S.wfCardByWc.get(wcId)
+      if (!reg || !S.orchByTag || !S.wfRegistry) return out
+      let tag = ''
+      for (const [t, oref] of S.orchByTag) { if (oref && String(oref.id) === String(reg.id)) { tag = t; break } }
+      if (!tag) return out
+      for (const r of S.wfRegistry.values()) { if (r && r.parentOrch === tag) out.push({ id: r.id, goal: String(r.goal || ''), status: r.status || '', at: r.at || 0 }) }
+    } catch {}
+    return out
+  }
   ipcMain.handle('card-init', async (e, opts) => {
     try {
     const sid = opts && opts.sid
     const wantTitle = (opts && opts.title) || ''
     if (sid) {
       const h = S.history.find((x) => x.id === sid)
-      const dir = S.cardDir.get(e.sender.id) || (h && h.dir) || S.settings.projectDir || ''
-      if (h && h.dir && !S.cardDir.has(e.sender.id)) S.cardDir.set(e.sender.id, h.dir)   // 钉住历史目录,后续 reinit 不漂回全局
+      // history 旧 dir 可能已被删/挪走:钉进 cardDir 前做存在性校验,不在 → 回退全局 projectDir 并留日志(否则 serve 起在死目录上)
+      let hDir = (h && h.dir) || ''
+      if (hDir && !fs.existsSync(hDir)) { log('card-init: history dir gone, fallback to projectDir: ' + hDir); hDir = '' }
+      const dir = S.cardDir.get(e.sender.id) || hDir || S.settings.projectDir || ''
+      if (hDir && !S.cardDir.has(e.sender.id)) S.cardDir.set(e.sender.id, hDir)   // 钉住历史目录,后续 reinit 不漂回全局
       const serve = await oc.ensureServe(dir, S.handlers, log)
       const proj = dir ? path.basename(dir) : (S.settings.projectDir ? path.basename(S.settings.projectDir) : '未选目录')
       if (await oc.sessionExists(serve, sid)) {   // 会话还在 → 重连 + 回放（已有历史，不注入上下文）
@@ -1067,7 +1168,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
           if (tx.length) { messages = tx; log('reattach: serve history unavailable, replay local transcript (' + tx.length + ' entries) for ' + sid) }
         }
         txCount.set(sid, (messages || []).length)   // 对齐转录游标:下轮只 append 新增量(防进程重启后整段重记)
-        return { sessionId: sid, project: proj, dir, model, reattached: true, messages, running: turnBusy.has(sid) }
+        return { sessionId: sid, project: proj, dir, model, reattached: true, messages, running: turnBusy.has(sid), shards: shardSnapshot(e.sender.id) }
       }
       const ns = await oc.createSession(serve, wantTitle || (h && h.title) || 'BocomHermes 对话', dir)  // 已不在 → 新开一段(带项目目录)
       if (!ns) throw new Error('create session failed')
@@ -1083,7 +1184,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
       else recordHistory(ns, wantTitle || (h && h.title), dir)
       // C4 同款回退:serve 已没有这段会话(进程重启等)→ 本地转录回放旧对话(只读回看,新消息写进新会话)
       let txMsgs = []; try { txMsgs = readTranscript(sid); if (txMsgs.length) log('stale reattach: replay local transcript (' + txMsgs.length + ' entries) for ' + sid) } catch {}
-      return { sessionId: ns, project: proj, dir, model: model1, reattached: false, stale: true, running: false, messages: txMsgs }
+      return { sessionId: ns, project: proj, dir, model: model1, reattached: false, stale: true, running: false, messages: txMsgs, shards: shardSnapshot(e.sender.id) }
     }
     const dir = S.cardDir.get(e.sender.id) || S.settings.projectDir || ''
     const serve = await oc.ensureServe(dir, S.handlers, log)
@@ -1096,7 +1197,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     S.pushServeHealth && S.pushServeHealth(e.sender, serve)
     const ctx0 = loadMemory() + loadProjectContext(dir) + KNOWLEDGE_SLOT; S.firstMsgCtx.set(sessionId, ctx0)   // C2:知识留占位,发送时懒构建
     if (!(opts && opts.shard)) recordHistory(sessionId, wantTitle, dir)   // 分片/索引棒是内部工人,不进历史(对用户只是一条工作流)
-    return { sessionId, project: dir ? path.basename(dir) : '未选目录', dir, model: model0, reattached: false, running: false }
+    return { sessionId, project: dir ? path.basename(dir) : '未选目录', dir, model: model0, reattached: false, running: false, shards: shardSnapshot(e.sender.id) }
     } catch (err) {
       // serve 拉起/建会话失败:分片隐藏卡死在这 = 主控永远等不到这片(静默整链卡死,实测)。
       // 这类失败不走 card-send,wfTurnError 三路兜底都到不了 —— 在这里补一刀,让分片按 interrupted 收官上报
@@ -1212,7 +1313,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     // 回调里跑与 pollTurnParts 同构的 part 映射(mapRawTurnParts);hook 生效期间自己的轮询降到 5s 兜底,hook 缺席维持 1.2s。
     const feedParts = (parts) => {
       for (const p of parts || []) {
-        if (p.kind === 'tool') onText({ sessionId, role: 'assistant', kind: 'tool', text: p.text, partID: p.partID, status: p.status, toolInput: p.input, toolOutput: p.output, toolTitle: p.title, toolError: p.error })
+        if (p.kind === 'tool') onText({ sessionId, role: 'assistant', kind: 'tool', text: p.text, partID: p.partID, status: p.status, toolInput: p.input, toolOutput: p.output, toolTitle: p.title, toolError: p.error, taskChild: p.taskChild || '' })
         else onText({ sessionId, role: 'assistant', kind: p.kind, text: p.text, partID: p.partID })
       }
     }
@@ -1230,12 +1331,12 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     //    子会话清单每 ~6s 经 listSessions 刷新(新派生的子 Agent 至多晚 6s 进栏,标题晚到也在这里改名)。
     const childSeen = new Map()   // childSid → title(本回合已发现的直子会话)
     let childLastList = 0, childPoll = null
-    const pollChildren = async () => {
+    const pollChildren = async (timeoutMs) => {
       const si2 = S.sessionInfo.get(sessionId); if (!si2 || !si2.wc || si2.wc.isDestroyed()) return
       const now = Date.now()
       if (now - childLastList > 6000) {
         childLastList = now
-        const all = await oc.listSessions(si2.serve)
+        const all = await oc.listSessions(si2.serve, timeoutMs)
         for (const c of all || []) {
           if (!c || !c.id || c.parentID !== sessionId) continue
           const t = String(c.title || '')
@@ -1244,7 +1345,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
       }
       for (const [cid, ctitle] of childSeen) {
         let list = null
-        try { list = await oc.getRawMessages(si2.serve, cid) } catch {}
+        try { list = await oc.getRawMessages(si2.serve, cid, { timeoutMs }) } catch {}
         if (!list) continue
         for (const p of mapRawTurnParts(list)) {
           if (p.kind === 'tool') onText({ sessionId, role: 'assistant', kind: 'tool', text: p.text, partID: p.partID, status: p.status, toolInput: p.input, toolOutput: p.output, toolTitle: p.title, toolError: p.error, subagent: true, agentId: cid, agentName: ctitle })
@@ -1379,8 +1480,12 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
           }).catch(() => {})
         }
       } catch {}
-      // 回合收尾再扫一遍子会话:最后一个 tick 之后落盘的子 Agent 产出/工具终态也补进侧边栏(不留差一口气的终态)
-      try { await pollChildren() } catch {}
+      // 中止/报错回合工具终态补拉:abort 时 serve 侧 markStopped 后直接收尾,父会话 task 等工具的 cancelled/error 终态
+      // 不再推送 → 卡片工具块定格"运行中…"(实测病灶)。与下方 pollChildren 对称:轮末补一次 pollTurnParts 喂 onText 定格终态。
+      // 6s 限时:停止途中最忌 serve 堵了无期陪等(停止耗时实测病灶),超时=放弃补拉不挡回合收尾。
+      try { const tailParts = await oc.pollTurnParts(si.serve, sessionId, { timeoutMs: 6000 }); if (tailParts) feedParts(tailParts) } catch {}
+      // 回合收尾再扫一遍子会话:最后一个 tick 之后落盘的子 Agent 产出/工具终态也补进侧边栏(不留差一口气的终态);同样 6s 限时
+      try { await pollChildren(6000) } catch {}
     }
   })
 

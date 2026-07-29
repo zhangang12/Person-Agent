@@ -2,6 +2,9 @@
 //   R6 提问清理 / R7 发送失败塞回背景 / R8 stale 换 id / C2 知识懒构建 / C4 本地转录(增量·截断·轮转·回放兜底)/
 //   P1 onRawMessages 降轮询 / P4 看门狗 limit 拉取 / T5 产物轨道 / 错误码人话 / C1 模型列表缓存版 /
 //   P3.3 todo 权威同步 / P3.4 promptAsync knob 透传。
+// 本波(动态工作流 bug 修复):看门狗内容签名判活(轮询重喂不续命)/ onQuestion 分片自动拒答 / onPermission 无主兜底 /
+//   deny 规则先于 AUTO_ALLOW/skill_ 短路 / taskChild 双通道透传 / 轮末补拉工具终态 / VERIFY_CMD 证据粘性(npm ci 不算)/
+//   card-init 分片快照 + history dir 存在性校验 / S.turnBusy 挂载。
 // 跑法:npm run session:test(零依赖 ok() 风格;假 ipcMain/oc/电子壳全注入,不连真 serve/模型;真 fs 只碰临时目录)
 import { createRequire } from 'module'
 import fs from 'fs'
@@ -429,6 +432,62 @@ console.log('用例12b:permMode auto —— 写/执行自动放行;deny 红线�
   ok('auto+分片:deny 仍不可翻(reject)', replies2[0] && replies2[0].d === 'reject', replies2[0])
 }
 
+console.log('用例12c:工作路径管理 —— 分片默认围栏=本仓根(仓外 write/bash 写拒);显式归属优先;普通卡出仓写一次性提醒(tmp 白名单)')
+{
+  const outFile = path.join(path.dirname(os.tmpdir()), 'bh-outside-fence.txt')   // tmpdir 的同级:在 PROJ 外、也不吃 tmp 白名单
+  const sandboxDir = path.join(os.tmpdir(), 'bh-verify-sandbox')   // 验证棒沙箱:与 PROJ 互不包含(PROJ 在 tmpdir 下,直接用 tmpdir 当归属会把 PROJ 包进去)
+  const mkWc = (id) => ({ id, isDestroyed: () => false, send: () => {} })
+  // 1) 分片卡无 writeScope → 默认归属本仓根(快照锚点口径)
+  const h = makeHarness()
+  const wc = mkWc(995)
+  const sid = 'ses_fence1'
+  h.S.sessionByWc.set(wc.id, sid)
+  h.S.sessionInfo.set(sid, { serve: h.serve, wc })
+  h.S.shardWc = new Set([wc.id])
+  const replies = []
+  h.oc.replyPermission = (serve, sessionId, requestId, d) => replies.push({ requestId, d })
+  h.S.handlers.onPermission({ sessionId: sid, requestId: 'f1', tool: 'write', detail: path.join(PROJ, 'in.txt') })
+  ok('默认围栏:写本仓内放行(once)', replies[0] && replies[0].d === 'once', replies[0])
+  h.S.handlers.onPermission({ sessionId: sid, requestId: 'f2', tool: 'write', detail: outFile })
+  ok('默认围栏:写仓外拒(reject)', replies[1] && replies[1].d === 'reject', replies[1])
+  h.S.handlers.onPermission({ sessionId: sid, requestId: 'f3', tool: 'bash', detail: 'cat > ' + outFile })
+  ok('默认围栏:bash 写仓外同拒(reject)', replies[2] && replies[2].d === 'reject', replies[2])
+  h.S.handlers.onPermission({ sessionId: sid, requestId: 'f4', tool: 'write', detail: '' })
+  ok('默认围栏:空 detail 不硬拦(once)', replies[3] && replies[3].d === 'once', replies[3])
+  h.S.handlers.onPermission({ sessionId: sid, requestId: 'f5', tool: 'bash', detail: 'npm test' })
+  ok('默认围栏:无写目标的 bash 放行(once)', replies[4] && replies[4].d === 'once', replies[4])
+
+  // 2) 显式 writeScope 优先(验证棒 tmpdir 沙箱):写 tmpdir 放行、写本仓反被拒
+  const h2 = makeHarness()
+  const wc2 = mkWc(996)
+  const sid2 = 'ses_fence2'
+  h2.S.sessionByWc.set(wc2.id, sid2)
+  h2.S.sessionInfo.set(sid2, { serve: h2.serve, wc: wc2 })
+  h2.S.shardWc = new Set([wc2.id])
+  h2.S.wfCardByWc = new Map([[wc2.id, { id: 'vf', writeScope: [sandboxDir] }]])
+  const replies2 = []
+  h2.oc.replyPermission = (serve, sessionId, requestId, d) => replies2.push({ requestId, d })
+  h2.S.handlers.onPermission({ sessionId: sid2, requestId: 'v1', tool: 'write', detail: path.join(sandboxDir, 'probe.sh') })
+  ok('显式归属优先:验证棒写 tmpdir 放行(once)', replies2[0] && replies2[0].d === 'once', replies2[0])
+  h2.S.handlers.onPermission({ sessionId: sid2, requestId: 'v2', tool: 'write', detail: path.join(PROJ, 'src.js') })
+  ok('显式归属优先:验证棒写本仓被拒(只读沙箱)', replies2[1] && replies2[1].d === 'reject', replies2[1])
+
+  // 3) 普通卡:出仓写一次性提醒(不硬拦,弹框路径照旧);tmp 白名单不提醒
+  const sent = []
+  const h3 = makeHarness()
+  const wc3 = { id: 997, isDestroyed: () => false, send: (ch, p) => sent.push({ ch, p }) }
+  const sid3 = 'ses_fence3'
+  h3.S.sessionByWc.set(wc3.id, sid3)
+  h3.S.sessionInfo.set(sid3, { serve: h3.serve, wc: wc3 })
+  h3.S.handlers.onPermission({ sessionId: sid3, requestId: 'w1', tool: 'write', detail: outFile })
+  ok('普通卡出仓写:卡内提醒一次', sent.filter((x) => x.ch === 'card-note' && /项目目录外/.test((x.p && x.p.text) || '')).length === 1, sent)
+  ok('普通卡出仓写:不硬拦(维持弹框 pendingPerm)', h3.S.pendingPerm.has('w1'))
+  h3.S.handlers.onPermission({ sessionId: sid3, requestId: 'w2', tool: 'write', detail: outFile })
+  ok('普通卡出仓写:第二次不再提醒', sent.filter((x) => x.ch === 'card-note').length === 1)
+  h3.S.handlers.onPermission({ sessionId: sid3, requestId: 'w3', tool: 'write', detail: path.join(os.tmpdir(), 'scratch-once.mjs') })
+  ok('普通卡:tmp 白名单不提醒', sent.filter((x) => x.ch === 'card-note').length === 1)
+}
+
 console.log('用例13:P3.3 todo 权威数据源 —— 回合收尾 getSessionTodo 非空才覆盖注册表;空/异常/无桩/非wf卡一律不动不炸')
 {
   // 非空 → wfTodos(本卡, 权威清单) 被调一次,注册表被覆盖
@@ -530,6 +589,194 @@ console.log('用例15:提问兜底轮询 —— serve 不推 question.asked 时,
   await iv.fn()
   ok('同一待答不重复弹', ev.sent.filter((s) => s.ch === 'question-request').length === 1)
   release(); await p
+}
+
+console.log('用例16:看门狗内容签名判活 —— 轮询重喂同一内容不续命;真变化照常刷新;300s 无变化自动中止分片;S.turnBusy 挂载')
+{
+  intervals.length = 0
+  let release = null
+  const h = makeHarness({ oc: {
+    sendMessage: async () => new Promise((r) => { release = () => r('ok') }),
+    pollTurnParts: async () => [{ partID: 'p1', kind: 'text', text: '半截结论' }],
+  } })
+  h.S.settings.projectDir = PROJ
+  const { ev, sid } = await openCard(h, 201)
+  h.S.shardWc = new Set([201])
+  const p = h.handlers['card-send'](ev, { text: 'x' })
+  await tick()
+  const si = h.S.sessionInfo.get(sid)
+  ok('S.turnBusy 已挂载且回合在飞含本 sid(Set<根会话sid>,window.js 推导 isCardBusy 的权威记录)', h.S.turnBusy instanceof Set && h.S.turnBusy.has(sid))
+  const iv = intervals.find((t) => t.ms === 1200)
+  si.lastEventAt = 1000
+  await iv.fn()
+  ok('轮询喂入新 part → 判活计时刷新一次', si.lastEventAt > 1000, si.lastEventAt)
+  si.lastEventAt = 1000
+  await iv.fn(); await iv.fn(); await iv.fn()
+  ok('轮询全量重喂【同一内容】→ 看门狗计时不再被喂活(病灶修复)', si.lastEventAt === 1000, si.lastEventAt)
+  h.oc.pollTurnParts = async () => [{ partID: 'p1', kind: 'text', text: '半截结论真的变长了' }]
+  await iv.fn()
+  ok('内容真变化(SSE/轮询同规)→ 照常刷新', si.lastEventAt > 1000, si.lastEventAt)
+  si.lastEventAt = Date.now() - 400000
+  const aborted = []
+  h.oc.abort = async (...a) => { aborted.push(a) }
+  await intervals.filter((t) => t.ms === 45000).pop().fn()
+  ok('挂死看门狗:300s 无内容变化 → 自动中止分片主回合', aborted.some((a) => a[1] === sid), aborted)
+  release(); await p
+  ok('回合落定后 S.turnBusy 移除本 sid', !h.S.turnBusy.has(sid))
+}
+
+console.log('用例17:onQuestion 分片分支 —— 隐藏分片卡调 question 工具自动拒答(不拒=永久死锁);可见卡照常弹')
+{
+  const h = makeHarness()
+  const ev = mkEv(211)
+  h.S.shardWc = new Set([211])
+  h.S.sessionInfo.set('ses_q1', { wc: ev.sender, serve: h.serve })
+  h.S.handlers.onQuestion({ sessionId: 'ses_q1', requestId: 'q9', questions: [{ question: '选哪个?' }], v2: false, serve: h.serve })
+  ok('分片隐藏卡提问 → 自动 rejectQuestion(对齐"不拒就把回合挂死"口径)', h.calls.rejectQuestion.some((a) => a[1] === 'ses_q1' && a[2] === 'q9'), h.calls.rejectQuestion)
+  ok('不登记 pendingQuestion、不弹卡', !h.S.pendingQuestion.has('q9') && !ev.sent.some((s) => s.ch === 'question-request'))
+  const ev2 = mkEv(212)
+  h.S.sessionInfo.set('ses_q2', { wc: ev2.sender, serve: h.serve })
+  h.S.handlers.onQuestion({ sessionId: 'ses_q2', requestId: 'q10', questions: [{ question: '选哪个?' }], v2: false, serve: h.serve })
+  ok('可见对话卡照常弹 question-request 并登记', ev2.sent.some((s) => s.ch === 'question-request' && s.p.requestId === 'q10') && h.S.pendingQuestion.has('q10'))
+}
+
+console.log('用例18:onPermission 无主兜底 —— 会话无主(子agent路由未学到/无头会话)保守 reject,serve 不干等')
+{
+  const h = makeHarness()
+  const replies = []
+  h.oc.replyPermission = (...a) => replies.push(a)
+  h.oc.anyHealthyServe = () => h.serve
+  h.S.handlers.onPermission({ sessionId: 'ses_ghost', requestId: 'r9', tool: 'bash', detail: 'rm -rf /tmp/x' })
+  ok('无主 permission → 借健康 serve 保守 reject', replies.some((a) => a[0] === h.serve && a[1] === 'ses_ghost' && a[2] === 'r9' && a[3] === 'reject'), replies)
+  ok('不登记 pendingPerm(没人能答)', !h.S.pendingPerm.has('r9'))
+  const h2 = makeHarness()   // oc 无 anyHealthyServe(老版本)→ 只记日志安全跳过
+  h2.S.handlers.onPermission({ sessionId: 'ses_ghost2', requestId: 'r10', tool: 'bash', detail: 'x' })
+  ok('anyHealthyServe 缺席 → 不炸', true)
+}
+
+console.log('用例19:taskChild 双通道透传 —— 轮询 parts 带 taskChild 透传;onRaw 原始 state 同口径提取')
+{
+  // 通道①:pollTurnParts 提取的 taskChild(opencode.js 轮询通道)→ feedParts 透传到卡片
+  intervals.length = 0
+  let release = null
+  const h = makeHarness({ oc: {
+    sendMessage: async () => new Promise((r) => { release = () => r('ok') }),
+    pollTurnParts: async () => [{ partID: 'c1:tool', kind: 'tool', text: 'task', status: 'running', taskChild: 'ses_child1' }],
+  } })
+  h.S.settings.projectDir = PROJ
+  const { ev } = await openCard(h, 221)
+  const p = h.handlers['card-send'](ev, { text: 'x' })
+  await tick()
+  await intervals.find((t) => t.ms === 1200).fn()
+  ok('轮询通道 taskChild 透传到 card-stream', ev.sent.some((s) => s.ch === 'card-stream' && s.p.partID === 'c1:tool' && s.p.taskChild === 'ses_child1'), ev.sent.filter((s) => s.ch === 'card-stream').map((s) => s.p.taskChild))
+  release(); await p
+
+  // 通道②:onRawMessages 原始消息 → mapRawTurnParts 从 state 同口径提取(sessionID 字段 / 输出 task_id 兜底)
+  const h2 = makeHarness()
+  h2.S.settings.projectDir = PROJ
+  let release2 = null
+  h2.oc.sendMessage = async (...a) => { h2.calls.sendMessage.push(a); return new Promise((r) => { release2 = () => r('ok') }) }
+  const { ev: ev2 } = await openCard(h2, 222)
+  const p2 = h2.handlers['card-send'](ev2, { text: 'x' })
+  await tick()
+  h2.calls.sendMessage[0][6].onRawMessages([
+    { info: { role: 'user' }, parts: [{ id: 'u1', type: 'text', text: 'x' }] },
+    { info: { role: 'assistant' }, parts: [
+      { id: 't1', callID: 'c2', type: 'tool', tool: 'task', state: { status: 'running', sessionID: 'ses_child2', input: { description: 'd', prompt: 'p' } } },
+      { id: 't2', callID: 'c3', type: 'tool', tool: 'task', state: { status: 'completed', output: 'task_id: ses_child3\n其余输出' } },
+    ] },
+  ])
+  const streams2 = ev2.sent.filter((s) => s.ch === 'card-stream')
+  ok('onRaw 通道 state.sessionID → taskChild 提取', streams2.some((s) => s.p.partID === 'c2:tool' && s.p.taskChild === 'ses_child2'), streams2.map((s) => [s.p.partID, s.p.taskChild]))
+  ok('onRaw 通道输出 task_id 兜底 → taskChild 提取', streams2.some((s) => s.p.partID === 'c3:tool' && s.p.taskChild === 'ses_child3'), streams2.map((s) => [s.p.partID, s.p.taskChild]))
+  release2(); await p2
+}
+
+console.log('用例20:轮末补拉工具终态 —— 中止/报错回合 finally 补一次 pollTurnParts,task cancelled 终态送达(与 pollChildren 对称)')
+{
+  intervals.length = 0
+  let tail = false
+  const h = makeHarness({ oc: {
+    sendMessage: async () => { tail = true; throw new Error('markStopped: turn aborted') },
+    pollTurnParts: async () => tail ? [{ partID: 'c4:tool', kind: 'tool', text: 'task', status: 'cancelled' }] : [],
+  } })
+  h.S.settings.projectDir = PROJ
+  const { ev } = await openCard(h, 231)
+  await h.handlers['card-send'](ev, { text: 'x' }).catch(() => {})
+  ok('报错轮末补拉:task 工具 cancelled 终态定格到卡片(不再定格"运行中…")', ev.sent.some((s) => s.ch === 'card-stream' && s.p.partID === 'c4:tool' && s.p.status === 'cancelled'), ev.sent.filter((s) => s.ch === 'card-stream').map((s) => [s.p.partID, s.p.status]))
+}
+
+console.log('用例21:deny 规则前移 —— 先于 AUTO_ALLOW/skill_ 短路:read(*.env) 红线命中即拒(曾在白名单短路后永不命中)')
+{
+  const h = makeHarness()
+  h.oc.AUTO_ALLOW = new Set(['read', 'grep'])
+  const ev = mkEv(241)
+  h.S.sessionInfo.set('ses_d1', { wc: ev.sender, serve: h.serve })
+  h.S.settings.permRules = { deny: ['read(*.env)'] }
+  const replies = []
+  h.oc.replyPermission = (...a) => replies.push(a)
+  h.S.handlers.onPermission({ sessionId: 'ses_d1', requestId: 'd1', tool: 'read', detail: '/proj/.env' })
+  ok('deny read(*.env) 命中即拒(不再被 AUTO_ALLOW 短路)', replies[0] && replies[0][3] === 'reject', replies)
+  ok('deny 拦截卡片留痕', ev.sent.some((s) => s.ch === 'card-note' && /权限规则拦截/.test(s.p.text)))
+  h.S.handlers.onPermission({ sessionId: 'ses_d1', requestId: 'd2', tool: 'read', detail: '/proj/ok.js' })
+  ok('不命中 deny 的 read 维持 AUTO_ALLOW 放行', replies[1] && replies[1][3] === 'once', replies)
+  h.S.settings.permRules = { deny: ['skill_run(*)'] }
+  h.S.handlers.onPermission({ sessionId: 'ses_d1', requestId: 'd3', tool: 'skill_run', detail: '任意技能' })
+  ok('deny 先于 skill_ 短路:命中即拒', replies[2] && replies[2][3] === 'reject', replies)
+}
+
+console.log('用例22:VERIFY_CMD 证据粘性 —— bash 验证命令当场置 reg.verifyEvidence;npm ci/普通命令不算;扩充口径全中')
+{
+  const h = makeHarness()
+  const ev = mkEv(251)
+  const reg = { id: 'wfV1', wcId: 251 }
+  h.S.wfCardByWc = new Map([[251, reg]])
+  h.S.wfAction = () => {}
+  h.S.sessionInfo.set('ses_v1', { wc: ev.sender, serve: h.serve })
+  const bash = (cmd, pid) => h.S.handlers.onText({ sessionId: 'ses_v1', role: 'assistant', kind: 'tool', text: 'bash', partID: pid + ':tool', status: 'completed', toolInput: JSON.stringify({ command: cmd }) })
+  bash('npm ci', 'v1')
+  ok('npm ci 不算验证证据(装依赖≠跑验证)', !reg.verifyEvidence)
+  bash('git status', 'v2')
+  ok('普通命令不置证据', !reg.verifyEvidence)
+  bash('npm run build', 'v3')
+  ok('npm run build 命中 → 当场置 verifyEvidence', reg.verifyEvidence === true)
+
+  for (const [cmd, expect] of [['pytest tests/', true], ['./gradlew build', true], ['mvnw test', true], ['dotnet test', true], ['go vet ./...', true], ['cargo check', true], ['npx vue-tsc --noEmit', true], ['npm run e2e', true], ['ls -la', false]]) {
+    const h2 = makeHarness()
+    const reg2 = { id: 'wfV2', wcId: 252 }
+    h2.S.wfCardByWc = new Map([[252, reg2]])
+    h2.S.wfAction = () => {}
+    h2.S.sessionInfo.set('ses_v2', { wc: mkEv(252).sender, serve: h2.serve })
+    h2.S.handlers.onText({ sessionId: 'ses_v2', role: 'assistant', kind: 'tool', text: 'bash', partID: 'x:tool', status: 'completed', toolInput: JSON.stringify({ command: cmd }) })
+    ok('VERIFY_CMD 口径:「' + cmd + '」→ ' + (expect ? '算验证' : '不算'), !!reg2.verifyEvidence === expect, reg2.verifyEvidence)
+  }
+}
+
+console.log('用例23:card-init 两处 —— 主控卡回包带本 tag 分片快照(id/goal/status/at);history 旧 dir 不存在回退 projectDir')
+{
+  const h = makeHarness(); h.S.settings.projectDir = PROJ
+  const orchReg = { id: 'orch1', wcId: 261, kind: 'orch', goal: '总目标', status: 'running', at: 111 }
+  h.S.wfRegistry = new Map([
+    ['orch1', orchReg],
+    ['sh1', { id: 'sh1', wcId: 262, kind: 'shard', goal: '分片一', status: 'running', at: 222, parentOrch: 'OC-ab' }],
+    ['sh2', { id: 'sh2', wcId: 263, kind: 'shard', goal: '分片二', status: 'done', at: 333, parentOrch: 'OC-ab' }],
+    ['shZ', { id: 'shZ', wcId: 264, kind: 'shard', goal: '别家分片', status: 'running', at: 444, parentOrch: 'OC-zz' }],
+  ])
+  h.S.wfCardByWc = new Map([[261, orchReg]])
+  h.S.orchByTag = new Map([['OC-ab', { id: 'orch1', at: 100 }]])
+  const r = await h.handlers['card-init'](mkEv(261), {})
+  ok('主控卡回包带本 tag 分片快照(只含 OC-ab 两片)', Array.isArray(r.shards) && r.shards.length === 2 && r.shards[0].id === 'sh1' && r.shards[0].goal === '分片一' && r.shards[1].status === 'done' && r.shards[1].at === 333, r.shards)
+  const r0 = await h.handlers['card-init'](mkEv(269), {})
+  ok('非主控卡 → 空数组(拿不到就给空)', Array.isArray(r0.shards) && r0.shards.length === 0, r0.shards)
+
+  const goneDir = path.join(os.tmpdir(), 'bh-gone-dir-' + Date.now())
+  const h2 = makeHarness(); h2.S.settings.projectDir = PROJ
+  h2.S.history.push({ id: 'ses_gone', title: '旧会话', dir: goneDir })
+  const r2 = await h2.handlers['card-init'](mkEv(271), { sid: 'ses_gone' })
+  ok('history 旧 dir 已删 → 回退 projectDir 且不钉死目录', r2.dir === PROJ && h2.S.cardDir.get(271) !== goneDir, { dir: r2.dir, pinned: h2.S.cardDir.get(271) })
+  h2.S.history.push({ id: 'ses_live', title: '旧会话2', dir: PROJ })
+  const r3 = await h2.handlers['card-init'](mkEv(272), { sid: 'ses_live' })
+  ok('history dir 存在 → 照常钉住', r3.dir === PROJ && h2.S.cardDir.get(272) === PROJ, h2.S.cardDir.get(272))
 }
 
   console.log('\n' + (fail ? '❌ 有失败' : '✅ 全部通过') + '  ' + pass + ' passed, ' + fail + ' failed')

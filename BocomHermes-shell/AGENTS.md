@@ -88,6 +88,7 @@ npm run ui:typecheck / ui:test / ui:build   # Vue 侧三件套(vue-tsc 零错误
 - **数据不出网**：不加任何外网请求/上报/CDN；MCP 与中继只绑 `127.0.0.1`（`mail-relay.json` 本地中继带 token）。
 - 渲染进程 IPC 暴露面全部走 `preload.js` 白名单，新增能力时在 preload 里加窄接口，不开泛化通道。
 - `read-file-text` 有路径围栏：只放行项目目录/后端目录/userData 之内、≤512KB，realpath + `path.relative` 防逃逸——不要放宽。
+- **写路径与 git 快照同锚**：serve 的 git 快照 work-tree 锚在卡片目录（=选中项目路径/卡片钉住目录），写仓外文件快照追踪不上且 fork 会持续报错（task 子 Agent 启动失败病灶同链）。因此：分片/无人值守卡**默认写归属=本仓根目录**（`session.js onPermission` 分片分支，显式 writeScope 优先，验证棒 tmpdir 沙箱走显式归属；bash 写文件同闸）；普通可见卡出仓写不硬拦但卡内提醒一次/会话（tmp/userData 白名单）。serve 复用/重启前有 `fs.existsSync(dir)` 守卫，home 会话 spawn 显式 `cwd=os.homedir()`。
 - `db.js` 只读铁律：只放行单条 SELECT/SHOW/DESCRIBE，写关键词直接拒，强制 LIMIT。
 - 录制系统**密码框不存明文**（录制即脱敏）；邮箱密码用 Electron `safeStorage` 加密落盘。
 - 发件箱是**发信安全闸门**：默认延迟 15s 可软撤回，真发信是高风险操作。
