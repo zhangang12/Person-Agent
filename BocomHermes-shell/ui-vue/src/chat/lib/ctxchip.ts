@@ -1,15 +1,15 @@
 // chat 页纯函数层 · 上下文用量 chip(零 DOM 依赖,可 vitest)
 // 口径平移 ui/card.html 930-981:
 //   实测态 = serve 真实 prompt tokens / 上限(无 ~ 前缀);估算态 = 字符估算/1.6(~ 前缀)
-//   上限 = 模型元数据 limit.context;serve 没报走型号兜底表,再兜底 128k;128k 口径硬顶(knobs.ctxLimitMax)
+//   上限 = list-models 的 ctx 字段(兼容 limit.context/context);serve 没报走型号兜底表,再兜底 knobs.ctxLimitMax;口径硬顶同旋钮(ctxCap)
 // ⚠ 阈值变更(设计稿优先,用户已拍板):旧页 70/90 两段变色 → 设计稿 <60% 绿 / 60-80% 橙 / >80% 红。
 //   <5% 隐藏是旧页既有行为(设计稿未提,保留 —— 起步空会话不占标题栏)。
 
 // serve 不报 limit.context 时的型号兜底表(按 modelID 小写子串匹配,保守取公开标称值)
-// DeepSeek V4 = 128K(V2/V3 的 64k 已过时,实测 V4 Pro 误标 64k 被用户抓出);128k 口径硬顶见 ctxCap
+// DeepSeek V4 = 128K(V2/V3 的 64k 已过时,实测 V4 Pro 误标 64k 被用户抓出);MiniMax M2.5 = 192K(内网主力);口径硬顶见 ctxCap
 export const CTX_FALLBACK: Array<[string, number]> = [
   ['claude', 200000], ['gpt-4', 128000], ['gpt-3.5', 16000], ['deepseek', 128000],
-  ['qwen', 131072], ['glm', 128000], ['kimi', 131072], ['llama', 128000],
+  ['qwen', 131072], ['glm', 128000], ['kimi', 131072], ['llama', 128000], ['minimax', 192000],
 ]
 export function ctxFallbackFor(key: unknown): number {
   const k = String(key || '').toLowerCase()
@@ -36,9 +36,11 @@ export function ctxLevel(pct: number): CtxLevel {
   if (pct >= 0.6) return 'warn'
   return 'ok'
 }
-/** chip 文案:「上下文 ~42%」(~=估算态轻量区分,实测无前缀) */
+/** chip 文案:「上下文 ~42%」(~=估算态轻量区分,实测无前缀);显示钳到 100%,超线注明「已超壳层安全线」(真实水位看 title) */
 export function ctxChipText(pct: number, real: boolean): string {
-  return '上下文 ' + (real ? '' : '~') + Math.round(pct * 100) + '%'
+  const over = pct > 1
+  const shown = Math.round((over ? 1 : pct) * 100)
+  return '上下文 ' + (real ? '' : '~') + shown + '%' + (over ? ' · 已超壳层安全线' : '')
 }
 /** chip title(用量 + 可选 KV-cache 命中率 + 压缩提示) */
 export function ctxChipTitle(realTokens: number | null, usedChars: number, limitTokens: number, cacheHit: number | null, pct: number): string {

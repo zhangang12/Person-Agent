@@ -13,7 +13,11 @@
 //   交互提问卡(onQuestion 单/多选/custom/跳过/定格留痕);成果抽屉(artFiles/最终结论);
 //   标题栏 chips(模型菜单/ctx 用量/保活灯)+ 压缩续聊(compactCore)
 // 显式不做(P2b):子 Agent 侧边栏(ev.sub 仍只计数)/命令块「运行」target 轮/wf·orch·shard 卡
-import { reactive, computed } from 'vue'
+// 丢补丁回补波(对齐旧页 card.html 为准):compacting 闸(摘要轮防重入/submit 入队/drain 不开轮/reinit 持忙)、
+//   摘要轮两句+<analysis> 剥离+工作现场回填+滚动 session memory(compactLog*)、子 Agent 完成态权威轮询(pollSubStatus,5s)、
+//   taskChild 只认非空覆写+终态 taskChild 优先配对(同名归并已废)/孙会话联动 done、分片镜像只写缓冲+shardVersion 150ms 合帧+终态截尾、
+//   hang 探针按内容签名判活+分片/主控 300s 自动中断、chatHandoffPct 旋钮、ctx 上限读 ctx 字段+knobs.ctxLimitMax 兜底+回合补刷
+import { reactive, computed, ref } from 'vue'
 import { BH } from './bridge'
 import { renderMarkdown } from './rich'
 import { splitThink, joinParts } from './lib/text'
@@ -243,6 +247,7 @@ const meter = new CtxMeter()
 const queue: QueueEntry[] = []
 let lastSend: { text: string; files: any[] | null } | null = null
 let draftKey = ''
+let cardId = ''   // 本卡 id(boot 从 URL 取):滚动 session memory 落盘键(compactLogLast/compactLogAppend)
 let turnN = 0
 // 子 Agent 索引:agentId → SubAgent(数组本体 = s.subAgents 响应式);跨轮清(每轮扇出重开)
 const subIdx = new Map<string, SubAgent>()
@@ -397,12 +402,19 @@ export function togglePermMode(): void {
 
 // ── 主进程流事件(渲染端不碰 SSE,协议不变) ────────────────────────────────
 let streamWired = false
+// hang 探针判活按内容签名:轮询通道会把同内容快照反复重发,同内容不算活(分片/主控 300s 长牙的判据)
+let lastStreamSig = ''
+function streamSig(ev: StreamEvent): string {
+  const t = String(ev.text || ''), o = ev.output == null ? '' : String(ev.output)
+  return [ev.kind, ev.partID, ev.status, t.length + ':' + t.slice(-64), o.length + ':' + o.slice(-32), ev.title, ev.shardRoot, ev.agentId].join('|')
+}
 export function wireStream(): void {
   if (streamWired) return
   streamWired = true
   try {
     BH()?.onStream?.((ev: StreamEvent) => {
-      lastStreamAt = Date.now()   // 静默挂死探针:有事件就不算挂死(90s/5min 提醒的打点)
+      const sig = streamSig(ev)
+      if (sig !== lastStreamSig) { lastStreamSig = sig; lastStreamAt = Date.now() }   // 静默挂死探针:有新内容才算活(90s/5min 的打点)
       // 多层派发分片回流(shardRoot):只进分片专属缓冲(分片视图用),主控的侧边栏/对话流不沾
       if (ev.shardRoot) { upsertShardMirror(ev); return }
       // 本卡 task 子 Agent 活动 → 侧边栏各自窗格(思考/工具/产出),不占主对话流
@@ -447,12 +459,21 @@ function paintRunAct(): void {
   const last = [...runningTools.values()].pop() || '思考中'
   s.runAct = last + (runningTools.size > 1 ? '（共 ' + runningTools.size + ' 个工具在跑）' : '')
 }
-// hang 探针:任何流事件打点;忙碌期 15s 一拍 —— 90s 无输出提示,5min 升级
+// hang 探针:新内容事件打点(同内容重发不算,见 streamSig);忙碌期 15s 一拍 —— 90s 无输出提示,5min 升级
+// 分片/主控无人值守卡 5min 长牙:提示没人点,直接自动中断本轮(壳层按 aborted 判 interrupted 收官);可见卡维持只提示不代劳
 let lastStreamAt = 0, hangNag90 = false, hangNag300 = false
 setInterval(() => {
   if (!s.busy || !lastStreamAt) return
   const sil = Date.now() - lastStreamAt
-  if (sil >= 300000 && !hangNag300) { hangNag300 = true; addNote('⚠ 已 5 分钟没有任何输出 —— 大概率是网关挂死(不是慢)。建议按 Esc 中断后点「重试本轮」') }
+  if (sil >= 300000 && !hangNag300) {
+    hangNag300 = true
+    if (s.shardMode || s.orchMode) {
+      addNote('⚠ 已 5 分钟没有任何新输出 —— 无人值守卡判定网关挂死,自动中断本轮(壳层按中断收官,主控会重派)')
+      try { BH()?.cardAbort?.() } catch { /* 静默 */ }
+    } else {
+      addNote('⚠ 已 5 分钟没有任何输出 —— 大概率是网关挂死(不是慢)。建议按 Esc 中断后点「重试本轮」')
+    }
+  }
   else if (sil >= 90000 && !hangNag90) { hangNag90 = true; addNote('模型已 90 秒没有输出 —— 可能在长考,也可能是网关挂死。可继续等,或按 Esc 中断') }
 }, 15000)
 // 看门狗(仅 wf 卡):最近连续 N 轮读文件集合高度重合(∩/∪≥阈值)且 todo 无勾选进展 → 注入绕圈提醒;
@@ -533,12 +554,17 @@ function upsertToolEvent(ev: StreamEvent): void {
   // 子等会话 id 提不到(serve 形状各异,实测)→ 立刻建占位条目:侧边栏必须有得看,不能空等(用户实测"点不进去看")
   if (/^(task|delegate_task)$/i.test(name)) {
     it.isTask = true   // 委派工具:点块跳子 Agent 窗格(taskChild 或占位 ph:partID)
-    it.taskChild = String(ev.taskChild || '')
-    if (it.taskChild) {
-      if (st !== 'running') subAgentDone(it.taskChild, st === 'err', String(ev.taskDesc || ''))
-    } else {
-      const ph = subAgent('ph:' + partID, String(ev.taskDesc || ev.title || '子任务'))
-      if (st !== 'running') subAgentDone(ph.id, st === 'err')
+    if (ev.taskChild) it.taskChild = String(ev.taskChild)   // 只在非空时覆写:轮询通道恒空串,会把 SSE 带来的真 id 擦掉
+    if (st !== 'running') {
+      if (it.taskChild) {
+        adoptPlaceholder('ph:' + partID, it.taskChild)   // 终态配对 taskChild 优先:本 task 的占位改嫁真 id(FIFO 领养仅作兜底的另一路)
+        subAgentDone(it.taskChild, st === 'err', String(ev.taskDesc || ''))
+      } else {
+        const ph = subAgent('ph:' + partID, String(ev.taskDesc || ev.title || '子任务'))
+        subAgentDone(ph.id, st === 'err')
+      }
+    } else if (!it.taskChild) {
+      subAgent('ph:' + partID, String(ev.taskDesc || ev.title || '子任务'))   // 运行中且无真 id:先建占位,侧边栏不能空等(用户实测"点不进去看")
     }
   }
   // write/edit 落盘 → 成果抽屉(完成且无错才收;对齐旧页与 session.js wfFiles 口径)
@@ -577,19 +603,20 @@ function upsertTodo(partID: string, ev: StreamEvent, st: ToolState): void {
 
 // ── 子 Agent 侧边栏(P2b,旧页 1795-1885 平移):扇出自动滑出(本轮没手动关过)、各自窗格 ──
 const READ_TOOL = /^(read|grep|glob|list|ls|find|tree)$/i
+/** 占位改嫁真身:task 终态带来真子会话 id 时,把本 task 的占位(ph:partID)配对给它 —— 终态配对 taskChild 优先,FIFO 仅兜底 */
+function adoptPlaceholder(phId: string, realId: string): void {
+  if (subIdx.has(realId)) return
+  const ph = subIdx.get(phId)
+  if (!ph || !ph.id.startsWith('ph:')) return
+  subIdx.set(realId, ph)   // 旧 ph key 留在 subIdx 当别名:task 块的 subJump('ph:partID') 不失效
+  if (s.subActiveId === ph.id) s.subActiveId = realId
+  ph.id = realId
+}
 function subAgent(id: string, name?: string): SubAgent {
   const hit = subIdx.get(id)
   if (hit) { if (name && name !== '子agent') hit.name = name; return hit }
-  // 名字归并:task 工具先建了占位(id=ph:partID,子等会话 id 后到时)或子事件先建(id=ses_*,task 后到)——
-  // 同名按一条算,别出"占位+真身"两行(实测:等 id 失败时用户看不到任何子 Agent 活动)
-  if (name) {
-    for (const a of s.subAgents) {
-      if (a.name === name) { subIdx.set(id, a); return a }
-    }
-  }
-  // 真身领养占位:子等会话 id 晚于占位到、占位名是兜底「子任务」(taskDesc 没拿到,截图实测双行)——
-  // 最老的占位改嫁成真身(同 turn 内派出顺序一致,FIFO 配对);旧 ph key 留在 subIdx 当别名,
-  // task 块的 subJump('ph:partID') 与 subAgentDone 不失效;snapshotSubAgents 按 Set 去重。
+  // 真身领养占位(兜底):子等会话 id 经 sub 事件先到、task 终态没带 taskChild 时 ——
+  // 最老的占位改嫁成真身(同 turn 内派出顺序一致,FIFO 配对);两个同名子会话各是各,不做同名归并(归并会把第二个的活动并丢)
   if (!id.startsWith('ph:')) {
     const ph = s.subAgents.find((a) => a.id.startsWith('ph:'))
     if (ph) {
@@ -639,6 +666,8 @@ function upsertSubAgentEvent(ev: StreamEvent): void {
     t.hasErr = !!ev.error
     t.summary = toolSummary(t.status, outFull)
     if (t.state === 'err') a.err = true
+    // 孙会话:子 Agent 又派 task(嵌套),终态联动勾掉孙 Agent —— 此前嵌套 task 永不 done(计时永不封顶的又一来源)
+    if (/^(task|delegate_task)$/i.test(String(ev.text || '')) && t.state !== 'running' && ev.taskChild) subAgentDone(String(ev.taskChild), t.state === 'err')
   } else if (ev.kind === 'reasoning') {
     a.reasonParts.set(ev.partID || '_', String(ev.text || ''))
     a.reason = joinParts(a.reasonParts)
@@ -652,6 +681,21 @@ function subAgentDone(id: string, err: boolean, name?: string): void {
   const a = subIdx.get(id); if (!a || a.done) return
   if (name) a.name = name
   a.done = true; a.doneAt = Date.now(); if (err) a.err = true
+}
+// 完成态权威轮询(旧页 saTick 平移,SubAgentRail 的 1s tick 驱动):serve 的 task 完成事件缺 taskChild 时配对不上,
+// 子 Agent 一直"运行中"、计时永不封顶(实测)—— 每 5s 对未 done 的真身条目按子会话消息判完成,兜底配对失败的全部情形
+let saPollAt = 0, saPolling = false
+export function pollSubStatus(): void {
+  if (saPolling || Date.now() - saPollAt < 5000) return
+  const fn = BH()?.subStatus
+  if (typeof fn !== 'function') return
+  const ids = s.subAgents.filter((a) => !a.done && !a.id.startsWith('ph:') && a.id !== '_').map((a) => a.id)
+  saPollAt = Date.now()
+  if (!ids.length) return
+  saPolling = true
+  Promise.resolve(fn(ids)).then((st: any) => {
+    try { for (const [id, fin] of Object.entries(st || {})) { if (fin) subAgentDone(id, false) } } catch { /* 静默 */ }
+  }).catch(() => { /* 静默 */ }).finally(() => { saPolling = false })
 }
 /** 点委派工具块跳到该子 Agent 窗格(ToolBlock 调用) */
 export function subJump(agentId: string): void {
@@ -676,13 +720,19 @@ function snapshotSubAgents(): void {
 export function subSnapList(): SubSnap[] { return saSnaps }
 
 // ── 分片回流镜像(P2b-3 分片视图的数据层;点进度卡细看某片时渲染) ──
-// shardRoot → Map<partID, 事件快照>;只缓冲不渲染(渲染在分片视图组件,合帧)。
+// shardRoot → Map<partID, 事件快照>;只写缓冲+置脏标记(旧页 card.html 731-744 平移),150ms 合帧 bump 版本号让 computed 重算 ——
+// 普通 Map 不触发响应式,不 bump 的话打开分片视图后新事件不重渲染、视图定格(实测回归)
 export interface ShardMirrorItem { partID?: string; kind?: string; text?: string; status?: string; input?: any; output?: any; title?: string; error?: any; sub?: boolean; agentName?: string; shardRoot?: string }
 const shardStreams = new Map<string, Map<string, ShardMirrorItem>>()
+/** 镜像缓冲版本号:分片视图 computed 读它建立依赖(脏标记合帧驱动) */
+export const shardVersion = ref(0)
+let shardDirty = false
+setInterval(() => { if (shardDirty) { shardDirty = false; shardVersion.value++ } }, 150)
 function upsertShardMirror(ev: ShardMirrorItem): void {
   const root = String(ev.shardRoot || ''); if (!root) return
   let m = shardStreams.get(root); if (!m) { m = new Map(); shardStreams.set(root, m) }
   m.set(ev.partID || ((ev.kind || 'x') + '_' + m.size), ev)
+  shardDirty = true
   // 分片 write/edit 落盘 → 主控卡成果抽屉(8 片文档+索引都在磁盘,抽屉不能显示"无")
   try {
     if (ev.kind === 'tool' && /complet|success|done/i.test(String(ev.status || '')) && !ev.error && isWriteEditTool(ev.text)) {
@@ -690,6 +740,17 @@ function upsertShardMirror(ev: ShardMirrorItem): void {
       if (fp && !artFileSeen.has(fp)) { artFileSeen.add(fp); s.artFiles.push(fp) }
     }
   } catch { /* 静默 */ }
+}
+/** 分片 chip 变 done/interrupted → 该片缓冲截尾(末 50 条、单条 output 截 4k):终态分片不再增量,防长跑主控内存无界 */
+function trimShardBuffer(root: string): void {
+  const m = shardStreams.get(root); if (!m) return
+  const keep = [...m.entries()].slice(-50)
+  m.clear()
+  for (const [k, v] of keep) {
+    if (v && typeof v.output === 'string' && v.output.length > 4096) v.output = v.output.slice(0, 4096) + '\n…(截尾)'
+    m.set(k, v)
+  }
+  shardDirty = true
 }
 export function shardMirror(root: string): Map<string, ShardMirrorItem> | undefined { return shardStreams.get(root) }
 
@@ -709,7 +770,8 @@ export async function turn(text: string, files?: any[] | null): Promise<boolean>
   turnN++
   s.planAsk = false   // 新一轮开跑即撤规划闸提示(用户在调整方案,轮末若仍待批会重挂)
   clearPlanTimers()   // 撤条必清倒计时(泄漏/二次注入防线)
-  lastStreamAt = Date.now(); hangNag90 = hangNag300 = false   // hang 探针复位(新一轮重新计)
+  lastStreamAt = Date.now(); lastStreamSig = ''; hangNag90 = hangNag300 = false   // hang 探针复位(新一轮重新计)
+  if (!ctxLimitReal) refreshCtxLimit()   // 上限还没拿到真值(serve 晚起/列表为空):每个回合补刷,防开卡终身吃兜底
   s.aborting = false
   runningTools.clear(); paintRunAct()   // 状态行:新一轮从"思考中"起
   const ai = addAi()
@@ -824,7 +886,7 @@ export function submit(text: string, atts: { kind: string; name: string; path?: 
   }
   const dispText = disp || (v || (images.length ? '(图片)' : '(文档)')) + (atts.length ? ' · 附件 ' + atts.length : '')   // card-inject:用户气泡看 disp,引擎收全文
   const el = addUser(dispText)
-  if (s.busy || !s.ready) {
+  if (s.busy || !s.ready || compacting) {   // compacting 期间一律入队:摘要轮/交棒 reinit 窗口不开新轮(compacting 闸,旧页平移)
     el.queued = true
     queue.push({ text: full || '(见附件)', files: images, item: el })
     return
@@ -840,8 +902,9 @@ export function cancelQueuedItem(item: UserItem): void {
   if (i >= 0) s.items.splice(i, 1)
 }
 
-/** 轮末 drain:就绪且闲且有队 → 出一条转正发出 */
+/** 轮末 drain:就绪且闲且有队 → 出一条转正发出;compacting 期间不开轮(摘要轮/交棒窗口) */
 function drain(): void {
+  if (compacting) return
   const qi = drainNext(queue, s.ready, s.busy)
   if (!qi) return
   qi.item.queued = false
@@ -968,13 +1031,23 @@ export function wireInject(): void {
 
 // ── 主控卡分片进度(shard-progress 推送)+ 分片视图(点一片就地渲染镜像会话) ─────
 let shardProgWired = false
+const shardTrimmed = new Set<string>()   // 已截尾的分片(终态只截一次)
+function mapShardList(list: any[]): { id: string; goal: string; status: string; round: number }[] {
+  return (list || []).map((x: any) => ({ id: String(x.id || ''), goal: String(x.goal || ''), status: String(x.status || ''), round: +x.round || 0 }))
+}
+function applyShards(list: any[]): void {
+  s.shards = mapShardList(list)
+  for (const sh of s.shards) {   // 终态分片镜像缓冲截尾(防无界增长;一片只截一次)
+    if (sh.id && (sh.status === 'done' || sh.status === 'interrupted') && !shardTrimmed.has(sh.id)) { shardTrimmed.add(sh.id); trimShardBuffer(sh.id) }
+  }
+}
 export function wireShardProgress(): void {
   if (shardProgWired) return
   shardProgWired = true
   try {
     BH()?.onShardProgress?.((p: any) => {
       if (!p || !Array.isArray(p.shards)) return
-      s.shards = p.shards.map((x: any) => ({ id: String(x.id || ''), goal: String(x.goal || ''), status: String(x.status || ''), round: +x.round || 0 }))
+      applyShards(p.shards)
     })
   } catch { /* 静默 */ }
 }
@@ -987,7 +1060,7 @@ function handoffDue(): boolean {   // 交棒优先于一切轮末催办:水位�
 }
 function maybeAutoCompact(): void {
   compactClock++   // 轮末节拍:本函数每轮末调一次,熔断冷却按它数
-  if (!s.wfMode || s.busy || !s.ctxLimitTokens) return
+  if (compacting || !s.wfMode || s.busy || !s.ctxLimitTokens) return   // compacting 闸:摘要轮/交棒进行中绝不重入
   let handoff = 0.55, maxN = 5
   try {
     const knobs = ((BH()?.getSettings?.() || {}) as any).knobs || {}
@@ -1052,7 +1125,7 @@ function wdCheck(): void {
 // ── 委派驱动(harness,旧页 1061-1078):复杂任务主 Agent 一直单干 = 必走歪路 ──
 // todo ≥3 步 且 已实质干活 且 ≥2 轮 且 从未派过 task → wf 自动注入派子 Agent 规程;普通卡给可见建议。每任务只催一次。
 function maybeDelegateNudge(): void {
-  if (s.busy || delegatedSeen || delegateNudged || handoffDue()) return   // busy 闸:同一轮末链里已有注入开跑了,下轮末再催(防并发回合撞 answerParts)
+  if (s.busy || compacting || delegatedSeen || delegateNudged || handoffDue()) return   // busy/compacting 闸:同一轮末链里已有注入开跑了,下轮末再催(防并发回合撞 answerParts)
   if (latestTodoTotal < 3 || turnN < 2) return
   if (!wdRounds.length && !wfExecSeen) return
   delegateNudged = true
@@ -1066,7 +1139,7 @@ function maybeDelegateNudge(): void {
 // ── 长任务防停(旧页 1082-1103):todo 还有未完项就催它继续 ──
 // wf 自动注入"继续"(停下=链死);普通卡出可见「继续执行」按钮。连催 3 次且无进展 → 停催转人工;未完项变少即复位。
 function maybeContinueNudge(): void {
-  if (s.busy || handoffDue()) return   // busy 闸:轮末链里已有注入开跑(规划旁路/委派/交棒),下轮末再催
+  if (s.busy || compacting || handoffDue()) return   // busy/compacting 闸:压缩/交棒期间不催 —— 摘要轮里再注入会起嵌套回合,把摘要泡顶成空气泡(实测死循环)
   const open = latestOpenTodos
   if (!open.length) { contNudgeN = 0; contLastOpen = -1; return }
   if (contLastOpen >= 0 && open.length < contLastOpen) contNudgeN = 0
@@ -1081,19 +1154,21 @@ function maybeContinueNudge(): void {
 }
 // ── 产出兜底(wf 卡,规程第 7 条):todo 全勾却零落盘产出 → 注入补 MD 提醒(一次) ──
 function maybeWfProduceNag(): void {
-  if (!s.wfMode || s.busy || wfProduceNag || handoffDue() || !latestTodoTotal) return
+  if (!s.wfMode || s.busy || compacting || wfProduceNag || handoffDue() || !latestTodoTotal) return
   if (latestOpenTodos.length) return   // 还有未完项,不算"快完成"
   if (s.artFiles.length) return
   wfProduceNag = true
   addNote('⚠ 系统提醒:尚无落盘产出 —— 请补写 MD 文档')
   turn('(系统提醒:工作流即将完成,但尚未有任何落盘产出。按规程第 7 条【默认必须落盘产出 MD】:把最终成果写成 docs/ 下的 MD 文档(报告/手册/清单/改动说明),写完再交付;确有理由不落盘的,请在交付回答里明确说明理由。)')
 }
-// ── 普通对话卡水位主动提醒(不自动压缩 —— 会清可见对话,越权):≥90% 且轮末空闲 → 提醒一次 ──
+// ── 普通对话卡水位主动提醒(不自动压缩 —— 会清可见对话,越权):≥knobs.chatHandoffPct(缺省 0.9,0=不提醒)且轮末空闲 → 提醒一次 ──
 let ctxNag = false
 function maybeCtxNag(): void {
-  if (s.wfMode || ctxNag || !s.ctxLimitTokens) return
+  if (s.wfMode || ctxNag || compacting || !s.ctxLimitTokens) return
+  const line = knobNum('chatHandoffPct', 0.9)   // 死旋钮复活:阈值跟设置页 knobs.chatHandoffPct 走;0=用户关了提醒
+  if (line <= 0) return
   const pct = ctxPctVal(s.ctxRealTokens, s.ctxUsedChars, s.ctxLimitTokens)
-  if (pct < 0.9) return
+  if (pct < line) return
   ctxNag = true
   addNote('上下文已用 ' + Math.round(pct * 100) + '% —— 继续聊质量会下降,建议点上方上下文 chip「压缩续聊」')
 }
@@ -1149,19 +1224,25 @@ export function toggleVerbose(): void {
   try { localStorage.setItem('cardVerbose', s.verbose ? '1' : '0') } catch { /* 静默 */ }
 }
 
-// ── ctx chip 数据源:上限(listModels 60s 缓存 → 型号兜底 → 128k 硬顶)/ 实测用量(轮末轮询) ──
+// ── ctx chip 数据源:上限(listModels 60s 缓存 → 型号兜底 → knobs.ctxLimitMax 兜底)/ 实测用量(轮末轮询) ──
+// ctxLimitReal=false 时 turn() 每回合补刷:serve 未起时开卡 list-models 落空,不补刷会终身吃兜底值(实测)
+let ctxLimitReal = false
 export async function refreshCtxLimit(): Promise<void> {
   let limit = 0
   try {
     const now = Date.now()
-    if (!modelsCache || now - modelsCacheAt > 60000) { modelsCache = (await BH()?.listModels?.()) || []; modelsCacheAt = now }
+    if (!modelsCache || now - modelsCacheAt > 60000) {
+      const list = (await BH()?.listModels?.()) || []
+      if (list.length) { modelsCache = list; modelsCacheAt = now }   // 空不缓存:下次调用重试(serve 晚起是常态),拿到真列表才起 60s 缓存
+    }
     const cur = s.modelKey && (modelsCache || []).find((m: any) => (m.providerID + '/' + m.modelID) === s.modelKey)
-    limit = (cur && ((cur.limit && cur.limit.context) || cur.context || 0)) || 0
+    limit = (cur && (cur.ctx || (cur.limit && cur.limit.context) || cur.context || 0)) || 0   // list-models 上限字段是 ctx(opencode.js),limit.context/context 兼容兜底
+    if (limit) ctxLimitReal = true
   } catch { /* 静默 */ }
   if (!limit) limit = ctxFallbackFor(s.modelKey || s.modelLabel)
-  if (!limit) limit = 128000
   let capMax = 128000
   try { capMax = Math.floor(+((((BH()?.getSettings?.() || {}) as any).knobs || {}).ctxLimitMax)) || 128000 } catch { /* 静默 */ }
+  if (!limit) limit = capMax   // 全部读不到:兜底取 knobs.ctxLimitMax(壳层口径同源,knobs 改上限这里跟随),不写死
   s.ctxLimitTokens = ctxCap(limit, capMax)
   emitCtxToHost()
 }
@@ -1244,8 +1325,8 @@ export async function pickProject(): Promise<void> {
 
 // ── 压缩续聊(compactCore,旧页 982-1017 平移):模型写接力摘要 → cardReinit(carryCtx) → 清场续聊 ──
 // wf 变体(主动交棒):工作流专用摘要提示 + 压缩后自动发「恢复执行」棒次,无人值守链不断。
-const SUM_PROMPT_CHAT = '请把我们这段对话压缩成一份「接力摘要」，供新会话继续用。包含：1) 正在做的事与目标 2) 已确认的关键结论/决定（保留文件路径、命令、数据） 3) 未完成事项与下一步 4) 已排除的思路与失败尝试（各附一句原因 —— 保错误证据，下一棒不重犯） 5) 需要沿用的约束与偏好 6) 用户消息清单：逐条列出本段对话中用户发过的所有消息（原话，不含工具结果） 7) 已读文件清单：本段精读过的文件路径，各附一句"读到了什么"，新会话直接采信结论、不要重读 8) 下一步：逐字引用最近一条进行中的对话原话，说明做到哪、接着做什么（防意图漂移）。只输出摘要正文。'
-const SUM_PROMPT_WF = '请把本工作流到目前为止压缩成一份「接力摘要」，供新会话无缝继续执行。必须包含：1) 总目标 2) todo 计划清单及各项当前状态（原样逐条列出） 3) 已确认的关键结论与产出（保留文件路径、file:行号、命令、数据；子 Agent 已回报的发现逐条保留） 4) 未完成事项与下一步打算 5) 已尝试与已排除路径（失败的方法/走过的死胡同/被否决的方案，各附一句原因 —— 保错误证据，下一棒不重犯） 6) 需沿用的约束 7) 用户消息清单：逐条列出本工作流中用户发过的所有消息（原话，不含工具结果） 8) 已读文件清单：本棒已精读过的文件路径，各附一句"读到了什么"，下一棒直接采信结论、不要重读 9) 下一步：逐字引用最近一条进行中的对话原话，说明做到哪、接着做什么（防意图漂移）。只输出摘要正文。'
+const SUM_PROMPT_CHAT = '请把我们这段对话压缩成一份「接力摘要」，供新会话继续用。包含：1) 正在做的事与目标 2) 已确认的关键结论/决定（保留文件路径、命令、数据） 3) 未完成事项与下一步 4) 已排除的思路与失败尝试（各附一句原因 —— 保错误证据，下一棒不重犯） 5) 需要沿用的约束与偏好 6) 用户消息清单：逐条列出本段对话中用户发过的所有消息（原话，不含工具结果） 7) 已读文件清单：本段精读过的文件路径，各附一句"读到了什么"，新会话直接采信结论、不要重读 8) 下一步：逐字引用最近一条进行中的对话原话，说明做到哪、接着做什么（防意图漂移）。可以先打 <analysis> 草稿再定稿，但只输出定稿后的摘要正文（草稿会被剥离）；本轮直接输出，不要调用任何工具。'
+const SUM_PROMPT_WF = '请把本工作流到目前为止压缩成一份「接力摘要」，供新会话无缝继续执行。必须包含：1) 总目标 2) todo 计划清单及各项当前状态（原样逐条列出） 3) 已确认的关键结论与产出（保留文件路径、file:行号、命令、数据；子 Agent 已回报的发现逐条保留） 4) 未完成事项与下一步打算 5) 已尝试与已排除路径（失败的方法/走过的死胡同/被否决的方案，各附一句原因 —— 保错误证据，下一棒不重犯） 6) 需沿用的约束 7) 用户消息清单：逐条列出本工作流中用户发过的所有消息（原话，不含工具结果） 8) 已读文件清单：本棒已精读过的文件路径，各附一句"读到了什么"，下一棒直接采信结论、不要重读 9) 下一步：逐字引用最近一条进行中的对话原话，说明做到哪、接着做什么（防意图漂移）。可以先打 <analysis> 草稿再定稿，但只输出定稿后的摘要正文（草稿会被剥离）；本轮直接输出，不要调用任何工具。'
 const RESUME_MSG = '接力摘要已随本消息注入（见上方摘要块）。摘要中的已读文件清单直接采信，不要重读；请先用 todowrite 恢复摘要里的计划清单，然后按未完成事项继续执行，直至总目标完成。'
 /** 清场:压缩续聊/切目录专用 —— feed/队列/工具账本/成果抽屉全清,会话级草稿键由调用方负责换 */
 export function resetConversation(): void {
@@ -1264,37 +1345,65 @@ export function resetConversation(): void {
 // 交棒熔断(借鉴 CC autoCompact consecutiveFailures,依据 借鉴清单 A1):成功复位、失败不耗棒次、
 // 连败 2 次停自动重试转人工、失败隔一个轮末再试(冷却按 maybeAutoCompact 的轮末节拍数)。台账见 docs/项目记忆/弱模型行为台账.md
 let compactFailStreak = 0, compactFailSeq = -1, compactClock = 0, compactFailNoted = false
+// compacting 闸(旧页 card.html:992 平移):摘要轮的轮末 finally 会再触发 maybeAutoCompact/催办链,没这闸会重入交棒(实测死循环);
+// 入口置位、finally 复位;compacting 期间 submit 一律入队、drain 不开轮(reinit 窗口不持忙的回归一并修)
+let compacting = false
+// 滚动 session memory(CC 同款):上一棒交接单作基座只增量合并,摘要不再每次从零重写(弱模型漂移更少)。
+// 内存态随卡存活(交棒链同卡);落盘按卡 id 存 userData/compacts/(compactLogLast/compactLogAppend IPC,键稳定重启能找回)
+let lastCompactSummary = ''
+export function isCompacting(): boolean { return compacting }
 export async function compactCore(opts?: { wf?: boolean; auto?: boolean }): Promise<boolean> {
   const wf = !!(opts && opts.wf), auto = !!(opts && opts.auto)
+  if (compacting) return false   // 重入闸:静默拒(忙线拒绝在下条,带提示)
   if (s.busy) { addNote('正在回答中，等这轮结束再压缩'); return false }   // 忙线拒绝不算失败(不计熔断)
-  addNote(auto ? '到达主动交棒水位,接力给下一棒主 Agent(第 ' + (s.autoCompactN + 1) + ' 棒):正在写交接单…' : '压缩续聊:正在让模型总结本段对话…')
-  const oldSid = s.sessionId   // 逃生舱 transcript 属于旧会话(reinit 后换新号)
-  const ok = await turn(wf ? SUM_PROMPT_WF : SUM_PROMPT_CHAT)
-  const lastAi = [...s.items].reverse().find((i): i is AiItem => i.kind === 'ai' && !!(i as AiItem).raw)
-  const summary = ok && lastAi ? String(lastAi!.raw || '') : ''
-  if (!summary.trim()) { compactFailStreak++; compactFailSeq = compactClock; addNote('压缩失败：没拿到摘要，继续用原会话（可稍后重试）'); return false }
+  compacting = true
   try {
-    const r = await BH()!.cardReinit({ dir: s.dir, carryCtx: summary, shard: s.shardMode || undefined })
-    resetConversation()
-    s.project = r.project || s.project; s.dir = r.dir || s.dir
-    s.modelLabel = (r.model && (r.model.name || r.model.modelID)) || s.modelLabel
-    s.sessionId = r.sessionId || s.sessionId
-    draftKey = draftKeyOf(s.sessionId)
-    meter.bump(summary.length); s.ctxUsedChars = meter.usedChars
-    s.items.push({ id: nextId(), kind: 'reason', body: summary, open: false, title: '接力摘要（已随新会话注入）' })
-    compactFailStreak = 0; compactFailNoted = false   // 成功复位(手动 chip 压成功同样复位)
-    if (auto) {
-      s.autoCompactN++   // 棒次只计成功(失败不耗额度)
-      let resume = RESUME_MSG
-      try { const txp = await (BH() as any)?.transcriptPath?.(oldSid); if (txp) resume += '上一棒完整记录见：' + txp + '，需要细节可回查。' } catch { /* 静默 */ }
-      addNote('已交棒:下一棒主 Agent 带着交接单上阵(全新 128k),继续执行未完成步骤')
-      await turn(resume)
-    } else {
-      addNote('已压缩续聊：新会话就绪，摘要已注入，直接继续提问即可。')
-      drain()
-    }
-    return true
-  } catch (e: any) { compactFailStreak++; compactFailSeq = compactClock; addNote('开新会话失败：' + ((e && e.message) || e) + '（原会话不受影响）'); return false }
+    addNote(auto ? '到达主动交棒水位,接力给下一棒主 Agent(第 ' + (s.autoCompactN + 1) + ' 棒):正在写交接单…' : '压缩续聊:正在让模型总结本段对话…')
+    const oldSid = s.sessionId   // 逃生舱 transcript 属于旧会话(reinit 后换新号)
+    // 滚动 session memory:上一棒交接单(内存优先,落盘兜底)作基座拼进摘要提示,只增量合并
+    let sumPrompt = wf ? SUM_PROMPT_WF : SUM_PROMPT_CHAT
+    try {
+      const prev = lastCompactSummary || (typeof (BH() as any)?.compactLogLast === 'function' ? await (BH() as any).compactLogLast(cardId || 'card') : '')
+      if (prev && String(prev).trim()) sumPrompt += '\n\n【上一棒交接单(基座,直接采信)】\n' + String(prev).trim() + '\n【/上一棒交接单】\n要求:以它为基座,只把本段新内容增量合并进来(保留仍成立的事实,删掉过期事实,别整段重写)。'
+    } catch { /* 静默 */ }
+    const ok = await turn(sumPrompt)
+    const lastAi = [...s.items].reverse().find((i): i is AiItem => i.kind === 'ai' && !!(i as AiItem).raw)
+    let summary = ok && lastAi ? String(lastAi!.raw || '') : ''
+    // analysis 机械剥离(CC 摘要模板同款纪律):模型先打 <analysis> 草稿再定稿,只许定稿进新会话(CoT 提质量但不该花 token 带进下一棒)
+    const am = summary.match(/<analysis>[\s\S]*?<\/analysis>/i)
+    if (am) summary = summary.replace(am[0], '').trim()
+    if (!summary.trim()) { compactFailStreak++; compactFailSeq = compactClock; addNote('压缩失败：没拿到摘要，继续用原会话（可稍后重试）'); return false }
+    // 工作现场回填(CC buildPostCompactMessages 同款):最近 write/edit 落盘的 5 个文件随摘要注入新会话 ——
+    // 换棒失忆是弱模型最痛的一档;必须在 resetConversation 清场之前取(清场后 artFiles 已空)
+    const siteFiles = s.artFiles.slice(-5)
+    if (siteFiles.length) summary += '\n\n<工作现场回填>上一棒最近 write/edit 落盘的文件（需要最新内容时按路径重读，不要全部重读）：' + siteFiles.join('、') + '</工作现场回填>'
+    lastCompactSummary = summary   // 滚动 session memory:本棒交接单记为下一棒基座(内存态 + 落盘双写)
+    try { if (typeof (BH() as any)?.compactLogAppend === 'function') (BH() as any).compactLogAppend({ sid: cardId || 'card', text: summary }) } catch { /* 静默 */ }
+    try {
+      s.busy = true   // reinit 窗口持忙(旧页 setBusy(true) 平移):清场到新会话就绪之间,submit 入队、drain 不开轮
+      const r = await BH()!.cardReinit({ dir: s.dir, carryCtx: summary, shard: s.shardMode || undefined })
+      resetConversation()
+      s.project = r.project || s.project; s.dir = r.dir || s.dir
+      s.modelLabel = (r.model && (r.model.name || r.model.modelID)) || s.modelLabel
+      s.sessionId = r.sessionId || s.sessionId
+      draftKey = draftKeyOf(s.sessionId)
+      // ⚠ 此处不再 bump summary 长度:新会话首条注入的 ctxPrefix(含摘要)会经 card-note 整长计账,两边都 bump 水位虚高一个摘要身位(实测回归)
+      s.items.push({ id: nextId(), kind: 'reason', body: summary, open: false, title: '接力摘要（已随新会话注入）' })
+      compactFailStreak = 0; compactFailNoted = false   // 成功复位(手动 chip 压成功同样复位)
+      s.busy = false
+      if (auto) {
+        s.autoCompactN++   // 棒次只计成功(失败不耗额度)
+        let resume = RESUME_MSG
+        try { const txp = await (BH() as any)?.transcriptPath?.(oldSid); if (txp) resume += '上一棒完整记录见：' + txp + '，需要细节可回查。' } catch { /* 静默 */ }
+        addNote('已交棒:下一棒主 Agent 带着交接单上阵(全新 128k),继续执行未完成步骤')
+        await turn(resume)
+      } else {
+        addNote('已压缩续聊：新会话就绪，摘要已注入，直接继续提问即可。')
+        drain()
+      }
+      return true
+    } catch (e: any) { s.busy = false; compactFailStreak++; compactFailSeq = compactClock; addNote('开新会话失败：' + ((e && e.message) || e) + '（原会话不受影响）'); return false }
+  } finally { compacting = false }
 }
 
 // ── 启动引导(cardInit 生命周期) ───────────────────────────────────────────
@@ -1325,6 +1434,7 @@ export async function boot(): Promise<void> {
   initVerbose()        // 过程详情偏好(localStorage cardVerbose)
   const p = new URLSearchParams(location.search)
   s.title = p.get('title') || '新对话'
+  cardId = p.get('id') || ''   // 滚动 session memory 落盘键(compactLog*)
   const initMsg = p.get('msg') || s.title          // msg 在场时发送内容不同于标题(fan-out)
   const dispMsg = p.get('disp') || initMsg         // disp 在场时用户气泡展示它
   const sid = p.get('sid') || ''
@@ -1348,7 +1458,8 @@ export async function boot(): Promise<void> {
     s.modelKey = r.model ? (r.model.providerID + '/' + r.model.modelID) : ''
     s.sessionId = r.sessionId || ''
     try { const st = BH()?.getSettings?.() || {}; s.permMode = st.permMode === 'auto' ? 'auto' : 'default' } catch { /* 静默 */ }   // 权限模式(chip 与设置页同源)
-    refreshCtxLimit()   // ctx chip 上限(listModels → 型号兜底 → 128k 硬顶;fire-and-forget)
+    try { const sh = (r as any).shards; if (Array.isArray(sh)) applyShards(sh) } catch { /* 静默 */ }   // card-init 回包带分片进度(主控卡重开恢复面板);字段缺席不炸
+    refreshCtxLimit()   // ctx chip 上限(listModels → 型号兜底 → knobs.ctxLimitMax 兜底;fire-and-forget)
     draftKey = draftKeyOf(s.sessionId)
     // 续接/调试卡恢复草稿;新卡自动发首条消息,不恢复(对齐旧页)
     if (sid || s.embedded) {

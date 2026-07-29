@@ -6,7 +6,7 @@
   W1 右栏 264px 上下文面板:preload 无整组数据通道,本阶段不做,归 P2(见报告)。
 -->
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { KButton, KChip, KDialog, KToaster } from '../components'
 import TitleBar from './TitleBar.vue'
 import SideBar from './SideBar.vue'
@@ -19,6 +19,24 @@ onMounted(() => { wireShell() })
 // 有 webview 的会话(收养条目无 webview,不占视图区)
 const wvChats = computed(() => store.chats.filter((c) => c.hasWv))
 
+// ── 侧栏宽度拖拽(2026-07 评审要求):拖右缘 168~420px,localStorage 持久化 ──
+// 注意:拖动经过 webview 时鼠标事件会被 guest 进程吃掉 → 拖拽期间盖一层透明罩,事件全落在本页。
+const SBW_KEY = 'bh.sbw'
+const clampW = (v: number) => Math.min(420, Math.max(168, Math.round(v) || 228))
+const sbw = ref(clampW(+(localStorage.getItem(SBW_KEY) || 228)))
+const sbDragging = ref(false)
+function sbDragStart(e: MouseEvent) {
+  const x0 = e.clientX, w0 = sbw.value
+  sbDragging.value = true
+  const move = (ev: MouseEvent) => { sbw.value = clampW(w0 + ev.clientX - x0) }
+  const up = () => {
+    window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up)
+    sbDragging.value = false
+    try { localStorage.setItem(SBW_KEY, String(sbw.value)) } catch {}
+  }
+  window.addEventListener('mousemove', move); window.addEventListener('mouseup', up)
+}
+
 function onConfirmClose() {
   const key = store.confirmCloseKey
   store.confirmCloseKey = ''
@@ -30,8 +48,13 @@ function onConfirmClose() {
   <div id="shell">
     <TitleBar />
 
-    <div id="body">
+    <div id="body" :style="{ gridTemplateColumns: sbw + 'px 1fr' }">
       <SideBar />
+
+      <!-- 侧栏右缘拖拽柄 -->
+      <div id="sbResizer" :class="{ on: sbDragging }" :style="{ left: (sbw - 3) + 'px' }" title="拖拽调整侧栏宽度" @mousedown.prevent="sbDragStart"></div>
+      <!-- 拖拽期透明罩:webview 会吃掉经过它的鼠标事件,罩住整窗保证拖拽不断线 -->
+      <div v-if="sbDragging" id="sbDragMask"></div>
 
       <main id="main">
         <!-- 对话视图:每会话一个 webview 保活(切走仅隐藏);右栏 = W1 上下文面板(可收起) -->
@@ -102,8 +125,14 @@ body { padding: 0; }
 
 <style scoped>
 #shell { height: 100%; display: grid; grid-template-rows: 38px 1fr 28px; }
-#body { display: grid; grid-template-columns: 228px 1fr; min-height: 0; }
+#body { display: grid; grid-template-columns: 228px 1fr; min-height: 0; position: relative; }
 #main { min-width: 0; min-height: 0; position: relative; }
+
+/* 侧栏右缘拖拽柄:默认隐形,hover/拖拽中亮一条 accent 细线 */
+#sbResizer { position: absolute; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 40; }
+#sbResizer::after { content: ''; position: absolute; top: 0; bottom: 0; left: 2px; width: 2px; background: transparent; transition: background .15s; }
+#sbResizer:hover::after, #sbResizer.on::after { background: var(--blue); opacity: .55; }
+#sbDragMask { position: fixed; inset: 0; z-index: 999; cursor: col-resize; }
 .view { position: absolute; inset: 0; display: none; flex-direction: column; }
 .view.on { display: flex; }
 .chatcol { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
