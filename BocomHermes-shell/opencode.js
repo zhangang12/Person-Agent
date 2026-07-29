@@ -1,6 +1,6 @@
 // opencode serve 连接层 —— 按【项目目录】分池的多 serve。
-// 事实：此版本 POST /session 不支持会话级目录（directory/cwd/path 均被忽略），
-// 每个会话都用 serve 的启动目录。因此：一个项目目录 = 一个独立 serve（各占一端口）。
+// 防御口径：不依赖 POST /session 的会话级目录（?directory= 带上但可能被 serve 忽略，
+// 各版本行为不一，统一按"会话用 serve 启动目录"设防）。因此：一个项目目录 = 一个独立 serve（各占一端口）。
 //   · 同项目多卡 → 复用同一 serve 的多个并发会话（任务隔离）
 //   · 不同项目  → 各自 serve（进程级隔离）
 // 终端日志一律英文，避免 Windows 控制台乱码。
@@ -16,6 +16,8 @@ const { spawn } = require('child_process')
 const net = require('net')
 const http = require('http')
 const path = require('path')
+const fs = require('fs')
+const os = require('os')
 
 const AUTO_ALLOW = new Set(['read', 'grep', 'glob', 'list', 'ls', 'find', 'tree'])
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -48,9 +50,11 @@ const childTitle = new Map()      // 子会话ID -> 标题(如 "Explore codebase
 const sidBase = new Map()         // 子会话ID -> 所属 serve base：refreshSessionTree 差集回收只摘本 base 的,别误伤其它 serve 的映射
 // R9 子会话映射统一登记口：三个学习点(session 事件/会话树/task 工具结果)都走这里。
 // 容量粗清仿 usageBySession：超上限全清,映射丢了靠 SSE/轮询重新学,代价可接受;清 parent 映射必须连带清标题/base。
+// ⚠ 必须连带清 classifiedSessions:懒刷新的触发条件是"!classifiedSessions.has && !childToParent.has",
+// 只清映射不清已分类集 = 条件永不成立,在飞子 Agent 路由永断(审查实测)。
 function noteChild(id, parent, title, base) {
   if (!id || !parent || id === parent) return
-  if (childToParent.size > 500) { childToParent.clear(); childTitle.clear(); sidBase.clear() }
+  if (childToParent.size > 500) { childToParent.clear(); childTitle.clear(); sidBase.clear(); classifiedSessions.clear() }
   childToParent.set(id, parent)
   if (typeof title === 'string' && title) childTitle.set(id, title)
   if (base) sidBase.set(id, base)
@@ -127,12 +131,18 @@ function extractChildSessionId(st) {
   return ''
 }
 // 懒加载会话树:见到没见过的 sessionID 就 GET /session 拉全量,给所有带 parentID 的会话建 子→父 映射。
-// 保证子agent路由不依赖 session 事件是否早发(节流 1.5s,只在出现新会话时触发;force=true 绕过节流,断线重连补偿用)。
+// 保证子agent路由不依赖 session 事件是否早发(节流 1.5s,只在出现新会话时触发;force=true 绕过节流,断线重连补偿/一次性事件防吞用)。
 const classifiedSessions = new Set()   // 已分类(已知是根 or 已建映射)的会话,避免重复刷
-let _lastTreeRefresh = 0, _treeRefreshing = false
+let _lastTreeRefresh = 0, _treeRefreshing = false, _treeInflight = null
 async function refreshSessionTree(base, force) {
-  if (_treeRefreshing || (!force && Date.now() - _lastTreeRefresh < 1500)) return
+  // force 恰逢上一次刷新在飞:等它落地再返回 —— 一次性事件(permission/question)防吞要求"返回时映射必为最新"才敢 dispatch
+  if (_treeRefreshing) { if (force && _treeInflight) { try { await _treeInflight } catch {} } return }
+  if (!force && Date.now() - _lastTreeRefresh < 1500) return
   _treeRefreshing = true
+  _treeInflight = _refreshSessionTree(base).finally(() => { _treeRefreshing = false; _treeInflight = null })
+  return _treeInflight
+}
+async function _refreshSessionTree(base) {
   try {
     const list = await api(base, 'GET', '/session')
     const arr = Array.isArray(list) ? list : (list && list.data) || []
@@ -152,7 +162,7 @@ async function refreshSessionTree(base, force) {
       for (const id of [...classifiedSessions]) { if (!seen.has(id)) classifiedSessions.delete(id) }
     }
     _lastTreeRefresh = Date.now()
-  } catch {} finally { _treeRefreshing = false }
+  } catch {}
 }
 
 // 用 Node http 而非 fetch：智能体一轮可能跑几分钟，POST /message 在结束前一直挂着，
@@ -194,10 +204,13 @@ async function findExistingServe(startPort = 4096, endPort = 4110, log = null) {
   return found.length ? { port: found[0], base: `http://127.0.0.1:${found[0]}` } : null
 }
 
-// 找一个空闲端口（绕开被占用的，比如残留的旧 serve）
-function freePort(start) {
-  return new Promise((resolve) => {
+// 找一个空闲端口（绕开被占用的，比如残留的旧 serve）。
+// 必须在扫描窗内(默认 ≤4110,与 findExistingServe 的 4096-4110 同窗):爬出窗口 = 保活/扫描都找不到它,
+// 且会话注册表按窗内端口管理 —— 爬满即报错,不硬爬(审查实测 restartServe 会一路爬出扫描窗)。
+function freePort(start, end = 4110) {
+  return new Promise((resolve, reject) => {
     const test = (p) => {
+      if (p > end) return reject(new Error(`端口扫描窗 ${start}-${end} 已无空闲端口(被 ${end - start + 1} 个残留进程占满),请先清理旧 serve 再重试`))
       const s = net.createServer()
       s.once('error', () => test(p + 1))
       s.once('listening', () => s.close(() => resolve(p)))
@@ -225,7 +238,9 @@ function spawnServe(cwd, port) {
     OPENCODE_DISABLE_LSP_DOWNLOAD: 'true',   // 内网无外网:opencode 内置 LSP server 探测不到会尝试联网安装(必失败),恒关;代码智能走壳层随包注册(lsp-config.js)
   }
   const opts = {
-    cwd: cwd || undefined,
+    // 无 projectDir(home 会话)显式落 os.homedir():打包后被快捷方式拉起时继承的 cwd 可能是 System32,
+    // serve 起在 System32 = 工作区/快照/git 全错。cwd 目录不存在时 spawn 直接报错(好过起在错目录)。
+    cwd: cwd || os.homedir(),
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
     env,
@@ -234,7 +249,10 @@ function spawnServe(cwd, port) {
     //   配 windowsHide + stdio:pipe + BOCOMCODE_TERMINAL=0 已经足够静默,加 detached 反而炸窗。
   }
   if (process.platform === 'win32') {
-    return spawn('cmd.exe', ['/d', '/s', '/c', SERVE_BIN, ...args], opts)
+    // serveBin 是自由文本(settings.serveBin),含空格的路径(如 C:\Program Files\...)必须加引号,
+    // 否则 cmd /c 按空格拆词找不到命令(非 win32 不走 shell,无此问题)。
+    const bin = /\s/.test(SERVE_BIN) && !/^".*"$/.test(SERVE_BIN) ? `"${SERVE_BIN}"` : SERVE_BIN
+    return spawn('cmd.exe', ['/d', '/s', '/c', bin, ...args], opts)
   }
   return spawn(SERVE_BIN, args, opts)
 }
@@ -294,13 +312,19 @@ async function ensureServeInner(dir, handlers, log = console.log, opts = {}) {
       if (existing.proc && existing.proc.exitCode != null) alive = false
       else if (!existing.proc && !(await healthAt(existing.base))) alive = false
     }
+    // 项目目录存亡守卫:目录被搬走/删除后 serve 进程没死、健康端点照样应答会被复用,
+    // 但 git 快照/工具全在死 cwd 上持续失败(用户实测 subagent 全灭的病灶)。不在 → 退休重扫,不复用不重启。
+    // home 会话(dir 空)无目录可查,跳过。
+    const dirGone = !!(existing.dir && !fs.existsSync(existing.dir))
+    if (alive && dirGone) { log(`serve dir gone: [${existing.dir}] (health endpoint still answers on dead cwd) — retire, will rescan`); alive = false }
     if (alive) return existing
-    // 自起的 serve 死了 → 用时按需原地重启,复用同一 info(已绑会话引用自动跟到新 base)
-    if (existing.proc && !existing.external) {
+    // 自起的 serve 死了 → 用时按需原地重启,复用同一 info(已绑会话引用自动跟到新 base);目录已死的不重启(原地重启还是死 cwd)
+    if (!dirGone && existing.proc && !existing.external) {
       try { await restartServe(existing, handlers, log); return existing }
       catch (e) { log(`serve restart failed: ${e.message}`) }
     }
     existing.dead = true   // 停掉它的事件循环(原由心跳设置,现在用时检测即设)
+    if (dirGone) killProc(existing.proc)   // 死 cwd 的 serve 不留:健康端点还在应答,不杀会被下次扫描又复用
     if (pool.get(key) === existing) pool.delete(key)
     if (existing.base) baseToEntry.delete(existing.base)
     log(`serve for [${dir || '(home)'}] not alive; will rescan/restart`)
@@ -341,7 +365,7 @@ async function ensureServeInner(dir, handlers, log = console.log, opts = {}) {
   // 2) 没找到 → 自起新 serve
   const info = { dir, key, base: null, port: null, proc: null, permStyle: 'new', handlers, log }
   info.ready = (async () => {
-    const port = await freePort(scanStart)
+    const port = await freePort(scanStart, scanEnd)   // 爬满扫描窗即报错(与 findExistingServe 同窗),不硬爬出窗口
     info.port = port; info.base = `http://127.0.0.1:${port}`
     log(`starting serve for [${dir || '(home)'}] on :${port}`)
     info.proc = spawnServeHook ? spawnServeHook(dir, port) : spawnServe(dir, port)
@@ -359,7 +383,8 @@ async function ensureServeInner(dir, handlers, log = console.log, opts = {}) {
 }
 
 const sidOf = (s) => s?.id ?? s?.data?.id ?? s?.info?.id
-// dir:会话工作目录(本版 serve 支持 ?directory=,与 serve 启动 cwd 无关 → 复用同一 serve 也能跑不同项目)
+// dir:会话工作目录(?directory= 带上但【不依赖】—— 不支持的 serve 会忽略它;目录正确性靠"一目录一 serve 分池"
+// + requireDirMatch + R3 外部 serve cwd 校验兜底,别把 ?directory= 当生效前提)
 async function createSession(info, title, dir) {
   // serve 的 ?directory= 不认 Windows 反斜杠(会剥掉盘符、删掉 \ 再当相对路径拼到自己 cwd 上 → 落到错的项目)；
   // 统一转正斜杠，serve 才能解析成正确的绝对路径。这是"项目路径生效"的关键。
@@ -477,7 +502,7 @@ function pickTurnText(list) {
 async function waitAssistantText(info, sessionId, maxMs = 1800000, idleMs = 600000, opts = {}) {
   const onRaw = opts && opts.onRawMessages   // P1(契约③):每拍拿到全量消息回调一次,上层同一份数据喂 pollTurnParts,消灭双轮询
   const t0 = Date.now()
-  let prev = '', stable = 0, doneNoTextTicks = 0, sig = '', lastMove = Date.now(), lastErr = null, toolBusy = false
+  let prev = '', stable = 0, doneNoTextTicks = 0, sig = '', lastMove = Date.now(), lastErr = null, toolBusy = false, pollTimeouts = 0
   // 工具在跑(如 task 子agent的 fan-out 长波)时空转容忍放宽到 25 分钟:父消息可能整波都不动,10 分钟就收会截走半截;
   // 真黑洞仍有 maxMs 绝对上限兜底。工具不跑时维持原 idleMs。
   while (Date.now() - t0 < maxMs && Date.now() - lastMove < (toolBusy ? Math.max(idleMs, 1500000) : idleMs)) {
@@ -485,9 +510,18 @@ async function waitAssistantText(info, sessionId, maxMs = 1800000, idleMs = 6000
     // 长任务不必频繁打 GET /message。实测这台 serve 首字要 12s(模型 TTFT),客户端能省的就这半秒量级。
     await sleep(Date.now() - t0 < 6000 ? 450 : 750)
     // 本次等待期间会话被 abort(用户点「停止」/看门狗收割)→ 别再傻等 serve 自然收尾(它可能永远不标 completed,
-    // 一等就是 idleMs=10 分钟,用户点了停止卡片却一直转圈)。宽限 ~3s 让 abort 后的收尾文本落进消息,然后有啥收啥。
-    if (abortedSince(sessionId, t0) && Date.now() - abortedSids.get(sessionId) > 2800) { markStopped(sessionId); return prev }   // C7:登记"已手动停止"一次性标记(契约①)
-    let raw; try { raw = await api(info.base, 'GET', `/session/${sessionId}/message`); lastErr = null } catch (e) { lastErr = e; continue }   // 留住最后一个错:serve 挂掉时上层才有的可查(否则=10 分钟静默 + 空结果)
+    // 一等就是 idleMs=10 分钟,用户点了停止卡片却一直转圈)。宽限 ~1.5s 让 abort 后的收尾文本落进消息,然后有啥收啥。
+    if (abortedSince(sessionId, t0) && Date.now() - abortedSids.get(sessionId) > 1500) { markStopped(sessionId); return prev }   // C7:登记"已手动停止"一次性标记(契约①)
+    // 单次 30s 超时:serve 半僵死(监听但不应答)时无超时 = 回合永久卡死、abort 也救不回(审查实测)。
+    // 超时按普通错误记 lastErr 后 continue;【连续 3 次】超时 = serve 无响应,上抛走引擎连接中断通道(session.js 人话化认 socket hang up)。
+    // abort 后的轮询改用 6s 短超时:停止途中 serve 堵了,别让用户为一次轮询陪等 30s。
+    const pollTo = abortedSince(sessionId, t0) ? 6000 : 30000
+    let raw; try { raw = await api(info.base, 'GET', `/session/${sessionId}/message`, undefined, pollTo); lastErr = null; pollTimeouts = 0 } catch (e) {
+      lastErr = e
+      if (/超时/.test(String(e && e.message || '')) && ++pollTimeouts >= 3)
+        throw new Error('serve 无响应(GET /message 连续 3 次 30s 无应答,半僵死,按 socket hang up 处理):' + sessionId)
+      continue
+    }   // 留住最后一个错:serve 挂掉时上层才有的可查(否则=10 分钟静默 + 空结果)
     const list = Array.isArray(raw) ? raw : (raw && raw.data) || []
     if (onRaw) { try { onRaw(list) } catch {} }
     const r = pickTurnText(list)
@@ -552,18 +586,31 @@ async function sendMessage(info, sessionId, text, model, files, onNote, opts = {
     }
     // 停止慢的根:serve 把 POST 阻塞到生成自然收尾才回,用户点「停止」后 /abort 也喊不醒它 → 卡片"正在停止"干等 90s+(实测)。
     // 解法:POST 与 abort 哨兵赛跑 —— 本卡一旦 abort,~0.4s 内赛跑输给哨兵,转去"宽限 ~3s 收半截"快收,不再陪 POST 傻等。
+    let abortIv = null
     const abortWatch = new Promise((res) => {
-      const iv = setInterval(() => { if (abortedSince(sessionId, tSend)) { clearInterval(iv); res('__aborted__') } }, 400)
+      abortIv = setInterval(() => { if (abortedSince(sessionId, tSend)) { clearInterval(abortIv); abortIv = null; res('__aborted__') } }, 400)
     })
-    const direct = await Promise.race([api(info.base, 'POST', `/session/${sessionId}/message`, body), abortWatch])
+    // race 落定(含抛错)后无条件摘哨兵:POST 先完成时不清 = 每条消息泄一个 400ms 定时器(审查实测泄漏)。
+    let direct
+    try { direct = await Promise.race([api(info.base, 'POST', `/session/${sessionId}/message`, body), abortWatch]) }
+    finally { if (abortIv) { clearInterval(abortIv); abortIv = null } }
     if (direct === '__aborted__') {
       markStopped(sessionId)   // 一次性"已手动停止"标记(契约①,上层给回合标)
-      await sleep(2800)        // 宽限收尾文本落消息(与 waitAssistantText 的 C7 快收同口径)
-      try {
-        const raw = await api(info.base, 'GET', `/session/${sessionId}/message`)
-        const list = Array.isArray(raw) ? raw : (raw && raw.data) || []
-        return pickTurnText(list).text || ''
-      } catch { return '' }
+      // 宽限自适应(停止慢的两大根:原固定 sleep(2800) + 无超时 GET):每 ~600ms 拉一次,文本连稳两拍/两拍皆空 →
+      // 提前收;单次 GET 6s 超时(serve 一堵不再陪等);总预算 ~2.4s+一次 GET。既留住收尾文本,又把"点停止干等"压到秒级。
+      let last = ''
+      for (let i = 0; i < 4; i++) {
+        await sleep(i ? 600 : 500)
+        try {
+          const raw = await api(info.base, 'GET', `/session/${sessionId}/message`, undefined, 6000)
+          const list = Array.isArray(raw) ? raw : (raw && raw.data) || []
+          const t = pickTurnText(list).text || ''
+          if (t && t === last) return t            // 连稳两拍 → 收尾文本已落定
+          if (!t && !last && i >= 1) return ''     // 两拍皆空 → 没什么可收的
+          last = t
+        } catch { if (i >= 1 || last) return last }   // serve 堵/挂 → 有啥收啥
+      }
+      return last
     }
     const out = extractText(direct) || await waitAssistantText(info, sessionId, undefined, undefined, opts)   // 空 body（流式版 serve）→ 轮询等完成
     getSessionChildren(info.base, sessionId).catch(() => {})   // P3.3 调用点A:回合成功收尾补一记子会话权威清单(子 Agent 路由不依赖 SSE 早发;fire-and-forget)
@@ -661,12 +708,15 @@ async function sessionExists(info, sid) {
   try { const list = await api(info.base, 'GET', '/session'); const arr = Array.isArray(list) ? list : (list && list.data) || []; return arr.some((s) => sidOf(s) === sid) } catch { return false }
 }
 // 会话清单(看门狗/诊断用,原始形态:id/parentID/title/time.updated 都在)
-async function listSessions(info) {
-  try { const list = await api(info.base, 'GET', '/session'); return Array.isArray(list) ? list : (list && list.data) || [] } catch { return [] }
+async function listSessions(info, timeoutMs) {
+  try { const list = await api(info.base, 'GET', '/session', undefined, (+timeoutMs > 0) ? +timeoutMs : undefined); return Array.isArray(list) ? list : (list && list.data) || [] } catch { return [] }
 }
 // 原始消息(看门狗判据要 tool 状态/time;getMessages 是归一化的,只剩 role/text)
-async function getRawMessages(info, sid) {
-  try { const r = await api(info.base, 'GET', `/session/${sid}/message`); return Array.isArray(r) ? r : (r && r.data) || [] } catch { return [] }
+// opts.limit(可选):拼 ?limit= 只拉最近 N 条 —— 看门狗降载只判最新一条,没它每 90s 全量拉一遍(第三参曾被静默丢弃)。
+async function getRawMessages(info, sid, opts = {}) {
+  const lim = (opts && +opts.limit > 0) ? '?limit=' + Math.floor(+opts.limit) : ''
+  const to = (opts && +opts.timeoutMs > 0) ? +opts.timeoutMs : undefined
+  try { const r = await api(info.base, 'GET', `/session/${sid}/message${lim}`, undefined, to); return Array.isArray(r) ? r : (r && r.data) || [] } catch { return [] }
 }
 // ── P3.3 children/todo 权威数据源(带 404 熔断回落)──────────────────────────────
 // SDK 有而内网 fork 可能没有的两个端点。404 一次记 Set 熔断:之后该 base 直接返回 [] 不再发请求
@@ -828,9 +878,9 @@ async function getMessages(info, sid) {
 // 轮询补渲染:这台 serve 的 /event 常不推流式事件(工具/子Agent/思考全静默),卡片只能等 POST 返回一次性贴。
 // 拉当前回合(最后一个 user 之后的所有 assistant)的【原始 parts】,映射成 onText 能吃的形状 → 卡片按 partID 幂等渲染。
 // text/reasoning/thinking → 文本流;tool(含 task 子Agent)→ 工具块。返回 null=取消息失败,调用方跳过本次。
-async function pollTurnParts(info, sid) {
+async function pollTurnParts(info, sid, opts = {}) {
   let raw
-  try { raw = await api(info.base, 'GET', `/session/${sid}/message`) } catch { return null }
+  try { raw = await api(info.base, 'GET', `/session/${sid}/message`, undefined, (opts && +opts.timeoutMs > 0) ? +opts.timeoutMs : undefined) } catch { return null }
   const list = Array.isArray(raw) ? raw : (raw && raw.data) || []
   let lastUserIdx = -1
   list.forEach((m, i) => { const r = m?.info?.role ?? m?.role; if (r === 'user') lastUserIdx = i })
@@ -850,7 +900,11 @@ async function pollTurnParts(info, sid) {
         // partID 必须与 SSE 路径(message.part.updated 处)同构:(callID || id) + ':tool' ——
         // 否则同一个工具调用会被渲染成两行(SSE 一行、轮询兜底又一行),卡片按 partID 幂等去重就失效了。
         const cid = String(p.callID || p.id || p.partID || p.tool || '')
-        out.push({ partID: cid + ':tool', kind: 'tool', text: p.tool || 'tool', status: st.status || '', input: st.input, output: st.output, title: st.title, error: st.error })
+        // taskChild 与 SSE 路径(dispatch 工具分支)同构:委派工具从 state 刨子会话ID透传(渲染端只在非空时覆写)——
+        // 不补的话轮询通道的 task 块永远没 taskChild,128k 硬闸"等子会话ID再杀"在静默 serve 上永远等不到。
+        const tnm = p.tool || 'tool'
+        const taskChild = /^(task|delegate_task)$/i.test(tnm) ? extractChildSessionId(st) : ''
+        out.push({ partID: cid + ':tool', kind: 'tool', text: tnm, status: st.status || '', input: st.input, output: st.output, title: st.title, error: st.error, taskChild })
       }
     }
   }
@@ -935,7 +989,16 @@ async function runEventLoop(info, handlers, log) {
             if (si2 && si2.parentID && si2.id && String(si2.id).startsWith('ses_') && String(si2.parentID).startsWith('ses_') && !loggedChildren.has(si2.id)) { loggedChildren.add(si2.id); log('子会话映射 ' + si2.id + ' → parent ' + si2.parentID + ' (' + (si2.title || '') + ')') } }
           // 见到没分类过的会话 → 懒加载会话树建 子→父 映射(保证子agent事件能路由回父卡片)
           { const evp = ev && ev.properties; const evSid = evp && (evp.sessionID || evp.sessionId || (evp.info && (evp.info.sessionID || evp.info.id)))
-            if (evSid && !classifiedSessions.has(evSid) && !childToParent.has(evSid)) refreshSessionTree(info.base) }
+            if (evSid && !classifiedSessions.has(evSid) && !childToParent.has(evSid)) {
+              // permission/question 是一次性事件(serve 不重发):懒刷新是异步的、事件已按原子 sid 发出 →
+              // 主进程 sessionInfo 查无 → 静默吞掉挂死(审查实测)。这两类先强制刷新(绕过节流、等在飞那次落地)再 dispatch;
+              // 其它事件保持懒刷新(丢了有下一拍,不挡事件流)。
+              const et0 = (ev && ev.type) || ''
+              const oneShot = (et0.includes('permission') && !et0.includes('replied') && !et0.includes('response'))
+                || et0 === 'question.asked' || et0 === 'question.v2.asked'
+              if (oneShot) await refreshSessionTree(info.base, true)
+              else refreshSessionTree(info.base)
+            } }
           dispatch(ev, onPermission, onText, info, onQuestion, onChildSession, onDiffStat)
         }
       }
@@ -968,7 +1031,9 @@ function dispatch(ev, onPermission, onText, info, onQuestion, onChildSession, on
     if (onDiffStat) {
       const d = (p && p.diff != null) ? p.diff : p
       const files = Array.isArray(d) ? d.length : (typeof (d && d.files) === 'number' ? d.files : (Array.isArray(d && d.files) ? d.files.length : 0))
-      onDiffStat({ sessionId: p.sessionID ?? p.sessionId, files: files || 0, additions: (d && d.additions) || 0, deletions: (d && d.deletions) || 0 })
+      // 与其它事件同构 route() 归父卡:子会话的 diff 直接按原子 sid 发,session.js 查不到卡会被丢弃(编码分片改动账少算)。
+      const r = route(p.sessionID ?? p.sessionId)
+      onDiffStat({ sessionId: r.sessionId, files: files || 0, additions: (d && d.additions) || 0, deletions: (d && d.deletions) || 0, subagent: r.subagent, agentId: r.agentId, agentName: r.agentName })
     }
     return
   }
@@ -989,7 +1054,7 @@ function dispatch(ev, onPermission, onText, info, onQuestion, onChildSession, on
     }
     const detail = argOf(p.tool) || argOf(p.permission) || argOf(p.metadata) || argOf(p)
       || (typeof p.title === 'string' && p.title !== tool ? p.title : '') || ''
-    if (requestId && onPermission) onPermission({ sessionId, requestId, tool, detail: String(detail).slice(0, 200) })
+    if (requestId && onPermission) onPermission({ sessionId, requestId, tool, detail: String(detail).slice(0, 200), serve: info })
     return
   }
   // 交互提问工具(question):路由给卡片弹【交互提问卡】让用户点选回答(经 onQuestion,应答走 replyQuestion);

@@ -27,13 +27,20 @@ function matchScope(scope, serveDir, filePath) {
 // (cat > f / tee / sed -i),不收这个口 = 归属闸形同虚设。覆盖三类:
 //   ① 重定向  > f / >> f(2> / >& / &> 不算 —— 那是 stderr 与 fd 复制)
 //   ② tee [-a] f
-//   ③ sed -i … f(macOS 带备份后缀 '' 也认;取该段最后一个 token 当目标文件 —— 启发式,够用)
+//   ③ sed -i … f(macOS 带备份后缀 '' 与 GNU -i.bak 都认;取该段最后一个 token 当目标文件 —— 启发式,够用)
+// 扫描前先剥单/双引号段(换占位符、命中目标时还原):grep "a->b" f、node -e "console.log('x>y')" 这类
+// 引号内的 > 不是重定向,不剥会被误当写目标越界拒;引号路径当目标(cat > "my file.py")剥了也能还原。
+// 空设备白名单:/dev/null、NUL(大小写不敏感)不算写目标(npm test > /dev/null 惯用法,误杀怨声大)。
 // 拿不到的不硬猜:含 $( ) ` ~ 的目标原样返回由调用方跳过(宁可放过,不可误杀)。
 // 注意:权限事件 detail 被截到 200 字,长命令尾部的目标可能已被切掉 —— 本函数是【尽力防线】,不是完备解析器。
 function bashWriteTargets(cmd) {
   const out = []
-  const s = String(cmd || '')
-  const push = (t) => { if (t && !out.includes(t)) out.push(t) }
+  // 剥引号段:内容记进 quoted,原位留 \x00N\x00 占位符(字符本身不在排除集里,能被 target 正则整体捕获),
+  // 命中目标时还原 —— 目标本身带引号路径的场景不受影响
+  const quoted = []
+  const s = String(cmd || '').replace(/"([^"\\]*)"|'([^'\\]*)'/g, (_, dq, sq) => { quoted.push(dq !== undefined ? dq : sq); return '\x00' + (quoted.length - 1) + '\x00' })
+  const restore = (t) => String(t || '').replace(/\x00(\d+)\x00/g, (_, i) => quoted[+i] || '')
+  const push = (t) => { t = restore(t); if (t && !out.includes(t)) out.push(t) }
   // ① 重定向:> 前不能是数字(2>)、&>(>& 复制 fd)、另一个 >(>> 由同式吃)
   const reRedir = /(?:^|[^0-9>&])>>?\s*(?:"([^"]+)"|'([^']+)'|([^\s;&|)]+))/g
   let m
@@ -41,14 +48,14 @@ function bashWriteTargets(cmd) {
   // ② tee:第一个非选项参数
   const reTee = /\btee\s+((?:-[a-zA-Z]+\s+)*)(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))/g
   while ((m = reTee.exec(s))) push(m[2] || m[3] || m[4])
-  // ③ sed -i:命令段(到 ; & | 为止)最后一个 token 是目标文件
-  const reSed = /\bsed\s+-[a-zA-Z]*i[a-zA-Z]*\s+([^;&|]+)/g
+  // ③ sed -i:命令段(到 ; & | 为止)最后一个 token 是目标文件;选项串容许 .(GNU 备份后缀 -i.bak / -i '')
+  const reSed = /\bsed\s+-[a-zA-Z.]*i[a-zA-Z.]*\s+([^;&|]+)/g
   while ((m = reSed.exec(s))) {
     const toks = String(m[1]).trim().split(/\s+/).filter(Boolean)
     const last = toks[toks.length - 1]
     if (last) push(last.replace(/^["']|["']$/g, ''))
   }
-  return out.filter((t) => t && !t.startsWith('-') && !/^&/.test(t) && !/[$`~]/.test(t))
+  return out.filter((t) => t && !t.startsWith('-') && !/^&/.test(t) && !/[$`~]/.test(t) && !/^(?:\/dev\/null|nul)$/i.test(t))
 }
 
 // 契约签名清单解析(纯逻辑):goal 里一行「契约: 签名1, 签名2, …」—— 该片必须产出的关键函数/类/端点。

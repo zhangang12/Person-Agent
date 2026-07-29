@@ -44,6 +44,15 @@ console.log('用例3:bash 写目标提取(bash 写文件过归属闸)')
   ok('复合命令多目标全收', bashWriteTargets('echo a > x.txt && echo b >> y.txt').join('|') === 'x.txt|y.txt', bashWriteTargets('echo a > x.txt && echo b >> y.txt'))
   ok('纯读命令无目标', bashWriteTargets('ls -la && grep -r foo src/').length === 0)
   ok('含 $/`/~ 的目标跳过(不硬猜)', bashWriteTargets('echo x > $OUT/f.txt; echo y > ~/g.txt').length === 0, bashWriteTargets('echo x > $OUT/f.txt; echo y > ~/g.txt'))
+  // 引号内的 > 不是重定向(剥引号段再扫描):grep "a->b" / node -e "console.log('x>y')" 曾被误当写目标越界拒
+  ok('双引号内的 > 不算(grep "a->b")', bashWriteTargets('grep "a->b" src/f.js').length === 0, bashWriteTargets('grep "a->b" src/f.js'))
+  ok('嵌套引号内的 > 不算(node -e "...\'x>y\'...")', bashWriteTargets(`node -e "console.log('x>y')"`).length === 0, bashWriteTargets(`node -e "console.log('x>y')"`))
+  ok('引号段剥了,引号外真重定向仍命中', bashWriteTargets('node -e "console.log(1)" > out.log').join() === 'out.log', bashWriteTargets('node -e "console.log(1)" > out.log'))
+  // 空设备白名单:npm test > /dev/null(与 Windows NUL)惯用法不该被归属闸误杀
+  ok('> /dev/null 不算写目标', bashWriteTargets('npm test > /dev/null 2>&1').length === 0, bashWriteTargets('npm test > /dev/null 2>&1'))
+  ok('> NUL/nul(大小写不敏感)不算写目标', bashWriteTargets('npm test > NUL').length === 0 && bashWriteTargets('type x > nul').length === 0, bashWriteTargets('npm test > NUL'))
+  // GNU sed 备份后缀 -i.bak(选项串带 .)也要认
+  ok('sed -i.bak(GNU 备份后缀)命中', bashWriteTargets("sed -i.bak 's/a/b/' src/e.py").join() === 'src/e.py', bashWriteTargets("sed -i.bak 's/a/b/' src/e.py"))
 }
 
 console.log('用例4:契约签名解析(收官缺口核对)')
