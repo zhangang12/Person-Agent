@@ -13,6 +13,7 @@
     "permcheck": "node scripts/permission-probe.mjs",
     "jsonschema": "node scripts/json-schema-probe.mjs",
     "mail:test": "node scripts/mail-parse-selftest.mjs",
+    "todo:test": "node scripts/todo-extract-selftest.mjs",
     "tool:test": "node scripts/tool-part-selftest.mjs",
     "compact:test": "node scripts/recorder-compact-selftest.mjs",
     "card:ui:test": "node scripts/card-ui-selftest.mjs",

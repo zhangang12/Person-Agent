@@ -46,4 +46,15 @@ function extractMeeting(em) {
   return { meetingAt, link, snippet: ((dm ? dm[0] : '') + (tm ? ' ' + tm[0] : '')).trim() }
 }
 
-module.exports = { extractMeeting }
+// 时间点原文(如"明天下午3点""7月30日18:00""周五 14:30") → ms 时间戳;解不出 → 0。
+// 给语义提取器(todo-extract-llm)用:模型只负责照抄原文,时间换算统一走这里(规则与语义两条路同一套历法)。
+function resolveWhen(atText, base) {
+  const t = String(atText || '')
+  if (!t) return 0
+  const dm = t.match(DATE)
+  if (!dm) return 0
+  const tm = t.match(TIME)
+  return resolveDateTime(dm, tm, base)
+}
+
+module.exports = { extractMeeting, resolveWhen }

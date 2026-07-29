@@ -1,0 +1,3 @@
+# 用例⑨ transcript:分片 todowrite(1 条 completed + 1 条 pending)—— 驱动"带未完 todo 停轮"分支。
+# $s1 = 分片会话;响应走 fake serve 默认行为(POST message 落 user + 返一条 assistant 完成消息)。
+{"t":0,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s1","part":{"id":"prt_td1","callID":"call_td1","type":"tool","tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"勘察认证模块入口","status":"completed"},{"content":"汇总落盘报告","status":"pending"}]}}}}}}

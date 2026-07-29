@@ -8,6 +8,7 @@ const emailSummarySeen = require('./email-summary-seen')
 const initOutbox = require('./outbox')
 const db = require('./db')
 const { extractMeeting } = require('./meeting-extract')
+const todoExtractLLM = require('./todo-extract-llm')   // 邮件待办语义提取(攒批 LLM 复核,规则法太宽被弃用)
 const { RECORDER_JS, selExpr, findElExpr, anchorExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, markHumanGates, upgradeToSkill, skillMd, composePostPipelineGoal, applyRefinePatch, rowToParamValues, relocateSelectors, takeoverDigest, redactRec } = require('./recorder-core')
 const initRecorder = require('./recorder')
 const { cdpConsoleLevel, fmtRO, fmtException, resolveFrame } = require('./cdp-format')
@@ -230,7 +231,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       if (wfKind === 'orch') reg.planApproved = false   // 主控规划闸壳层状态位:用户在卡片点【开始执行】后置 true(wf-plan-approved),relay /orch/run 据此拦未批派发
       if (opts && opts.model) reg.model = opts.model   // 发起时选定的模型(编排页):随注册表走,replayModel 取;分片继承也读它
       S.wfRegistry.set(reg.id, reg); S.wfCardByWc.set(wcId, reg)
-      if (S.wfRegistry.size > 50) { const k = S.wfRegistry.keys().next().value; S.wfRegistry.delete(k) }
+      // 50 条 FIFO 逐出跳过在跑项:把 running 主控/分片逐出 = 唤醒目标丢失 + 全收官分母算错(宁可暂停逐出)
+      if (S.wfRegistry.size > 50) { const victim = [...S.wfRegistry.entries()].find(([, v]) => !v || v.status !== 'running'); if (victim) S.wfRegistry.delete(victim[0]) }
     }
     // cardImpl 双轨(P2a/P2b):默认 Vue 版(ui/dist/chat.html,wf/orch/shard 已于 P2b-3 迁移);
     // settings.json 置 "cardImpl":"legacy" 回退旧页;构建产物缺失(没跑过 ui:build)也自动回退,不留死路。
@@ -275,7 +277,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
 
   // ── 卡关闭清理链:独立成 ./card-cleanup(波2 从 closed 内联体抽出;波3 模块化,探针可直测)──────
   // 语义对照与 browser.js:644-664 教训见模块头注释;依赖全部注入,shardSettleTimers 惰性取(装配期尚在 TDZ)。
-  const cleanupCardContext = makeCardCleanup({ S, oc, log, BrowserWindow, getShardSettleTimers: () => shardSettleTimers, wfDequeue, forgetBusy })
+  const cleanupCardContext = makeCardCleanup({ S, oc, log, BrowserWindow, getShardSettleTimers: () => shardSettleTimers, wfDequeue, forgetBusy, shardSettled, pushShardProgress })
   S.cleanupCardContext = (wcId, opts) => cleanupCardContext(S, wcId, null, opts)   // 挂 S:零依赖探针(scripts/cleanup-detach-test.mjs)与后续波次复用同一入口,别复刻
 
   // wcId → webContents(顶层窗或 webview guest 皆可):guest 不在 BrowserWindow.getAllWindows() 里,
@@ -352,8 +354,13 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const raw = String(goal || '')
     const m1 = raw.match(/^\s*\[orch:([A-Za-z0-9-]+)\]\s*/)
     if (m1) return { tag: m1[1], rest: raw.slice(m1[0].length) || raw }
-    const m2 = raw.match(/[\[【]\s*orch\s*[:：]\s*([A-Za-z0-9-]+)\s*[\]】]/)
-    if (m2 && S.orchByTag && S.orchByTag.has(m2[1])) return { tag: m2[1], rest: (raw.slice(0, m2.index) + raw.slice(m2.index + m2[0].length)).trim() || raw, rescued: true }
+    // 全文兜底:收集所有命形里去重后仍【唯一】的现存 tag 才拯救 —— 多个不同现存 tag 命中时放弃(错配到他主控比不拯救更糟)
+    const hits = new Set()
+    for (const m of raw.matchAll(/[\[【]\s*orch\s*[:：]\s*([A-Za-z0-9-]+)\s*[\]】]/g)) { if (S.orchByTag && S.orchByTag.has(m[1])) hits.add(m[1]) }
+    if (hits.size === 1) {
+      const m2 = raw.match(/[\[【]\s*orch\s*[:：]\s*([A-Za-z0-9-]+)\s*[\]】]/)   // 摘除第一个命形(唯一命中,必然就是它)
+      return { tag: m2[1], rest: (raw.slice(0, m2.index) + raw.slice(m2.index + m2[0].length)).trim() || raw, rescued: true }
+    }
     return { tag: '', rest: raw }
   }
   function spawnWorkflow(goal, forceModel) {
@@ -365,7 +372,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (pt.tag) { parentOrch = pt.tag; g = pt.rest; if (pt.rescued) log('orch tag rescued (not at goal head): ' + parentOrch) }
     if (parentOrch && !(S.orchByTag && S.orchByTag.has(parentOrch))) log('⚠ shard tag unknown: ' + parentOrch + ' —— 唤醒目标不存在,该片收官无人接收')
     if (wfRunningCount() >= wfConcurrency()) {
-      S.wfQueue.push({ goal: raw, at: Date.now() })
+      S.wfQueue.push({ goal: raw, at: Date.now(), forceModel: forceModel || null })   // forceModel 随队列走:出队恢复读图模型口径(验证棒排队不丢双模型)
       log('workflow queued (running ' + wfRunningCount() + '/' + wfConcurrency() + ', position ' + S.wfQueue.length + '): ' + g.slice(0, 60))
       if (parentOrch) pushShardProgress(parentOrch)   // 分片进排队:主控卡进度条先亮"排队中"
       return { queued: true, position: S.wfQueue.length }
@@ -413,18 +420,45 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // 递归场景实测病灶:下级主控的分片标记被弱模型写成父 tag,唤醒全流去父主控,它名下一片没有 → 彻底停摆无人知。
   // 判据:已过批准闸(planApproved=true)且(有分片没齐 / 一片都没有但已跑过 ≥2 轮)且 10 分钟无进度(pushShardProgress 打点)
   // 且当前空闲(没回合在飞)→ 注入一次催办(只催不代派,编排主权仍归主控)。每 10 分钟最多催一次,不唠叨。
+  // 顺带两条兜底:①verifyOpen 30min 无复验自清(清账+允许关窗);②done 但唤醒丢失的分片重调 shardSettled(无重试路径的补救)。
   setInterval(() => {
     try {
+      // ①verifyOpen 无复验 30min 自清:修复片永不来/验证棒已死,账挂着既挡全收官关窗又泄漏 —— 清账 + 关掉孤儿验证棒卡
+      if (S.verifyOpen && S.verifyOpen.size) {
+        const nowV = Date.now()
+        for (const [vtag, vo] of [...S.verifyOpen.entries()]) {
+          const vSince = (vo && typeof vo === 'object' && +vo.since) || 0
+          if (!vSince || nowV - vSince < 1800000) continue
+          S.verifyOpen.delete(vtag); S.verifyRounds && S.verifyRounds.delete(vtag)
+          log('[harness-verify] verifyOpen 30min 无复验自清 (tag ' + vtag + ')')
+          try {
+            const vwcId = (vo && typeof vo === 'object') ? vo.wcId : vo
+            const vreg = [...S.wfRegistry.values()].find((r) => r.wcId === vwcId)
+            if (vreg && !(S.isCardBusy && S.isCardBusy(vreg.wcId))) {
+              const w5 = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === vreg.wcId)
+              if (w5) { (S.shardForceClose = S.shardForceClose || new Set()).add(vreg.wcId); w5.close() }
+            }
+          } catch {}
+        }
+      }
+      // ②末片唤醒丢失兜底:done 但 orchNotified 未消费的分片 → 重调 shardSettled(唤醒一次性,原路径无重试)
+      if (S.wfRegistry) for (const r of S.wfRegistry.values()) {
+        if (r.parentOrch && r.status === 'done' && !r.orchNotified) { try { shardSettled(r) } catch {} }
+      }
       if (!S.wfRegistry || !S.orchByTag) return
       const tagById = new Map()
       for (const [tag, o] of S.orchByTag) tagById.set(String(o && o.id), tag)
       const now = Date.now()
       for (const reg of S.wfRegistry.values()) {
         if (reg.kind !== 'orch' || reg.planApproved !== true) continue
+        if (reg.routedSingle) continue   // 预检后走单工作流路由是合法归宿(relay /orch/run 置位):没分片是它的形状,不是停滞,不催
         const tag = tagById.get(String(reg.id)); if (!tag) continue
         if (S.isCardBusy && S.isCardBusy(reg.wcId)) continue
         const last = (S.orchProgressAt && S.orchProgressAt.get(tag)) || reg.at || 0
         if (now - last < 600000) continue
+        // 排队片同口径(parseOrchTag,与 pushShardProgress 一致):该 tag 还有片在等并发位 = 排队等待中,不是"标记写错" ——
+        // 现状把"全在排队"误诊成"标记写错",弱模型照文案重派 → 队列长出重复分片双倍执行(实锤)
+        if ((S.wfQueue || []).some((q) => parseOrchTag(q.goal).tag === tag)) { S.orchProgressAt.set(tag, now); continue }
         const sibs = [...S.wfRegistry.values()].filter((r) => r.parentOrch === tag)
         const unsettled = sibs.some((r) => r.status !== 'done' && r.status !== 'interrupted')
         const empty = sibs.length === 0 && (reg.rounds || 0) >= 2
@@ -446,7 +480,12 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     // opts.model:编排页发起时选定的模型 → 注册表随卡走,分片派发生效链同待(spawnWorkflow 继承)
     const id = spawnCard('主控 · ' + g.slice(0, 20), null, orchestratorSystemPrompt(dir, S.settings.backendDir || '', tag) + '\n\n【总目标】\n' + g, g, { flash: true, wf: true, orch: true, model: (opts && opts.model) || null })
     S.orchByTag.set(tag, { id: String(id), at: Date.now() })
-    if (S.orchByTag.size > 20) { const k = S.orchByTag.keys().next().value; S.orchByTag.delete(k) }
+    // 20 条 FIFO 逐出跳过"还有未收官分片"的 tag:在跑主控被逐出 = 分片收官唤醒目标丢失(宁可暂停逐出)
+    if (S.orchByTag.size > 20) {
+      const hasOpenShard = (t) => [...(S.wfRegistry ? S.wfRegistry.values() : [])].some((r) => r.parentOrch === t && r.status !== 'done' && r.status !== 'interrupted')
+      const victim = [...S.orchByTag.keys()].find((t) => !hasOpenShard(t))
+      if (victim) S.orchByTag.delete(victim)
+    }
     log('orchestrator spawned (tag ' + tag + ', card ' + JSON.stringify(id) + '): ' + g.slice(0, 60))
     return { id, tag }
   }
@@ -499,7 +538,15 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     try {
       const next = S.wfQueue.shift()
       if (!next) return
-      const id = spawnWorkflow(next.goal)
+      const id = spawnWorkflow(next.goal, next.forceModel || null)   // 出队恢复发起时的 forceModel(双模型:验证棒的读图模型口径不丢)
+      // 排队时验证棒身份挂不上注册表(卡还没开出来):出队重开后按 goal 文本补登记 —— VERDICT 机判/证据闸豁免以 reg.isVerify 为准;
+      // 只读沙箱 writeScope 由 goal 里的「写归属:」行被 parseWriteScope 天然恢复(这里只是兜底)
+      if (/集成验证/.test(String(next.goal || ''))) {
+        try {
+          const vreg = (id && typeof id !== 'object') && S.wfRegistry && S.wfRegistry.get(String(id))
+          if (vreg) { vreg.isVerify = true; if (!Array.isArray(vreg.writeScope) || !vreg.writeScope.length) vreg.writeScope = [require('os').tmpdir().replace(/\\/g, '/')] }
+        } catch {}
+      }
       log('workflow dequeued → card ' + JSON.stringify(id) + ': ' + String(next.goal).slice(0, 60))
       if (!/^\s*\[orch:/.test(String(next.goal))) {   // 分片出队不桌面通知(静默卡,进度在主控卡里看)
         try { new Notification({ title: 'BocomHermes · 工作流', body: '排队的工作流已开跑：' + String(next.goal).slice(0, 60) }).show() } catch {}
@@ -553,8 +600,11 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // 验证证据闸(编码 harness):编码分片(有写归属)收官时,机判"跑没跑过构建/测试"——bash 命令流水(session.js wfAction 'cmd' 轨)
   // 里有没有验证命令。无证据 ≠ 判失败,但标 reg.unverified 随唤醒报主控按【未验证】对待(弱模型"看上去做完了实际没验证"的头号漏网);
   // 全片齐后壳层自动补派【集成验证棒】,验证不再依赖模型自觉。
-  const VERIFY_CMD = /(npm|pnpm|yarn)\s+(run\s+)?(test|build|lint|typecheck|tsc|ci)\b|\b(pytest|vitest|jest|go test|cargo test|mvn|gradle|make)\b/i
+  // 命令口径:npm/pnpm/yarn test|build|lint|typecheck|tsc、npm run test|build|check|e2e|verify(npm ci 不算 —— 装依赖不是验证)、
+  // pytest/vitest/jest/mvn(w)/gradle(w)/make、dotnet test|build、go test|build|vet、cargo test|build|check、npx tsc|vue-tsc|vitest|jest。
+  const VERIFY_CMD = /(npm|pnpm|yarn)\s+(run\s+)?(test|build|lint|typecheck|tsc)\b|npm\s+run\s+(test|build|check|e2e|verify)\b|\b(pytest|vitest|jest|mvnw?|gradlew?|make)\b|\bdotnet\s+(test|build)\b|\bgo\s+(test|build|vet)\b|\bcargo\s+(test|build|check)\b|\bnpx\s+(tsc|vue-tsc|vitest|jest)\b/i
   function hasVerifyEvidence(reg) {
+    if (reg && reg.verifyEvidence) return true   // session.js 波次当场粘性置位(验证命令一过工具事件就记)——先查它,再 fallback 重扫动作流水
     const acts = Array.isArray(reg.actions) ? reg.actions : []
     // 两轨都算证据:构建/测试命令轨(bash 流水)+ 浏览器动作轨(前端自验:browser_navigate/eval/screenshot 等)
     return acts.some((a) => a && ((a.kind === 'cmd' && VERIFY_CMD.test(String(a.label || ''))) || a.kind === 'browser'))
@@ -565,9 +615,19 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   function visionModel() { const mv = S.settings.modelVision; return (mv && mv.modelID) ? mv : null }
   // 验证棒只读沙箱(CC :14-22):writeScope 限定系统临时目录——write/edit 项目文件被拒,bash 重定向写入越界被拒;
   // 一次性验证脚本仍可写(临时目录内),npm test/build 这类无显式文件目标的命令不受影响。
+  function verifyTmpScope() { return require('os').tmpdir().replace(/\\/g, '/') }
   function assignVerifyScope(cardId) {
-    try { const vreg = S.wfRegistry && S.wfRegistry.get(String(cardId)); if (vreg) vreg.writeScope = [require('os').tmpdir().replace(/\\/g, '/')] } catch {}
+    try {
+      if (!cardId || typeof cardId === 'object') return   // 并发满时 spawnWorkflow 返回 {queued}(卡还没开出来)——容忍:writeScope 由 goal 里的「写归属:」行在出队时经 parseWriteScope 天然恢复
+      const vreg = S.wfRegistry && S.wfRegistry.get(String(cardId)); if (vreg) vreg.writeScope = [verifyTmpScope()]
+    } catch {}
   }
+  // 验证棒身份登记(壳层派出点统一调):VERDICT 机判/复验豁免以 reg.isVerify 为准,不再只认 goal 文本含【集成验证】
+  function markVerify(cardId) {
+    try { const vreg = (cardId && typeof cardId !== 'object') && S.wfRegistry && S.wfRegistry.get(String(cardId)); if (vreg) vreg.isVerify = true } catch {}
+  }
+  // 验证棒判定(机判/豁免统一口径):优先壳层登记的 isVerify,goal 文本作兜底(排队出队/老注册表项没赶上登记的也认得)
+  function isVerifyReg(r) { return !!(r && (r.isVerify || /集成验证/.test(String(r.goal || '')))) }
   // 前端命中检测:任一分片的写归属含前端文件 → 验证棒除基线外追加浏览器专条
   function verifyFrontendHit(tag) {
     return [...S.wfRegistry.values()].filter((r) => r.parentOrch === tag).some((r) => (Array.isArray(r.writeScope) ? r.writeScope : []).some((p) => /\.(vue|tsx?|jsx|css|less|scss|html?)($|\?)/i.test(String(p)) || /\/(ui|web|frontend|fe|pages|views|components)\//i.test(String(p))))
@@ -585,6 +645,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       + '【输出契约】最终回报第一行必须是字面量 VERDICT: PASS|FAIL|PARTIAL(不加粗不变体;PARTIAL 仅限环境限制,能跑的检查必须判 PASS/FAIL);每项检查带两行 Command run: <实际跑的命令> / Output observed: <关键输出原文,copy-paste 不得转述> —— 没有 Command run 块的 PASS 是跳过不是通过;壳层会机判 VERDICT 与 Command run 块(缺了拒收回派),并会抽 1-2 条命令真跑核对(不符按拒收)。\n'
       + feSteps
       + '失败按写归属回派对应分片修复(同标记 [orch:' + tag + ']);汇报只给:VERDICT 行 + 各检查的 Command run/Output observed + 失败归属文件' + (frontendHit ? ' + 截图路径' : '') + '。'
+      + '\n写归属: ' + verifyTmpScope()   // 只读沙箱落进 goal 文本:并发满排队时 assignVerifyScope 落空,出队重开卡由 parseWriteScope 天然恢复(队列安全)
   }
   // 多层派发唤醒钩:带 parentOrch 的分片收官(完成/中断,一次)→ 给主控卡注入进度消息(N/M)把它唤醒。
   // 主控只装清单,收到后自己对照 todo:齐了按规程派索引棒,没齐结束本轮继续等 —— 事件驱动,不轮询。
@@ -592,16 +653,18 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (!reg.parentOrch || reg.orchNotified) return
     if (reg.status !== 'done' && reg.status !== 'interrupted') return
     if (reg.status === 'done') checkContract(reg)   // 中断片不核对:半成品缺签名是常态,报了也是噪音
-    if (reg.status === 'done' && !/集成验证/.test(String(reg.goal || '')) && Array.isArray(reg.writeScope) && reg.writeScope.length && !hasVerifyEvidence(reg)) {
-      // 验证棒自身(【集成验证】分片)不算编码分片,不进证据闸——否则它的只读沙箱 writeScope 会把自己标【未验证】,误触发再派(实测)
+    if (reg.status === 'done' && !isVerifyReg(reg) && !/索引/.test(String(reg.goal || '')) && Array.isArray(reg.writeScope) && reg.writeScope.length && !hasVerifyEvidence(reg)) {
+      // 验证棒自身(【集成验证】分片)不算编码分片,不进证据闸——否则它的只读沙箱 writeScope 会把自己标【未验证】,误触发再派(实测);
+      // 索引棒(goal 含「索引」)同样豁免:它的写归属是索引文档,跑构建/测试不是它的活,标【未验证】只会误触发再派
       reg.unverified = true   // 编码分片零验证证据:标【未验证】随唤醒报主控(契约核对管"签名在不在",这条管"跑没跑过")
       log('[harness-verify] shard ' + reg.id + ' 无构建/测试执行证据,标未验证: ' + String(reg.goal).slice(0, 50))
     }
-    // VERDICT 机判(V2,CC verification agent"report gets rejected"壳层落地):验证棒(【集成验证】分片)收官解析 reg.final——
+    // VERDICT 机判(V2,CC verification agent"report gets rejected"壳层落地):验证棒收官解析 reg.final——
     // 无 VERDICT 字面量,或 VERDICT: PASS 但全文没有 Command run 块(没跑就写 PASS)→ 拒收:自动回派一次(带拒因);
     // 连撞 2 次标【验证未完成】转人工。VERDICT: FAIL/PARTIAL 是合法结果(失败按归属回派),不拒。
+    // 前提改 reg.isVerify(壳层三个派出点统一登记 markVerify),goal 文本仅兜底 —— 不再只认「集成验证」字面。
     let verifyRejectNote = ''
-    if (reg.status === 'done' && /集成验证/.test(String(reg.goal || ''))) {
+    if (reg.status === 'done' && isVerifyReg(reg)) {
       const rep = String(reg.final || '')
       const vm = rep.match(/VERDICT:\s*(PASS|FAIL|PARTIAL)\b/)
       const rejectWhy = !vm ? '回报缺 VERDICT 字面量' : (vm[1] === 'PASS' && !/Command run\s*[:：]/i.test(rep) ? 'VERDICT: PASS 但全文没有 Command run 块(没跑就写 PASS)' : '')
@@ -616,7 +679,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
         } else {
           verifyRejectNote = '【验证回报被壳层拒收:' + rejectWhy + ' —— 已自动回派一根验证棒,等它收官再收口。】'
           log('[harness-verify] 验证棒拒收(tag ' + reg.parentOrch + '):' + rejectWhy + ' → 自动回派一次')
-          try { const rid = spawnWorkflow(verifyGoalFor(reg.parentOrch, verifyFrontendHit(reg.parentOrch), rejectWhy), visionModel()); assignVerifyScope(rid) } catch (e) { log('verify retry dispatch err: ' + e.message) }
+          try { const rid = spawnWorkflow(verifyGoalFor(reg.parentOrch, verifyFrontendHit(reg.parentOrch), rejectWhy), visionModel()); markVerify(rid); assignVerifyScope(rid) } catch (e) { log('verify retry dispatch err: ' + e.message) }
         }
       } else if (vm[1] === 'FAIL') {
         // M4 修复循环(CC "fix, resume the verifier, repeat until PASS"):FAIL 保留验证卡待复验,循环 ≤3 轮到顶转人工
@@ -628,20 +691,27 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
           verifyRejectNote = '【验证未通过:连续 ' + rounds + ' 轮修复后仍未达标 —— 按未完成对待,需人工介入。】'
           log('[harness-verify] 验证棒 ' + rounds + ' 轮 FAIL(tag ' + reg.parentOrch + ') → 转人工')
         } else {
-          S.verifyOpen.set(reg.parentOrch, reg.wcId)   // 保留这张卡:修复落盘后由壳层喂"复验"消息同棒续验
+          S.verifyOpen.set(reg.parentOrch, { wcId: reg.wcId, since: Date.now() })   // 保留这张卡:修复落盘后由壳层喂"复验"消息同棒续验;since=FAIL 时间戳(只喂此后派出的修复片)+ 30min 无复验自清
           verifyRejectNote = '【验证未达标(第 ' + rounds + ' 轮):请按验证棒回报的失败项修复 —— 修复落盘后壳层会让同一根验证棒复验。】'
           log('[harness-verify] 验证棒 FAIL 第 ' + rounds + ' 轮(tag ' + reg.parentOrch + '),保留待复验')
         }
       } else if (vm[1] === 'PASS') {
         S.verifyOpen && S.verifyOpen.delete(reg.parentOrch); S.verifyRounds && S.verifyRounds.delete(reg.parentOrch)   // 过了:清修复循环账
-        // M4 抽查重放(CC spot-check):抽报告里一条只读白名单命令真跑(异步,不阻塞),非零退出 → 按拒收回派
+        // M4 抽查重放(CC spot-check):抽报告里一条只读白名单命令真跑(异步,不阻塞),非零退出 → 按拒收回派。
+        // 硬化:含 shell 元字符 [&|;<>`$()] 一律拒跑(报告文本不能直接进 shell);curl 移出白名单(打网络不算只读自验);
+        // 剥掉行尾括号注释(中英文):「npm test (14 passed)」→「npm test」;maxBuffer 8MB(全量测试输出常超 1MB 默认);
+        // ENOBUFS/超时/命令不存在等环境性失败不算"报告造假" —— 只留日志,不计入 orchVerifyRetry 的 2 次预算
         const cmds = [...rep.matchAll(/Command run\s*[:：]\s*(.+)/g)].map((m) => String(m[1] || '').trim()).filter(Boolean)
-        const safe = cmds.find((c) => /^(curl\s|npm (test|run (build|test|lint|typecheck))|pnpm test|yarn test|pytest|mvn( | -q )(test|compile)|gradle test|go test|npx (vitest|jest))/.test(c))
+          .map((c) => c.replace(/\s*[（(][^()（）]*[)）]\s*$/, '').trim())
+        const safe = cmds.find((c) => !/[&|;<>`$()]/.test(c) && /^(npm (test|run (build|test|lint|typecheck))|pnpm test|yarn test|pytest|mvn( | -q )(test|compile)|gradle test|go test|npx (vitest|jest))/.test(c))
         if (safe) {
           const tag1 = reg.parentOrch
-          require('child_process').exec(safe, { cwd: (reg.dir || S.settings.projectDir || '.'), timeout: 120000, windowsHide: true }, (err) => {
+          require('child_process').exec(safe, { cwd: (reg.dir || S.settings.projectDir || '.'), timeout: 120000, maxBuffer: 8 * 1024 * 1024, windowsHide: true }, (err) => {
             try {
               if (!err) { log('[harness-verify] 抽查重放通过(tag ' + tag1 + '): ' + safe.slice(0, 60)); return }
+              if (err.killed || err.code === 'ENOBUFS' || err.code === 127 || /ENOBUFS|maxBuffer|timed?\s*out/i.test(String(err.message || ''))) {
+                log('[harness-verify] 抽查重放环境性失败(tag ' + tag1 + ',不计拒收预算): ' + safe.slice(0, 60) + ' — ' + String(err.message || err.code).slice(0, 100)); return
+              }
               log('[harness-verify] 抽查重放不符(tag ' + tag1 + '): ' + safe.slice(0, 60) + ' 实跑非零退出 → 按拒收处理')
               S.orchVerifyRetry = S.orchVerifyRetry || new Map()
               const rn = (S.orchVerifyRetry.get(tag1) || 0) + 1
@@ -650,23 +720,44 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
               const oreg2 = oref2 && S.wfRegistry && S.wfRegistry.get(String(oref2.id))
               const w4 = oreg2 && wcById(oreg2.wcId)
               if (w4) w4.send('card-inject', { text: '<主控进度>(壳层验证闸)验证棒报告称 PASS,但抽验命令「' + safe.slice(0, 60) + '」实跑非零退出 —— 已按拒收处理' + (rn >= 2 ? ',连续 ' + rn + ' 次,标【验证未完成】转人工。' : '并回派一根验证棒,等它收官再收口。') + '</主控进度>', disp: '验证棒抽查重放不符' })
-              if (rn < 2) { const rid = spawnWorkflow(verifyGoalFor(tag1, verifyFrontendHit(tag1), '抽查重放不符:' + safe.slice(0, 40)), visionModel()); assignVerifyScope(rid) }
+              if (rn < 2) { const rid = spawnWorkflow(verifyGoalFor(tag1, verifyFrontendHit(tag1), '抽查重放不符:' + safe.slice(0, 40)), visionModel()); markVerify(rid); assignVerifyScope(rid) }
             } catch (e2) { log('verify spotcheck err: ' + e2.message) }
           })
         }
       }
     }
+    // 验证棒被掐断(interrupted):验证链不能静默蒸发 —— 按拒收同构自动回派一次(计同一 orchVerifyRetry 预算,连 2 次转人工)
+    if (reg.status === 'interrupted' && isVerifyReg(reg)) {
+      S.orchVerifyRetry = S.orchVerifyRetry || new Map()
+      const rn = (S.orchVerifyRetry.get(reg.parentOrch) || 0) + 1
+      S.orchVerifyRetry.set(reg.parentOrch, rn)
+      if (rn >= 2) {
+        verifyRejectNote = '【验证未完成:验证棒连续 ' + rn + ' 次未有效收官(本次被中断) —— 别当完成,需人工核验或重派。】'
+        log('[harness-verify] 验证棒 interrupted 且 retry 到顶(tag ' + reg.parentOrch + ') → 转人工')
+      } else {
+        verifyRejectNote = '【验证棒被中断,未能给出 VERDICT —— 已自动回派一根验证棒,等它收官再收口。】'
+        log('[harness-verify] 验证棒 interrupted(tag ' + reg.parentOrch + ') → 按拒收同构回派一次')
+        try { const rid = spawnWorkflow(verifyGoalFor(reg.parentOrch, verifyFrontendHit(reg.parentOrch), '验证棒被中断'), visionModel()); markVerify(rid); assignVerifyScope(rid) } catch (e) { log('verify interrupted retry dispatch err: ' + e.message) }
+      }
+    }
     // M4 复验触发:本 tag 有待复验的验证棒,且当前收官的是其它(修复)分片 → 喂同一验证棒"复验"消息(CC resume the verifier)
-    if (reg.status === 'done' && !/集成验证/.test(String(reg.goal || '')) && S.verifyOpen && S.verifyOpen.has(reg.parentOrch)) {
+    // 收窄(实锤"复验触发过宽"):只有 FAIL 之后派出的修复片(reg.at >= since)收官才喂;同一片只喂一次;
+    // 验证棒忙/窗不在不喂(它这轮收官自会重走 VERDICT 机判);orchNotified 复位挪到 vwc 存在性确认之后(复位在前窗没了 = verifyOpen 泄漏)
+    if (reg.status === 'done' && !isVerifyReg(reg) && S.verifyOpen && S.verifyOpen.has(reg.parentOrch)) {
       try {
-        const vwcId = S.verifyOpen.get(reg.parentOrch)
-        // 复验棒的下一次收官要重走唤醒+VERDICT 机判全流程:一次性标志 orchNotified 已在上轮收官被消费,先复位(实测漏复位=复验收官静默)
-        const vreg = [...S.wfRegistry.values()].find((r) => r.wcId === vwcId)
-        if (vreg) vreg.orchNotified = false
-        const vwc = wcById(vwcId)
-        if (vwc) {
-          vwc.send('card-inject', { text: '<主控进度>实现方已回报修复(分片「' + String(reg.goal).slice(0, 40) + '」已收官),请按原检查清单复验并更新 VERDICT。</主控进度>', disp: '修复落盘,验证棒复验' })
-          log('[harness-verify] 修复分片收官,已喂验证棒复验 (tag ' + reg.parentOrch + ')')
+        const vo = S.verifyOpen.get(reg.parentOrch)
+        const vwcId = (vo && typeof vo === 'object') ? vo.wcId : vo   // 兼容旧形态(纯 wcId)
+        const since = (vo && typeof vo === 'object' && +vo.since) || 0
+        if ((reg.at || 0) >= since && !reg.reverifyFed) {
+          const vreg = [...S.wfRegistry.values()].find((r) => r.wcId === vwcId)
+          const vwc = wcById(vwcId)
+          if (vwc && !(S.isCardBusy && S.isCardBusy(vwcId))) {
+            reg.reverifyFed = true   // 去重:这片已喂过(重复收官/多片连收官不再重喂)
+            // 复验棒的下一次收官要重走唤醒+VERDICT 机判全流程:一次性标志 orchNotified 已在上轮收官被消费,先复位(实测漏复位=复验收官静默)
+            if (vreg) vreg.orchNotified = false
+            vwc.send('card-inject', { text: '<主控进度>实现方已回报修复(分片「' + String(reg.goal).slice(0, 40) + '」已收官),请按原检查清单复验并更新 VERDICT。</主控进度>', disp: '修复落盘,验证棒复验' })
+            log('[harness-verify] 修复分片收官,已喂验证棒复验 (tag ' + reg.parentOrch + ')')
+          }
         }
       } catch (e) { log('verify resume err: ' + e.message) }
     }
@@ -689,7 +780,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       if (!queuedN && doneN === sibs.length) {   // 全部收官(且无排队片)
         for (const r of sibs) {   // 还活着的分片窗口一律关掉(隐藏工人不停下就一直烧 token);忙着的别杀 —— 可能正在交棒/补零产出文档,杀了就毁在半路
           if (S.isCardBusy && S.isCardBusy(r.wcId)) continue
-          if (S.verifyOpen && S.verifyOpen.has(r.parentOrch) && /集成验证/.test(String(r.goal || ''))) continue   // M4:FAIL 待复验的验证棒保留不关(复验后 PASS/到顶自清)
+          if (S.verifyOpen && S.verifyOpen.has(r.parentOrch) && isVerifyReg(r)) continue   // M4:FAIL 待复验的验证棒保留不关(复验后 PASS/到顶自清)
           const w2 = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === r.wcId)
           if (w2) { try { (S.shardForceClose = S.shardForceClose || new Set()).add(r.wcId); w2.close() } catch {} }   // 走白名单真销毁(弹窗查看后 X 只转隐藏,见 spawnCard close 拦截)
         }
@@ -705,20 +796,26 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
           try {
             const vGoal = verifyGoalFor(tag0, verifyFrontendHit(tag0))   // M3 全量 CC 验证代理;前端命中自动追加浏览器专条
             const vid = spawnWorkflow(vGoal, visionModel())   // 双模型:验证棒整卡跑读图模型(已配时)
+            markVerify(vid)   // 身份登记:VERDICT 机判/复验豁免以 reg.isVerify 为准(排队返回 {queued} 时由 wfDequeue 按 goal 文本补登记)
             assignVerifyScope(vid)   // 只读沙箱:writeScope 限定系统临时目录(CC :14-22 思想)
             log('[harness-verify] 自动集成验证棒已派出 (tag ' + tag0 + ', card ' + JSON.stringify(vid) + ')')
             const owin2 = wcById(oreg.wcId)
             if (owin2) owin2.send('card-inject', { text: '<主控进度>(壳层验证闸)检测到编码分片缺验证证据,已自动补派【集成验证】分片跑构建/测试 —— 它的结果会作为收官证据回流;别急着索引,等验证棒收官再收口。</主控进度>', disp: '壳层已自动补派集成验证棒' })
           } catch (e) { log('harness verify dispatch err: ' + e.message) }
         }
-        setTimeout(() => {
-          try {
-            const spawned = [...S.wfRegistry.values()].some((r) => r.parentOrch === tag0 && (r.at || 0) >= settledAt - 1000)
-            if (spawned) return
-            const w3 = wcById(oreg.wcId)   // 主控卡可能是内嵌 guest(波2)
-            if (w3) { w3.send('card-inject', { text: '<主控进度>(壳层兜底)全部分片已收官 5 分钟,仍未看到索引棒派出 —— 请立即按规程第 6 条派【索引棒】收口;若你判断无需索引,直接向用户总结交付即可,别再干等。</主控进度>', disp: '兜底提醒:分片已齐,该派索引棒了' }); log('orch index nudge fired (tag ' + tag0 + ')') }
-          } catch {}
-        }, 300000)
+        // 索引棒 5min 催办每 tag 只武装一次(全收官可被交棒/复验反复触发,不武装守卫 = 同 tag 挂 N 个计时器轮着催)
+        S.orchIndexNudgeArmed = S.orchIndexNudgeArmed || new Set()
+        if (!S.orchIndexNudgeArmed.has(tag0)) {
+          S.orchIndexNudgeArmed.add(tag0)
+          setTimeout(() => {
+            try {
+              const spawned = [...S.wfRegistry.values()].some((r) => r.parentOrch === tag0 && (r.at || 0) >= settledAt - 1000)
+              if (spawned) return
+              const w3 = wcById(oreg.wcId)   // 主控卡可能是内嵌 guest(波2)
+              if (w3) { w3.send('card-inject', { text: '<主控进度>(壳层兜底)全部分片已收官 5 分钟,仍未看到索引棒派出 —— 请立即按规程第 6 条派【索引棒】收口;若你判断无需索引,直接向用户总结交付即可,别再干等。</主控进度>', disp: '兜底提醒:分片已齐,该派索引棒了' }); log('orch index nudge fired (tag ' + tag0 + ')') }
+            } catch {}
+          }, 300000)
+        }
       }
     } catch (e) { log('orch wake err: ' + e.message) }
   }
@@ -726,23 +823,58 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // S.wfTurnStart 由 session.js 每次 card-send 回调(新回合开始=还活着,解除计时);
   // S.wfTurnError 由 session.js 回合抛错回调(报错路径到不了 wfTurnDone,也得兜底,否则 serve 中断一次就永远卡 running)。
   const shardSettleTimers = new Map()   // wcId → timer
+  const wfTurnBusy = new Set()   // wcId:wf 卡在飞回合(主进程自维护,回合 busy 推导的兜底来源 —— Vue 卡不上报 card-busy IPC,session.js turnBusy 挂载前的权威替身);wfTurnStart 加、wfTurnDone/wfTurnError 摘
+  const orchErrRetryTimers = new Map()   // wcId → timer(主控卡出错轮自动重试,见 wfTurnError;wfTurnStart 解除)
   function armShardSettle(reg, wcId, verdict) {
     clearTimeout(shardSettleTimers.get(wcId))
     shardSettleTimers.set(wcId, setTimeout(() => {
       shardSettleTimers.delete(wcId)
-      if (reg.orchNotified) return
-      reg.status = verdict   // done=正常轮末落定;interrupted=回合报错后落定
-      log('[ctx-settle] shard settle → ' + verdict + ' (card ' + reg.id + '): ' + String(reg.goal).slice(0, 50))
+      // ①verdict 不沿用 arm 时快照,fire 时重算:有未完 todo 的分片【不判 done】——
+      // 明知没干完强判 done,主控按"全齐"收口,是"分片死循环主控却判全齐"的病根;无 todo 学习兜底时落回 arm 口径(lastAborted/零产出)
+      const openTodos = (reg.todos || []).some((x) => !/complet|cancel/i.test(String(x && x.status || '')))
+      const v = (reg.todos && reg.todos.length && openTodos) ? 'interrupted' : verdict
+      // ②状态照写,与 orchNotified 一次性唤醒解耦:提前 settle 消费过标志后,后续 settle 仍要更新状态
+      // (否则"实际完成但卡 running";唤醒是一次性的 —— shardSettled 内部查 orchNotified 自守)
+      reg.status = v
+      log('[ctx-settle] shard settle → ' + v + ' (card ' + reg.id + '): ' + String(reg.goal).slice(0, 50))
       shardSettled(reg)
       if (reg.status === 'done' || reg.status === 'interrupted') wfDequeue()   // 收官即腾位:中断也算(系统性失败全 interrupted 时,不出队=排队片永远卡死)
     }, 45000))
   }
-  S.wfTurnStart = (wcId) => { const t = shardSettleTimers.get(wcId); if (t) { clearTimeout(t); shardSettleTimers.delete(wcId) } }
+  S.wfTurnStart = (wcId) => {
+    const t = shardSettleTimers.get(wcId); if (t) { clearTimeout(t); shardSettleTimers.delete(wcId) }
+    const rt = orchErrRetryTimers.get(wcId); if (rt) { clearTimeout(rt); orchErrRetryTimers.delete(wcId) }
+    const reg = S.wfCardByWc && S.wfCardByWc.get(wcId)
+    // 防交棒复活死等:已判 done 且唤醒已消费的分片又开始新回合(交棒 resume/催办)→ 复位一次性标志并翻回 running ——
+    // 否则它再次收官时 shardSettled 被 orchNotified 挡住,永不二次唤醒,主控 N/M 回退死等
+    if (reg && reg.parentOrch && reg.orchNotified && reg.status === 'done') {
+      reg.orchNotified = false; reg.status = 'running'
+      log('[ctx-settle] shard resumed after done → orchNotified 复位, status 翻回 running (card ' + reg.id + ')')
+    }
+    if (reg) wfTurnBusy.add(wcId)   // 回合 busy 兜底轨:wfTurnDone/wfTurnError 对称摘除
+  }
   S.wfTurnError = (wcId) => {
+    wfTurnBusy.delete(wcId)
     const reg = S.wfCardByWc && S.wfCardByWc.get(wcId)
     if (reg && reg.parentOrch && !reg.orchNotified && reg.status === 'running') armShardSettle(reg, wcId, 'interrupted')
+    // 主控卡出错轮零兜底(实锤):预检轮撞网关 429/超时,不自动重试 = 永久停摆零感知(停滞巡检要求 planApproved=true,预检没批它也不管)。
+    // arm 一次 45s 后自动重试:重试前查窗还在、仍无新回合(新回合经 wfTurnStart 已解除本计时,双保险再查 busy),只补一刀不循环。
+    if (reg && reg.kind === 'orch' && reg.status === 'running' && !reg.orchErrRetried) {
+      reg.orchErrRetried = true
+      clearTimeout(orchErrRetryTimers.get(wcId))
+      orchErrRetryTimers.set(wcId, setTimeout(() => {
+        orchErrRetryTimers.delete(wcId)
+        try {
+          const wc = wcById(wcId); if (!wc) return
+          if (S.isCardBusy && S.isCardBusy(wcId)) return
+          wc.send('card-inject', { text: '<主控进度>(壳层容错)你上一轮因网关错误中断 —— 这是临时故障,请立即重试你刚才要做的事(预检/规划/派发),不要干等。</主控进度>', disp: '主控出错轮已自动重试' })
+          log('[ctx-orch] orch error-turn auto retry injected (card ' + reg.id + ')')
+        } catch {}
+      }, 45000))
+    }
   }
   S.wfTurnDone = (wcId, finalText, snap) => {
+    wfTurnBusy.delete(wcId)   // 回合 busy 兜底轨:与 wfTurnStart 对称摘除
     const reg = S.wfCardByWc && S.wfCardByWc.get(wcId); if (!reg) return
     reg.rounds++; reg.round = reg.rounds
     const t = String(finalText == null ? '' : finalText); if (t.trim()) reg.final = t
@@ -751,7 +883,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     reg.elapsedMs = Date.now() - reg.at
     const open = (reg.todos || []).some((x) => !/complet|cancel/i.test(String(x && x.status || '')))
     const wasDone = reg.status === 'done'
-    reg.status = (reg.todos && reg.todos.length && !open) ? 'done' : 'running'
+    // ③已 interrupted 的 reg(stop-all 直写/关卡落终态/settle 补判)不按 todos 翻回 running —— 终态不被轮末重算覆写
+    if (reg.status !== 'interrupted') reg.status = (reg.todos && reg.todos.length && !open) ? 'done' : 'running'
     // 严格模式推进:步骤未发完时看本轮成败 —— 含失败语义(模型明说失败/无法/放弃)→ 停发并标 interrupted;否则自动下发下一步。
     // 失败判定只在"还有步要发"时做:全部发完后的收尾汇报常带"无失败"之类否定句,误标 interrupted 没意义。
     if (reg.strictSteps && reg.strictSteps.length && !reg.strictFailed) {
@@ -802,20 +935,60 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     fs.writeFileSync(reg.archive, '# ' + (reg.kind === 'pipeline' ? '任务编排' : '工作流') + ':' + reg.goal + '\n\n- id:' + reg.id + ' · 会话:' + (reg.sid || '-') + ' · 轮次:' + reg.rounds + ' · 用时:' + Math.round((reg.elapsedMs || 0) / 1000) + 's · 状态:' + reg.status + (reg.aborted ? ' · 曾被中止' : '') + (reg.diff ? ' · 改动:+' + reg.diff.additions + '/-' + reg.diff.deletions + ' (' + reg.diff.files + ' 文件)' : '') + '\n\n## 任务清单\n' + (todoLines || '(无)') + '\n\n## 产出文件\n' + (fileLines || '(无)') + '\n\n## 执行动作\n' + (actLines || '(无)') + '\n\n## 最终成果(最近一轮回答)\n\n' + reg.final)
   }
 
-  // 规则法识别邮件里的会议 → 产出"建议待办"(pending 态,人工确认后才进正式待办);
-  // 抽取器保守(解析不出可信时间只给建议不给提醒),误报靠确认区兜底。产出即广播 UI 刷新
+  // 邮件 → 建议待办(pending 态,人工确认后才进正式待办)。
+  // 语义化口径(2026-07 整改):规则法关键词太宽("讨论/沟通"+任意日期即命中),把没有行动要求的邮件全捞出来(实测病灶)。
+  // 现改为:hasTimeSignal 便宜预筛(无日期/截止信号的邮件不送模型)→ 攒批(20s 或 8 封)→ 一次 LLM 调用语义复核
+  // (只挑"有明确截止时间的待办"与"会议待办"两类,宁可漏不可滥)→ 产出即广播 UI 刷新。
+  // LLM 失败降级:收紧版规则法(必须有会议链接,或主题带明确会议词),宁可少捞不滥捞。
+  const todoSuggestQ = { list: [], timer: null, busy: false }
   function maybeSuggestMeeting(em) {
     try {
       if (!em || !em.messageId || !S.todosApi) return
-      const mt = extractMeeting(em)
-      if (!mt) return
-      const sug = S.todosApi.addSuggestion({
-        msgId: em.messageId, from: em.from || '', subject: em.subject || '', date: em.date || '',
-        text: (em.subject || '会议').slice(0, 80) + (mt.snippet ? ' · ' + mt.snippet : ''),
-        meetingAt: mt.meetingAt, link: mt.link,
-      })
-      if (sug) { for (const w of BrowserWindow.getAllWindows()) { try { w.webContents.send('todo-suggest-updated') } catch {} } }
+      if (!todoExtractLLM.hasTimeSignal(em)) return
+      if (todoSuggestQ.list.some((x) => x.messageId === em.messageId)) return
+      todoSuggestQ.list.push(em)
+      if (todoSuggestQ.list.length > 40) todoSuggestQ.list.shift()   // 爆量兜底:丢最老(建议区本来就是尽力而为)
+      if (todoSuggestQ.busy) return
+      if (todoSuggestQ.list.length >= 8) { flushTodoSuggest(); return }
+      if (!todoSuggestQ.timer) todoSuggestQ.timer = setTimeout(() => { todoSuggestQ.timer = null; flushTodoSuggest() }, 20000)
     } catch (e) { log('suggest meeting err: ' + e.message) }
+  }
+  async function askOneShot(prompt) {   // 无头一次性问答(技能精修同款模式):问答短、无需会话上下文
+    const serve = await oc.ensureServe(S.settings.projectDir || '', S.handlers, log)
+    const sid = await oc.createSession(serve, '邮件待办提取')
+    if (!sid) throw new Error('createSession failed')
+    return await oc.sendMessage(serve, sid, prompt)
+  }
+  async function flushTodoSuggest() {
+    if (todoSuggestQ.busy) return
+    todoSuggestQ.busy = true
+    if (todoSuggestQ.timer) { clearTimeout(todoSuggestQ.timer); todoSuggestQ.timer = null }
+    const batch = todoSuggestQ.list.splice(0, 12)
+    try {
+      let items
+      try {
+        items = await todoExtractLLM.extract(batch, askOneShot)
+      } catch (e) {
+        // LLM 不可用(serve 没起/模型报错) → 收紧版规则法兜底:只留"有会议链接"或"主题带明确会议词"的,防滥捞
+        log('todo llm extract failed, fallback to strict rules: ' + e.message)
+        items = []
+        for (const em of batch) {
+          const mt = extractMeeting(em)
+          if (!mt) continue
+          if (!mt.link && !/(会议|例会|周会|晨会|邀请|约谈|评审会|meeting|invite)/i.test(em.subject || '')) continue
+          items.push({ msgId: em.messageId, kind: 'meeting', from: em.from || '', subject: em.subject || '', date: em.date || '', text: (em.subject || '会议').slice(0, 80) + (mt.snippet ? ' · ' + mt.snippet : ''), meetingAt: mt.meetingAt, link: mt.link })
+        }
+      }
+      let added = 0
+      for (const it of items) {
+        const sug = S.todosApi.addSuggestion({ msgId: it.msgId, from: it.from, subject: it.subject, date: it.date, kind: it.kind, text: it.text, meetingAt: it.meetingAt, link: it.link })
+        if (sug) added++
+      }
+      if (added) { log('todo-suggest: 语义提取新增 ' + added + ' 条 (批次 ' + batch.length + ' 封)'); for (const w of BrowserWindow.getAllWindows()) { try { w.webContents.send('todo-suggest-updated') } catch {} } }
+    } catch (e) { log('flush todo suggest err: ' + e.message) } finally {
+      todoSuggestQ.busy = false
+      if (todoSuggestQ.list.length) setTimeout(flushTodoSuggest, 1000)   // 队列还有剩,接着冲
+    }
   }
 
   // ── 邮件整理卡 ─────────────────────────────────────────────────────────────
@@ -2114,7 +2287,14 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
         const si = sid && S.sessionInfo.get(sid)
         if (si) { try { oc.abort(si.serve, sid) } catch {} ; stopped++ }
         reg.status = 'interrupted'; reg.aborted = true
+        // 竞态修复:挂着的 45s settle 计时必须清掉(不清 = 到点把刚写的 interrupted 按旧 verdict 覆写回 done);
+        // 分片还要唤醒主控 + 刷进度面板(直写状态不唤醒 = 主控死等这片,面板也看不到终态)
+        clearTimeout(shardSettleTimers.get(reg.wcId)); shardSettleTimers.delete(reg.wcId)
         try { S.wfArchive(reg) } catch {}
+        if (reg.parentOrch) {
+          try { shardSettled(reg) } catch {}
+          try { pushShardProgress(reg.parentOrch) } catch {}
+        }
       } catch {}
     }
     log('wf stop-all: aborted ' + stopped + ' running, cleared queue ' + queued)
@@ -2167,10 +2347,25 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   })
 
   // ── 任务完成通知 ────────────────────────────────────────────────────────────
-  const busyCards = new Set()   // 正在运行任务的 webContents id
+  const busyCards = new Set()   // card-busy IPC 上报的 webContents id(渲染端驱动;Vue 卡从不上报 —— 只作补充来源,不再是唯一权威)
   const busyEndAt = new Map()   // wcId → 最近一次转闲的时间戳:出队补位给 3s 宽限 —— 分片轮间空窗(过规划闸/交棒)瞬间"闲"是假象,曾被机制性超发(4 并发跑出 8 张活卡,加剧内网 429)
-  S.isCardBusy = (wcId) => busyCards.has(wcId)   // 暴露给 relay:/orch/result 据此区分"干活中"与"空闲(等批准/等插话)"
-  S.isCardBusyLately = (wcId) => busyCards.has(wcId) || (Date.now() - (busyEndAt.get(wcId) || 0) < 3000)
+  // 回合 busy 改主进程推导(实锤:busyCards 唯一来源是渲染端 card-busy IPC,默认 Vue 卡从不上报 →
+  // wfConcurrency 并发闸形同虚设、看门狗门槛永不真、'忙着别杀'守卫失效):wcId → sid → 在回合中。
+  // 权威记录 = session.js 的 turnBusy(sid 键 Set,经 S.turnBusy 挂载);挂载未就绪时回退 sessionInfo 字段形态,
+  // 再兜底 wf 卡自维护的 wfTurnBusy(wfTurnStart 加 / wfTurnDone·wfTurnError 摘,见分片落定计时器段);
+  // card-busy IPC 保留作补充不删(legacy 卡仍上报)。
+  function turnBusyByWc(wcId) {
+    const sid = S.sessionByWc.get(wcId)
+    if (sid) {
+      const tb = S.turnBusy
+      if (tb && typeof tb.has === 'function' && tb.has(sid)) return true
+      const si = S.sessionInfo.get(sid)
+      if (si && (si.busy === true || si.turnBusy === true)) return true
+    }
+    return wfTurnBusy.has(wcId)
+  }
+  S.isCardBusy = (wcId) => turnBusyByWc(wcId) || busyCards.has(wcId)   // 暴露给 relay:/orch/result 据此区分"干活中"与"空闲(等批准/等插话)"
+  S.isCardBusyLately = (wcId) => S.isCardBusy(wcId) || (Date.now() - (busyEndAt.get(wcId) || 0) < 3000)
   function updateTrayBusy() {
     if (!S.tray) return
     const n = busyCards.size
@@ -2200,6 +2395,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   })
   // 卡片关闭时清掉它的"忙"记录 —— 否则正在生成的卡被关，wcId 永留 busyCards,托盘提示会一直"运行中"
   function forgetBusy(wcId) {
+    wfTurnBusy.delete(wcId)   // 主进程推导轨同步摘除(关卡即闲)
     if (!busyCards.delete(wcId)) return
     if (busyCards.size === 0) {
       if (S.tray && !S.tray.isDestroyed()) S.tray.setToolTip('BocomHermes')

@@ -299,6 +299,19 @@ module.exports = function initMail(ctx) {
             }
             try {
               const id = spawnWorkflow(goal)
+              // 主控预检后走单工作流路由(goal 无 [orch:TAG]):给它的主控 reg 置 routedSingle —— 停滞巡检据此跳过
+              // (没分片是"单卡装得下"的合法归宿,不是"标记写错",误催会让弱模型重复派片)。
+              // relay 不带调用方身份,只在候选【唯一】时置位:已批准、仍在跑、名下无分片的主控;拿不准(多个)就不标 ——
+              // 漏标的代价是 10 分钟后多一条催办文案,错标的代价是真停滞的主控无人催
+              if (!tm && S.orchByTag && S.wfRegistry) {
+                try {
+                  const cands = [...S.orchByTag.entries()]
+                    .map(([tag, o]) => ({ tag, oreg: S.wfRegistry.get(String(o && o.id)) }))
+                    .filter((x) => x.oreg && x.oreg.planApproved === true && x.oreg.status === 'running'
+                      && ![...S.wfRegistry.values()].some((r) => r.parentOrch === x.tag))
+                  if (cands.length === 1) { cands[0].oreg.routedSingle = true }
+                } catch {}
+              }
               // 并发满时 spawnWorkflow 返回 { queued, position } —— 必须拍平,否则 MCP 文本打出 id=[object Object](主控对着它瞎猜,实测)
               if (id && typeof id === 'object') return reply({ ok: true, queued: true, position: id.position || 0, id: id.id })
               return reply({ ok: true, id })

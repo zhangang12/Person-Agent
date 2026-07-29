@@ -1,0 +1,5 @@
+# 用例⑪ transcript:$s1 = 分片A1 会话(todowrite 全勾 + echo 无验证证据 → 触发壳层自动验证棒)。
+# $s2 = 自动验证棒会话;respond 规则:验证棒汇报 VERDICT: PARTIAL(合法结果:不拒收、不触发抽查重放 exec)。
+{"t":0,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s1","part":{"id":"prt_td1","callID":"c1","type":"tool","tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"实现接口","status":"completed"}]}}}}}}
+{"t":1,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s1","part":{"id":"prt_b1","callID":"c2","type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"echo hello"},"output":"hello"}}}}}
+{"t":2,"op":"respond","method":"POST","path":"/session/.*/message","bodyIncludes":"验证执行","appendAssistant":"VERDICT: PARTIAL\nCommand run: npm test\nOutput observed: 环境限制,部分检查跳过"}

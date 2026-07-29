@@ -2,6 +2,8 @@
 //   ①全清理:abort/删会话/退休 serve/wf 落 interrupted+存档/wfDequeue/orch 级联/forgetBusy 一项不漏
 //   ②done 终态不被覆写 ③detach:会话活着(si.wc 置空、sid 键会话态全留)、wf 不收官、wc 键登记摘净、幂等
 //   ④幂等:同一 wcId 重复清理安全 ⑤orch 级联杀分片
+//   ⑥running 分片关卡 = interrupted 收官:补调 shardSettled 唤醒主控 + pushShardProgress 刷面板(状态机黑洞修复);
+//     唤醒一次性标志已消费/非分片则不重复唤醒
 // 跑法:npm run cleanup:test(零依赖 ok() 风格;假 oc/log/BrowserWindow 全注入,不碰 electron)
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
@@ -15,7 +17,7 @@ function ok(name, cond, extra) {
 
 // ── 装配:每个用例一套全新 S/依赖,互不染指 ──
 function makeHarness() {
-  const calls = { abort: [], retire: [], archive: [], dequeue: 0, forget: [], dropPerm: [], dropQ: [] }
+  const calls = { abort: [], retire: [], archive: [], dequeue: 0, forget: [], dropPerm: [], dropQ: [], settled: [], progress: [] }
   const serve = { base: 'http://127.0.0.1:4999' }
   const S = {
     sessionByWc: new Map([[101, 's1']]),
@@ -48,6 +50,8 @@ function makeHarness() {
     getShardSettleTimers: () => timers,
     wfDequeue: () => { calls.dequeue++ },
     forgetBusy: (id) => calls.forget.push(id),
+    shardSettled: (r) => calls.settled.push(r),
+    pushShardProgress: (t) => calls.progress.push(t),
   })
   return { S, oc, calls, timers, wins, cleanup, serve }
 }
@@ -129,6 +133,30 @@ console.log('card-cleanup 自测')
   ok('分片窗被 close', closed === 1)
   ok('分片进销毁白名单', S.shardForceClose.has(202))
   void calls
+}
+
+// ── 用例 6:running 分片关卡 → interrupted 收官唤醒主控 + 刷面板(状态机黑洞修复)──
+{
+  const { S, calls, cleanup } = makeHarness()
+  const wreg = { id: 30, kind: 'workflow', status: 'running', at: Date.now() - 5000, parentOrch: 'tagY', orchNotified: false }
+  S.wfCardByWc.set(101, wreg)
+  cleanup(S, 101, null)
+  ok('分片落 interrupted', wreg.status === 'interrupted')
+  ok('补调 shardSettled 唤醒主控(一次性)', calls.settled.length === 1 && calls.settled[0] === wreg)
+  ok('补调 pushShardProgress 刷面板', calls.progress.join() === 'tagY')
+}
+// ── 用例 7:唤醒已消费(orchNotified=true)/非分片 → 不重复唤醒 ──
+{
+  const { S, calls, cleanup } = makeHarness()
+  const wreg = { id: 31, kind: 'workflow', status: 'running', at: Date.now() - 5000, parentOrch: 'tagY', orchNotified: true }
+  S.wfCardByWc.set(101, wreg)
+  cleanup(S, 101, null)
+  ok('已消费不重复唤醒/刷面板', calls.settled.length === 0 && calls.progress.length === 0)
+  const h2 = makeHarness()
+  const w2 = { id: 32, kind: 'chat', status: 'running', at: Date.now() - 5000 }   // 无 parentOrch:普通工作流卡不唤醒
+  h2.S.wfCardByWc.set(101, w2)
+  h2.cleanup(h2.S, 101, null)
+  ok('非分片不唤醒', h2.calls.settled.length === 0 && h2.calls.progress.length === 0)
 }
 
 console.log(`\n结果:${pass} 通过,${fail} 失败`)
