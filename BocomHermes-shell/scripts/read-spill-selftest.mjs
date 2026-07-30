@@ -67,14 +67,15 @@ function bigText(lines = 500, lineLen = 40) {
 // ── ② 超阈值:写盘 + 返回摘要 ──
 {
   const hooks = await loadPluginWithEnv({ BOCOMHERMES_READ_SPILL_DIR: TEST_DIR })
-  const original = bigText(500, 40) // ≈ 23500 字符 > 8000
+  const original = bigText(500, 40) // ≈ 25500 字符 > 16000(新默认阈值)
   const output = { title: 'read', output: original, metadata: {} }
   await hooks['tool.execute.after']({ tool: 'read', sessionID: 'ses_2', callID: 'c2' }, output)
-  ok('超阈值输出被替换为短摘要', output.output.length < 3000)
-  ok('摘要保留头部行(前 40 行内)', output.output.startsWith('LINE-0001') && output.output.includes('LINE-0040'))
-  ok('摘要不包含头部之后的内容', !output.output.includes('LINE-0041'))
+  ok('超阈值输出被替换为短摘要', output.output.length < 3600)
+  ok('摘要保留头部行(前 60 行内)', output.output.startsWith('LINE-0001') && output.output.includes('LINE-0060'))
+  ok('摘要不包含头部之后的内容', !output.output.includes('LINE-0061'))
   ok('摘要含总行数/总字符数', output.output.includes('共 500 行') && output.output.includes(`${original.length} 字符`))
   ok('摘要含落盘路径与分段读取提示', output.output.includes(TEST_DIR) && output.output.includes('offset/limit'))
+  ok('摘要含"用户要全文"指引(写进回答正文才算展示)', output.output.includes('写进你的回答正文'))
   ok('临时文件已写入', fs.readdirSync(TEST_DIR).some((f) => f.includes('ses_2') && f.includes('c2')))
 }
 
@@ -137,7 +138,7 @@ function bigText(lines = 500, lineLen = 40) {
   const original = bigText(500, 40)
   const output = { title: 'read', output: original, metadata: { output: original } }
   await hooks['tool.execute.after']({ tool: 'read', sessionID: 'ses_6', callID: 'c6' }, output)
-  ok('metadata.output 快照同步替换', output.metadata.output === output.output && output.metadata.output.length < 3000)
+  ok('metadata.output 快照同步替换', output.metadata.output === output.output && output.metadata.output.length < 3600)
 }
 
 // ── ⑦ 异常输入不炸(钩子必须静默放行) ──
@@ -154,12 +155,12 @@ function bigText(lines = 500, lineLen = 40) {
 // ── ⑧ 会话累计桶(第二道闸):单次不超也累计,超线后小输出照样外溢 ──
 {
   const hooks = await loadPluginWithEnv({ BOCOMHERMES_READ_SPILL_DIR: TEST_DIR, BOCOMHERMES_READ_SPILL_SESSION_MAX: '15000' })
-  const mk = () => ({ title: 'read', output: 'y'.repeat(6000), metadata: {} })   // 6000 < 8000 单次闸不拦
+  const mk = () => ({ title: 'read', output: 'y'.repeat(6000), metadata: {} })   // 6000 < 16000 单次闸不拦
   const o1 = mk(); await hooks['tool.execute.after']({ tool: 'read', sessionID: 'ses_b1', callID: 'b1' }, o1)
   const o2 = mk(); await hooks['tool.execute.after']({ tool: 'read', sessionID: 'ses_b1', callID: 'b2' }, o2)
   ok('累计未超线:小输出原样放行', o1.output.length === 6000 && o2.output.length === 6000)
   const o3 = mk(); await hooks['tool.execute.after']({ tool: 'read', sessionID: 'ses_b1', callID: 'b3' }, o3)   // 18000 > 15000
-  ok('累计超线:小输出(6000<8000)照样外溢', o3.output.includes('本会话读取量已到预算线'))
+  ok('累计超线:小输出(6000<16000)照样外溢', o3.output.includes('本会话读取量已到预算线'))
   ok('预算线文案给落盘路径+改用 grep 提示', o3.output.includes(TEST_DIR) && o3.output.includes('grep'))
   const diskFile = fs.readdirSync(TEST_DIR).find((f) => f.includes('ses_b1') && f.includes('b3'))
   ok('超线外溢同样落盘且内容完整', !!diskFile && fs.readFileSync(path.join(TEST_DIR, diskFile), 'utf8').length === 6000)

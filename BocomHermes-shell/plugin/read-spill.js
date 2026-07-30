@@ -71,7 +71,9 @@ function spillIfTooBig(text, cfg) {
   const replacement =
     head
     + `\n\n…(输出过长已外溢:共 ${lines.length} 行 / ${text.length} 字符,完整内容已存 ${file}`
-    + '。需要更多内容时,用 read 带 offset/limit 读该文件,或 grep 该文件定位行号后再分段读)'
+    + '。需要更多内容时,用 read 带 offset/limit 读该文件,或 grep 该文件定位行号后再分段读;'
+    + '如果用户要求查看/输出完整内容,就用 offset/limit 把这个文件分段读回,并【把内容写进你的回答正文】发给用户'
+    + ' —— 读进工具输出不算展示,用户只能看到你的回答正文,工具块默认是折叠的)'
   return { file, replacement }
 }
 
@@ -92,14 +94,16 @@ function spillBudgetLine(text, cfg, bytes) {
   fs.writeFileSync(file, text, 'utf8')
   const replacement =
     `本会话读取量已到预算线(累计 ${bytes} 字符 > 预算 ${cfg.sessionMax}):完整内容已存 ${file}`
-    + '。请改用 grep 定位后分段精读,不要再全文读取。'
+    + '。请改用 grep 定位后分段精读,不要再全文读取;如果用户要求查看/输出完整内容,就用 read 带 offset/limit 把这个文件分段读回,并【把内容写进你的回答正文】发给用户(读进工具输出不算展示)。'
   return { file, replacement }
 }
 
 /** 读取插件配置(环境变量优先,全部有默认值) */
 function loadConfig() {
-  const maxChars = Number(process.env.BOCOMHERMES_READ_SPILL_MAX ?? 8000)
-  const headLines = Number(process.env.BOCOMHERMES_READ_SPILL_HEAD ?? 40)
+  // 默认 16000(2026-07-29 由 8000 上调):该阈值定在 128k 写死+注入失控的旧时代;192k 口径修复后,
+  // 单次 16k 字符 ≈ 4% 上下文,编码与"读文档给用户看"两类场景更平衡;防连读爆上下文的主力仍是它,别撤。
+  const maxChars = Number(process.env.BOCOMHERMES_READ_SPILL_MAX ?? 16000)
+  const headLines = Number(process.env.BOCOMHERMES_READ_SPILL_HEAD ?? 60)
   const tools = String(process.env.BOCOMHERMES_READ_SPILL_TOOLS || 'read,grep,bash')   // bash 同拦:模型会用 cat 绕开 read(实测),>阈值照样外溢;TUI 快照问题仅影响界面显示(metadata.output 已同步替换)
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
   const spillDir = process.env.BOCOMHERMES_READ_SPILL_DIR
@@ -107,8 +111,8 @@ function loadConfig() {
   const sessionMax = Number(process.env.BOCOMHERMES_READ_SPILL_SESSION_MAX ?? 0)   // 累计桶默认关(编码场景实测:40k 几波 read 就到顶,之后连 200 字小读也外溢,工具调用效率腰斩;
   // 长任务的"累计增长"已由 context-guard① 在 messages.transform 层管(清旧历史不碰新鲜内容),累计桶只留环境变量作极端场景逃生门
   return {
-    maxChars: Number.isFinite(maxChars) ? maxChars : 8000,
-    headLines: Number.isFinite(headLines) && headLines > 0 ? headLines : 40,
+    maxChars: Number.isFinite(maxChars) ? maxChars : 16000,
+    headLines: Number.isFinite(headLines) && headLines > 0 ? headLines : 60,
     tools,
     spillDir,
     sessionMax: Number.isFinite(sessionMax) ? sessionMax : 40000,
