@@ -289,21 +289,19 @@ module.exports = function initMail(ctx) {
           if (req.url === '/orch/run') {
             const goal = String(a.goal || '').trim()
             if (!goal) return reply({ error: '缺少 goal' })
-            // 规划闸升级壳层状态位:主控派分片(goal 带 [orch:TAG])必须方案已批 —— 批准以前只是会话里的一条文案,
-            // 模型不守规程第一轮直接派 N 片,壳层照单全收(顺序倒置,审查实测)。查无主控/无状态(老会话)放行:宁可漏拦不死锁
+            // 结构化派发(window.js S.dispatchShard):parentTag 参数优先(校验真实存在+方案已批,机械注入 tag,
+            // 模型不再手写 [orch:TAG] 进文本——写错串台的病灶从根拔掉);缺席回退 goal 文本解析(兼容旧调用)。
+            // 内含:规划闸(未批拒派)+ 同 tag 去重闸(相同目标在跑/排队拒派回执原因)。
             const tm = goal.match(/^\s*\[orch:([A-Za-z0-9-]+)\]\s*/) || goal.match(/[\[【]\s*orch\s*[:：]\s*([A-Za-z0-9-]+)\s*[\]】]/)
-            if (tm && S.orchByTag) {
-              const oref = S.orchByTag.get(tm[1])
-              const oreg = oref && S.wfRegistry && S.wfRegistry.get(String(oref.id))
-              if (oreg && oreg.planApproved === false) return reply({ error: '主控方案尚未批准 —— 请用户在主控卡点击【开始执行】后再派分片(壳层规划闸,不是文案约定)。' })
-            }
             try {
-              const id = spawnWorkflow(goal)
-              // 主控预检后走单工作流路由(goal 无 [orch:TAG]):给它的主控 reg 置 routedSingle —— 停滞巡检据此跳过
+              const r = S.dispatchShard(goal, a.parentTag != null ? String(a.parentTag) : '')
+              if (r && r.error) return reply({ error: r.error })
+              const id = r && r.id
+              // 主控预检后走单工作流路由(goal 无 [orch:TAG] 且未传 parentTag):给它的主控 reg 置 routedSingle —— 停滞巡检据此跳过
               // (没分片是"单卡装得下"的合法归宿,不是"标记写错",误催会让弱模型重复派片)。
               // relay 不带调用方身份,只在候选【唯一】时置位:已批准、仍在跑、名下无分片的主控;拿不准(多个)就不标 ——
               // 漏标的代价是 10 分钟后多一条催办文案,错标的代价是真停滞的主控无人催
-              if (!tm && S.orchByTag && S.wfRegistry) {
+              if (!tm && !a.parentTag && S.orchByTag && S.wfRegistry) {
                 try {
                   const cands = [...S.orchByTag.entries()]
                     .map(([tag, o]) => ({ tag, oreg: S.wfRegistry.get(String(o && o.id)) }))
@@ -327,7 +325,7 @@ module.exports = function initMail(ctx) {
             // 或分片内部用 task 子 Agent 细分 —— 层级只到"主控→分片→task"为止
             const ptm = goal.match(/[\[【]\s*orch\s*[:：]\s*([A-Za-z0-9-]+)\s*[\]】]/)
             if (ptm && S.orchByTag && S.orchByTag.has(ptm[1]))
-              return reply({ error: '禁止递归派发主控 —— 分片太大的正确做法:① 把它拆成更小的多片(≤10 文件/片),由你自己用 run_workflow 一次派够(goal 带你的 [orch:' + ptm[1] + '] 标记);② 或让分片内部用 task 子 Agent 再细分。不许再开下级主控。' })
+              return reply({ error: '禁止递归派发主控 —— 分片太大的正确做法:① 把它拆成更小的多片(≤10 文件/片),由你自己用 run_workflow 一次派够(传 parentTag="' + ptm[1] + '",壳层机械注入标记);② 或让分片内部用 task 子 Agent 再细分。不许再开下级主控。' })
             try { const r = spawnOrchestrator(goal); return reply({ ok: true, id: r && r.id != null ? r.id : r }) }
             catch (e) { return reply({ error: e.message }) }
           }

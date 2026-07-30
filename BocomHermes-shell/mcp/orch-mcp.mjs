@@ -54,6 +54,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         goal: { type: 'string', description: '总目标一句话(把已掌握的关键上下文写进去,工作流主 Agent 看不到本对话)' },
+        parentTag: { type: 'string', description: '【仅主控卡派分片时必填】你的主控标记(形如 a3f9,就在你的系统提示里,照抄)。壳层校验后机械注入回流标记——不要在 goal 里手写 [orch:xxx],手写容易写错串台。对话卡直接升格工作流时【不要填】。' },
       },
       required: ['goal'],
     },
@@ -101,7 +102,10 @@ async function callTool(name, a) {
   if (name === 'run_workflow') {
     const goal = String(a.goal || '').trim()
     if (!goal) return '需要 goal(交给小队的总目标)'
-    const r = await relayPost('/orch/run', { goal })
+    const body = { goal }
+    if (a.parentTag != null && String(a.parentTag).trim()) body.parentTag = String(a.parentTag).trim()
+    const r = await relayPost('/orch/run', body)
+    if (r.error) return '派发被拒:' + r.error
     if (r.queued) return '工作流并发位已满,已进队列(第 ' + (r.position || '?') + ' 位)—— 前面跑完自动开跑,不用你重派。之后调 workflow_result 取成果。'
     return '已拉起动态工作流,id=' + (r.id != null ? r.id : '?') + '(卡片已打开:主 Agent 自拆 + 并行派子 Agent 深挖 + 自综合,过程可视、用户可插话)。'
       + '注意:它的第一份计划要用户在卡片里点【开始执行】批准 —— 若用户不知道,提醒他去批准,批准后它自动开跑。'

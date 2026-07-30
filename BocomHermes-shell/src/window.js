@@ -363,6 +363,43 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     }
     return { tag: '', rest: raw }
   }
+  // ── 分片派发结构化校验(借鉴 AgentSwarm:路由元数据=校验字段,模型做选择题不做格式题)────────────
+  // 病灶:主控(弱模型)手写 [orch:TAG] 进 goal 文本 —— 写错/写歪/幻觉他主控 tag → 回报串台、唤醒错乱(多次实测)。
+  // 新口径:run_workflow 传 parentTag 参数(主控自己的标记就在它系统提示里,照抄即可),壳层校验后【机械注入】;
+  // goal 文本里一切手写 tag 一律剥掉以 parentTag 为准。parentTag 缺席 → 回退老路径(goal 文本解析,兼容旧调用)。
+  // 顺带两道硬闸:tag 必须真实存在且方案已批(规划闸,原 relay 文案闸的机械版);同 tag 下归一化 goal 相同
+  // 且在跑/排队 → 拒派回执原因(弱模型重复派单的机械兜底,AgentSwarm distinctness 同款)。
+  function normShardGoal(g) { return String(g || '').replace(/[\[【]\s*orch\s*[:：]\s*[A-Za-z0-9-]+\s*[\]】]/g, '').replace(/\s+/g, ' ').trim() }
+  function dispatchShard(goal, parentTag) {
+    const g = String(goal || '').trim()
+    if (!g) return { error: '缺少 goal' }
+    let tag = ''
+    if (parentTag) {
+      const t = String(parentTag).trim()
+      const oref = S.orchByTag && S.orchByTag.get(t)
+      const oreg = oref && S.wfRegistry && S.wfRegistry.get(String(oref && oref.id))
+      if (!oreg) return { error: 'parentTag ' + t + ' 不存在(主控可能已关闭)——分片必须挂在活着的主控名下,不许悬空派发。' }
+      if (oreg.planApproved === false) return { error: '主控方案尚未批准 —— 请用户在主控卡点击【开始执行】后再派分片(壳层规划闸,不是文案约定)。' }
+      tag = t
+    } else {
+      const pt0 = parseOrchTag(g)
+      if (pt0.tag && S.orchByTag) {
+        const oref = S.orchByTag.get(pt0.tag)
+        const oreg = oref && S.wfRegistry && S.wfRegistry.get(String(oref && oref.id))
+        if (oreg && oreg.planApproved === false) return { error: '主控方案尚未批准 —— 请用户在主控卡点击【开始执行】后再派分片(壳层规划闸,不是文案约定)。' }
+      }
+    }
+    // 机械注入:剥掉 goal 里一切手写 tag(可能与 parentTag 冲突/写错),以校验过的 parentTag 为准
+    const finalGoal = tag ? '[orch:' + tag + '] ' + normShardGoal(g) : g
+    if (tag) {
+      const ng = normShardGoal(finalGoal)
+      const dup = [...(S.wfRegistry ? S.wfRegistry.values() : [])].some((r) => r.parentOrch === tag && r.status === 'running' && normShardGoal(r.goal) === ng)
+        || (S.wfQueue || []).some((q) => parseOrchTag(q.goal || '') === tag && normShardGoal(q.goal) === ng)
+      if (dup) return { error: '同标记下已有相同目标的分片在跑/排队 —— 重复派发纯属浪费,先等它收官或调 workflow_result 看进展。' }
+    }
+    return { id: spawnWorkflow(finalGoal) }
+  }
+  S.dispatchShard = dispatchShard   // relay(mail.js /orch/run)薄壳调用;replay 用例直接驱动
   function spawnWorkflow(goal, forceModel) {
     const raw = String(goal || '').trim() || '未命名工作流'
     // 多层派发:主控卡派出的分片 goal 带 [orch:TAG] 前缀 → 登记父子关联(wfTurnDone 据此唤醒主控),展示与注入都剥掉标记;
@@ -494,7 +531,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       '<多层派发主控规程>',
       '你是【主控】,复杂目标的统一入口。你的第一件事永远是【预检路由】:估出这个目标的上下文量级 —— 单卡装得下的派给一张工作流卡,装不下的在主 Agent 层面拆成多个分片并行干,最后派索引 Agent 把结论关联成整体。你不是执行者 —— 【严禁】自己深读代码/文档,【严禁】自己执行分片内容:你的上下文只装"分片清单 + 状态"。',
       '',
-      '【落盘哲学 —— 本流程总规矩】一切中间成果(勘察清单、分片产出、阶段结论)一律写成文档落盘,上下文里只过【路径 + 一句话索引】。字数没有限制:内容住在文档里,谁要用谁去读。【禁止递归派主控】任何一块太大,【不许】调 run_orchestration 再开下级主控 —— 下级主控派出的分片会回报到别的 Tag 名下,唤醒回流错乱,整条链黑盒停摆(实测)。正确做法:把分片拆得更小(单片预算再压,≤10 文件),由你直接用 run_workflow 一次派够(带你的 [orch:' + orchTag + '] 标记);分片内部还嫌大,让它自己用 task 子 Agent 再细分 —— 层级只到"主控→分片→task 子 Agent"为止。',
+      '【落盘哲学 —— 本流程总规矩】一切中间成果(勘察清单、分片产出、阶段结论)一律写成文档落盘,上下文里只过【路径 + 一句话索引】。字数没有限制:内容住在文档里,谁要用谁去读。【禁止递归派主控】任何一块太大,【不许】调 run_orchestration 再开下级主控 —— 下级主控派出的分片会回报到别的 Tag 名下,唤醒回流错乱,整条链黑盒停摆(实测)。正确做法:把分片拆得更小(单片预算再压,≤10 文件),由你直接用 run_workflow 一次派够(传 parentTag="' + orchTag + '");分片内部还嫌大,让它自己用 task 子 Agent 再细分 —— 层级只到"主控→分片→task 子 Agent"为止。',
       '',
       '1. 【预检路由,先估再派】估的是【目标相关的那一撮文件】,绝不是工作目录的全部 —— 目录再大也不直接统计,按漏斗收窄:',
       '   ① 看结构:目录树(两层)+ README/manifest,判断目标落在哪几个模块/子目录;',
@@ -508,9 +545,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       '   某片自己就超 150KB(如一个巨型文件)→ 那片【必须】再拆一层(按文件内部再分),不许硬塞;分不够细 = 流程失败重来,不许将错就错。',
       '2. 【能不能拆,先判】只有能拆出 ≥3 个【互相独立 + 各自可交付】的分片才走多层。整份目标分不出 3 个独立片(全串依赖)→ 多层退化成串行,【改用单工作流】把整个目标派出去,结束。局部有依赖不拦路 —— 记进联动备注,别为了"绝对独立"硬凑错误边界。',
       '3. 【第一轮只出方案,等批准】用 todowrite 列出:预检结论(N 与总量)、片数 M 的预算演算、成本估算(约 M×(2~4) 次模型调用、并发下预计时长)、每个分片:一句话目标 + 自估大小(文件数/总量,超线即错拆必须重分)+ 边界(干什么不干什么)+ 联动备注(依赖哪些片)+ 产出落盘路径(docs/<主题>/<分片名>.md)、索引棒打算。然后结束这轮等用户点【开始执行】—— 用户可能整批批准,也可能【按片修订】("第 N 片去掉/改成 X/某两片合并"):按修订执行,没被点名的片按原方案。批准前【不派任何分片】。',
-      '4. 【派发】批准后,每个分片调一次 run_workflow。goal 第一行必须是标记 [orch:' + orchTag + '] —— 壳层靠它把分片完成消息回传给你,漏了你就变成聋子;标记之后写:一句话目标 + 边界 + 产出路径 + 回报要求(结论与细节全部落盘成文档,回报只给一句话 + 路径 + 分歧点)。',
-      '5. 【等待与失败处置】派完就结束回合。每完成一个分片,壳层会给你注入一条进度消息(N/M)。【分片中断/失败】先分析原因,再【拆成更小单元重派一次】(同一标记 [orch:' + orchTag + '] 即可);仍失败 → 不派第三次,索引时在对应章显著标注【缺口:分片 N 未完成】。对照 todo 清单还没齐,就结束本轮继续等 —— 别轮询、别空转。',
-      '6. 【收口:先校验,再索引】分片全部完成(或只剩失败缺口)后,先派 1~2 个【校验子 Agent】(goal 同样以 [orch:' + orchTag + '] 开头):拿各分片文档里最关键的硬事实(权限/状态机/核心公式/接口契约),按 file:行号 回代码核对,返回"不一致清单"。然后调 workflow_result 逐个取回成果(只取一句话结论与路径,别拉全文),再调 run_workflow 派【索引 Agent】:总目标 + 每个分片一句话结论 + 产出路径清单 + 分歧点 + 校验不一致清单,要求它产出【联合 LLM-wiki 开发文档】' + (dir ? dir + '/docs/' : 'docs/') + '<主题>/README.md:总览与业务闭环 + 每分片一章(核心结论/关键规则/数据流/重要 file:行号,本章即够用)+ 跨片联动章(按联动备注)+ 章末链到分片详文档 + 分歧点仲裁;【校验不一致处标 [待复核]】。读者只看 README 就能掌握全局。分片全文【严禁】贴进 goal(只给路径与一句话);它读不过来,就让它派子 Agent 分片读、自己综合。',
+      '4. 【派发】批准后,每个分片调一次 run_workflow,必须传参数 parentTag="' + orchTag + '" —— 壳层靠它把分片完成消息回传给你,漏传/传错你就变成聋子(会被直接拒派,看到"派发被拒"就检查这个参数);【不要】在 goal 文本里手写 [orch:xxx] 前缀,壳层会机械注入,手写写错过串台(实测)。goal 正文写:一句话目标 + 边界 + 产出路径 + 回报要求(结论与细节全部落盘成文档,回报只给一句话 + 路径 + 分歧点)。',
+      '5. 【等待与失败处置】派完就结束回合。每完成一个分片,壳层会给你注入一条进度消息(N/M)。【分片中断/失败】先分析原因,再【拆成更小单元重派一次】(同样传 parentTag="' + orchTag + '");仍失败 → 不派第三次,索引时在对应章显著标注【缺口:分片 N 未完成】。对照 todo 清单还没齐,就结束本轮继续等 —— 别轮询、别空转。',
+      '6. 【收口:先校验,再索引】分片全部完成(或只剩失败缺口)后,先派 1~2 个【校验子 Agent】(同样传 parentTag="' + orchTag + '"):拿各分片文档里最关键的硬事实(权限/状态机/核心公式/接口契约),按 file:行号 回代码核对,返回"不一致清单"。然后调 workflow_result 逐个取回成果(只取一句话结论与路径,别拉全文),再调 run_workflow 派【索引 Agent】:总目标 + 每个分片一句话结论 + 产出路径清单 + 分歧点 + 校验不一致清单,要求它产出【联合 LLM-wiki 开发文档】' + (dir ? dir + '/docs/' : 'docs/') + '<主题>/README.md:总览与业务闭环 + 每分片一章(核心结论/关键规则/数据流/重要 file:行号,本章即够用)+ 跨片联动章(按联动备注)+ 章末链到分片详文档 + 分歧点仲裁;【校验不一致处标 [待复核]】。读者只看 README 就能掌握全局。分片全文【严禁】贴进 goal(只给路径与一句话);它读不过来,就让它派子 Agent 分片读、自己综合。',
       '7. 【交付】索引棒完成后,你的最终回答 = 总目标一段话总结 + 索引 README 路径 + 各分片产出路径清单【+ 如实汇报:哪些分片失败/缺口、哪些结论待复核】。然后用 memory_add 蒸馏系统级事实(一句话 + anchors 挂 file:行号 + scene,没够格的就跳过,宁缺勿滥)。',
       '8. 【128k 纪律】你的每轮输入都该是小的:预检只看数字、进度只看条数、成果只取索引。发现自己在大段读文件 = 立刻停手,那是分片的活。',
       '',
@@ -519,7 +556,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       'A. 【契约先行】预检后,先派一个勘察子 Agent 提炼【契约文档】' + (dir ? dir + '/docs/' : 'docs/') + '<主题>/CONTRACT.md:各分片将共享的接口/类型/API 签名/关键数据表字段(压在一页内)。所有分片指令必须带契约路径,严格按契约实现,不许自由改签名。',
       'A2. 【转换/迁移类目标的分片口径】按文件清单均分分片(每片 ≤10 个文件,大文件再拆),分片 goal 附【本片文件清单】;片内执行铁律 —— 逐文件派子 Agent 转换(它读原文 → 写目标文件 → 只回路径+一句差异),分片主 Agent【不亲自通读原文】:源码全文只许进叶子子 Agent 的上下文,出现一次。主 Agent 亲自读原文 = 上下文爆掉 + 任务失败,壳层计量到会立即纠偏。',
       'B. 【写归属清单(硬约束)】每个分片的 goal 必须含一行「写归属: <相对路径1>, <相对路径2>」—— 这片【只能】写这些文件(壳层硬闸:写归属外的 write/edit 直接拒绝,bash 写文件同样过闸)。归属两两不交:两片不许共享可写文件;共用的文件归一片独占,另一片只读引用。代码改动一律走 write/edit 工具(bash 写文件视为越权)。编码分片的 goal 还应含一行「契约: <本片必须交付的关键签名1, 签名2, …>」—— 从 CONTRACT.md 摘本片要实现的函数/类/端点名;壳层收官逐个去归属文件里核对,缺一个都算【契约缺口】报回给你(防"看上去做完了实际差一截")。分片指令开头给它一个角色(如"你是负责 X 模块的资深后端工程师")+ 三层边界(✅ 该片必做 / ⚠️ 超归属先问 / 🚫 禁做)—— 弱模型吃"具体角色+明确边界"这套(2500 个 agents.md 的实证)。',
-      'C. 【集成验证 fix-loop】分片全部完成后,派【集成验证分片】:按仓库文档(CLAUDE.md/交接文档)的命令跑全量构建/测试;失败按归属回派 —— 哪个文件的错就重派那片去修(同标记 [orch:' + orchTag + '],至多 2 轮)。全绿才进索引。',
+      'C. 【集成验证 fix-loop】分片全部完成后,派【集成验证分片】:按仓库文档(CLAUDE.md/交接文档)的命令跑全量构建/测试;失败按归属回派 —— 哪个文件的错就重派那片去修(同样传 parentTag="' + orchTag + '",至多 2 轮)。全绿才进索引。',
       'D. 【联合改动报告】索引棒产出 ' + (dir ? dir + '/docs/' : 'docs/') + '<主题>/CHANGES.md:总览 + 每分片一章(改了什么/为什么/验证结果/关键 diff 位置)+ 契约偏差记录 + 失败修复流水 —— 是可审阅的改动报告,不是分析 wiki。',
       'E. 【测试纪律 —— 测试是交付的一部分,不是可选项】关键逻辑必须补/改测试;能跑就跑相关测试,把结果(命令+通过数)写进交付。没有测试框架就为关键路径写最小验证脚本并跑通。集成验证不过 = 没做完,不许收口。',
       'F. 【交付自检 —— 防"看上去完成"】交付前必须输出【要求-证据对照表】:把总目标的每个要求点逐项列出,给证据(file:行号 / 命令输出 / 测试通过)—— 给不出证据的项 = 没做完,继续干,不许"看上去做完了"就交。',
@@ -1201,9 +1238,17 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       titleBarOverlay: process.platform === 'win32' ? { color: '#f3f4f7', symbolColor: '#3c4250', height: 38 } : undefined,
       autoHideMenuBar: true,
       backgroundColor: '#f3f4f7',
+      // 白屏治理:创建即 show 时,shell 单文件包解析+Vue 挂载+IPC 就绪的几百 ms 里用户盯着 backgroundColor 近白屏。
+      // 改为首帧绘制完成(ready-to-show)再亮相 —— 窗口晚出现一点点,但出来就是渲染好的完整界面。
+      show: false,
       // webviewTag:四个视图页全部以 <webview> 收编;preload 与全应用同一份(白名单不变)
       webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false, webviewTag: true },
     })
+    // 3s 兜底:ready-to-show 异常不发(极端)也不能让窗口永远不亮 —— 白屏可忍,黑盒不可忍
+    let mainShown = false
+    const showMainOnce = () => { if (mainShown || !S.mainWin || S.mainWin.isDestroyed()) return; mainShown = true; S.mainWin.show() }
+    S.mainWin.once('ready-to-show', showMainOnce)
+    setTimeout(showMainOnce, 3000)
     S.mainWin.on('closed', () => {
       // 主窗口关 = 内嵌会话卡全灭:逐张走卡关闭清理链(波2 抽出的 cleanupCardContext),
       // 不然 serve 进程/会话映射/busy 状态全成孤儿(browser.js:644-664 同款教训)

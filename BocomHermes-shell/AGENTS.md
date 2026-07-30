@@ -43,7 +43,7 @@ BocomHermes-shell/
 └── docs/              # 设计文档(中文)；docs/项目记忆/ 是项目记忆手动同步镜像
 ```
 
-**主进程架构约定**：`main.js` 创建共享可变状态对象 `S`，各模块导出 `initX(S, deps)` 工厂函数协作（依赖注入，无全局单例 import）；渲染进程一律经 `window.BocomHermes.*` 调主进程（preload 是唯一入口）。**多层派发（主控编排）与 serve 池**：复杂目标走主控卡（预检路由→规划闸→分片(隐藏卡)→索引棒收口，分片 goal 带 `[orch:TAG]` 前缀回流唤醒）；一个项目目录 = 一个独立 serve 进程（4096 起），同项目多卡复用并发会话——**完整机制与健壮性口径见 `docs/AGENTS-机制细节.md`**。
+**主进程架构约定**：`main.js` 创建共享可变状态对象 `S`，各模块导出 `initX(S, deps)` 工厂函数协作（依赖注入，无全局单例 import）；渲染进程一律经 `window.BocomHermes.*` 调主进程（preload 是唯一入口）。**多层派发（主控编排）与 serve 池**：复杂目标走主控卡（预检路由→规划闸→分片(隐藏卡)→索引棒收口，分片派发传 `parentTag` 参数经 `S.dispatchShard` 校验+机械注入 tag 回流唤醒，不再手写 `[orch:TAG]` 进 goal 文本）；一个项目目录 = 一个独立 serve 进程（4096 起），同项目多卡复用并发会话——**完整机制与健壮性口径见 `docs/AGENTS-机制细节.md`**。
 
 ## 上下文口径（MiniMax M2.5 = 192k，所有 Agent 同规）
 
