@@ -41,7 +41,7 @@ export interface UserItem extends BaseItem { kind: 'user'; text: string; queued:
 /** 分诊/提示行(非对话轮);retry=true 时带「重试本轮」按钮 */
 export interface NoteItem extends BaseItem { kind: 'note'; text: string; muted: boolean; retry: boolean }
 /** 思考块:每轮一个,答完不折叠不移除(open 保持);title 缺省「思考过程」,压缩续聊的接力摘要复用同壳;displayLen=打字机已吐字符数(可缺省=0) */
-export interface ReasonItem extends BaseItem { kind: 'reason'; body: string; open: boolean; title?: string; displayLen?: number }
+export interface ReasonItem extends BaseItem { kind: 'reason'; body: string; open: boolean; title?: string; displayLen?: number; full?: string }
 /** AI 气泡:流式期 = segs(冻结段,只增) + tail(每帧重渲);收尾后 = finalHtml 全量一次;displayLen=打字机已吐字符数(快照→匀速吐的游标) */
 export interface AiItem extends BaseItem {
   kind: 'ai'
@@ -150,6 +150,8 @@ export const s = reactive({
   archived: 0,
   /** 权限模式:default=写/执行逐次确认;auto=全部自动放行(deny 红线兜底)。会话卡 TitleBar 可切(不再只藏设置页) */
   permMode: 'default' as 'default' | 'auto',
+  /** 本卡选定的 Agent(空=serve 默认 build;OMO 的 sisyphus/plan 等经 TitleBar 切换,逐条消息带上) */
+  agentName: '',
   busy: false,
   ready: false,
   /** 本轮成功结束(标题 ✓,多卡扫一眼就知道谁跑完了) */
@@ -262,7 +264,19 @@ const artFileSeen = new Set<string>()
 let modelsCache: any[] | null = null, modelsCacheAt = 0
 // 本轮流式态(turn 之间串行,全局一份即可 —— 与旧页同构)
 let curAnswer: AiItem | null = null
-let curReason: ReasonItem | null = null
+// ── ReAct 时序思考块(2026-07-29 评审):思考与工具按到达顺序穿插渲染(思考→工具→思考),不再全程聚成一块 ——
+// 一块一 reasoning partID,首次到达即插在答案气泡前(与工具同 insertBeforeAnswer 通道,天然按时序);
+// 正文中内联的 <think> 归 '_' 块。打字机平滑逐块推进(twTick)。
+const reasonItems = new Map<string, ReasonItem>()
+function ensureReasonFor(key: string): ReasonItem {
+  let r = reasonItems.get(key)
+  if (!r) {
+    r = insertBeforeAnswer<ReasonItem>({ id: nextId(), kind: 'reason', body: '', full: '', open: true, displayLen: 0 })
+    if (reasonItems.size > 200) reasonItems.clear()   // 防御无界(清掉只影响后续原地更新)
+    reasonItems.set(key, r)
+  }
+  return r
+}
 let answerParts = new Map<string, string>()
 let reasonParts = new Map<string, string>()
 // target 轮(命令块「运行」,P2b):回答渲染进命令块下的输出区 DOM,不进 feed(旧页 turn(text, target) 平移)
@@ -295,15 +309,15 @@ function addAi(): AiItem {
   }
   s.items.push(it); return s.items[s.items.length - 1] as AiItem
 }
-function ensureReason(): ReasonItem {
-  if (!curReason) {
-    const r: ReasonItem = { id: nextId(), kind: 'reason', body: '', open: true, displayLen: 0 }
-    const at = curAnswer ? s.items.indexOf(curAnswer) : s.items.length
-    const i = at < 0 ? s.items.length : at
-    s.items.splice(i, 0, r)
-    curReason = s.items[i] as ReasonItem   // 同上:用数组里的代理
+function finalizeReasonItems(thinkTail: string): void {
+  // 回合收尾:每块补全到全量(打字机已停);内联 <think> 归 '_' 块(首访才建,不抢既有块的位)
+  if (thinkTail) { const ri = ensureReasonFor('_'); ri.full = [ri.full, thinkTail].filter(Boolean).join('\n') }
+  for (const [k, ri] of reasonItems) {
+    if (k !== '_') ri.full = reasonParts.get(k) || ri.full || ''
+    ri.body = ri.full || ''
+    ri.displayLen = ri.body.length
+    ri.open = true
   }
-  return curReason
 }
 
 // ── 流式增量渲染(防 O(n²):冻结段只增,尾巴每帧重渲) + 打字机平滑 ──────────────
@@ -318,19 +332,21 @@ function twTick(): void {
   const ai = curAnswer
   if (!ai) return
   const st = splitThink(joinParts(answerParts))
-  const reasonBody = [joinParts(reasonParts), st.think].filter(Boolean).join('\n')
   const full = st.rest
-  // 思考块平滑:匀速推进 displayLen,块内只显示已吐部分
+  // 思考块平滑(ReAct 时序):逐块匀速推进 displayLen —— 每个 reasoning partID 一块,与工具块按到达顺序穿插
   let reasonCaughtUp = true
-  if (reasonBody) {
-    const r = ensureReason()
-    const rd = r.displayLen || 0
-    if (rd < reasonBody.length) {
-      r.displayLen = Math.min(reasonBody.length, rd + Math.max(2, Math.ceil((reasonBody.length - rd) / 4)))
+  if (st.think) { const ri = ensureReasonFor('_'); ri.full = st.think }   // 正文内联 <think> 兜底
+  for (const [k, ri] of reasonItems) {
+    if (k !== '_') ri.full = reasonParts.get(k) || ri.full || ''
+    const f = ri.full || ''
+    if (!f) continue
+    const rd = ri.displayLen || 0
+    if (rd < f.length) {
+      ri.displayLen = Math.min(f.length, rd + Math.max(2, Math.ceil((f.length - rd) / 4)))
       reasonCaughtUp = false
     }
-    r.body = reasonBody.slice(0, r.displayLen)
-    r.open = true
+    ri.body = f.slice(0, ri.displayLen)
+    ri.open = true
   }
   // 正文平滑:先推进游标,再把"已吐前缀"走 planIncremental(冻结段只增+尾巴重渲)
   if (ai.displayLen < full.length) {
@@ -391,13 +407,13 @@ export async function turnToEl(text: string, el: HTMLElement): Promise<boolean> 
   return ok
 }
 
-/** 权限模式开关(TitleBar chip):default ↔ auto;写 settings 即时生效(下一条权限请求起用新档) */
+/** 权限模式开关(TitleBar chip):default ↔ auto;【按会话】一卡一开关(主进程按 wcId 存),下一条权限请求起用新档 */
 export function togglePermMode(): void {
   s.permMode = s.permMode === 'auto' ? 'default' : 'auto'
-  try { BH()?.setSettings?.({ permMode: s.permMode }) } catch { /* 静默 */ }
+  try { BH()?.cardPermModeSet?.(s.permMode) } catch { /* 静默 */ }
   addNote(s.permMode === 'auto'
-    ? '权限模式已切到【自动放行】：写文件/执行命令不再弹框（deny 红线仍兜底、edit 预检仍生效、每次放行记审计）'
-    : '权限模式已切回【逐次确认】：写文件/执行命令会弹框等你批准', { muted: true })
+    ? '本会话已切到【自动放行】：写文件/执行命令不再弹框（deny 红线仍兜底、edit 预检仍生效、每次放行记审计）；只影响本卡，别的会话不受影响'
+    : '本会话已切回【逐次确认】：写文件/执行命令会弹框等你批准', { muted: true })
 }
 
 // ── 主进程流事件(渲染端不碰 SSE,协议不变) ────────────────────────────────
@@ -429,6 +445,7 @@ export function wireStream(): void {
       const key = ev.partID || '_'
       if (ev.kind === 'reasoning') {
         reasonParts.set(key, String(ev.text || ''))
+        ensureReasonFor(key)   // ReAct 时序:新思考 part 立即占位成块(与工具块按到达顺序穿插,不再全程聚一块)
         scheduleFlush()
       } else {
         answerParts.set(key, String(ev.text || ''))
@@ -775,8 +792,8 @@ export async function turn(text: string, files?: any[] | null): Promise<boolean>
   s.aborting = false
   runningTools.clear(); paintRunAct()   // 状态行:新一轮从"思考中"起
   const ai = addAi()
-  curAnswer = ai; curReason = null
-  answerParts = new Map(); reasonParts = new Map()
+  curAnswer = ai
+  answerParts = new Map(); reasonParts = new Map(); reasonItems.clear()
   twStop()   // 新一轮:打字机游标随新 AiItem 归零(displayLen 在 addAi 初始化),旧 ticker 停掉
   s.busy = true; s.done = false
   lastSend = { text, files: files || null }
@@ -785,10 +802,10 @@ export async function turn(text: string, files?: any[] | null): Promise<boolean>
   let ok = true, gotText = false
   try {
     const reply = await BH()!.cardSend(text, files || [], s.activeSkill ? s.activeSkill.id : null)   // 挂载技能(作答方法论预置,对齐旧页 submit 第三参)
-    twStop()   // 末帧:停打字机 ticker(终态由 finalHtml 全量接管;思考块在下方补全)
+    twStop()   // 末帧:停打字机 ticker(终态由 finalHtml 全量接管;思考块逐块补全)
     const raw = reply || joinParts(answerParts)
     const st = splitThink(raw)
-    if (st.think) { const r = ensureReason(); r.body = [joinParts(reasonParts), st.think].filter(Boolean).join('\n'); r.open = true }
+    finalizeReasonItems(st.think)
     const finalText = st.rest
     if (finalText) {
       gotText = true
@@ -808,7 +825,7 @@ export async function turn(text: string, files?: any[] | null): Promise<boolean>
     ok = false
     // 半截答案是用户的,错误不许覆盖它:保留半截 + 错误另起一行 note;思考同样分流进思考块
     const pst = splitThink(joinParts(answerParts))
-    if (pst.think) { const r = ensureReason(); r.body = [joinParts(reasonParts), pst.think].filter(Boolean).join('\n'); r.open = true }
+    finalizeReasonItems(pst.think)
     if (pst.rest) {
       gotText = true   // 半截也是文本(分片/主控空答重试不冤枉它)
       ai.finalHtml = renderMarkdown(pst.rest)
@@ -822,7 +839,7 @@ export async function turn(text: string, files?: any[] | null): Promise<boolean>
     }
   } finally {
     twStop()   // 回合收尾:停打字机 ticker(终态已用 finalHtml 全量渲染,游标不再推进)
-    curAnswer = null; curReason = null
+    curAnswer = null; reasonItems.clear()
     s.busy = false
     if (ok) { s.done = true; maybeAutoTitle() }   // 首轮成功 → 默认名自动换成首条消息前 24 字
     maybeCapFeed()
@@ -1281,6 +1298,23 @@ export async function setModel(key: string): Promise<void> {
   s.modelLabel = m.name || m.modelID
   refreshCtxLimit()   // 换模型 → 上限重估(兜底表按新型号匹配)
 }
+// ── Agent 切换(OMO 兼容):serve 的 /agent 清单(primary 非隐藏);空清单=老 serve,UI 藏入口 ──
+let agentsCache: any[] | null = null, agentsCacheAt = 0
+export async function listAgents(): Promise<any[]> {
+  try {
+    const now = Date.now()
+    if (!agentsCache || now - agentsCacheAt > 60000) {
+      const r: any = await BH()?.listAgents?.()
+      agentsCache = (r && r.agents) || []; agentsCacheAt = now
+    }
+  } catch { /* 静默 */ }
+  return agentsCache || []
+}
+export async function setAgent(name: string): Promise<void> {
+  try { await BH()?.cardSetAgent?.(name || '') } catch { /* 静默 */ }
+  s.agentName = name || ''
+  addNote(name ? '本会话 Agent 已切到【' + name + '】(下一条消息起生效)' : '本会话 Agent 已切回默认(build)', { muted: true })
+}
 /** 作答技能('/' 菜单):挂到 activeSkill,submit 时随 cardSend 第三参发出;✕ 卸载 */
 export async function listSkills(): Promise<any[]> {
   try { return (await BH()?.skillsList?.()) || [] } catch { return [] }
@@ -1332,7 +1366,7 @@ const RESUME_MSG = '接力摘要已随本消息注入（见上方摘要块）。
 export function resetConversation(): void {
   s.items = []; s.archived = 0
   toolItems.clear(); artFileSeen.clear(); s.artFiles = []; s.lastFinalText = ''
-  queue.length = 0; curAnswer = null; curReason = null
+  queue.length = 0; curAnswer = null; reasonItems.clear()
   answerParts = new Map(); reasonParts = new Map()
   meter.reset(); s.ctxUsedChars = 0; s.ctxRealTokens = null; s.ctxCacheHit = null
   wfExecSeen = false; wfSawTodo = false   // 新会话重看规划/执行信号(planApproved 主进程侧按卡记,不动)
@@ -1457,7 +1491,8 @@ export async function boot(): Promise<void> {
     s.modelLabel = (r.model && (r.model.name || r.model.modelID)) || '默认模型'
     s.modelKey = r.model ? (r.model.providerID + '/' + r.model.modelID) : ''
     s.sessionId = r.sessionId || ''
-    try { const st = BH()?.getSettings?.() || {}; s.permMode = st.permMode === 'auto' ? 'auto' : 'default' } catch { /* 静默 */ }   // 权限模式(chip 与设置页同源)
+    try { const m = await Promise.resolve(BH()?.cardPermModeGet?.()); s.permMode = m === 'auto' ? 'auto' : 'default' } catch { /* 静默 */ }   // 权限模式按会话(本卡自己的档,缺省回退全局默认)
+    s.agentName = (r as any).agent || ''   // 建会话时预选的 Agent(card-init 回包;空=默认 build)
     try { const sh = (r as any).shards; if (Array.isArray(sh)) applyShards(sh) } catch { /* 静默 */ }   // card-init 回包带分片进度(主控卡重开恢复面板);字段缺席不炸
     refreshCtxLimit()   // ctx chip 上限(listModels → 型号兜底 → knobs.ctxLimitMax 兜底;fire-and-forget)
     draftKey = draftKeyOf(s.sessionId)

@@ -307,6 +307,26 @@ html[data-theme="dark"] .a-avatar { box-shadow: 0 0 0 1px rgba(91, 157, 255, .28
   max-height: 220px; overflow-y: auto; margin: 2px 0 6px;
 }
 .toolblk .tb-body pre.err { color: var(--danger); }
+/* read-spill 外溢:折叠头「全文」钮(不展开也能点)+查看全文按钮 + 全文展示区(模型上下文里只有头部是刻意的,用户侧不该看不到) */
+.toolblk .tb-spillmini {
+  flex: none; border: 1px solid var(--sep); border-radius: 999px; background: var(--blue-10);
+  color: var(--blue); font-size: 11px; line-height: 1; padding: 3px 8px; cursor: pointer;
+}
+.toolblk .tb-spillmini:hover { background: var(--fill-2); }
+.toolblk .tb-spillmini:disabled { opacity: .6; cursor: default; }
+.toolblk .tb-spill { margin: 2px 0 6px; }
+.toolblk .tb-spillbtn {
+  border: 1px solid var(--sep); border-radius: var(--r-sm); background: var(--fill-1);
+  color: var(--blue); font: var(--c1); padding: 3px 10px; cursor: pointer;
+}
+.toolblk .tb-spillbtn:hover { background: var(--fill-2); }
+.toolblk .tb-spillbtn:disabled { opacity: .6; cursor: default; }
+.toolblk .tb-spillerr { font: var(--c2); color: var(--danger); margin-top: 4px; }
+.toolblk .tb-spillfull {
+  margin-top: 6px; font: var(--md-code); font-size: 12px; color: var(--label-2);
+  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow-y: auto;
+  border: 1px solid var(--sep); border-radius: var(--r-sm); background: var(--fill-1); padding: 8px 10px;
+}
 
 /* ── todo 一等公民清单卡(不折叠,设计稿 S4 三态圆点) ──────────────────────── */
 .todocard { align-self: stretch; border: 1px solid var(--sep); border-radius: var(--r-md); background: var(--bg-primary); padding: 8px 11px; }
@@ -437,6 +457,8 @@ html[data-theme="dark"] .a-avatar { box-shadow: 0 0 0 1px rgba(91, 157, 255, .28
 .k-chip.ctxchip.danger { color: var(--danger); }
 .k-chip.permchip { flex: none; }
 .k-chip.permchip.auto { color: var(--orange); border-color: var(--orange); background: var(--orange-10); }
+.k-chip.agentchip { flex: none; }
+.k-chip.agentchip.accent { color: var(--blue); border-color: var(--blue); background: var(--blue-10); }
 .hb-dot.ok { background: var(--green); }
 .hb-dot.bad { background: var(--danger); }
 .hb-dot.gray { background: var(--label-4); }
@@ -622,12 +644,15 @@ html[data-theme="dark"] .a-avatar { box-shadow: 0 0 0 1px rgba(91, 157, 255, .28
 
 /* ── 设计稿对齐补齐(P2d 审计 G1/G3/G6):工具耗时 / 流式块光标 / toggle 开关 ── */
 .toolblk .tb-ms { flex: none; font: var(--c2); color: var(--label-3); font-family: var(--font-mono); }
-/* 流式光标:8×16 块,1.06s steps(1) 闪烁,labels.primary —— 不用 spinner 顶替文本光标(S3 契约) */
+/* 流式光标:细圆角 accent 蓝条 + 呼吸脉冲(2026-07-29 评审美化 —— 原 8×16 实心黑块+硬闪像终端光标,太糙);
+   保留"光标"语义指示流式位置(S3 契约不用 spinner),但观感现代化:细条、发光、平滑呼吸。 */
 .streamcursor {
-  display: inline-block; width: 8px; height: 16px; margin-left: 2px; vertical-align: -2px;
-  background: var(--label-1); animation: cur-blink 1.06s steps(1) infinite;
+  display: inline-block; width: 3px; height: 15px; margin-left: 3px; vertical-align: -2px;
+  border-radius: 2px; background: var(--blue);
+  box-shadow: 0 0 6px rgba(23, 131, 255, .45);
+  animation: cur-pulse 1.2s ease-in-out infinite;
 }
-@keyframes cur-blink { 0%, 49% { opacity: 1 } 50%, 100% { opacity: 0 } }
+@keyframes cur-pulse { 0%, 100% { opacity: .25 } 50% { opacity: 1 } }
 /* toggle 开关(toggle.md 契约:32×18 轨道、14px 正圆滑块、on 态轨道 = labels.primary) */
 .tgl { position: relative; width: 32px; height: 18px; border-radius: var(--r-full); background: var(--fill-3); transition: background-color 200ms ease; flex: none; cursor: pointer; }
 .tgl::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform 200ms var(--ez-out); }

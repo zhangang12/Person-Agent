@@ -33,6 +33,8 @@ module.exports = function makeCardCleanup({ S, oc, log, BrowserWindow, getShardS
     if (S.shardForceClose) S.shardForceClose.delete(wcId)   // 销毁白名单随卡清理(弹窗查看后的 X 转隐藏不进这里)
     if (S.cardDir) S.cardDir.delete(wcId)       // per-card 目录/模型状态随卡销毁
     if (S.modelByWc) S.modelByWc.delete(wcId)
+    if (S.permModeByWc) S.permModeByWc.delete(wcId)   // per-card 权限模式随卡销毁
+    if (S.agentByWc) S.agentByWc.delete(wcId)   // per-card Agent 选择随卡销毁
     // 本卡独占的自起 serve(切过项目的卡)没别的会话引用就退休,不留孤儿进程。detach 天然跳过(oldServe 未取):会话还在 serve 上跑,谈何孤儿
     if (oldServe) {
       const inUseBases = new Set([...S.sessionInfo.values()].map((si) => si.serve && si.serve.base).filter(Boolean))

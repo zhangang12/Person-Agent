@@ -385,11 +385,13 @@ async function ensureServeInner(dir, handlers, log = console.log, opts = {}) {
 const sidOf = (s) => s?.id ?? s?.data?.id ?? s?.info?.id
 // dir:会话工作目录(?directory= 带上但【不依赖】—— 不支持的 serve 会忽略它;目录正确性靠"一目录一 serve 分池"
 // + requireDirMatch + R3 外部 serve cwd 校验兜底,别把 ?directory= 当生效前提)
-async function createSession(info, title, dir) {
+async function createSession(info, title, dir, agent) {
   // serve 的 ?directory= 不认 Windows 反斜杠(会剥掉盘符、删掉 \ 再当相对路径拼到自己 cwd 上 → 落到错的项目)；
   // 统一转正斜杠，serve 才能解析成正确的绝对路径。这是"项目路径生效"的关键。
   const q = dir ? ('?directory=' + encodeURIComponent(String(dir).replace(/\\/g, '/'))) : ''
-  const sid = sidOf(await api(info.base, 'POST', '/session' + q, { title: title || '对话' }))
+  // agent(可选):会话级 Agent(build/plan/OMO 的 sisyphus 等,POST /session schema 认 agent 字段);
+  // 只在显式给出时带 —— 老 serve 不认该字段时少一个被拒的面
+  const sid = sidOf(await api(info.base, 'POST', '/session' + q, agent ? { title: title || '对话', agent: String(agent) } : { title: title || '对话' }))
   if (sid) {
     info.sids = info.sids || new Set()   // 活跃会话登记:R5 断线重连后补摘 tokens 用(粗粒度防涨)
     if (info.sids.size > 500) info.sids.clear()
@@ -556,6 +558,9 @@ async function sendMessage(info, sessionId, text, model, files, onNote, opts = {
   }
   if (!parts.length) parts.push({ type: 'text', text: text || '' })
   const body = { parts }
+  // 按消息级 Agent 切换(OMO/自定义 agent 兼容):POST message/prompt_async schema 均认 agent 字段;
+  // 只在卡片选定非默认 agent 时带,缺省不带(走 serve 默认 build,老 serve 也少一个被拒的面)
+  if (opts && opts.agent) body.agent = String(opts.agent)
   // C5 模型黑名单:这台 serve 曾 4xx 拒过这个 modelID → 本条直接不指定(省一次必败往返);首次命中经 onModelFallback 告知一句话
   const blMap = (model && model.modelID) ? modelBlacklist.get(info.base) : null
   const blEnt = blMap ? blMap.get(model.modelID) : null
@@ -679,6 +684,26 @@ async function listModels(info, opts = {}) {
     return out
   } catch { return [] }
 }
+// ── Agent 清单(OMO/自定义 agent 兼容):GET /agent → [{name, description, mode, hidden, native}] ──
+// mode=primary 的才可当会话主 Agent(build/plan/OMO 的 sisyphus 等),subagent(task 扇出用)不列给切换。
+// 一台 serve 的 agent 清单很少变 → 按 base 缓存 5 分钟;端点不存在(老 serve)→ 熔断返回 null,调用方隐藏切换入口。
+const unsupportedAgents = new Set()   // base → /agent 404 熔断
+const agentListCache = new Map()      // base -> { at, list }
+async function listAgents(info, opts = {}) {
+  const base = info && info.base
+  if (!base || unsupportedAgents.has(base)) return null
+  if (!(opts && opts.force)) { const hit = agentListCache.get(base); if (hit && Date.now() - hit.at < MODEL_CACHE_MS) return hit.list }
+  try {
+    const r = await api(base, 'GET', '/agent')
+    const arr = Array.isArray(r) ? r : (r && r.data)
+    if (!Array.isArray(arr)) { unsupportedAgents.add(base); return null }
+    const list = arr.filter((a) => a && a.name)
+      .map((a) => ({ name: String(a.name), description: String(a.description || ''), mode: String(a.mode || 'primary'), hidden: !!a.hidden, native: !!a.native }))
+    agentListCache.set(base, { at: Date.now(), list })
+    if (agentListCache.size > 50) agentListCache.clear()
+    return list
+  } catch (e) { if (is404(e)) { if (unsupportedAgents.size > 50) unsupportedAgents.clear(); unsupportedAgents.add(base) } return null }
+}
 // 问 serve【实际加载】的配置里有没有我们的 MCP 注册 —— 配置文件写了不等于 serve 带上了(外部 serve 早于注册启动=静默没工具)。
 // GET /config 是 serve 启动时装载的快照,正是我们要的"它到底认不认"。端点不存在/形状不认识 → known:false(别误报)。
 async function checkMcp(info) {
@@ -796,6 +821,9 @@ function stripInjected(t) {
     .replace(/<任务编排执行规程>[\s\S]*?<\/任务编排执行规程>\s*/g, '')      // 任务编排注入的单 Agent 规程
     .replace(/<任务编排·严格模式>[\s\S]*?<\/任务编排·严格模式>\s*/g, '')   // 严格模式逐步下发的包装(步骤正文保留)
     .replace(/<主控进度>[\s\S]*?<\/主控进度>\s*/g, '')                     // 分片收官注入主控的 N/M 进度消息
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>\s*/gi, '')        // OMO/oh-my-opencode 系插件注入的提醒块(CC 同款格式,内网实测一长串)
+    .replace(/<ultrawork-mode>[\s\S]*?<\/ultrawork-mode>\s*/gi, '')          // OMO keyword-detector 注入(ulw/ultrawork)
+    .replace(/<[a-z0-9-]*reminder[\s\S]{0,4000}?<\/[a-z0-9-]*reminder>\s*/gi, '')   // 兜底:其它 *reminder 命名块的同族(限长防误吞整篇)
     .replace(/\s*\(系统提醒:[\s\S]*?\)\s*$/g, '')                          // 系统提醒尾巴(todoNudge 附在用户消息尾/看门狗与字节计量整条的)
     .trim()
 }
@@ -1285,7 +1313,7 @@ function anyHealthyServe() {
   return null
 }
 
-module.exports = { ensureServe, createSession, sendMessage, listModels, checkMcp, abort, replyPermission, replyQuestion, rejectQuestion, sessionExists, listSessions, getMessages, getRawMessages, getSessionChildren, getSessionTodo, listPendingQuestions, generationStalled, pollTurnParts, getSessionUsage, getStreamState, consumeAbortFlag, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, anyHealthyServe, AUTO_ALLOW,
+module.exports = { ensureServe, createSession, sendMessage, listModels, listAgents, checkMcp, abort, replyPermission, replyQuestion, rejectQuestion, sessionExists, listSessions, getMessages, getRawMessages, getSessionChildren, getSessionTodo, listPendingQuestions, generationStalled, pollTurnParts, getSessionUsage, getStreamState, consumeAbortFlag, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, anyHealthyServe, AUTO_ALLOW,
   __test: { dispatch, waitAssistantText, extractText, pickTurnText, abortedSince, abortedSids, normalizeMessages, stripInjected, splitThink,
     normDirKey, sameDir, inflight, noteChild, noteModelBlacklist, modelBlacklist, refreshSessionTree, runEventLoop, turnTextCache, stoppedSids, lastUserMatches, noteUsage,
     maps: { pool, baseToEntry, childToParent, childTitle, classifiedSessions, sidBase },

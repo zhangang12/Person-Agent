@@ -93,6 +93,8 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   // 取拖入文件的本地路径:Electron 34 已移除 File.path,改用 webUtils.getPathForFile
   getDropPath: (file) => { try { return webUtils.getPathForFile(file) } catch (e) { return (file && file.path) || '' } },
   listModels: () => ipcRenderer.invoke('list-models'),
+  listAgents: () => ipcRenderer.invoke('list-agents'),
+  cardSetAgent: (name) => ipcRenderer.invoke('card-set-agent', name),
   cardSetModel: (m) => ipcRenderer.invoke('card-set-model', m),
   cardUsage: () => ipcRenderer.invoke('card-usage'),
   subStatus: (ids) => ipcRenderer.invoke('sub-status', ids),
@@ -108,6 +110,11 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   applyDiff: (diffText) => ipcRenderer.invoke('apply-diff', diffText),
   onPermission: (cb) => ipcRenderer.on('permission-request', (_e, p) => cb(p)),
   permissionReply: (requestId, decision) => ipcRenderer.send('permission-reply', { requestId, decision }),
+  // 权限模式(按会话):每张卡自己的 逐次确认↔自动放行 开关(TitleBar chip),主进程按 wcId 存,缺省回退全局 settings.permMode
+  cardPermModeSet: (mode) => ipcRenderer.invoke('card-perm-mode-set', mode),
+  cardPermModeGet: () => ipcRenderer.invoke('card-perm-mode-get'),
+  // read-spill 外溢文件全文读取(工具块"查看全文";主进程围栏:只许 spill 临时目录,≤1MB)
+  spillRead: (file) => ipcRenderer.invoke('spill-read', { file }),
   // 交互提问卡:serve question 工具提问 → 卡片点选回答(reply) / 拒绝(reject)
   onQuestion: (cb) => ipcRenderer.on('question-request', (_e, p) => cb(p)),
   questionReply: (requestId, answers) => ipcRenderer.invoke('question-reply', { requestId, answers }),

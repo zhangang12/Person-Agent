@@ -2,8 +2,8 @@
 // 标题栏(设计稿 S2):拖动柄 → 会话色点 → 标题 → 项目名 → chips(模型菜单/ctx 用量) → verbose → 成果 → 保活灯 → 窗口控件
 // ctx chip:<5% 隐藏;<60% 绿 / 60-80% 橙 / >80% 红(设计稿口径);点击 = 压缩续聊确认(KDialog 挂 ChatApp)。
 // embedded 模式:去窗口控件(宿主窗口的系统边框负责)。
-import { ref, computed } from 'vue'
-import { s, toggleVerbose, listModels, setModel, subToggle, subRunningCount, pickProject, setSessionTitle, togglePermMode } from './store'
+import { ref, computed, onMounted } from 'vue'
+import { s, toggleVerbose, listModels, setModel, listAgents, setAgent, subToggle, subRunningCount, pickProject, setSessionTitle, togglePermMode } from './store'
 import { ctxPctVal, ctxLevel, ctxChipText, ctxChipTitle } from './lib/ctxchip'
 import { BH } from './bridge'
 import KMenu from '../components/KMenu.vue'
@@ -28,6 +28,18 @@ async function loadModels() {
   }))
 }
 function onModelSelect(key: string) { setModel(key) }
+
+// ── Agent 菜单(chip → KMenu;60s 缓存走 store.listAgents;空清单=老 serve 不显示) ──
+const agentItems = ref<{ key: string; label: string; checked?: boolean }[]>([])
+const hasAgents = ref(false)
+async function loadAgents() {
+  const as = await listAgents()
+  hasAgents.value = as.length > 1   // 只有默认 build 一个也没必要给切换
+  agentItems.value = [{ key: '', label: '默认（build）', checked: !s.agentName },
+    ...as.map((a: any) => ({ key: a.name, label: a.name + (a.description ? ' · ' + String(a.description).slice(0, 40) : ''), checked: a.name === s.agentName }))]
+}
+function onAgentSelect(key: string) { setAgent(key) }
+onMounted(() => { loadAgents() })   // 开卡即探一次清单(空=老 serve 藏入口;OMO 装的插件 Agent 一并列出)
 
 // ── ctx 用量 chip(实测优先,估算 ~ 前缀;点击 → 压缩续聊确认) ──
 const ctxPct = computed(() => ctxPctVal(s.ctxRealTokens, s.ctxUsedChars, s.ctxLimitTokens))
@@ -76,8 +88,11 @@ function commitEdit() {
     <KMenu :items="modelItems" placement="bottom-end" @select="onModelSelect" @update:open="(v) => v && loadModels()">
       <span class="k-chip clickable" :title="'当前模型：' + s.modelLabel + '(点击切换)'">{{ s.modelLabel }}</span>
     </KMenu>
+    <KMenu v-if="hasAgents || s.agentName" :items="agentItems" placement="bottom-end" @select="onAgentSelect" @update:open="(v) => v && loadAgents()">
+      <span class="k-chip clickable agentchip" :class="{ accent: !!s.agentName }" :title="'当前 Agent：' + (s.agentName || 'build') + '(点击切换 · OMO 插件 Agent 也在此列)'">{{ s.agentName || 'build' }}</span>
+    </KMenu>
     <span class="k-chip clickable permchip" :class="{ auto: s.permMode === 'auto' }"
-          :title="s.permMode === 'auto' ? '权限模式：自动放行（写文件/执行命令不再弹框 · deny 红线兜底 · edit 预检生效 · 放行记审计）｜点击切回逐次确认' : '权限模式：逐次确认（写文件/执行命令逐次弹框批准）｜点击切到自动放行'"
+          :title="s.permMode === 'auto' ? '本会话权限：自动放行（写文件/执行命令不再弹框 · deny 红线兜底 · edit 预检生效 · 放行记审计 · 只影响本卡）｜点击切回逐次确认' : '本会话权限：逐次确认（写文件/执行命令逐次弹框批准）｜点击切到自动放行（只影响本卡）'"
           @click="togglePermMode">{{ s.permMode === 'auto' ? '自动放行' : '逐次确认' }}</span>
     <span v-if="ctxLv !== 'hidden'" class="k-chip ctxchip clickable" :class="ctxLv" :title="ctxTitle" @click="s.compactAsk = true">{{ ctxText }}</span>
     <button class="ibtn" :class="{ on: s.verbose }" title="过程详情(verbose):工具块自动展开入参/结果" aria-label="过程详情" @click="toggleVerbose">

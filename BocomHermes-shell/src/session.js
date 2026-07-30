@@ -91,6 +91,9 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
       + '① 按需精读,不通读整个模块——单次 read ≤400 行(带 offset/limit),grep 先收窄路径与类型;深读大片文件用 task 派子 Agent(它有独立 ' + _ck + ')。'
       + '② task / delegate_task 指令只写目标+文件路径+边界+回报格式,【严禁】贴文件原文/大段代码——不是限字数,是禁止把文档内容搬进上下文(塞原文超 2 万字壳层直接拦停该子 Agent);用 delegate_task 必须显式传 load_skills,不需要技能就传 []。'
       + '③ 子 Agent 结论一律落盘成文档,回报只给一句话+路径(字数不限,内容住文档里,谁要用谁去读);要整理结论也派子 Agent 读文档接力归纳,别自己全读。</上下文纪律>\n'
+      // 中文思考(P1.5,2026-07-29):serve 内置系统提示与 OMO 注入都是英文,模型的思考过程默认跑成英文(用户实测);
+      // 一句中文指令把 reasoning 也拉回中文 —— 思考是用户排查模型问题的主窗口,读英文成本是母语的三倍。
+      + '<语言纪律>回答用中文,【思考过程(reasoning)也一律用中文输出】;代码、命令、标识符保持原文。</语言纪律>\n'
       // 弱模型双向纪律(P1.3,2026-07-26,依据 external/claude-code-提示词工程借鉴.md §1.2/§3):不粉饰也不许防御性打折;
       // 委派回报三不(直接用/不偷看/不编造);系统提醒元定义(防把注入提醒误归因于当前文件/工具输出)。
       // 提示词改动纪律:小步单变量、两周观测期,台账见 docs/项目记忆/弱模型行为台账.md
@@ -528,10 +531,11 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
         }
       }
     } catch {}
-    // ── auto 模式(settings.permMode='auto'):写/执行全部自动放行 —— 位置刻意在 deny 规则之后(红线不可翻)、
-    // 分片分支之后(分片写归属闸不受影响)、allow 规则之前(语义更宽);edit 同享预检(oldString 未命中照样拒带纠偏)。
-    // 每次放行记审计 + 卡内一行灰字(用户看得见放了什么,不发批准确认框)。
-    if (S.settings.permMode === 'auto') {
+    // ── auto 模式:按会话优先(S.permModeByWc,TitleBar chip 一卡一开关),缺省回退全局 settings.permMode ——
+    // 位置刻意在 deny 规则之后(红线不可翻)、分片分支之后(分片写归属闸不受影响)、allow 规则之前(语义更宽);
+    // edit 同享预检(oldString 未命中照样拒带纠偏)。每次放行记审计 + 卡内一行灰字(用户看得见放了什么,不发批准确认框)。
+    const permModeNow = (S.permModeByWc && si.wc && S.permModeByWc.get(si.wc.id)) || S.settings.permMode
+    if (permModeNow === 'auto') {
       try { S.audit && S.audit('permission', 'auto 模式放行', { tool: String(tool || ''), detail: String(detail || '').slice(0, 200) }) } catch {}
       if (/^edit(_[a-z]+)*$/i.test(String(tool || ''))) {
         ;(async () => {
@@ -1170,7 +1174,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
         txCount.set(sid, (messages || []).length)   // 对齐转录游标:下轮只 append 新增量(防进程重启后整段重记)
         return { sessionId: sid, project: proj, dir, model, reattached: true, messages, running: turnBusy.has(sid), shards: shardSnapshot(e.sender.id) }
       }
-      const ns = await oc.createSession(serve, wantTitle || (h && h.title) || 'BocomHermes 对话', dir)  // 已不在 → 新开一段(带项目目录)
+      const ns = await oc.createSession(serve, wantTitle || (h && h.title) || 'BocomHermes 对话', dir, S.agentByWc && S.agentByWc.get(e.sender.id))  // 已不在 → 新开一段(带项目目录+卡内预选 Agent)
       if (!ns) throw new Error('create session failed')
       S.sessionByWc.set(e.sender.id, ns)
       S.sessionInfo.set(ns, { wc: e.sender, serve })
@@ -1188,7 +1192,8 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     }
     const dir = S.cardDir.get(e.sender.id) || S.settings.projectDir || ''
     const serve = await oc.ensureServe(dir, S.handlers, log)
-    const sessionId = await oc.createSession(serve, 'BocomHermes 对话', dir)
+    const agent0 = S.agentByWc && S.agentByWc.get(e.sender.id)   // 卡内预选的 Agent(建会话即带,首条消息起就是它)
+    const sessionId = await oc.createSession(serve, 'BocomHermes 对话', dir, agent0)
     if (!sessionId) throw new Error('create session failed')
     S.sessionByWc.set(e.sender.id, sessionId)
     S.sessionInfo.set(sessionId, { wc: e.sender, serve })
@@ -1197,7 +1202,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     S.pushServeHealth && S.pushServeHealth(e.sender, serve)
     const ctx0 = loadMemory() + loadProjectContext(dir) + KNOWLEDGE_SLOT; S.firstMsgCtx.set(sessionId, ctx0)   // C2:知识留占位,发送时懒构建
     if (!(opts && opts.shard)) recordHistory(sessionId, wantTitle, dir)   // 分片/索引棒是内部工人,不进历史(对用户只是一条工作流)
-    return { sessionId, project: dir ? path.basename(dir) : '未选目录', dir, model: model0, reattached: false, running: false, shards: shardSnapshot(e.sender.id) }
+    return { sessionId, project: dir ? path.basename(dir) : '未选目录', dir, model: model0, agent: agent0 || null, reattached: false, running: false, shards: shardSnapshot(e.sender.id) }
     } catch (err) {
       // serve 拉起/建会话失败:分片隐藏卡死在这 = 主控永远等不到这片(静默整链卡死,实测)。
       // 这类失败不走 card-send,wfTurnError 三路兜底都到不了 —— 在这里补一刀,让分片按 interrupted 收官上报
@@ -1223,7 +1228,8 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     if (opts && opts.dir) S.cardDir.set(e.sender.id, String(opts.dir))
     const dir = (opts && opts.dir) || S.cardDir.get(e.sender.id) || S.settings.projectDir || ''
     const serve = await oc.ensureServe(dir, S.handlers, log)   // requireDirMatch 默认开:cwd 不符不共享,自起独立 serve
-    const sessionId = await oc.createSession(serve, 'BocomHermes 对话', dir)
+    const agent0 = S.agentByWc && S.agentByWc.get(e.sender.id)
+    const sessionId = await oc.createSession(serve, 'BocomHermes 对话', dir, agent0)
     if (!sessionId) throw new Error('create session failed')
     S.sessionByWc.set(e.sender.id, sessionId)
     S.sessionInfo.set(sessionId, { wc: e.sender, serve })
@@ -1386,6 +1392,8 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
       // P3.4:knobs.promptAsync truthy → 走 prompt_async 发送通道(POST 立即返回不挂起等回合;fork 无端点 404 自动回落,见 opencode.js)
       const sendOpts = { onRawMessages: onRaw }
       try { if (S.settings && S.settings.knobs && S.settings.knobs.promptAsync) sendOpts.promptAsync = true } catch {}
+      // 按消息级 Agent 切换(OMO 兼容):本卡在 TitleBar 选了非默认 agent → 随每条消息带上(schema 认 agent 字段)
+      try { const ag = S.agentByWc && si.wc && S.agentByWc.get(si.wc.id); if (ag) sendOpts.agent = ag } catch {}
       const out = await oc.sendMessage(si.serve, sessionId, msg, model, fileArr, onNote, sendOpts)
       si.errStreak = 0   // 成功复位:模型降级路由的连错计数(见 catch)
       // 手动停止标记(opencode.js consumeAbortFlag,按形状防御调用):本轮被用户中止 → 卡内留一行灰字交代截断原因。
@@ -1510,10 +1518,58 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     // applied=false → UI 提示"会话就绪后自动生效",不再假报成功
     return { ok: true, applied: !!si, model: m || S.settings.model || null }
   })
+  // ── Agent 切换(OMO 兼容):GET /agent 列 primary 非隐藏的 Agent;S.agentByWc 按卡记选择,发卡逐条消息带上 ──
+  // 会话级在建会话时也带(createSession 第四参),消息级双保险(opencode 的 agent 是按消息生效的)。
+  if (!S.agentByWc) S.agentByWc = new Map()
+  ipcMain.handle('list-agents', async (e) => {
+    const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
+    const serve = (si && si.serve) || (oc.anyHealthyServe && oc.anyHealthyServe())
+    if (!serve || !serve.base || typeof oc.listAgents !== 'function') return { agents: [], note: '引擎未启动' }
+    const list = await oc.listAgents(serve)
+    if (!list) return { agents: [], note: '本 serve 不支持 Agent 清单' }   // 老 serve:UI 隐藏切换入口
+    return { agents: list.filter((a) => a.mode === 'primary' && !a.hidden) }
+  })
+  ipcMain.handle('card-set-agent', (e, name) => {
+    const n = String(name || '').trim()
+    if (n) S.agentByWc.set(e.sender.id, n); else S.agentByWc.delete(e.sender.id)   // 空 = 回默认(build)
+    if (S.agentByWc.size > 200) S.agentByWc.delete(S.agentByWc.keys().next().value)
+    try { S.audit && S.audit('session', 'Agent 切换(按会话)', { wcId: e.sender.id, agent: n || 'default' }) } catch {}
+    return { ok: true, agent: n || null }
+  })
 
   ipcMain.on('card-abort', (e) => {
     const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
     if (si) oc.abort(si.serve, sessionId)
+  })
+
+  // 权限模式按会话(TitleBar chip 一卡一开关):S.permModeByWc wcId → 'auto'|'default';
+  // 缺席回退全局 settings.permMode(设置页已挪走,该值只作新卡初始默认,power user 可改 settings.json)。
+  // 关卡清理链(card-cleanup.js)随卡摘除,防泄漏。
+  if (!S.permModeByWc) S.permModeByWc = new Map()
+  ipcMain.handle('card-perm-mode-set', (e, mode) => {
+    const m = mode === 'auto' ? 'auto' : 'default'
+    S.permModeByWc.set(e.sender.id, m)
+    if (S.permModeByWc.size > 200) S.permModeByWc.delete(S.permModeByWc.keys().next().value)   // 粗粒度防涨
+    try { S.audit && S.audit('permission', '权限模式切换(按会话)', { wcId: e.sender.id, mode: m }) } catch {}
+    return m
+  })
+  ipcMain.handle('card-perm-mode-get', (e) => S.permModeByWc.get(e.sender.id) || (S.settings.permMode === 'auto' ? 'auto' : 'default'))
+
+  // read-spill 落盘文件读取(卡片工具块"查看全文"按钮):read-spill 插件把大输出外溢到临时目录后,
+  // 卡片渲染的也是被截断的通知,用户想看全文只能经这里 —— 围栏:只许 spill 目录下的 .txt,realpath 防逃逸,≤1MB。
+  ipcMain.handle('spill-read', (_e, p) => {
+    try {
+      const file = String((p && p.file) || '')
+      if (!file) return { error: '缺少 file' }
+      const spillRoot = process.env.BOCOMHERMES_READ_SPILL_DIR || path.join(os.tmpdir(), 'bocomhermes-read-spill')
+      const root = fs.realpathSync.native ? fs.realpathSync.native(spillRoot) : fs.realpathSync(spillRoot)
+      const abs = fs.realpathSync(file)
+      const rel = path.relative(root, abs)
+      if (rel.startsWith('..') || path.isAbsolute(rel)) return { error: '路径越界(只允许 read-spill 临时目录)' }
+      const st = fs.statSync(abs)
+      if (st.size > 1024 * 1024) return { error: '文件超过 1MB(' + Math.round(st.size / 1024) + 'KB),请用编辑器打开' }
+      return { text: fs.readFileSync(abs, 'utf8'), chars: st.size }
+    } catch (e) { return { error: e.message } }
   })
 
   // 卡片上下文用量 chip:取本卡会话最近一次 assistant 调用的真实 token 用量(opencode.js 经 SSE/轮询登记)。

@@ -488,6 +488,75 @@ console.log('用例12c:工作路径管理 —— 分片默认围栏=本仓根(�
   ok('普通卡:tmp 白名单不提醒', sent.filter((x) => x.ch === 'card-note').length === 1)
 }
 
+console.log('用例12d:permMode 按会话 —— 本卡 auto 只放本卡;本卡 default 压过全局 auto;缺席回退全局')
+{
+  const mkWc = (id) => ({ id, isDestroyed: () => false, send: () => {} })
+  const h = makeHarness()
+  const wcA = mkWc(981), wcB = mkWc(982)
+  h.S.sessionByWc.set(wcA.id, 'ses_pma'); h.S.sessionByWc.set(wcB.id, 'ses_pmb')
+  h.S.sessionInfo.set('ses_pma', { serve: h.serve, wc: wcA })
+  h.S.sessionInfo.set('ses_pmb', { serve: h.serve, wc: wcB })
+  const replies = []
+  h.oc.replyPermission = (serve, sessionId, requestId, d) => replies.push({ sessionId, requestId, d })
+
+  // IPC:本卡 A 设 auto、本卡 B 设 default(全局 default 下)
+  h.S.permModeByWc = new Map()
+  const r1 = h.handlers['card-perm-mode-set']({ sender: wcA }, 'auto')
+  const r2 = h.handlers['card-perm-mode-set']({ sender: wcB }, 'default')
+  ok('set 回执', r1 === 'auto' && r2 === 'default', [r1, r2])
+  ok('get 按卡读回(缺席回退全局)', h.handlers['card-perm-mode-get']({ sender: wcA }) === 'auto' && h.handlers['card-perm-mode-get']({ sender: wcB }) === 'default'
+    && h.handlers['card-perm-mode-get']({ sender: { id: 999 } }) === 'default')
+
+  h.S.handlers.onPermission({ sessionId: 'ses_pma', requestId: 'pa1', tool: 'bash', detail: 'npm test' })
+  ok('本卡 auto:放行(once)', replies[0] && replies[0].d === 'once', replies[0])
+  h.S.handlers.onPermission({ sessionId: 'ses_pmb', requestId: 'pb1', tool: 'bash', detail: 'npm test' })
+  ok('本卡 default:维持弹框(pendingPerm)', h.S.pendingPerm.has('pb1') && !replies.find((x) => x.requestId === 'pb1'))
+
+  // 全局 auto + 本卡 default → 本卡覆盖压过全局
+  h.S.settings.permMode = 'auto'
+  const r3 = h.handlers['card-perm-mode-get']({ sender: { id: 999 } })
+  ok('无本卡档时回退全局 auto', r3 === 'auto', r3)
+  h.S.handlers.onPermission({ sessionId: 'ses_pmb', requestId: 'pb2', tool: 'bash', detail: 'npm run build' })
+  ok('本卡 default 压过全局 auto(仍弹框)', h.S.pendingPerm.has('pb2') && !replies.find((x) => x.requestId === 'pb2'))
+  h.S.handlers.onPermission({ sessionId: 'ses_pma', requestId: 'pa2', tool: 'bash', detail: 'npm run build' })
+  ok('本卡 auto 与全局一致放行(once)', !!replies.find((x) => x.requestId === 'pa2' && x.d === 'once'), replies)
+}
+
+console.log('用例12e:Agent 切换(OMO 兼容)—— list-agents 过滤 primary 非隐藏;card-set-agent 按卡记忆;发卡逐条消息带 agent')
+{
+  const h = makeHarness({ oc: {
+    listAgents: async () => [
+      { name: 'build', mode: 'primary', hidden: false, native: true },
+      { name: 'plan', mode: 'primary', hidden: false, native: true },
+      { name: 'sisyphus', mode: 'primary', hidden: false, native: false },
+      { name: 'compaction', mode: 'primary', hidden: true, native: true },
+      { name: 'explore', mode: 'subagent', hidden: false, native: true },
+    ],
+  } })
+  h.S.settings.projectDir = PROJ
+  const { ev } = await openCard(h, 971)
+  // list-agents:只留 primary 非隐藏(compaction 隐藏、explore 是 subagent 都滤掉)
+  const la = await h.handlers['list-agents'](ev)
+  ok('list-agents 过滤(hidden/subagent 滤掉,OMO 插件 Agent 保留)', la.agents.length === 3 && la.agents.some((a) => a.name === 'sisyphus'), la.agents && la.agents.map((a) => a.name))
+  // 设定本卡 agent → 发卡逐条消息带上
+  const sr = h.handlers['card-set-agent']({ sender: ev.sender }, 'sisyphus')
+  ok('card-set-agent 回执', sr && sr.ok && sr.agent === 'sisyphus', sr)
+  await h.handlers['card-send'](ev, { text: '查一下入口' })
+  const lastSend = h.calls.sendMessage[h.calls.sendMessage.length - 1]
+  ok('发卡带 agent(opts.agent=sisyphus)', lastSend && lastSend[6] && lastSend[6].agent === 'sisyphus', lastSend && lastSend[6])
+  // 切回默认(空串) → 不再带
+  h.handlers['card-set-agent']({ sender: ev.sender }, '')
+  await h.handlers['card-send'](ev, { text: '再说说' })
+  const lastSend2 = h.calls.sendMessage[h.calls.sendMessage.length - 1]
+  ok('切回默认不带 agent', lastSend2 && lastSend2[6] && !lastSend2[6].agent, lastSend2 && lastSend2[6])
+  // 老 serve(listAgents → null):回 note,UI 藏入口
+  const h2 = makeHarness({ oc: { listAgents: async () => null } })
+  h2.S.settings.projectDir = PROJ
+  const { ev: ev2 } = await openCard(h2, 972)
+  const la2 = await h2.handlers['list-agents'](ev2)
+  ok('老 serve:agents 空 + note', la2.agents.length === 0 && !!la2.note, la2)
+}
+
 console.log('用例13:P3.3 todo 权威数据源 —— 回合收尾 getSessionTodo 非空才覆盖注册表;空/异常/无桩/非wf卡一律不动不炸')
 {
   // 非空 → wfTodos(本卡, 权威清单) 被调一次,注册表被覆盖
