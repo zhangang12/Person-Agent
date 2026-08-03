@@ -6,6 +6,29 @@ import { s } from './store'
 import { artRel } from './lib/tool'
 import { BH } from './bridge'
 
+// 左缘拖拽拉宽:产出路径动辄 docs/exploration/miniapp/_draft/02_manager_login.md 这种长度,
+// 固定 300px 宽全被 … 截断,只能靠 hover tooltip 一个个看(实测用户第一反应就是"拉宽点")。
+// 与子 Agent 侧栏同一套手法(sr-resize):往左拖=变宽,localStorage 持久化。
+const ADW_KEY = 'bh.artw'
+const drawerW = ref(+(localStorage.getItem(ADW_KEY) || 0))
+const rsDragging = ref(false)
+const drawerStyle = computed(() => (drawerW.value > 0 ? { width: drawerW.value + 'px' } : {}))
+function rsStart(e: MouseEvent) {
+  const el = (e.currentTarget as HTMLElement).parentElement as HTMLElement
+  const cardW = (el && el.parentElement && el.parentElement.clientWidth) || window.innerWidth
+  const x0 = e.clientX, w0 = (el && el.offsetWidth) || 300
+  rsDragging.value = true
+  const move = (ev: MouseEvent) => {
+    drawerW.value = Math.min(Math.max(240, Math.round(w0 + (x0 - ev.clientX))), Math.round(cardW * 0.92))
+  }
+  const up = () => {
+    window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up)
+    rsDragging.value = false
+    try { localStorage.setItem(ADW_KEY, String(drawerW.value)) } catch { /* 静默 */ }
+  }
+  window.addEventListener('mousemove', move); window.addEventListener('mouseup', up)
+}
+
 const activePath = ref('')
 const preview = ref('')
 const previewErr = ref('')
@@ -26,7 +49,9 @@ function close() { s.artOpen = false }
 </script>
 
 <template>
-  <div v-if="s.artOpen" class="artdrawer">
+  <div v-if="s.artOpen" class="artdrawer" :style="drawerStyle">
+    <!-- 左缘拖拽柄:往左拖=变宽(240px ~ 卡宽 92%),记在 localStorage -->
+    <div class="ad-resize" :class="{ on: rsDragging }" title="拖拽调整宽度" @mousedown.prevent="rsStart"></div>
     <div class="ad-hd">
       <span class="ad-title">成果</span>
       <span class="ad-cnt">{{ s.artFiles.length }} 个产出文件</span>
