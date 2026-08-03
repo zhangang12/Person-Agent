@@ -29,6 +29,8 @@
     "lspmcp:test": "node scripts/lsp-mcp-selftest.mjs",
     "session:test": "node scripts/session-selftest.mjs",
     "replay:test": "node scripts/replay/run.mjs",
+    "orch:test": "node scripts/orch-selftest.mjs",
+    "orch:lint": "node scripts/orch-boundary-check.mjs",
     "modelroute": "node scripts/model-route-probe.mjs",
     "mcp:browser": "node mcp/browser-mcp.mjs",
     "mcp:browser:test": "node mcp/selftest.mjs",
@@ -44,7 +46,9 @@
     "ui:build": "node scripts/electron-node.cjs ui-vue/build.mjs",
     "ui:typecheck": "node scripts/electron-node.cjs node_modules/vue-tsc/bin/vue-tsc.js --noEmit -p ui-vue/tsconfig.json",
     "ui:test": "node scripts/electron-node.cjs node_modules/vitest/vitest.mjs run --config ui-vue/vitest.config.ts",
-    "ui:stub": "electron scripts/chat-p2a2-stub.cjs"
+    "ui:stub": "electron scripts/chat-p2a2-stub.cjs",
+    "orch:stub": "electron scripts/orch-shard-stub.cjs",
+    "run:stub": "electron scripts/run-panel-stub.cjs"
   },
   "dependencies": {
     "mammoth": "^1.8.0",

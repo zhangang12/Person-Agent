@@ -28,6 +28,7 @@ import { draftKeyOf, draftSave, draftRestore, draftClear, purgeStaleDrafts } fro
 import {
   isTodoTool, isWriteEditTool, isAskTool, asObj, fmtInput, fmtOutput, toolLabel,
   toolState, toolSummary, todoModel, extractFilePath, artAbs, truncIn, truncOut,
+  isDispatchTool, dispatchModel, dispatchedId,
 } from './lib/tool'
 import type { TodoModel, ToolState } from './lib/tool'
 import { ctxFallbackFor, ctxCap, ctxPctVal } from './lib/ctxchip'
@@ -36,8 +37,14 @@ import type { PermDecision, QuizQuestion } from './lib/perm'
 
 // ── Feed 条目模型 ─────────────────────────────────────────────────────────
 interface BaseItem { id: number }
-/** 用户气泡(queued=排队中,半透明 + 可取消) */
-export interface UserItem extends BaseItem { kind: 'user'; text: string; queued: boolean }
+/**
+ * 用户气泡(queued=排队中,半透明 + 可取消)。
+ * origin:壳层直发注入(card-inject)的来源 —— 'orch'=分片回流/编排闸,'system'=壳层系统提醒;
+ * 空 = 用户本人说的话。这些注入必须走 submit 才能触发新回合(设计如此),但【不能长得像用户气泡】:
+ * 主控卡里 N 条"分片 3/4 已完成"跟用户真插话右对齐挤在一起,谁说的话都分不出来(实测"交互乱"的视觉根因)。
+ * shardId:该条回流属于哪一片 → 渲染成可点条目,直接跳该片镜像视图。
+ */
+export interface UserItem extends BaseItem { kind: 'user'; text: string; queued: boolean; origin?: 'orch' | 'system'; shardId?: string }
 /** 分诊/提示行(非对话轮);retry=true 时带「重试本轮」按钮 */
 export interface NoteItem extends BaseItem { kind: 'note'; text: string; muted: boolean; retry: boolean }
 /** 思考块:每轮一个,答完不折叠不移除(open 保持);title 缺省「思考过程」,压缩续聊的接力摘要复用同壳;displayLen=打字机已吐字符数(可缺省=0) */
@@ -76,6 +83,7 @@ export interface ToolItem extends BaseItem {
   askNoted: boolean        // ask/elicit 兜底提示只挂一次
   taskChild?: string       // task/delegate_task 的真子会话 id(点工具块跳子 Agent 窗格)
   isTask?: boolean         // 委派工具(task/delegate_task):点块跳窗格(taskChild 或占位 ph:partID)
+  shardId?: string         // run_workflow 派出的分片卡 id(从回执 "id=<n>" 抠出):点块跳该片镜像视图
   t0?: number              // 创建时刻(运行中起点;终态结算耗时 —— 设计稿 S2 工具行「做了什么、多久」)
   ms?: number              // 耗时毫秒(终态结算一次)
 }
@@ -127,6 +135,26 @@ export interface SubAgent {
 /** 轮次快照(清场前拍,只留概要元数据;上限 20 轮) */
 export interface SubSnap { round: number; items: { name: string; count: number; ms: number; err: boolean; reads: number }[] }
 
+/** 编排面板投影(主进程 projectSnapshot 的形状;渲染端只读) */
+export interface RunNodeView {
+  id: string; title: string; kind: string; state: string
+  attempt: number; patches: number; wave: number
+  cardId: string | null; reason: string; droppedReason: string
+  files: string[]; deps: string[]
+  exitReport: { kind: string; detail: string }[]
+}
+export interface RunSnapshot {
+  id: string; goal: string; phase: string; alias: string; wave: number
+  counts: { total: number; verified: number; running: number; queued: number; pending: number; failed: number; skipped: number }
+  budget: any
+  nodes: RunNodeView[]
+  decisions: { at: number; point: string; why: string; invalid: string }[]
+  pendingDecision: { id: string; point: string; event: string; nodeId: string } | null
+  ask: { question?: string; options?: string[] } | null
+  result: { summary: string; deliverables: string[]; gaps: any[] }
+  notes: { at: number; text: string }[]
+}
+
 interface QueueEntry { text: string; files: any[] | null; item: UserItem }
 
 interface StreamEvent {
@@ -174,11 +202,30 @@ export const s = reactive({
   planApproved: false,
   planAsk: false,
   planAutoLeft: 0,
+  /**
+   * 已收官回合数。规划闸兜底判据用:
+   * planAsk 的唯一来源是"嗅到 todowrite 且没嗅到 task/write-edit"(maybePlanGate),
+   * 而主控卡的实质执行动作是 MCP 的 run_workflow —— 它【不在】wfExecSeen 的判据里(只认 task/delegate_task),
+   * orch 卡还额外豁免 write/edit。于是主控若不调 todowrite:planAsk 永假 → 批准条永不渲染 →
+   * planApproved 永假 → 壳层把每一次派发都拒掉,回执还叫用户"去主控卡点【开始执行】"——那个按钮从没存在过。
+   * 兜底:跑过回合、没批准、也没挂出待批条时,给用户一个永远点得到的批准入口。
+   * 注意【不能】改成"把 run_workflow 也算实质执行"—— maybePlanGate 命中 wfExecSeen 会【自动撤闸】,
+   * 那是把静默死锁换成"人审闸被静默取消",更糟。
+   */
+  turnsDone: 0,
   /** 自动批准(仅 wf 卡,用户显式开启):权限请求自动放行 once 并留痕;关卡即失效 */
   wfAutoAllow: false,
   /** 主控卡分片进度(shard-progress 推送):{id, goal, status, round};shardView=就地渲染某片的镜像会话(''=主区域) */
   shards: [] as { id: string; goal: string; status: string; round: number }[],
   shardView: '',
+  /**
+   * 编排面板(新引擎):主进程 run-snapshot 推来的【只读投影】。
+   * 它在场 = 这张卡不是对话卡而是编排面板 —— 没有回合、没有 busy、没有工具流,
+   * 所以整套按"这是一张会话卡"写的 harness(规划闸嗅探/看门狗/空答重试/挂死探针/主动交棒)一律不挂载。
+   * 唯一真相源在主进程,这里永远只读:批准/插话/中止都是 IPC 显式转移,不回写本地。
+   */
+  run: null as RunSnapshot | null,
+  runId: '',
   /** 主动交棒计数(knobs.autoCompactMax 顶) */
   autoCompactN: 0,
   /** 状态行(P2c harness):忙时实时显示【正在跑什么 + Esc 中断】;aborting=已按 Esc 等引擎收尾 */
@@ -234,6 +281,10 @@ export const visibleGroups = computed<(FeedItem | ToolGrp)[]>(() => {
     cur = []
   }
   for (const it of visibleItems.value) {
+    // 分片派发块【不进工具组】:归组是为了把琐碎工具流水折成一行,但派发是这条编排的骨架 ——
+    // 主控派 4 片时全被折进「4 次工具调用 · 派发分片 ×4」,默认收起,派了哪几片、去了哪张卡一眼看不见(实测)。
+    // 每片单独成行,名/目标/#id 直接可见可点。
+    if (it.kind === 'tool' && (it as ToolItem).shardId) { flush(); out.push(it); continue }
     if (it.kind === 'tool') { cur.push(it as ToolItem); continue }
     flush(); out.push(it)
   }
@@ -287,8 +338,10 @@ let targetFlushQueued = false
 // ── 条目构造 ──────────────────────────────────────────────────────────────
 // ⚠ 响应式铁律:工作引用一律用「数组里的代理」,不能用 push 前的原始对象 ——
 // 改原始对象不触发依赖(实测:流式期间 curAnswer 裸引用导致视图整体不刷新)。
-export function addUser(text: string): UserItem {
+export function addUser(text: string, meta?: { origin?: 'orch' | 'system'; shardId?: string }): UserItem {
   const it: UserItem = { id: nextId(), kind: 'user', text, queued: false }
+  if (meta?.origin) it.origin = meta.origin
+  if (meta?.shardId) it.shardId = meta.shardId
   s.items.push(it); return s.items[s.items.length - 1] as UserItem
 }
 export function addNote(text: string, opts?: { muted?: boolean; retry?: boolean }): NoteItem {
@@ -429,10 +482,12 @@ export function wireStream(): void {
   streamWired = true
   try {
     BH()?.onStream?.((ev: StreamEvent) => {
+      // 多层派发分片回流(shardRoot):只进分片专属缓冲(分片视图用),主控的侧边栏/对话流不沾。
+      // 【必须先于挂死探针打点】—— 分片的回流事件不是主控自己的活口:主控回合撞上网关静默时,
+      // 名下几片还在哗哗刷屏,原来会把 lastStreamAt 一直续命,主控这一轮就永远等不到 90s/5min 长牙(实测停摆无感知)。
+      if (ev.shardRoot) { upsertShardMirror(ev); return }
       const sig = streamSig(ev)
       if (sig !== lastStreamSig) { lastStreamSig = sig; lastStreamAt = Date.now() }   // 静默挂死探针:有新内容才算活(90s/5min 的打点)
-      // 多层派发分片回流(shardRoot):只进分片专属缓冲(分片视图用),主控的侧边栏/对话流不沾
-      if (ev.shardRoot) { upsertShardMirror(ev); return }
       // 本卡 task 子 Agent 活动 → 侧边栏各自窗格(思考/工具/产出),不占主对话流
       if (ev.sub) { upsertSubAgentEvent(ev); return }
       if (ev.kind === 'tool') { upsertToolEvent(ev); return }
@@ -565,6 +620,17 @@ function upsertToolEvent(ev: StreamEvent): void {
   if (outFull) { const t2 = truncOut(outFull); it.outStr = t2.text + (t2.tip ? '\n' + t2.tip : '') }
   it.hasErr = !!ev.error
   it.summary = toolSummary(it.status, outFull)
+  // 分片派发块可辨识 + 可跳转:N 条派发原本全叫「升格 → 动态工作流」,归组后只剩一行「4 次工具调用 · 升格 ×4」,
+  // 派了哪几片、去了哪张卡一概看不见(用户实测的头号困惑)。改成 名=派发分片 / 标题=该片目标 / 点块跳该片镜像视图。
+  if (isDispatchTool(name)) {
+    const dm = dispatchModel(ev.input)
+    if (dm) {
+      if (dm.shard) it.name = '派发分片'
+      it.title = dm.goal.slice(0, 120)
+    }
+    const sid = dispatchedId(outFull)
+    if (sid) it.shardId = sid
+  }
   // ask/elicit 无应答通道:兜底提示一块卡只挂一次(对齐旧页)
   if (isAskTool(name) && !it.askNoted) { it.askNoted = true; addNote('模型发起了提问,但这个工具没有应答通道 —— 请直接在输入框回复它的问题') }
   // 委派工具(task/delegate_task):记 taskChild(点工具块跳子 Agent 窗格);终态勾掉对应子 Agent。
@@ -852,6 +918,7 @@ export async function turn(text: string, files?: any[] | null): Promise<boolean>
       turn(lastSend.text, lastSend.files)
       return ok
     }
+    s.turnsDone++       // 已收官回合数(WfBar 的规划闸兜底判据用:主控跑过回合却始终没挂出批准条 = 闸死了)
     maybePlanGate()     // 规划闸:方案出了没执行 → 待批提示(分片卡静默自动批)
     // ── harness 轮末链(旧页同序):看门狗结算+判定 → 委派驱动 → 防停 → 产出兜底 → 普通卡水位提醒 → 主动交棒 ──
     wdFinalizeRound()
@@ -889,7 +956,12 @@ export function regen(text: string, files?: any[] | null): void {
  * composer 提交:组装文档引用/图片附件,忙时入队(气泡立即上屏,半透明+可取消),
  * 闲时直接开轮。与旧页 submit() 同构。
  */
-export function submit(text: string, atts: { kind: string; name: string; path?: string; mime?: string; dataUrl?: string }[], disp?: string): void {
+export function submit(
+  text: string,
+  atts: { kind: string; name: string; path?: string; mime?: string; dataUrl?: string }[],
+  disp?: string,
+  meta?: { origin?: 'orch' | 'system'; shardId?: string },
+): void {
   const v = text.trim()
   if (!v && !atts.length) return
   const docRefs = atts.filter((a) => a.kind === 'doc').map((a) => '- ' + a.path + '（' + a.name + '）').join('\n')
@@ -902,7 +974,7 @@ export function submit(text: string, atts: { kind: string; name: string; path?: 
     full += '\n(系统提醒:todo 清单已多轮未更新,还有 ' + latestOpenTodos.length + ' 项未完成:「' + latestOpenTodos.slice(0, 3).join('、') + '」—— 请先用 todowrite 如实更新各项状态,再继续推进。)'
   }
   const dispText = disp || (v || (images.length ? '(图片)' : '(文档)')) + (atts.length ? ' · 附件 ' + atts.length : '')   // card-inject:用户气泡看 disp,引擎收全文
-  const el = addUser(dispText)
+  const el = addUser(dispText, meta)
   if (s.busy || !s.ready || compacting) {   // compacting 期间一律入队:摘要轮/交棒 reinit 窗口不开新轮(compacting 闸,旧页平移)
     el.queued = true
     queue.push({ text: full || '(见附件)', files: images, item: el })
@@ -1013,6 +1085,7 @@ function armPlanAuto(): void {
   planAutoTimer = setTimeout(() => { clearPlanTimers(); approvePlan(true) }, min * 60000)
 }
 function maybePlanGate(): void {
+  if (s.runId) return   // 编排面板:批准是主进程的显式 phase,不走"嗅 todowrite"这条推断链
   if (!(s.wfMode || s.orchMode) || s.planApproved) return
   if (s.shardMode) { approvePlan(true); return }   // 分片卡:拆分方案主控卡已批,静默自动开跑
   if (wfSawTodo && !wfExecSeen) { if (!s.planAsk) { s.planAsk = true; armPlanAuto() } return }
@@ -1041,7 +1114,10 @@ export function wireInject(): void {
   try {
     BH()?.onCardInject?.((p: any) => {
       if (!p || !p.text) return
-      submit(String(p.text), [], String(p.disp || ''))
+      // origin(主进程标注)决定气泡形态:orch=分片回流/编排闸,system=壳层系统提醒,空=按用户消息(浏览器/邮件/技能等
+      // 用户动作触发的注入,那些本来就代表"用户让我干这个",保留用户气泡)
+      const origin = p.origin === 'orch' || p.origin === 'system' ? p.origin : undefined
+      submit(String(p.text), [], String(p.disp || ''), origin ? { origin, shardId: p.shardId ? String(p.shardId) : undefined } : undefined)
     })
   } catch { /* 静默 */ }
 }
@@ -1069,6 +1145,44 @@ export function wireShardProgress(): void {
   } catch { /* 静默 */ }
 }
 export function openShardView(id: string): void { s.shardView = id || '' }
+
+// ── 编排面板(新引擎):只读投影 + 显式动作 ────────────────────────────────
+// 与旧主控卡最大的不同:这里【没有推断】。批准不是"嗅到 todowrite 就亮按钮",
+// 是主进程 phase==='awaiting-approval' 明说的;进度不是数中文消息,是 counts。
+let runWired = false
+export function wireRun(): void {
+  if (runWired) return
+  runWired = true
+  try {
+    BH()?.onRunSnapshot?.((snap: any) => {
+      if (!snap || !snap.id) return
+      s.run = snap as RunSnapshot
+      s.runId = String(snap.id)
+      if (snap.goal && !s.titleCustomized) s.title = String(snap.goal).slice(0, 40)
+    })
+  } catch { /* 静默 */ }
+}
+async function runCall(fn: string, ...args: any[]): Promise<void> {
+  try { await (BH() as any)?.[fn]?.(s.runId || null, ...args) } catch (e: any) { addNote('编排操作失败:' + ((e && e.message) || e)) }
+  // 主进程会主动推新快照;这里不本地改状态 —— 唯一真相源在主进程,本地改就是第二本账
+}
+export const runApprove = () => runCall('runApprove', null)
+export const runReject = (note: string) => runCall('runReject', note)
+export const runNote = (text: string) => runCall('runNote', text)
+export const runAbort = () => runCall('runAbort')
+export const runResume = () => runCall('runResume')
+export const runRetryNode = (nodeId: string) => runCall('runRetryNode', nodeId)
+/**
+ * 跳到某片的镜像视图(派发工具块 / 分片回流条点击):分片没在面板里(已被逐出注册表、或本卡不是主控)时
+ * 给一条提示而不是静默无反应 —— 点了没动静比点不动更糟(旧页实测)。
+ */
+export function shardJump(id: string): boolean {
+  const sid = String(id || '')
+  if (!sid) return false
+  if (!s.shards.some((x) => x.id === sid)) { addNote('分片 #' + sid + ' 不在当前进度面板里(可能已收官出表,或这张卡不是它的主控)'); return false }
+  s.shardView = sid
+  return true
+}
 
 // ── 工作流卡【主动交棒】(旧页 1037-1049 平移):水位 ≥knobs.ctxHandoffPct(默认 0.55)且轮末空闲
 // → 写交接单换下一棒主 Agent(全新 128k);上限 knobs.autoCompactMax(默认 5)防病态循环,到顶转人工。
@@ -1465,6 +1579,7 @@ export async function boot(): Promise<void> {
   wireServeHealth()    // 标题栏保活灯
   wireInject()         // card-inject:严格模式下一步 / 主控进度唤醒(过 card-send 闭环)
   wireShardProgress()  // 主控卡分片进度面板
+  wireRun()            // 编排面板:主进程 run-snapshot 只读投影
   initVerbose()        // 过程详情偏好(localStorage cardVerbose)
   const p = new URLSearchParams(location.search)
   s.title = p.get('title') || '新对话'
@@ -1478,10 +1593,11 @@ export async function boot(): Promise<void> {
   s.wfMode = p.get('wf') === '1' || p.get('wf') === 'true'
   s.orchMode = !!p.get('orch')
   s.shardMode = p.get('shard') === '1'
+  s.runId = p.get('run') || ''
   try { purgeStaleDrafts(localStorage) } catch { /* 静默 */ }
 
   s.busy = true
-  if (!sid && (!s.embedded || (s.chatEmbed && p.get('msg')))) addUser(dispMsg)
+  if (!s.runId && !sid && (!s.embedded || (s.chatEmbed && p.get('msg')))) addUser(dispMsg)
   const bootItem = addAi()
   bootItem.plainText = sid ? '正在续接对话…' : (s.embedded && !s.chatEmbed) ? '正在连接调试助手…' : '正在启动引擎…（首次较慢，请稍候）'
   try {
@@ -1521,6 +1637,11 @@ export async function boot(): Promise<void> {
     } else if (s.embedded && !s.chatEmbed) {
       s.busy = false
       addNote('我是你的调试助手。在右侧浏览器复现问题后点「发给 Agent」，我会拿到控制台报错、网络异常和页面结构来定位；也可以直接在下面提问。')
+    } else if (s.runId) {
+      // 编排面板:那段会话只为兼容而建(mirrorToOrch / 关卡级联杀 / 卡坞列表都按"有会话的 orch 卡"找它),
+      // 【永不发消息】—— 编排不是"跟一个 Agent 聊天"。首屏直接拉一次快照,之后由 run-snapshot 推。
+      s.busy = false
+      try { const snap = await (BH() as any)?.runSnapshot?.(s.runId); if (snap && snap.id) { s.run = snap; s.runId = String(snap.id) } } catch { /* 静默 */ }
     } else if (s.chatEmbed && !p.get('msg')) {
       s.busy = false   // 主窗口「新建对话」:空态等输入,不把标题当首条消息发出去
     } else {

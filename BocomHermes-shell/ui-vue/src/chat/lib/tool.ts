@@ -12,8 +12,29 @@ export const isWriteEditTool = (name: unknown): boolean => /^(write|edit)(_[a-z]
 /** 交互提问类(MCP ask/elicit 无应答通道,挂提示兜底) */
 export const isAskTool = (name: unknown): boolean => /^(ask|elicit)$/i.test(String(name || ''))
 /** 特殊显示名(对齐旧页 TOOL_LABEL) */
-export const TOOL_LABEL: Record<string, string> = { run_workflow: '升格 → 动态工作流', task: '子Agent' }
+export const TOOL_LABEL: Record<string, string> = { run_workflow: '升格 → 动态工作流', task: '子Agent', run_orchestration: '升格 → 多层派发主控' }
 export const toolLabel = (name: unknown): string => TOOL_LABEL[String(name)] || String(name || '?')
+/** 派发类工具(run_workflow):带 parentTag = 主控在派自己名下的分片,不是"又升格一个独立工作流" */
+export const isDispatchTool = (name: unknown): boolean => /^run_workflow$/i.test(String(name || ''))
+
+// ── 分片派发展示模型(主控卡里 N 条派发全叫"升格 → 动态工作流",要展开看 JSON 才知道派了哪片 —— 实测看不懂)──
+/** goal 里可能被模型手写的 [orch:TAG] 前缀:展示层一律剥掉(壳层也会剥,以 parentTag 为准) */
+export const stripOrchTag = (g: unknown): string =>
+  String(g || '').replace(/[[【]\s*orch\s*[:：]\s*[A-Za-z0-9-]+\s*[\]】]/g, '').replace(/\s+/g, ' ').trim()
+export interface DispatchModel { shard: boolean; goal: string }
+/** run_workflow 入参 → {是否分片, 目标摘要};入参还没到/形状不符返回 null */
+export function dispatchModel(input: unknown): DispatchModel | null {
+  const obj = asObj(input)
+  if (!obj) return null
+  const goal = stripOrchTag(obj.goal)
+  if (!goal) return null
+  return { shard: !!String(obj.parentTag || '').trim(), goal }
+}
+/** 派发回执文本里的分片卡 id(orch-mcp 回执统一写 "id=<n>")→ 工具块可点跳该片镜像视图 */
+export function dispatchedId(outStr: unknown): string {
+  const m = String(outStr || '').match(/\bid=(\d+)/)
+  return m ? m[1] : ''
+}
 
 // ── 入参/结果格式化 ───────────────────────────────────────────────────────
 /** 有的 serve 把工具入参给成 JSON 字符串:对象直返,字符串尝试 parse,其它 null */

@@ -1,0 +1,424 @@
+'use strict'
+// ══════════════════════════════════════════════════════════════════════════════
+// 编排装配层 · 全案【唯一】允许碰 Electron / S / fs / 时钟的文件
+//
+// run.js 是纯状态机:它只返回"意图"(effects),自己不做任何 IO。本文件把这些意图变成真事,
+// 并把执行结果作为【新事件】回灌 applyEvent。这条回灌闭环是整个设计的关键 ——
+// 状态机永远不知道"外面"发生了什么,它只认事件;于是它才能被 replay 逐行断言。
+//
+// 【它取代了什么】
+// 老的"LLM 主控卡"已整体删除:那版把编排控制流序列化成中文塞进一张会说话的卡(6.5k 常驻规程),
+// 再指望模型把壳层已经知道的账(派了几片、齐没齐、第几轮、缺哪些签名)重记一遍,
+// 于是围绕它长出十几道兜底闸去纠正它。现在编排是代码持有的状态机,模型只在 plan/replan 两点做判断。
+//
+// 【面板卡仍是一张注册在案的 orch 卡】
+// 看起来多余,其实是硬需求:mirrorToOrch(分片会话镜像回流)第一行就是
+// `const oreg = S.wfRegistry.get(String(oref.id)); if (!oreg) return`,
+// card-cleanup 的级联杀看 `wfCardByWc.get(wcId).kind==='orch'`,session.js 的 shardSnapshot 同理。
+// 面板卡不进这三张表,分片镜像会当场变空、关面板不再杀工人。所以它照常建卡、照常建一段会话 ——
+// 只是那段会话【永远不发消息】(编排不再是"跟一个 Agent 聊天")。
+// ══════════════════════════════════════════════════════════════════════════════
+const path = require('path')
+const fs = require('fs')
+const RUN = require('./run')
+const NODES = require('./nodes')
+const RENDER = require('./render')
+const { makeJournal } = require('./journal')
+
+const SURVEY_MAX_FILES = 4000
+const SURVEY_SKIP = /^(node_modules|\.git|dist|build|out|coverage|\.next|\.venv|__pycache__|target|vendor|\.idea|\.vscode)$/i
+const SURVEY_EXT = /\.(js|mjs|cjs|ts|tsx|jsx|vue|py|java|go|rs|rb|php|cs|c|h|cpp|hpp|kt|swift|sql|json|md|ya?ml|html?|css|less|scss)$/i
+const CMD_TIMEOUT_MS = 120000
+const CMD_MAXBUF = 8 * 1024 * 1024
+
+function str(x) { return x === null || x === undefined ? '' : String(x) }
+function arr(x) { return Array.isArray(x) ? x : [] }
+
+/**
+ * makeOrch(deps) → S.orch
+ * deps: { S, oc, log, app, spawnCard, spawnWorkflow, wcById, BrowserWindow, Notification, decide }
+ *   decide 可注入假实现(replay 用 fakeDecide),这是 decide.js 接口设计的第一约束
+ */
+function makeOrch(deps) {
+  const d = deps || {}
+  const { S, oc, log, app, spawnCard, spawnWorkflow, wcById, BrowserWindow } = d
+  const decide = d.decide
+  const journal = makeJournal({ dir: path.join(app.getPath('userData'), 'orch-runs'), log })
+
+  const runs = new Map()        // runId → run(内存主副本;journal 是它的持久投影)
+  const timers = new Map()      // effect.key → timeout
+  const cardToNode = new Map()  // cardId(String) → { runId, nodeId }
+  let seq = 0
+  const mkId = (p) => str(p) + (++seq)
+
+  // ── 事件入口:所有状态变化都从这里进 ────────────────────────────────────
+  function send(runId, ev) {
+    const run = runs.get(str(runId))
+    if (!run) return null
+    let out
+    // capHint = 全局并发余量。状态机自己只知道 run 内并发,不知道别的卡(单工作流/pipeline/别的 run)占了多少位;
+    // 不给它这个数,它会把节点置 running 后才在 doDispatch 撞上全局闸,然后那个节点就成了"running 却没有卡"的死节点。
+    try { out = RUN.applyEvent(run, Object.assign({ at: Date.now() }, ev), { mkId, capHint: globalCap() }) }
+    catch (e) { log('[orch] applyEvent 抛错(' + str(ev && ev.type) + '):' + (e && e.stack || e)); return null }
+    runs.set(run.id, out.run)
+    execAll(out.run, out.effects)
+    return out.run
+  }
+
+  function execAll(run, effects) {
+    for (const fx of arr(effects)) {
+      try { exec(run, fx) } catch (e) { log('[orch] effect ' + str(fx && fx.type) + ' 执行失败:' + (e && e.message)) }
+    }
+  }
+
+  // ── effects 执行 ───────────────────────────────────────────────────────
+  function exec(run, fx) {
+    switch (str(fx.type)) {
+      case 'dispatch': return doDispatch(run, fx)
+      case 'patchNode': return doPatch(run, fx)
+      case 'cancelNode': return doCancel(run, fx)
+      case 'decide': return doDecide(run, fx)
+      case 'evalExit': return doEvalExit(run, fx)
+      case 'armTimer': return doArm(run, fx)
+      case 'clearTimer': return doClear(fx)
+      case 'persist': return journal.save(run)
+      case 'ui': return pushUi(run)
+      case 'notify': return doNotify(run, fx)
+      case 'archive': return doArchive(run)
+      default: return undefined
+    }
+  }
+
+  // 派发一个节点 = 开一张工人卡(完全复用现有 spawnWorkflow:隐藏卡 / 写归属沙箱 / 权限自动放行 / 镜像回流全不动)
+  function doDispatch(run, fx) {
+    const n = findNode(run, fx.nodeId); if (!n) return
+    const brief = RENDER.composeNodeBrief(run, n) || n.goal
+    n.brief = brief
+    const r = spawnWorkflow(brief, run.model || null, {
+      runId: run.id, nodeId: n.id,
+      // verify 节点没写归属时【代码强制】只读沙箱:session.js 的写归属硬闸口径是"空 = 不设闸",
+      // 模型漏写 writeScope 的验证节点就能改项目文件 —— 这是安全退化,不能指望模型自觉
+      writeScope: (n.kind === 'verify' && !arr(n.writeScope).length)
+        ? [require('os').tmpdir().replace(/\\/g, '/')]
+        : arr(n.writeScope),
+      contract: arr(n.contract),
+      isVerify: n.kind === 'verify',
+      alias: run.alias,                 // 兼容垫片:让 pushShardProgress / ShardPanel 照旧认得这一片
+    })
+    // spawnWorkflow 统一返回 { ok, id, queued, position };排队时 id 为空,节点留在 queued 等下一次 tick
+    if (r && r.queued) { log('[orch] ' + n.id + ' 并发满,排队第 ' + r.position + ' 位'); return }
+    const cardId = r && r.id != null ? String(r.id) : ''
+    if (!cardId) { send(run.id, { type: 'WORKER_CARD_GONE', nodeId: n.id }); return }
+    cardToNode.set(cardId, { runId: run.id, nodeId: n.id })
+    send(run.id, { type: 'NODE_DISPATCHED', nodeId: n.id, cardId, wcId: regWcId(cardId) })
+  }
+
+  // 补做:不重开卡,直接给那张【还活着的】工人卡喂一条"缺这几项"的消息 —— 它的上下文还在
+  function doPatch(run, fx) {
+    const n = findNode(run, fx.nodeId); if (!n || !n.cardId) return
+    const wc = wcById(n.wcId)
+    if (!wc) { send(run.id, { type: 'WORKER_CARD_GONE', nodeId: n.id }); return }
+    const miss = arr(fx.missing).map((m) => '· ' + str(m.kind) + ':' + str(m.detail)).join('\n')
+    const text = '<编排·补做>你上一轮的产出没通过退出检查,差这几项(第 ' + fx.patch + ' 次补做):\n' + miss
+      + '\n\n只补这几项,别重做已经做对的部分;补完照原样回报。</编排·补做>'
+    try { wc.send('card-inject', { text, disp: '编排要求补做:' + arr(fx.missing).map((m) => str(m.kind)).join('、'), origin: 'orch' }) }
+    catch (e) { log('[orch] 补做注入失败:' + e.message) }
+  }
+
+  function doCancel(run, fx) {
+    const n = findNode(run, fx.nodeId); if (!n) return
+    const wcId = n.wcId
+    if (wcId != null) {
+      try {
+        if (S.isCardBusy && S.isCardBusy(wcId)) { /* 正在收尾就别杀,45s 静默计时会兜住 */ }
+        const w = BrowserWindow.getAllWindows().find((x) => !x.isDestroyed() && x.webContents.id === wcId)
+        if (w) { (S.shardForceClose = S.shardForceClose || new Set()).add(wcId); w.close() }
+      } catch (e) { log('[orch] 关工人卡失败:' + e.message) }
+    }
+    if (n.cardId) cardToNode.delete(String(n.cardId))
+  }
+
+  // 决策是异步 effect:结果作为【新事件】回灌,tick 不被它阻塞(一次卡住的 replan 不冻结整个 run)
+  function doDecide(run, fx) {
+    if (typeof decide !== 'function') { send(run.id, { type: 'DECIDED', decisionId: fx.decisionId, point: fx.point, ok: false, invalid: '没有装配决策器' }); return }
+    const ctx = {
+      run, event: str(fx.event), nodeId: str(fx.nodeId),
+      dir: run.dir, model: run.model || null,
+      survey: fx.point === 'plan' ? surveyDir(run.dir) : null,
+    }
+    Promise.resolve(decide(fx.point, ctx)).then((res) => {
+      send(run.id, {
+        type: 'DECIDED', decisionId: fx.decisionId, point: fx.point,
+        ok: !!(res && res.ok), data: (res && res.data) || {},
+        invalid: (res && res.invalid) || '', errors: (res && res.errors) || [], raw: (res && res.raw) || '',
+      })
+    }).catch((e) => {
+      send(run.id, { type: 'DECIDED', decisionId: fx.decisionId, point: fx.point, ok: false, invalid: 'transport', errors: [str(e && e.message)] })
+    })
+  }
+
+  // 退出检查:要读盘、要跑命令,所以住在这里而不是 run.js
+  function doEvalExit(run, fx) {
+    const n = findNode(run, fx.nodeId); if (!n) return
+    const base = run.dir || (S.settings && S.settings.projectDir) || '.'
+    const probe = {
+      statSync: (p) => fs.statSync(path.resolve(base, p)),
+      readFileSync: (p) => fs.readFileSync(path.resolve(base, p), 'utf8'),
+      readDirDeep: (p) => readDirDeep(path.resolve(base, p)),
+      exec: (cmd) => runCmd(cmd, base),
+      // 执行流水(bash 命令轨 + 浏览器动作轨)—— 证据闸的唯一原料。
+      // session.js 的 S.wfAction 一直在往 reg.actions 里写,但 evalExit 只认
+      // res.actions / n.actions / p.actions(n) 三条路,原来三条都没供 →
+      // requireEvidence:true 的节点【永远过不了闸】,unverified 恒 true(真跑才会暴露)。
+      actions: (nn) => { try { return arr((S.wfRegistry && S.wfRegistry.get(String(nn && nn.cardId))) ? S.wfRegistry.get(String(nn.cardId)).actions : []) } catch { return [] } },
+    }
+    let out
+    try { out = NODES.evalExit(n, probe) }
+    catch (e) { log('[orch] evalExit 抛错:' + e.message); out = { pass: false, report: [{ kind: 'noEmpty', ok: false, detail: '退出检查执行失败:' + e.message }] } }
+    send(run.id, {
+      type: 'EXIT_RESULT', nodeId: n.id,
+      pass: !!(out && out.pass), report: arr(out && out.report),
+      verdict: str(out && out.verdict), cmdExit: (out && out.cmdExit != null) ? out.cmdExit : null,
+      contractMiss: arr(out && out.contractMiss), unverified: !!(out && out.unverified),
+    })
+  }
+
+  function doArm(run, fx) {
+    doClear(fx)
+    const key = str(fx.key)
+    timers.set(key, setTimeout(() => {
+      timers.delete(key)
+      send(run.id, { type: 'TIMER', nodeId: fx.nodeId, key, kind: fx.kind })
+    }, Math.max(1000, Number(fx.ms) || 45000)))
+  }
+  function doClear(fx) {
+    const key = str(fx.key)
+    const t = timers.get(key)
+    if (t) { clearTimeout(t); timers.delete(key) }
+  }
+
+  // 面板 webContents:内嵌卡建 reg 时 wcId 恒为 null(webview guest 就绪后才由 session-bind 补),
+  // createRun 当场取到的 panelWcId 必然是 null —— 只认它的话 run-snapshot 一次都推不出去(实测静默)。
+  // 现查一次并回填,顺带把"面板卡重载后 wcId 变了"一并修掉。
+  function panelWc(run) {
+    if (run.panelWcId != null) { const wc = wcById(run.panelWcId); if (wc) return wc }
+    const fresh = regWcId(run.panelCardId)
+    if (fresh != null) { run.panelWcId = fresh; return wcById(fresh) }
+    return null
+  }
+
+  function doNotify(run, fx) {
+    log('[orch:' + str(fx.level) + '] ' + str(fx.text))
+    const wc = panelWc(run)
+    if (wc) { try { wc.send('card-note', { text: str(fx.text), tone: 'muted' }) } catch { /* 面板没了就只留日志 */ } }
+  }
+
+  // 存档:复用现有 wfArchive(卡坞/历史面板都读它)。它有 `if (!reg.final) return` 早退,所以必须先写 final
+  function doArchive(run) {
+    try {
+      const reg = run.panelCardId != null && S.wfRegistry ? S.wfRegistry.get(String(run.panelCardId)) : null
+      if (!reg) return
+      const res = run.result || {}
+      reg.final = str(res.summary) || ('编排结束(' + run.phase + '):' + str(run.goal))
+      reg.status = run.phase === 'done' ? 'done' : 'interrupted'
+      if (typeof S.wfArchive === 'function') S.wfArchive(reg)
+    } catch (e) { log('[orch] 存档失败:' + e.message) }
+  }
+
+  // 面板投影:run 的只读快照推给面板卡;顺带把节点表映射成伪 todos 喂给卡坞(wf-list 显示 N/M,零改)
+  function pushUi(run) {
+    const snap = RUN.projectSnapshot(run)
+    const wc = panelWc(run)
+    if (wc) { try { wc.send('run-snapshot', snap) } catch { /* 面板关了不影响 run */ } }
+    try {
+      const reg = run.panelCardId != null && S.wfRegistry ? S.wfRegistry.get(String(run.panelCardId)) : null
+      if (reg) {
+        reg.todos = arr(run.nodes).map((n) => ({
+          content: n.title,
+          status: n.state === 'verified' ? 'completed' : (n.state === 'running' || n.state === 'settled') ? 'in_progress'
+            : (n.state === 'skipped' || n.state === 'cancelled') ? 'cancelled' : n.state === 'failed' ? 'completed' : 'pending',
+        }))
+        reg.round = run.wave; reg.rounds = run.wave
+      }
+    } catch { /* 投影失败不影响编排 */ }
+  }
+
+  // ── 目录量级实测(代码算,不让模型估)────────────────────────────────
+  function surveyDir(dir) {
+    const base = str(dir) || (S.settings && S.settings.projectDir) || '.'
+    const tops = new Map()
+    let n = 0, bytes = 0, tree = []
+    const walk = (abs, rel, depth) => {
+      if (n >= SURVEY_MAX_FILES) return
+      let names = []
+      try { names = fs.readdirSync(abs, { withFileTypes: true }) } catch { return }
+      for (const de of names) {
+        if (n >= SURVEY_MAX_FILES) return
+        if (de.name.startsWith('.') && de.name !== '.claude') continue
+        if (SURVEY_SKIP.test(de.name)) continue
+        const childAbs = path.join(abs, de.name)
+        const childRel = rel ? rel + '/' + de.name : de.name
+        if (de.isDirectory()) {
+          if (depth < 2) tree.push('  '.repeat(depth) + childRel + '/')
+          walk(childAbs, childRel, depth + 1)
+          continue
+        }
+        if (!SURVEY_EXT.test(de.name)) continue
+        let sz = 0
+        try { sz = fs.statSync(childAbs).size } catch { continue }
+        n++; bytes += sz
+        const top = childRel.split('/')[0]
+        const t = tops.get(top) || { path: top, n: 0, bytes: 0 }
+        t.n++; t.bytes += sz; tops.set(top, t)
+      }
+    }
+    try { walk(base, '', 0) } catch (e) { log('[orch] survey 失败:' + e.message) }
+    let readmeHead = ''
+    for (const f of ['README.md', 'AGENTS.md', 'CLAUDE.md']) {
+      try { readmeHead = fs.readFileSync(path.join(base, f), 'utf8').split('\n').slice(0, 40).join('\n'); break } catch { /* 换下一个 */ }
+    }
+    return {
+      n, bytes,
+      tops: [...tops.values()].sort((a, b) => b.bytes - a.bytes).slice(0, 8),
+      tree: tree.slice(0, 60).join('\n'),
+      readmeHead,
+    }
+  }
+
+  function readDirDeep(abs) {
+    const out = []
+    const walk = (p, depth) => {
+      if (out.length >= 100 || depth > 4) return
+      let st = null
+      try { st = fs.statSync(p) } catch { return }
+      if (st.isDirectory()) { try { for (const nm of fs.readdirSync(p)) walk(path.join(p, nm), depth + 1) } catch { /* 读不动就跳过 */ } ; return }
+      if (st.size > 1024 * 1024) return
+      try { out.push(fs.readFileSync(p, 'utf8')) } catch { /* 二进制/权限,跳过 */ }
+    }
+    walk(abs, 0)
+    return out.join('\n')
+  }
+
+  // 验证命令实跑:安全过滤沿用 nodes.safeVerifyCmd(shell 元字符黑名单 + 白名单正则),一行没删 ——
+  // 命令的作者仍然是模型,只是从报告正文换成了 JSON 字段,信任级别一模一样
+  function runCmd(cmd, cwd) {
+    const safe = NODES.safeVerifyCmd(cmd)
+    if (!safe) return { code: null, skipped: true, reason: '命令未通过安全过滤,跳过实跑' }
+    try {
+      require('child_process').execSync(safe, { cwd, timeout: CMD_TIMEOUT_MS, maxBuffer: CMD_MAXBUF, stdio: 'pipe', windowsHide: true })
+      return { code: 0, out: '' }
+    } catch (e) {
+      // 环境性失败(超时/缓冲/命令不存在)不算"报告造假",按跳过处理,别拿它去判节点失败
+      const envish = e && (e.killed || e.code === 'ENOBUFS' || e.code === 127 || /ENOBUFS|maxBuffer|timed?\s*out/i.test(str(e.message)))
+      if (envish) return { code: null, skipped: true, reason: '环境性失败:' + str(e.message).slice(0, 120) }
+      return { code: typeof e.status === 'number' ? e.status : 1, out: str(e.stdout || '').slice(0, 4000) }
+    }
+  }
+
+  // 全局并发余量:与 spawnWorkflow 里那道闸同源(S.wfRunningCount / S.wfConcurrency 由 window.js 挂出),
+  // 取不到就返回 Infinity(退回"只看 run 内并发"的老行为,不会更差)
+  function globalCap() {
+    try {
+      if (typeof S.wfRunningCount !== 'function' || typeof S.wfConcurrency !== 'function') return Infinity
+      return Math.max(0, S.wfConcurrency() - S.wfRunningCount())
+    } catch { return Infinity }
+  }
+
+  function findNode(run, id) { return arr(run.nodes).find((n) => n.id === str(id)) || null }
+  function regWcId(cardId) {
+    try { const reg = S.wfRegistry && S.wfRegistry.get(String(cardId)); return reg ? reg.wcId : null } catch { return null }
+  }
+
+  // ── 对外 API(window.js / mail.js / IPC 调这些)──────────────────────
+  const api = {
+    /** run_orchestration 走这里:开面板卡 → 建 run → 起 plan 决策 */
+    createRun(goal, opts) {
+      const o = opts || {}
+      const dir = str(o.dir) || (S.settings && S.settings.projectDir) || ''
+      const alias = 'RUN-' + Math.random().toString(36).slice(2, 6)
+      const run = RUN.createRun({
+        goal: str(goal), dir, backendDir: (S.settings && S.settings.backendDir) || '',
+        model: o.model || null, alias,
+        concurrency: (S.settings && S.settings.knobs && S.settings.knobs.wfConcurrency) || 4,
+      }, { at: Date.now(), mkId })
+      // 面板卡:msg 传 null —— 它有会话但【永不发消息】(编排不是"跟一个 Agent 聊天")
+      const cardId = spawnCard('编排 · ' + str(goal).slice(0, 20), null, null, str(goal),
+        { flash: true, wf: true, orch: true, model: o.model || null, run: run.id })
+      run.panelCardId = String(cardId)
+      run.panelWcId = regWcId(cardId)
+      runs.set(run.id, run)
+      // 兼容垫片:让 orchByTag 认得它(ShardPanel / pushShardProgress / 卡坞都按 tag 反查)
+      S.orchByTag = S.orchByTag || new Map()
+      S.orchByTag.set(alias, { id: String(cardId), at: Date.now(), runId: run.id })
+      log('[orch] run 创建 ' + run.id + '(面板卡 ' + cardId + ', alias ' + alias + '):' + str(goal).slice(0, 60))
+      send(run.id, { type: 'RUN_START' })
+      return { id: run.id, cardId, alias }
+    },
+    get(runId) { return runs.get(str(runId)) || null },
+    list() { return [...runs.values()] },
+    byCard(cardId) {
+      const hit = cardToNode.get(String(cardId))
+      return hit ? { run: runs.get(hit.runId) || null, nodeId: hit.nodeId } : null
+    },
+    /** 面板卡 → run(window.js 的早退判据用) */
+    runOfPanel(cardId) {
+      for (const r of runs.values()) if (String(r.panelCardId) === String(cardId)) return r
+      return null
+    },
+    // ── 工人卡回流(window.js 的 wfTurn* 早退点转调这里)────────────────
+    onWorkerTurnStart(reg) { route(reg, (r, nodeId) => send(r.id, { type: 'WORKER_TURN_START', nodeId })) },
+    onWorkerTurnEnd(reg, snap) {
+      route(reg, (r, nodeId) => send(r.id, {
+        type: 'WORKER_TURN_END', nodeId,
+        final: str(reg.final), files: arr(reg.files), rounds: reg.rounds || 0,
+        aborted: !!(snap && snap.aborted),
+      }))
+    },
+    onWorkerTurnError(reg) { route(reg, (r, nodeId) => send(r.id, { type: 'WORKER_TURN_ERROR', nodeId })) },
+    onWorkerCardGone(reg) { route(reg, (r, nodeId) => send(r.id, { type: 'WORKER_CARD_GONE', nodeId })) },
+    /** 面板卡关闭 = 整个 run 取消(与今天"关主控卡级联杀分片"的语义一致) */
+    onPanelCardGone(cardId) {
+      const r = api.runOfPanel(cardId)
+      if (r) send(r.id, { type: 'PANEL_CARD_GONE' })
+    },
+    // ── 用户动作(IPC)────────────────────────────────────────────────
+    approve(runId, edits) { return send(runId, { type: 'USER_APPROVE', edits: edits || null }) },
+    reject(runId, note) { return send(runId, { type: 'USER_REJECT', note: str(note) }) },
+    note(runId, text) { return send(runId, { type: 'USER_NOTE', text: str(text) }) },
+    abort(runId) { return send(runId, { type: 'USER_ABORT' }) },
+    retryNode(runId, nodeId) { return send(runId, { type: 'USER_RETRY', nodeId: str(nodeId) }) },
+    resume(runId) { return send(runId, { type: 'USER_RESUME' }) },
+    tick(runId) { return send(runId, { type: 'TICK' }) },
+    snapshot(runId) { const r = runs.get(str(runId)); return r ? RUN.projectSnapshot(r) : null },
+    /** 重启后:把非终态存档读回内存并置 suspended(不自动跑 —— 内网重启常伴随 serve 变更,自动重跑=重复烧钱) */
+    restore() {
+      let n = 0
+      for (const r of journal.list()) {
+        if (['done', 'failed', 'cancelled'].indexOf(str(r.phase)) >= 0) continue
+        r.phase = 'suspended'
+        runs.set(r.id, r); n++
+      }
+      if (n) log('[orch] 重启恢复 ' + n + ' 条未完成编排(等用户点续跑)')
+      try { journal.gc(Date.now()) } catch { /* GC 失败无所谓 */ }
+      return n
+    },
+    dispose() {
+      for (const t of timers.values()) clearTimeout(t)
+      timers.clear()
+      journal.dispose()
+    },
+    __journal: journal,
+  }
+
+  function route(reg, fn) {
+    if (!reg || !reg.runId) return
+    const r = runs.get(String(reg.runId)); if (!r) return
+    const nodeId = str(reg.nodeId) || (cardToNode.get(String(reg.id)) || {}).nodeId
+    if (!nodeId) return
+    fn(r, nodeId)
+  }
+
+  return api
+}
+
+module.exports = { makeOrch }

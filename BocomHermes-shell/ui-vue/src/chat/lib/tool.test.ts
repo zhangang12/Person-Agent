@@ -4,6 +4,7 @@ import {
   isTodoTool, isWriteEditTool, isAskTool, toolLabel, asObj, fmtInput, fmtOutput,
   toolState, toolStateText, toolSummary, truncIn, truncOut, IN_CAP, OUT_CAP,
   todoModel, extractFilePath, artAbs, artRel,
+  isDispatchTool, stripOrchTag, dispatchModel, dispatchedId,
 } from './tool'
 
 describe('工具归类', () => {
@@ -136,5 +137,36 @@ describe('成果抽屉路径(artAbs/artRel)', () => {
     expect(artRel('/proj/docs/a.md', '/proj')).toBe('docs/a.md')
     expect(artRel('/other/a.md', '/proj')).toBe('/other/a.md')
     expect(artRel('/proj/a.md', '')).toBe('/proj/a.md')
+  })
+})
+
+// ── 分片派发展示模型:主控卡里 N 条派发原本全叫「升格 → 动态工作流」,归组后只剩「4 次工具调用 · 升格 ×4」,
+//    派了哪几片、去了哪张卡一概看不见(用户实测头号困惑)。现在名/标题/跳转 id 都从入参与回执里抠。
+describe('分片派发展示模型(run_workflow)', () => {
+  it('isDispatchTool:只认 run_workflow', () => {
+    expect(isDispatchTool('run_workflow')).toBe(true)
+    expect(isDispatchTool('RUN_WORKFLOW')).toBe(true)
+    expect(isDispatchTool('run_orchestration')).toBe(false)
+    expect(isDispatchTool('task')).toBe(false)
+  })
+  it('stripOrchTag:半角/全角/带空格的手写标记一律剥掉(壳层也剥,展示层同口径)', () => {
+    expect(stripOrchTag('[orch:a3f9] 勘察认证模块')).toBe('勘察认证模块')
+    expect(stripOrchTag('【orch：a3f9】勘察认证模块')).toBe('勘察认证模块')
+    expect(stripOrchTag('勘察 [orch: a3f9 ] 认证模块')).toBe('勘察 认证模块')
+    expect(stripOrchTag('没有标记的目标')).toBe('没有标记的目标')
+    expect(stripOrchTag(undefined)).toBe('')
+  })
+  it('dispatchModel:parentTag 在场 = 分片派发(不是又升格一个独立工作流)', () => {
+    expect(dispatchModel({ goal: '[orch:a3f9] 勘察认证模块', parentTag: 'a3f9' })).toEqual({ shard: true, goal: '勘察认证模块' })
+    expect(dispatchModel({ goal: '整理这个仓库的架构' })).toEqual({ shard: false, goal: '整理这个仓库的架构' })
+    expect(dispatchModel('{"goal":"读文档","parentTag":"b1"}')).toEqual({ shard: true, goal: '读文档' })
+    expect(dispatchModel({ parentTag: 'a3f9' })).toBe(null)   // 入参还没到齐(goal 空)→ 不改名不改标题
+    expect(dispatchModel(null)).toBe(null)
+  })
+  it('dispatchedId:从回执抠分片卡 id(点块跳该片镜像视图)', () => {
+    expect(dispatchedId('分片已派出,id=17。它是【无人值守隐藏工人】…')).toBe('17')
+    expect(dispatchedId('已拉起动态工作流,id=3(卡片已打开…)')).toBe('3')
+    expect(dispatchedId('派发被拒:主控方案尚未批准')).toBe('')
+    expect(dispatchedId('')).toBe('')
   })
 })

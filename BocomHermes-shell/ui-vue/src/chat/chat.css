@@ -72,7 +72,10 @@ html[data-embed="1"] .hl { display: none; }
   flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden;
   padding: 14px 16px 10px; display: flex; flex-direction: column; gap: 10px;
 }
-.feed > * { max-width: 100%; }
+/* flex: none 是必须的,不是保险:.feed 是 column flex,子项默认 flex-shrink:1;而 .toolblk/.toolgrp 带
+   overflow:hidden → 自动最小尺寸算成 0,内容一多就被压成只剩上下边框那两条线(实测主控卡派完分片后,
+   派发块全变成横线)。文字类子项有 min-content 兜底看不出来,所以这个坑一直藏着。 */
+.feed > * { max-width: 100%; flex: none; }
 
 /* 用户气泡:右对齐灰底,最大宽 80%(S2) */
 .msg-u {
@@ -109,8 +112,9 @@ html[data-embed="1"] .hl { display: none; }
 .k-think[open] summary .chev { transform: rotate(90deg); }
 .k-think summary .chev { transition: transform var(--hover-dur) var(--ez-out); }
 .k-think .body {
+  /* 不限高:思考一长就压成 200px 内滚条(用户实测"压成一条线") —— 全文直排,块本身可点 summary 折叠 */
   margin-top: 4px; font: var(--c1); color: var(--label-2); line-height: 1.6;
-  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; overflow-y: auto; opacity: 0.92;
+  white-space: pre-wrap; overflow-wrap: anywhere; opacity: 0.92;
 }
 
 /* AI 无气泡:正文直排(S2),markdown 16/26;左侧小球头像(应用图标同款) */
@@ -296,6 +300,8 @@ html[data-theme="dark"] .a-avatar { box-shadow: 0 0 0 1px rgba(91, 157, 255, .28
 .toolblk.wf .tb-name { color: var(--blue); }
 .toolblk .tb-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .toolblk .tb-summary { color: var(--label-3); flex: none; }
+/* 分片派发块:「#id 查看 →」直接跳该片镜像视图(与 task 块跳子 Agent 窗格同一交互语法) */
+.toolblk .tb-shardgo { flex: none; font: var(--c2); color: var(--blue); }
 .toolblk .tb-state { margin-left: auto; flex: none; font: var(--c2); }
 .toolblk .tb-state.running { color: var(--orange); }
 .toolblk .tb-state.done { color: var(--green); }
@@ -603,17 +609,62 @@ html[data-theme="dark"] .a-avatar { box-shadow: 0 0 0 1px rgba(91, 157, 255, .28
 .shardpanel .sp-pop:hover { color: var(--label-1); border-color: var(--blue); }
 .shardpanel .sp-chip.running { border-color: var(--green); }
 .shardpanel .sp-chip.interrupted { border-color: var(--orange); }
-.shardpanel .sp-view { max-height: 300px; overflow-y: auto; border-top: 1px solid var(--sep); padding: 9px 12px; }
+.shardpanel .sp-queued { font: var(--c2); color: var(--orange); }
+.shardpanel .sp-chip.queued { opacity: .7; border-style: dashed; cursor: default; }
+.shardpanel .sp-view { max-height: 340px; overflow-y: auto; border-top: 1px solid var(--sep); padding: 9px 12px; }
 .shardpanel .sp-empty { font: var(--c1); color: var(--label-3); }
+/* 分片视图头:这一片是谁 / 什么状态 / 第几轮 */
+.shardpanel .sp-vhd {
+  display: flex; align-items: center; gap: 7px; padding-bottom: 7px; margin-bottom: 7px;
+  border-bottom: 1px solid var(--sep);
+}
+.shardpanel .sp-vhd .vh-goal { font: var(--c1-em); color: var(--label-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shardpanel .sp-vhd .vh-meta { font: var(--c2); color: var(--label-3); font-family: var(--font-mono); flex: none; }
+.shardpanel .sp-vhd .sp-pop { margin-left: auto; border-left: 1px solid var(--sep); border-radius: var(--r-sm); }
+/* 工具行:点开看入参/结果(与主对话流工具块同口径,只是更紧凑) */
 .shardpanel .sp-tool {
   display: flex; align-items: center; gap: 7px; font: var(--c1); font-family: var(--font-mono);
-  color: var(--label-2); padding: 3px 0;
+  color: var(--label-2); padding: 3px 0; cursor: pointer;
 }
-.shardpanel .sp-tool .nm { color: var(--label-1); font-weight: 600; }
-.shardpanel .sp-tool .st.run { color: var(--orange); }
-.shardpanel .sp-tool .st.ok { color: var(--green); }
-.shardpanel .sp-tool .st.bad { color: var(--danger); }
-.shardpanel .sp-text { font-size: 13px; margin: 4px 0; }
+.shardpanel .sp-tool:hover .nm { color: var(--blue); }
+.shardpanel .sp-tool .nm { color: var(--label-1); font-weight: 600; flex: none; }
+.shardpanel .sp-tool .ti { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shardpanel .sp-tool .st { margin-left: auto; flex: none; font: var(--c2); }
+.shardpanel .sp-tool .st.running { color: var(--orange); }
+.shardpanel .sp-tool .st.done { color: var(--green); }
+.shardpanel .sp-tool .st.err { color: var(--danger); }
+.shardpanel .sp-toolbody { padding: 2px 0 6px 12px; border-left: 2px solid var(--sep); margin-left: 3px; }
+.shardpanel .sp-lb { font: var(--c2); color: var(--label-3); margin: 3px 0 1px; }
+.shardpanel .sp-toolbody pre, .shardpanel .sp-reason pre {
+  font: var(--c2); font-family: var(--font-mono); color: var(--label-2); background: var(--fill-2);
+  border-radius: var(--r-sm); padding: 5px 7px; margin: 0; max-height: 180px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+}
+.shardpanel .sp-toolbody pre.err { color: var(--danger); }
+.shardpanel .sp-reason { margin: 3px 0; }
+.shardpanel .sp-reason summary { font: var(--c2); color: var(--label-3); cursor: pointer; }
+/* 正文行:↳ 名字与正文同一行(who 是 inline span,正文里的 <p> 是块级,不拉平会自己另起一行占掉两行高) */
+.shardpanel .sp-text { font-size: 13px; margin: 4px 0; display: flex; gap: 6px; align-items: baseline; }
+.shardpanel .sp-text > span:last-child { flex: 1; min-width: 0; }
+.shardpanel .sp-text :is(p, ul, ol, h1, h2, h3, h4):first-child { margin-top: 0; }
+.shardpanel .sp-text :is(p, ul, ol):last-child { margin-bottom: 0; }
+/* 子 Agent 事件缩进 + ↳ 名字:分片主 Agent 与它 task 出去的子 Agent 泾渭分明 */
+.shardpanel .sp-who { font: var(--c2); color: var(--purple, var(--blue)); flex: none; margin-right: 4px; }
+.shardpanel .sp-tool.sub, .shardpanel .sp-text.sub, .shardpanel .sp-reason.sub { margin-left: 14px; opacity: .92; }
+
+/* ── 壳层直发注入条(分片回流 / 编排闸 / 系统提醒):左对齐机器条,不冒充用户气泡 ────── */
+.msg-sys {
+  align-self: flex-start; display: flex; align-items: baseline; gap: 7px; max-width: 88%;
+  margin: 3px 0; padding: 5px 10px; border-radius: var(--r-md);
+  border: 1px solid var(--sep); border-left: 3px solid var(--blue);
+  background: var(--fill-1); font: var(--c1); color: var(--label-2);
+}
+.msg-sys.system { border-left-color: var(--label-3); }
+.msg-sys .sy-tag { flex: none; font: var(--c2); color: var(--label-3); }
+.msg-sys .sy-text { flex: 1; min-width: 0; word-break: break-word; }
+.msg-sys .sy-go { flex: none; font: var(--c2); color: var(--blue); }
+.msg-sys.clickable { cursor: pointer; }
+.msg-sys.clickable:hover { border-color: var(--blue); }
+.msg-sys.queued { opacity: .55; }
 
 /* ── 状态行(P2c harness:✻ 正在跑什么 + 已耗时 + Esc 中断;完成短显) ────────── */
 .statusline {
@@ -669,3 +720,99 @@ html[data-theme="dark"] .a-avatar { box-shadow: 0 0 0 1px rgba(91, 157, 255, .28
   font: var(--c2); color: var(--label-3); background: var(--fill-1);
   border: 0.5px solid var(--sep); border-radius: var(--r-full); padding: 2px 10px;
 }
+
+/* ══ 编排面板(新引擎)· 替代"会跟你聊天的主控卡" ═══════════════════════════
+   旧主控卡把编排状态摊成一条对话流(进度靠注入中文、批准靠嗅探、齐没齐靠模型数)。
+   这里全部是看得见的事实:阶段 + 计数 + 节点表 + 决策留痕。面板只读,动作一律走 IPC。 */
+.runpanel { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+.runpanel > * { flex: none; }
+
+.runpanel .rp-hd { display: flex; align-items: center; gap: 9px; }
+.runpanel .rp-phase {
+  flex: none; font: var(--c2); padding: 2px 9px; border-radius: var(--r-full);
+  border: 1px solid var(--sep); color: var(--label-2); background: var(--fill-1);
+}
+.runpanel .rp-phase.executing { color: var(--green); border-color: var(--green); }
+.runpanel .rp-phase.awaiting-approval, .runpanel .rp-phase.awaiting-user { color: var(--orange); border-color: var(--orange); }
+.runpanel .rp-phase.suspended { color: var(--orange); border-color: var(--orange); }
+.runpanel .rp-phase.done { color: var(--green); border-color: var(--green); background: var(--green-10); }
+.runpanel .rp-phase.failed, .runpanel .rp-phase.cancelled { color: var(--danger); border-color: var(--danger); }
+.runpanel .rp-goal { font: var(--c1-em); color: var(--label-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.runpanel .rp-wave { flex: none; font: var(--c2); color: var(--label-3); font-family: var(--font-mono); }
+.runpanel .rp-thinking { flex: none; font: var(--c2); color: var(--blue); }
+
+.runpanel .rp-bar { height: 4px; border-radius: 2px; background: var(--fill-2); overflow: hidden; }
+.runpanel .rp-fill { height: 100%; background: var(--green); transition: width 300ms var(--ez-out); }
+.runpanel .rp-counts { display: flex; gap: 10px; font: var(--c2); color: var(--label-3); flex-wrap: wrap; }
+.runpanel .rp-counts .run { color: var(--green); }
+.runpanel .rp-counts .queued, .runpanel .rp-counts .pending { color: var(--label-3); }
+.runpanel .rp-counts .failed { color: var(--danger); }
+
+.runpanel .rp-ask {
+  display: flex; align-items: center; gap: 9px; padding: 8px 12px;
+  border: 1px solid var(--blue); border-radius: var(--r-md); background: var(--fill-1);
+}
+.runpanel .rp-ask.warn { border-color: var(--orange); }
+.runpanel .rp-asktext { font: var(--c1); color: var(--label-1); flex: 1; min-width: 0; }
+.runpanel .rp-go {
+  flex: none; font: var(--c1); border: none; border-radius: var(--r-sm);
+  background: var(--blue); color: #fff; padding: 4px 14px; cursor: pointer;
+}
+.runpanel .rp-alt {
+  flex: none; font: var(--c1); border: 1px solid var(--sep); border-radius: var(--r-sm);
+  background: var(--bg-primary); color: var(--label-2); padding: 4px 12px; cursor: pointer;
+}
+.runpanel .rp-alt:hover { border-color: var(--blue); color: var(--label-1); }
+
+.runpanel .rp-nodes { display: flex; flex-direction: column; gap: 4px; }
+.runpanel .rp-node {
+  display: flex; align-items: center; gap: 7px; padding: 6px 10px;
+  border: 1px solid var(--sep); border-radius: var(--r-sm); background: var(--fill-1); font: var(--c1);
+}
+.runpanel .rp-node.verified { opacity: .78; }
+.runpanel .rp-node.running { border-color: var(--green); }
+.runpanel .rp-node.failed { border-color: var(--danger); }
+.runpanel .rp-node.skipped, .runpanel .rp-node.cancelled { opacity: .5; }
+.runpanel .rn-ic { flex: none; }
+.runpanel .rn-title { color: var(--label-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.runpanel .rn-kind { flex: none; font: var(--c2); color: var(--label-3); }
+.runpanel .rn-tag { flex: none; font: var(--c2); padding: 0 6px; border-radius: var(--r-full); border: 1px solid var(--sep); color: var(--label-3); }
+.runpanel .rn-tag.patch { color: var(--blue); border-color: var(--blue); }
+.runpanel .rn-tag.redo { color: var(--orange); border-color: var(--orange); }
+.runpanel .rn-tag.bad { color: var(--danger); border-color: var(--danger); }
+.runpanel .rn-go, .runpanel .rn-retry {
+  flex: none; font: var(--c2); border: 1px solid var(--sep); border-radius: var(--r-sm);
+  background: transparent; color: var(--blue); padding: 1px 8px; cursor: pointer;
+}
+.runpanel .rn-retry { color: var(--orange); }
+.runpanel .rp-empty { font: var(--c1); color: var(--label-3); padding: 8px 2px; }
+
+.runpanel .rp-dechd { font: var(--c2); color: var(--label-3); background: none; border: none; cursor: pointer; padding: 0; text-align: left; }
+.runpanel .rp-dechd:hover { color: var(--label-1); }
+.runpanel .rp-declist { display: flex; flex-direction: column; gap: 2px; padding: 4px 0 0 12px; border-left: 2px solid var(--sep); }
+.runpanel .rp-decrow { display: flex; gap: 7px; font: var(--c2); color: var(--label-2); }
+.runpanel .rp-decrow.bad { color: var(--danger); }
+.runpanel .rp-decrow .dc-pt { flex: none; font-family: var(--font-mono); color: var(--label-3); }
+
+.runpanel .rp-result { padding: 9px 12px; border: 1px solid var(--green); border-radius: var(--r-md); background: var(--green-10); }
+.runpanel .rr-sum { font: var(--c1); color: var(--label-1); }
+.runpanel .rr-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.runpanel .rr-file { font: var(--c2); font-family: var(--font-mono); color: var(--label-2); background: var(--fill-2); border-radius: var(--r-sm); padding: 1px 7px; }
+.runpanel .rr-gaps { margin-top: 6px; font: var(--c2); color: var(--danger); }
+
+.runpanel .rp-say { display: flex; gap: 7px; align-items: center; margin-top: auto; padding-top: 6px; }
+.runpanel .rp-input {
+  flex: 1; min-width: 0; font: var(--c1); color: var(--label-1);
+  background: var(--fill-1); border: 1px solid var(--sep); border-radius: var(--r-md); padding: 6px 10px;
+}
+.runpanel .rp-input:focus { outline: none; border-color: var(--blue); }
+.runpanel .rp-send {
+  flex: none; font: var(--c1); border: none; border-radius: var(--r-sm);
+  background: var(--blue); color: #fff; padding: 5px 13px; cursor: pointer;
+}
+.runpanel .rp-send:disabled { opacity: .4; cursor: default; }
+.runpanel .rp-stop {
+  flex: none; font: var(--c1); border: 1px solid var(--sep); border-radius: var(--r-sm);
+  background: transparent; color: var(--label-3); padding: 4px 11px; cursor: pointer;
+}
+.runpanel .rp-stop:hover { color: var(--danger); border-color: var(--danger); }

@@ -135,6 +135,10 @@ export function spawnChat(p: any = {}) {
   if (p.disp) q.set('disp', p.disp)
   if (p.orch) q.set('orch', '1')
   if (p.wf) q.set('wf', '1')
+  // run:编排面板的身份。丢了它 → 内嵌卡的 s.runId 恒空 → ChatApp 不命中面板分支 → RunPanel 永不挂载,
+  // 用户看到的是一张空的 wf/orch 对话卡。主进程 spawnCard 已经把 run 放进 shell-spawn 载荷了,是这里漏组。
+  // (run-panel-stub 直接 loadFile chat.html 绕过了 shell,所以这个洞目检覆盖不到)
+  if (p.run) q.set('run', String(p.run))
   // cardImpl 双轨(P2a/P2b):默认 Vue 对话页(./chat.html,与 shell 同目录 dist;wf/orch 已于 P2b-3 迁移)
   let cardImpl = 'vue'
   try { cardImpl = ((BH()?.getSettings?.() || {}) as any).cardImpl || 'vue' } catch { /* 静默 */ }

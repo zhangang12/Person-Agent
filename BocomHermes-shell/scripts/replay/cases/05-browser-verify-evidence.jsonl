@@ -1,7 +1,0 @@
-# 用例⑤ transcript:两个前端分片各两行 —— todowrite(全勾收官) + 一条动作记录。
-# $s1 = 分片A 会话(browser_navigate 浏览器自验 → 浏览器动作轨算证据,不标未验证);
-# $s2 = 分片B 会话(bash 是 echo,无任何验证 → 标未验证,且验证棒 goal 含浏览器自验步骤)。
-{"t":0,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s1","part":{"id":"prt_td1","callID":"c1","type":"tool","tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"实现登录页","status":"completed"}]}}}}}}
-{"t":1,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s1","part":{"id":"prt_br1","callID":"c2","type":"tool","tool":"browser_navigate","state":{"status":"completed","input":{"url":"http://127.0.0.1:8080/login"},"output":"登录页"}}}}}
-{"t":2,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s2","part":{"id":"prt_td2","callID":"c3","type":"tool","tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"实现注册页","status":"completed"}]}}}}}}
-{"t":3,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s2","part":{"id":"prt_b2","callID":"c4","type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"echo done"},"output":"done"}}}}}

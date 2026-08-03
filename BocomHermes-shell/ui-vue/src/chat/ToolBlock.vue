@@ -5,7 +5,7 @@
 // read-spill 外溢(输出过长已外溢/读取量到预算线):给「查看全文」——内容落在临时文件,经 spillRead IPC 读回展示
 // (模型上下文里只有头部+路径是刻意的上下文治理,但【用户】不该跟着看不到全文,实测病灶)。
 import { watch, ref, computed } from 'vue'
-import { s, subJump } from './store'
+import { s, subJump, shardJump } from './store'
 import { BH } from './bridge'
 import type { ToolItem } from './store'
 
@@ -13,9 +13,14 @@ const props = defineProps<{ item: ToolItem }>()
 // verbose 打开时,所有工具块自动展开(关不强制收回,用户手折的保留)
 watch(() => s.verbose, (v) => { if (v) props.item.open = true })
 const stateText = { running: '运行中…', done: '完成', err: '出错' } as const
+// 头部点击的三种去处:委派 → 子 Agent 窗格;分片派发 → 该片镜像视图;其余 → 折叠/展开
+const jumpTip = computed(() =>
+  props.item.taskChild || props.item.isTask ? '点我看这个子 Agent 的全程(侧边栏)'
+    : props.item.shardId ? '点我看这个分片的实时会话(分片进度面板)' : '')
 function onHead() {
   if (props.item.isTask) { subJump(props.item.taskChild || ('ph:' + props.item.partID)); return }
   if (props.item.taskChild) { subJump(props.item.taskChild); return }
+  if (props.item.shardId && shardJump(props.item.shardId)) return
   props.item.open = !props.item.open
 }
 
@@ -49,10 +54,11 @@ async function spillOpenFull() {
 
 <template>
   <div class="toolblk" :class="[item.state, { wf: item.isWf, open: item.open }]">
-    <div class="tb-hd" :class="{ jumpable: !!item.taskChild }" :title="item.taskChild ? '点我看这个子 Agent 的全程(侧边栏)' : ''" @click="onHead">
+    <div class="tb-hd" :class="{ jumpable: !!item.taskChild || !!item.shardId }" :title="jumpTip" @click="onHead">
       <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
       <span class="tb-name">{{ item.name }}</span>
       <span v-if="item.title" class="tb-title">{{ item.title }}</span>
+      <span v-if="item.shardId" class="tb-shardgo" title="看这个分片的实时会话">#{{ item.shardId }} 查看 →</span>
       <span v-if="item.summary" class="tb-summary">{{ item.summary }}</span>
       <!-- read-spill 外溢:「全文」提到折叠头(默认折叠块里的按钮用户永远发现不了 —— 实测病灶);点了读回并自动展开 -->
       <button v-if="spill" class="tb-spillmini" :disabled="spillLoading" title="输出过长已外溢到临时文件,点我读回全文" @click.stop="spillOpenFull">全文</button>

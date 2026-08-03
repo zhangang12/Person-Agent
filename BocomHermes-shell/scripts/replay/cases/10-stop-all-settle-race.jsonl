@@ -1,3 +1,0 @@
-# 用例⑩ transcript:分片 todowrite(1 条 pending)—— 让分片轮末保持 running 并挂上 45s 落定计时。
-# $s1 = 分片会话;响应走 fake serve 默认行为。
-{"t":0,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s1","part":{"id":"prt_td1","callID":"call_td1","type":"tool","tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"勘察认证模块入口","status":"pending"}]}}}}}}

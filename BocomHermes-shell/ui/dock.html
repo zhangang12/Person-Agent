@@ -318,7 +318,7 @@
   function renderWfDetail(w) {
     const d = $('wfDetail')
     const stTxt = w.status === 'running' ? (w.busy ? '进行中' : '待操作') : w.status === 'done' ? '已完成' : w.status === 'interrupted' ? '中断' : '存档'
-    const kindTxt = w.kind === 'orch' ? '主控·多层派发' : w.kind === 'pipeline' ? '任务编排' : '工作流'
+    const kindTxt = w.runId ? '编排' : w.kind === 'orch' ? '主控·多层派发' : w.kind === 'pipeline' ? '任务编排' : '工作流'
     // 批准闸横幅:主控卡方案待批(planApproved===false 且还在跑)→ 决策点横幅置顶(去批准=聚焦到主控卡)
     const gate = (w.kind === 'orch' && w.planApproved === false && w.status === 'running')
       ? '<div class="wfd-gate"><div class="wfd-gt">⚡ 批准闸 · 拆分方案待批准</div><div class="wfd-gd">主控卡已出拆分方案,批准后各分片才会开跑。</div><button class="wfd-gbtn" data-act="approve">去批准</button></div>' : ''

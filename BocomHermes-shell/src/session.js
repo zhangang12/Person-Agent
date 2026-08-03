@@ -797,7 +797,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
           if (n > 12000 && !si._bigReadWarned) {
             si._bigReadWarned = true
             const tip = '单次 read 读入 ' + n + ' 字 —— 大文件请用 offset/limit 分段精读（单次 ≤400 行），或派 task 子 Agent 深读'
-            if (isWf) si.wc.send('card-inject', { text: '(系统提醒:' + tip + '。子 Agent 结论落盘成文档,上下文里只留路径+一句话。)', disp: '上下文提醒:' + tip })
+            if (isWf) si.wc.send('card-inject', { text: '(系统提醒:' + tip + '。子 Agent 结论落盘成文档,上下文里只留路径+一句话。)', disp: '上下文提醒:' + tip, origin: 'system' })
             else si.wc.send('card-note', { text: tip, tone: 'muted' })
           }
           const readWarnMax = Math.max(20000, Math.round(+(S.settings.knobs && S.settings.knobs.readWarnMax) || 100000))
@@ -805,7 +805,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
             si._readBytesWarned = true
             const ck = Math.round((+(S.settings.knobs && S.settings.knobs.ctxLimitMax) || 192000) / 1000) + 'k'
             const tip2 = '本会话已累计读入约 ' + Math.round(si.readBytes / 1000) + 'k 字文件内容（' + ck + ' 上下文的一半）—— 后续大文件的改造/转换/迁移建议【逐文件派 task 子 Agent】读（它读原文 → 写目标文件 → 只回路径+一句差异），你的上下文留给判断与整合'
-            if (isWf) si.wc.send('card-inject', { text: '(系统提醒:' + tip2 + '。)', disp: '上下文提醒:' + tip2 })
+            if (isWf) si.wc.send('card-inject', { text: '(系统提醒:' + tip2 + '。)', disp: '上下文提醒:' + tip2, origin: 'system' })
             else si.wc.send('card-note', { text: tip2, tone: 'muted' })
           }
         }
@@ -1207,7 +1207,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
       // serve 拉起/建会话失败:分片隐藏卡死在这 = 主控永远等不到这片(静默整链卡死,实测)。
       // 这类失败不走 card-send,wfTurnError 三路兜底都到不了 —— 在这里补一刀,让分片按 interrupted 收官上报
       try { if (S.wfTurnError && S.wfCardByWc && S.wfCardByWc.has(e.sender.id)) S.wfTurnError(e.sender.id) } catch {}
-      throw err
+      throw new Error(String((err && err.message) || err))   // 换落新 Error:异形错误对象过不了 IPC 克隆,真实原因会被吞
     }
   })
 
@@ -1439,7 +1439,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
             si.maxTokResumeN = (si.maxTokResumeN || 0) + 1
             if (si.maxTokResumeN <= 3) {
               log('[ctx-resume] max_tokens 截断续写(' + si.maxTokResumeN + '/3) sid=' + sessionId)
-              if (!si.wc.isDestroyed()) si.wc.send('card-inject', { text: '(系统提醒:输出 token 到上限被截断 —— 不要道歉、不要复述前文,直接从被切断的那一点接着写;把剩余工作拆得更小。)', disp: '输出被截断,自动续写(' + si.maxTokResumeN + '/3)' })
+              if (!si.wc.isDestroyed()) si.wc.send('card-inject', { text: '(系统提醒:输出 token 到上限被截断 —— 不要道歉、不要复述前文,直接从被切断的那一点接着写;把剩余工作拆得更小。)', disp: '输出被截断,自动续写(' + si.maxTokResumeN + '/3)', origin: 'system' })
             } else if (!si.wc.isDestroyed()) {
               si.wc.send('card-note', { text: '输出已连续 3 次被 max_tokens 截断 —— 建议手动把任务拆小,或点「重试本轮」', tone: 'muted' })
             }
@@ -1475,7 +1475,9 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
         throw new Error('模型响应超时，可重试。')
       if (/ECONNREFUSED|ECONNRESET|socket hang up|ENOTFOUND|EPIPE|fetch failed/i.test(m))
         throw new Error('引擎连接中断（serve 可能已退出）。关掉这张卡重开即可（已自动准备重启 serve）。')
-      throw err
+      // 未识别的错误必须换落成新 Error 再抛:原始 err 若是非 Error 的异形对象(网关/SDK 错),
+      // 过不了 Electron IPC 结构化克隆,渲染端只剩一句 "An object could not be cloned",真实原因被吞(实测)。
+      throw new Error(m)
     } finally {
       stopPoll(); stopQPoll(); stopChildPoll(); turnBusy.delete(sessionId)
       // P3.3 todo 权威数据源:serve 的 GET /session/:id/todo 比解析 todowrite 工具入参可靠(弱模型参数畸形会漏判)。

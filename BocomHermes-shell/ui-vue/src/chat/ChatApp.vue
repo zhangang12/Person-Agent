@@ -11,6 +11,7 @@ import ArtDrawer from './ArtDrawer.vue'
 import SubAgentRail from './SubAgentRail.vue'
 import WfBar from './WfBar.vue'
 import ShardPanel from './ShardPanel.vue'
+import RunPanel from './RunPanel.vue'
 import StatusLine from './StatusLine.vue'
 import KDialog from '../components/KDialog.vue'
 
@@ -46,6 +47,13 @@ function scrollToPerm() {
       <p>本卡类型（{{ s.unsupportedMode }}）暂未迁移到新对话页。</p>
       <p class="sub">工作流 / 编排 / 分片卡仍由旧版卡片承载（cardImpl 开关强制 legacy）。当前页未连接引擎，可直接关闭。</p>
     </div>
+    <!-- 编排面板(新引擎):这张卡不是对话卡,没有回合 —— 对话流/输入条/状态行一律不挂,
+         分片镜像视图仍复用 ShardPanel(点节点「查看」进去看那一片的实时会话) -->
+    <template v-else-if="s.runId">
+      <RunPanel />
+      <ShardPanel />
+      <ArtDrawer />
+    </template>
     <template v-else>
       <!-- 权限 sticky 摘要钉:批准条被流式顶出视口后,输入框上方仍有一枚钉;点击滚回批准条 -->
       <button v-if="pendingPerms.length" class="permsticky" @click="scrollToPerm">

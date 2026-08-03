@@ -419,6 +419,7 @@
     if (p.disp) q.set('disp', p.disp)
     if (p.orch) q.set('orch', '1')
     if (p.wf) q.set('wf', '1')
+    if (p.run) q.set('run', String(p.run))   // 编排面板身份(legacy 页不渲染它,但要能判出形态)
     const wv = document.createElement('webview')
     wv.setAttribute('src', 'card.html?' + q.toString())
     wv.setAttribute('preload', PRELOAD_URL)

@@ -183,7 +183,7 @@ async function stopAll() {
   try { await BH()?.wfStopAll?.() } catch { /* 静默 */ }
   setTimeout(loadWf, 500)
 }
-const kindText = (w: any) => w.kind === 'orch' ? '主控·多层派发' : w.kind === 'pipeline' ? '任务编排' : '工作流'
+const kindText = (w: any) => w.runId ? '编排' : w.kind === 'orch' ? '主控·多层派发' : w.kind === 'pipeline' ? '任务编排' : '工作流'
 const pctOf = (w: any) => (w.todoTotal > 0 ? Math.round((100 * (w.todoDone || 0)) / w.todoTotal) : -1)
 const rel = (ts: number) => {
   const d = Date.now() - ts, m = 60000, h = 3600000

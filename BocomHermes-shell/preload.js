@@ -79,6 +79,15 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   onCardNote: (cb) => ipcRenderer.on('card-note', (_e, p) => cb(p)),
   onShardProgress: (cb) => ipcRenderer.on('shard-progress', (_e, p) => cb(p)),   // 多层派发:主控卡收分片进度(静默分片卡的聚合状态)
   shardFocus: (id) => ipcRenderer.invoke('shard-focus', id),                     // 点分片进度块 → 把那张大隐藏卡拉到台前细看
+  // ── 编排面板(新引擎):批准/插话/中止都是【显式状态转移】,不再靠渲染端从工具流里嗅 ──
+  onRunSnapshot: (cb) => ipcRenderer.on('run-snapshot', (_e, p) => cb(p)),       // 主进程每次状态变化推一份只读投影
+  runSnapshot: (runId) => ipcRenderer.invoke('run-snapshot', { runId: runId || null }),
+  runApprove: (runId, edits) => ipcRenderer.invoke('run-approve', { runId: runId || null, edits: edits || null }),
+  runReject: (runId, note) => ipcRenderer.invoke('run-reject', { runId: runId || null, note: String(note || '') }),
+  runNote: (runId, text) => ipcRenderer.invoke('run-note', { runId: runId || null, text: String(text || '') }),
+  runAbort: (runId) => ipcRenderer.invoke('run-abort', { runId: runId || null }),
+  runRetryNode: (runId, nodeId) => ipcRenderer.invoke('run-retry-node', { runId: runId || null, nodeId: String(nodeId || '') }),
+  runResume: (runId) => ipcRenderer.invoke('run-resume', { runId: runId || null }),
   // files/skill 经 JSON 深克隆去代理:Vue 响应式对象过不了 IPC 结构化克隆(实测"An object could not be cloned"整条回合报废),一律剥平
   cardSend: (text, files, skill) => ipcRenderer.invoke('card-send', { text: String(text == null ? '' : text), files: JSON.parse(JSON.stringify(files || [])), skill: skill ? String(skill) : null }),
   skillsList: () => ipcRenderer.invoke('skills-list'),

@@ -2,7 +2,7 @@
 //   ①全清理:abort/删会话/退休 serve/wf 落 interrupted+存档/wfDequeue/orch 级联/forgetBusy 一项不漏
 //   ②done 终态不被覆写 ③detach:会话活着(si.wc 置空、sid 键会话态全留)、wf 不收官、wc 键登记摘净、幂等
 //   ④幂等:同一 wcId 重复清理安全 ⑤orch 级联杀分片
-//   ⑥running 分片关卡 = interrupted 收官:补调 shardSettled 唤醒主控 + pushShardProgress 刷面板(状态机黑洞修复);
+//   ⑥running 编排节点关卡 = interrupted 收官:通知编排引擎(onNodeCardGone)+ pushShardProgress 刷面板;
 //     唤醒一次性标志已消费/非分片则不重复唤醒
 // 跑法:npm run cleanup:test(零依赖 ok() 风格;假 oc/log/BrowserWindow 全注入,不碰 electron)
 import { createRequire } from 'module'
@@ -50,7 +50,7 @@ function makeHarness() {
     getShardSettleTimers: () => timers,
     wfDequeue: () => { calls.dequeue++ },
     forgetBusy: (id) => calls.forget.push(id),
-    shardSettled: (r) => calls.settled.push(r),
+    onNodeCardGone: (r) => calls.settled.push(r),
     pushShardProgress: (t) => calls.progress.push(t),
   })
   return { S, oc, calls, timers, wins, cleanup, serve }
@@ -138,20 +138,20 @@ console.log('card-cleanup 自测')
 // ── 用例 6:running 分片关卡 → interrupted 收官唤醒主控 + 刷面板(状态机黑洞修复)──
 {
   const { S, calls, cleanup } = makeHarness()
-  const wreg = { id: 30, kind: 'workflow', status: 'running', at: Date.now() - 5000, parentOrch: 'tagY', orchNotified: false }
+  const wreg = { id: 30, kind: 'workflow', status: 'running', at: Date.now() - 5000, runId: 'R7', nodeId: 'n1', parentOrch: 'tagY' }
   S.wfCardByWc.set(101, wreg)
   cleanup(S, 101, null)
   ok('分片落 interrupted', wreg.status === 'interrupted')
-  ok('补调 shardSettled 唤醒主控(一次性)', calls.settled.length === 1 && calls.settled[0] === wreg)
-  ok('补调 pushShardProgress 刷面板', calls.progress.join() === 'tagY')
+  ok('★通知编排引擎按磁盘产出判这一节点的收官', calls.settled.length === 1 && calls.settled[0] === wreg)
+  ok('顺带刷分片进度面板(alias 垫片)', calls.progress.join() === 'tagY')
 }
-// ── 用例 7:唤醒已消费(orchNotified=true)/非分片 → 不重复唤醒 ──
+// ── 用例 7:普通单工作流卡(无 runId)关卡 → 不通知编排引擎 ──
 {
   const { S, calls, cleanup } = makeHarness()
-  const wreg = { id: 31, kind: 'workflow', status: 'running', at: Date.now() - 5000, parentOrch: 'tagY', orchNotified: true }
+  const wreg = { id: 31, kind: 'workflow', status: 'running', at: Date.now() - 5000 }   // 普通单工作流卡:没有 runId
   S.wfCardByWc.set(101, wreg)
   cleanup(S, 101, null)
-  ok('已消费不重复唤醒/刷面板', calls.settled.length === 0 && calls.progress.length === 0)
+  ok('★普通工作流卡关卡不惊动编排引擎', calls.settled.length === 0 && calls.progress.length === 0)
   const h2 = makeHarness()
   const w2 = { id: 32, kind: 'chat', status: 'running', at: Date.now() - 5000 }   // 无 parentOrch:普通工作流卡不唤醒
   h2.S.wfCardByWc.set(101, w2)

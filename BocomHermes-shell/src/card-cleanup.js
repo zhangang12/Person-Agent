@@ -9,10 +9,10 @@
 // sessionInfo[sid] 不删,仅把这张死 wc 置空(serve/readStat 等会话态保留,重接时 card-init 整体重建;
 // 空窗期流事件被 onText 守卫丢弃、权限/提问自动拒 —— 窗口极短,重接后回放补齐);streamBuf/sentPrompt/firstMsgCtx 是 sid 键的会话态,全留。
 // browser.js:644-664 的教训在此守:abort 会话 / retireIfOrphan / cardDir / modelByWc / forgetBusy 一项不能漏(全清理分支)。
-// 分片关卡收官(状态机黑洞修复):running 分片直写 interrupted 后,orchNotified 未消费的要补调 shardSettled + pushShardProgress
+// 工人卡关卡收官:running 节点直写 interrupted 后,要把"卡没了"这件事通知编排引擎(它按磁盘产出判)
 // (注入依赖)—— 不唤醒主控 = 主控死等这片、面板看不到终态。
 // 幂等:各 Map 删除重复执行无副作用,wf 注册表项摘除后 wreg 取不到即空转 —— 重复调用安全。win 参数仅保留调用方语义(独立卡窗),清理本身只用 wcId。
-module.exports = function makeCardCleanup({ S, oc, log, BrowserWindow, getShardSettleTimers, wfDequeue, forgetBusy, shardSettled, pushShardProgress }) {
+module.exports = function makeCardCleanup({ S, oc, log, BrowserWindow, getShardSettleTimers, wfDequeue, forgetBusy, onNodeCardGone, pushShardProgress, onRunCardGone }) {
   return function cleanupCardContext(S2, wcId, win, opts) {
     const detach = !!(opts && opts.detach)
     const shardSettleTimers = getShardSettleTimers()   // 惰性取:装配期该 Map 尚在 TDZ,调用期必已就绪
@@ -45,11 +45,12 @@ module.exports = function makeCardCleanup({ S, oc, log, BrowserWindow, getShardS
     // detach 时 wreg 恒取空(!detach 守卫)→ 收官/存档/摘键/wfDequeue/orch 级联整串跳过(钉出挪窝不收官,重挂由 trackWcSession 认领)
     const wreg = !detach && S.wfCardByWc && S.wfCardByWc.get(wcId)
     if (wreg) { wreg.status = wreg.status === 'done' ? 'done' : 'interrupted'; wreg.elapsedMs = Date.now() - wreg.at; S.wfCardByWc.delete(wcId); try { S.wfArchive && S.wfArchive(wreg) } catch (e2) { log('wf archive err: ' + e2.message) } }
-    // 分片关卡 = interrupted 收官:必须唤醒主控 + 刷进度面板 —— 直写状态不唤醒 = 状态机黑洞(主控死等这片,面板看不到终态)。
-    // 唤醒一次性标志未消费的才补调(shardSettled 内部仍自守);shardSettled/pushShardProgress 由装配方注入(window.js)
-    if (wreg && wreg.parentOrch && !wreg.orchNotified) {
-      try { shardSettled && shardSettled(wreg) } catch (e2) { log('shard settled err: ' + e2.message) }
-      try { pushShardProgress && pushShardProgress(wreg.parentOrch) } catch {}
+    // 工人卡关闭 = 编排要按磁盘产出判这一节点的收官(直写状态不通知引擎 = 编排死等这个节点)。
+    // 判据从"有 parentOrch 且一次性标志未消费"改成"有 runId":新引擎没有一次性标志这种东西,
+    // 事件幂等由状态守卫保证(终态节点收到重复事件直接吸收)。回调由装配方注入(window.js)。
+    if (wreg && wreg.runId) {
+      try { onNodeCardGone && onNodeCardGone(wreg) } catch (e2) { log('orch node gone err: ' + e2.message) }
+      try { if (wreg.parentOrch) pushShardProgress && pushShardProgress(wreg.parentOrch) } catch {}
     }
     clearTimeout(shardSettleTimers.get(wcId)); shardSettleTimers.delete(wcId)   // 关窗即埋落定计时:否则计时器到点把 close 写入的 interrupted 覆写回 done(终态写错)
     if (wreg) { try { wfDequeue() } catch {} }   // 关卡腾出并发位 → 排队工作流补位(出队触发点②)
@@ -65,6 +66,9 @@ module.exports = function makeCardCleanup({ S, oc, log, BrowserWindow, getShardS
         }
       } catch {}
     }
+    // 编排面板卡关闭 → 通知引擎(整个 run 取消)。注入的 onNodeCardGone 只覆盖得到【工人卡】,
+    // 面板卡走不到那条路,没有别的注入点够得着 —— 这是本模块为双轨付出的全部代价:两行。
+    if (wreg && wreg.runId && typeof onRunCardGone === 'function') { try { onRunCardGone(wreg) } catch {} }
     forgetBusy(wcId)   // 关卡即清"忙",避免球卡在思考态
   }
 }

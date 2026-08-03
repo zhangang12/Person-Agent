@@ -1,7 +1,8 @@
-// BocomHermes · 动态工作流编排 MCP(本地 stdio,零业务依赖)
-// 给对话 Agent 一个能力:当它判断"这事自己一个人扛不动"时,自主升格给动态工作流。
-//   · 调 run_workflow → relay 到主进程 spawnWorkflow → 开一张工作流卡(Claude Code 式:单主 Agent
-//     在连续上下文里自拆 + task 并行派子 Agent 深挖 + 自综合;规划先行,用户批准后才开跑)。
+// BocomHermes · 升格 MCP(本地 stdio,零业务依赖)
+// 给对话 Agent 两级升格能力,由它自己在上下文里判断该不该用(不是规则触发):
+//   · run_workflow      → 一张【单工作流卡】:一个主 Agent 在连续上下文里自拆 + task 并行派子 Agent + 自综合。
+//   · run_orchestration → 【编排引擎】:代码测量级 → 规划器出节点图 → 用户在面板批准 → 按依赖并行派工人节点
+//                          → 每个节点收官都重新规划 → 收口。控制流归代码,模型只在 plan/replan 两点做判断。
 //   · workflow_result 取成果:内存注册表按轮快照(进行中也能取),关卡/重启后由 userData/workflows/ 存档兜底。
 //   · memory_add 任务尾蒸馏:把"系统级、三个月仍真"的事实写进项目知识库(userData/knowledge/,按项目分库),
 //     下次开卡随首条消息自动注入 —— 知识不落盘等于探索没发生(设计备忘 §7)。项目归属取 MCP 进程 cwd。
@@ -42,19 +43,19 @@ const TOOLS = [
   {
     name: 'run_workflow',
     description:
-      '把复杂目标升格给"动态工作流":主 Agent 卡自规划(todo 清单可见)、task 并行派子 Agent 深挖、自综合成品;过程可视,用户可插话或中止。\n' +
+      '把复杂目标升格给【单工作流卡】:一个主 Agent 自规划(todo 清单可见)、用 task 并行派子 Agent 深挖、自己综合成品;过程可视,用户可插话或中止。\n' +
       '【何时调用 —— 你自己判断,不是规则】满足任一即升格更好:\n' +
       ' · 大范围深读代码/资料(几十上百个文件),子 Agent 各自独立上下文分头读;\n' +
       ' · 并行探查多个相对独立的来源(如 代码 + 数据库 + 文档);\n' +
       ' · 多个独立视角互相校验(如 实现方 + 专挑刺的评审方)。\n' +
-      '【规模拿不准】调 run_orchestration:主控预检后自动路由,装不下才拆多层。\n' +
+      '【目标更大、想要真正的并行编排】调 run_orchestration —— 那边由代码持有编排状态,能拆节点图、按依赖并行、每步重规划。\n' +
       '【何时不要调】简单查询、解释、小改动、闲聊 —— 直接自己答,别升格(更慢更贵)。\n' +
       '【拿不准】倾向先自己做。',
     inputSchema: {
       type: 'object',
       properties: {
         goal: { type: 'string', description: '总目标一句话(把已掌握的关键上下文写进去,工作流主 Agent 看不到本对话)' },
-        parentTag: { type: 'string', description: '【仅主控卡派分片时必填】你的主控标记(形如 a3f9,就在你的系统提示里,照抄)。壳层校验后机械注入回流标记——不要在 goal 里手写 [orch:xxx],手写容易写错串台。对话卡直接升格工作流时【不要填】。' },
+        parentTag: { type: 'string', description: '【已废弃,壳层会拒绝】编排的节点由编排面板按依赖自动派发,不再由谁手写标记派分片。要加活儿请让用户在编排面板【插话】。' },
       },
       required: ['goal'],
     },
@@ -62,13 +63,14 @@ const TOOLS = [
   {
     name: 'run_orchestration',
     description:
-      '【复杂目标的默认升格入口】交给主控卡:先预检估量(只扫清单不读内容),单卡装得下就自动改用单工作流,装不下才拆成 N 个独立分片主 Agent 并行,完成后自动派索引 Agent 把分片结论关联成两级索引 README。中间成果全落盘,上下文只过路径。\n' +
-      '【何时调】任何复杂目标都可以 —— 预检路由自动选单层/多层,不用你判断规模。\n' +
+      '【复杂目标的默认升格入口】交给编排引擎:壳层先用代码实测目录量级(几个文件、多大、怎么分布,不用你估)→ 规划器把目标拆成可并行、各自可交付的节点 → 【用户在编排面板批准】→ 按依赖并行派工人节点 → 每个节点收官都重新规划一次(可以加片、撤还没开跑的片、也可以直接收口)→ 收口。\n' +
+      '过程全程可视:面板上能看到阶段、节点表(补做/重做次数、哪一项退出检查没过)、每次决策的理由。用户随时可以插话改计划或中止。\n' +
+      '【何时调】任何复杂目标都可以 —— 拆几片、值不值得拆由规划器判断,不用你估规模。\n' +
       '【何时不要调】简单查询、解释、小改动、闲聊 —— 直接自己答,别升格(更慢更贵)。',
     inputSchema: {
       type: 'object',
       properties: {
-        goal: { type: 'string', description: '总目标一句话(把已掌握的关键上下文写进去,主控看不到本对话)' },
+        goal: { type: 'string', description: '总目标一句话(把已掌握的关键上下文写进去,编排看不到本对话)' },
       },
       required: ['goal'],
     },
@@ -101,23 +103,25 @@ async function callTool(name, a) {
   a = a || {}
   if (name === 'run_workflow') {
     const goal = String(a.goal || '').trim()
-    if (!goal) return '需要 goal(交给小队的总目标)'
+    if (!goal) return '需要 goal(交给工作流的总目标)'
     const body = { goal }
     if (a.parentTag != null && String(a.parentTag).trim()) body.parentTag = String(a.parentTag).trim()
     const r = await relayPost('/orch/run', body)
-    if (r.error) return '派发被拒:' + r.error
-    if (r.queued) return '工作流并发位已满,已进队列(第 ' + (r.position || '?') + ' 位)—— 前面跑完自动开跑,不用你重派。之后调 workflow_result 取成果。'
-    return '已拉起动态工作流,id=' + (r.id != null ? r.id : '?') + '(卡片已打开:主 Agent 自拆 + 并行派子 Agent 深挖 + 自综合,过程可视、用户可插话)。'
+    if (r.error) return '升格被拒:' + r.error
+    if (r.queued) return '并发位已满,已进队列(第 ' + (r.position || '?') + ' 位)—— 前面跑完自动开跑,不用你重派。之后调 workflow_result 取成果。'
+    return '已拉起单工作流,id=' + (r.id != null ? r.id : '?') + '(卡片已打开:主 Agent 自拆 + 并行派子 Agent 深挖 + 自综合,过程可视、用户可插话)。'
       + '注意:它的第一份计划要用户在卡片里点【开始执行】批准 —— 若用户不知道,提醒他去批准,批准后它自动开跑。'
       + '之后调 workflow_result(id="' + (r.id != null ? r.id : '') + '") 取回成果继续用(进行中也能取到最新阶段成果);现在可以先和用户讨论别的。'
   }
   if (name === 'run_orchestration') {
     const goal = String(a.goal || '').trim()
-    if (!goal) return '需要 goal(交给主控的总目标)'
+    if (!goal) return '需要 goal(交给编排的总目标)'
     const r = await relayPost('/orch/run-orch', { goal })
-    return '已拉起多层派发主控,id=' + (r.id != null ? r.id : '?') + '(主控卡已打开:它先预检估量——单卡装得下会自动改用单工作流;装不下才出拆分方案等批准,批准后派 N 个分片工作流并行/排队执行,全部完成自动派索引 Agent 写两级索引)。'
-      + '注意:拆分方案要用户在主控卡里点【开始执行】批准 —— 若用户不知道,提醒他去批准。'
-      + '之后主控会自己等分片、自己收口;你只管用 workflow_result(id="' + (r.id != null ? r.id : '') + '") 取最终成果。'
+    if (r.error) return '起编排失败:' + r.error
+    return '已起编排,id=' + (r.id != null ? r.id : '?') + '(编排面板已打开)。'
+      + '它先用代码实测目录量级,再出一份节点方案 —— 【方案要用户在面板上点【开始执行】批准】,若用户不知道,提醒他去面板批准。'
+      + '批准后它按依赖并行派工人节点,每个节点收官都会重新规划一次(加片/撤片/收口都由它自己判断),过程和每次决策的理由都在面板上看得到。'
+      + '你不用管它,之后调 workflow_result(id="' + (r.id != null ? r.id : '') + '") 取阶段成果或最终交付;现在可以先和用户讨论别的。'
   }
   if (name === 'workflow_result') {
     const body = {}

@@ -5,7 +5,7 @@
 'use strict'
 const knowledge = require('./knowledge')
 module.exports = function initMail(ctx) {
-  const { S, app, path, fs, shell, ipcMain, log, oc, Notification, email, attachments, mailCache, emailSummarySeen, db, initOutbox, openOutbox, createMailCenter, openMailView, spawnCard, spawnWorkflow, spawnOrchestrator, maybeSuggestMeeting, skillList, skillRun, skillRunBatch, skillPageRead, skillPageAct, skillTakeoverDone } = ctx
+  const { S, app, path, fs, shell, ipcMain, log, oc, Notification, email, attachments, mailCache, emailSummarySeen, db, initOutbox, openOutbox, createMailCenter, openMailView, spawnCard, spawnWorkflow, startOrchRun, maybeSuggestMeeting, skillList, skillRun, skillRunBatch, skillPageRead, skillPageAct, skillTakeoverDone } = ctx
   // 解析"有效的" SMTP 配置:sameAsImap=true 时用户名/密码从 IMAP 取(host/port/secure 仍从 SMTP 取)
   function effectiveSmtp(S) {
     const sm = S.settings.smtp || {}
@@ -297,36 +297,25 @@ module.exports = function initMail(ctx) {
               const r = S.dispatchShard(goal, a.parentTag != null ? String(a.parentTag) : '')
               if (r && r.error) return reply({ error: r.error })
               const id = r && r.id
-              // 主控预检后走单工作流路由(goal 无 [orch:TAG] 且未传 parentTag):给它的主控 reg 置 routedSingle —— 停滞巡检据此跳过
-              // (没分片是"单卡装得下"的合法归宿,不是"标记写错",误催会让弱模型重复派片)。
-              // relay 不带调用方身份,只在候选【唯一】时置位:已批准、仍在跑、名下无分片的主控;拿不准(多个)就不标 ——
-              // 漏标的代价是 10 分钟后多一条催办文案,错标的代价是真停滞的主控无人催
-              if (!tm && !a.parentTag && S.orchByTag && S.wfRegistry) {
-                try {
-                  const cands = [...S.orchByTag.entries()]
-                    .map(([tag, o]) => ({ tag, oreg: S.wfRegistry.get(String(o && o.id)) }))
-                    .filter((x) => x.oreg && x.oreg.planApproved === true && x.oreg.status === 'running'
-                      && ![...S.wfRegistry.values()].some((r) => r.parentOrch === x.tag))
-                  if (cands.length === 1) { cands[0].oreg.routedSingle = true }
-                } catch {}
-              }
-              // 并发满时 spawnWorkflow 返回 { queued, position } —— 必须拍平,否则 MCP 文本打出 id=[object Object](主控对着它瞎猜,实测)
-              if (id && typeof id === 'object') return reply({ ok: true, queued: true, position: id.position || 0, id: id.id })
-              return reply({ ok: true, id })
+              // shard 恒 false(编排的节点不经这条路,由状态机按 deps 直接派)—— 字段保留只为回包形状稳定
+              const shard = !!(r && r.shard)
+              // 并发满时 spawnWorkflow 返回 { queued, position } —— 必须拍平,否则 MCP 文本打出 id=[object Object](实测)
+              if (id && typeof id === 'object') return reply({ ok: true, queued: true, position: id.position || 0, id: id.id, shard, tag: (r && r.tag) || '' })
+              return reply({ ok: true, id, shard, tag: (r && r.tag) || '' })
             }
             catch (e) { return reply({ error: e.message }) }
           }
-          // ── 多层派发:对话卡 Agent 判断目标大到单工作流装不下 → 调 run_orchestration → 拉起主控卡(拆 N 分片 + 索引棒收口)──
+          // ── 编排:对话卡 Agent 判断目标大到单工作流装不下 → 调 run_orchestration → 起一个 run(面板卡 + 状态机)──
           if (req.url === '/orch/run-orch') {
             const goal = String(a.goal || '').trim()
             if (!goal) return reply({ error: '缺少 goal' })
-            // 递归硬禁:goal 带【已有】[orch:TAG] = 分片/主控想再开下级主控 —— 下级分片回报会回流到别的 Tag 名下,
-            // 唤醒错乱、无人值守链黑盒停摆(实测)。拆小的权利只在当前主控手里(它直接 run_workflow 多派几片),
-            // 或分片内部用 task 子 Agent 细分 —— 层级只到"主控→分片→task"为止
+            // 递归硬禁:工人节点想再开一层编排。便宜的防线,【已知不完备】—— relay 是无身份 HTTP,
+            // 节点指令由 composeNodeBrief 生成、不带 [orch:] 前缀,这条正则其实抓不到它要防的东西。
+            // 真正的防线写在节点指令的规程里(层级只到"编排 → 工人节点 → task 子 Agent")。
             const ptm = goal.match(/[\[【]\s*orch\s*[:：]\s*([A-Za-z0-9-]+)\s*[\]】]/)
             if (ptm && S.orchByTag && S.orchByTag.has(ptm[1]))
-              return reply({ error: '禁止递归派发主控 —— 分片太大的正确做法:① 把它拆成更小的多片(≤10 文件/片),由你自己用 run_workflow 一次派够(传 parentTag="' + ptm[1] + '",壳层机械注入标记);② 或让分片内部用 task 子 Agent 再细分。不许再开下级主控。' })
-            try { const r = spawnOrchestrator(goal); return reply({ ok: true, id: r && r.id != null ? r.id : r }) }
+              return reply({ error: '不许在编排里再开一层编排 —— 活儿太大的正确做法:① 让用户在编排面板【插话】要求把这块拆得更细;② 或在本节点内部用 task 子 Agent 再细分。层级只到"编排 → 工人节点 → task 子 Agent"。' })
+            try { const r = startOrchRun(goal); if (r && r.error) return reply({ error: r.error }); return reply({ ok: true, id: r && r.cardId, runId: r && r.id }) }
             catch (e) { return reply({ error: e.message }) }
           }
           // 工作流成果回取:不再一次性 —— Agent 拿 id 查状态/取成果全文(注册表 + 存档),继续在对话里用
@@ -350,7 +339,7 @@ module.exports = function initMail(ctx) {
               const hit = id ? files.find((x) => x.f.split('_')[1] === id) : files[0]
               if (hit) {
                 const full = fs.readFileSync(hit.p, 'utf8')
-                const goal = ((full.match(/^# (?:工作流|任务编排):(.*)$/m) || [])[1] || '').trim()
+                const goal = ((full.match(/^# (?:工作流|任务编排|编排):(.*)$/m) || [])[1] || '').trim()
                 const prodSec = (full.match(/## 产出文件\n([\s\S]*?)(\n## |$)/) || [])[1] || ''   // 产出文件清单也从存档解析带回(旧存档没这节 → 空数组)
                 const prodFiles = prodSec.split('\n').map((l) => l.replace(/^- /, '').trim()).filter((l) => l && l !== '(无)')
                 return reply({ ok: true, id: hit.f.split('_')[1], status: 'archived', goal, archive: hit.p, files: prodFiles, final: full.slice(0, 14000) })

@@ -1,4 +1,0 @@
-# 用例① transcript:分片主 Agent 的 todowrite(2 条,1 条 pending)—— 驱动"todo 未全勾 → 轮末仍 running"分支。
-# $s1 = 本用例建的第一个会话(分片会话);回放时由 fake serve 绑定真实 ses_xxx 后替换。
-# 响应走 fake serve 默认行为:POST /session/:id/message 落 user + 返一条 assistant 完成消息(快速路径)。
-{"t":0,"op":"sse","event":{"type":"message.part.updated","properties":{"sessionID":"$s1","part":{"id":"prt_td1","callID":"call_td1","type":"tool","tool":"todowrite","state":{"status":"completed","input":{"todos":[{"content":"勘察认证模块入口","status":"completed"},{"content":"汇总落盘报告","status":"pending"}]}}}}}}

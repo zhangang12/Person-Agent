@@ -727,6 +727,12 @@ async function abort(info, sessionId) {
 // 永久判成已中止(sid 从不按会话删),那正是"点过一次停止,该会话此后永久失去 4xx 降级重发"的根。
 const abortedSince = (sessionId, t0) => { const at = abortedSids.get(sessionId); return at != null && at >= t0 }
 
+// 删会话（编排决策器用）：一次编排要做几十次一次性决策，不删的话 serve 上会堆出几十段死会话。
+// 删不掉不影响正确性（会话只是留着占位），所以吞错只记不抛 —— 老 serve 没有这个路由是正常的。
+async function deleteSession(info, sessionId) {
+  if (!info || !sessionId) return false
+  try { await api(info.base, 'DELETE', `/session/${sessionId}`); return true } catch { return false }
+}
 // 重连用：会话是否还在（直接 GET 取不到就扫列表；未知路由会回 SPA HTML→JSON.parse 抛错→走兜底）
 async function sessionExists(info, sid) {
   try { const s = await api(info.base, 'GET', `/session/${sid}`); if (sidOf(s) === sid) return true } catch {}
@@ -1313,7 +1319,7 @@ function anyHealthyServe() {
   return null
 }
 
-module.exports = { ensureServe, createSession, sendMessage, listModels, listAgents, checkMcp, abort, replyPermission, replyQuestion, rejectQuestion, sessionExists, listSessions, getMessages, getRawMessages, getSessionChildren, getSessionTodo, listPendingQuestions, generationStalled, pollTurnParts, getSessionUsage, getStreamState, consumeAbortFlag, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, anyHealthyServe, AUTO_ALLOW,
+module.exports = { ensureServe, createSession, deleteSession, sendMessage, listModels, listAgents, checkMcp, abort, replyPermission, replyQuestion, rejectQuestion, sessionExists, listSessions, getMessages, getRawMessages, getSessionChildren, getSessionTodo, listPendingQuestions, generationStalled, pollTurnParts, getSessionUsage, getStreamState, consumeAbortFlag, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, anyHealthyServe, AUTO_ALLOW,
   __test: { dispatch, waitAssistantText, extractText, pickTurnText, abortedSince, abortedSids, normalizeMessages, stripInjected, splitThink,
     normDirKey, sameDir, inflight, noteChild, noteModelBlacklist, modelBlacklist, refreshSessionTree, runEventLoop, turnTextCache, stoppedSids, lastUserMatches, noteUsage,
     maps: { pool, baseToEntry, childToParent, childTitle, classifiedSessions, sidBase },

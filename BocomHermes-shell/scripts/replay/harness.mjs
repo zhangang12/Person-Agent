@@ -2,7 +2,7 @@
 //
 // 测什么：把壳层编排逻辑（多层派发/分片收官/交棒兜底）从"人工实跑"变成"确定性回归"——
 //   真 opencode.js（HTTP+SSE 连接层）+ 真 src/session.js（卡片↔会话 IPC）+ 真 src/window.js
-//   （spawnOrchestrator/spawnWorkflow/wfTurnDone/shardSettled/armShardSettle/wfDequeue/parseOrchTag），
+//   （spawnWorkflow/wfTurnDone/wfDequeue/并发闸），真 src/orch/*（编排状态机）,
 //   只桩 Electron 边界（BrowserWindow/webContents/app/Notification/dialog/shell/screen）与 serve 进程
 //   （oc.__test.setSpawnHook 注入假进程，流量打到本文件实现的 fake serve 上）。
 //   业务逻辑零修改、零替身：分片收官 45s 兜底、主控唤醒(N/M 注入)、并发排队出队、tag 二次扫描全走真代码。
@@ -29,7 +29,7 @@
 //      ——把 /event 流与 API 往返录成 JSONL（自动把 ses_xxx 别名化成 $sN，path 参数化成正则）；
 //   ② 裁剪：编辑 JSONL，删掉与断言无关的事件/响应（或补 respond 规则做错误注入）；
 //   ③ 写用例：cases/xx.case.mjs，export default { name, transcript, mode, settings, async run(world) }，
-//      world 提供 spawnOrchestrator/spawnWorkflow/cardInit/cardSend/approvePlan/fireTimer/injects 等，
+//      world 提供 spawnWorkflow/cardInit/cardSend/relayPost/fireTimer/injects/S.orch 等，
 //      断言用 ok/expectSeq(子序列+参数子集匹配)/expectState/expectFile。跑 npm run replay:test 验收。
 import { createRequire } from 'module'
 import fs from 'fs'
@@ -476,6 +476,11 @@ async function createWorld(opts = {}) {
   const UD = path.join(root, 'ud')
   const PROJ = path.join(root, 'proj'); fs.mkdirSync(PROJ, { recursive: true })
   for (const d of ['ud']) fs.mkdirSync(path.join(root, d), { recursive: true })
+  // app.getPath('userData') 的落点必须【先存在】:mail.js 的 startMailRelay 在 listen 回调里
+  // writeFileSync(userData/mail-relay.json) 且【没有 mkdir】—— 目录不在就 ENOENT 被 catch 吞成一行日志,
+  // relay 端口号从此没人知道,整层 /orch/* 端点在 replay 里不可达(这就是它一直裸奔的原因)。
+  // 生产里 userData 由 Electron 保证存在,这里补齐同一前提。
+  fs.mkdirSync(stubGetPath('userData'), { recursive: true })
 
   const logs = []
   const log = (m) => { logs.push(String(m)); if (!opts.quiet && process.env.REPLAY_VERBOSE) console.log('    [log] ' + m) }
@@ -519,15 +524,6 @@ async function createWorld(opts = {}) {
     S, fake, logs, handlers, winApi, root, proj: PROJ, ud: UD, oc,
     wcById: (id) => ACTIVE.wcs.get(id) || null,
     windows: () => FakeBrowserWindow._all.slice(),
-    // 主控卡:start-conversation mode='orch' → spawnOrchestrator;返回 { id, tag, wcId, wc, reg }
-    spawnOrchestrator(goal) {
-      const r = handlers['start-conversation'](senderOf({ id: 0 }), { mode: 'orch', msg: goal })
-      const id = r && r.id
-      const ent = [...(S.orchByTag || new Map()).entries()].pop() || []
-      const reg = S.wfRegistry && S.wfRegistry.get(String(id))
-      const wcId = reg && reg.wcId
-      return { id, tag: ent[0] || '', wcId, wc: ACTIVE.wcs.get(wcId) || null, reg }
-    },
     // 分片/工作流:spawn-workflow → spawnWorkflow;正常开卡返回 { id, wcId, wc, reg },排队返回 { queued: true }
     spawnWorkflow(goal) {
       const r = handlers['spawn-workflow'](senderOf({ id: 0 }), goal)
@@ -537,6 +533,31 @@ async function createWorld(opts = {}) {
       return { id: r, wcId, wc: ACTIVE.wcs.get(wcId) || null, reg }
     },
     approvePlan(wcId) { if (handlers['wf-plan-approved']) handlers['wf-plan-approved'](senderOf({ id: wcId })) },
+    // ── 走【真 relay】的入口(MCP 视角)────────────────────────────────────────────────
+    // 以前用例一律从 S.dispatchShard 进,把 mail.js 的 /orch/run、/orch/run-orch、/orch/result 整层绕过去了 ——
+    // 而自主升格开卡、编排入口回包、成果回取、queued 拍平、递归硬禁全住在那一层。
+    // relay 在 harness 里其实是【真起着】的:mail.js 的 startMailRelay 无条件执行,app.getPath 又被重定向到本 world
+    // 的临时根,所以 mail-relay.json(端口 + token)就在 world.ud 下。之前只是没人从这个口进来过。
+    // 用法:const r = await world.relayPost('/orch/run', { goal, parentTag })
+    async relayPost(urlPath, body) {
+      // srv.listen(0) 是异步的,mail-relay.json 在 listen 回调里才写 —— 首次调用等它落地
+      const fp = path.join(stubGetPath('userData'), 'mail-relay.json')
+      const cfg = await waitFor(() => { try { return JSON.parse(fs.readFileSync(fp, 'utf8')) } catch { return null } },
+        { timeout: 4000, interval: 20, name: 'relay 未就绪(等不到 ' + fp + ')' })
+      return new Promise((resolve, reject) => {
+        const data = Buffer.from(JSON.stringify(body || {}), 'utf8')
+        const req = http.request({
+          hostname: '127.0.0.1', port: cfg.port, path: urlPath, method: 'POST',
+          headers: { 'content-type': 'application/json', 'content-length': data.length, 'x-bocom-tok': cfg.token },
+        }, (res) => {
+          let buf = ''; res.setEncoding('utf8')
+          res.on('data', (c) => { buf += c })
+          res.on('end', () => { try { resolve(JSON.parse(buf || '{}')) } catch { reject(new Error('relay 响应非 JSON: ' + buf.slice(0, 200))) } })
+        })
+        req.on('error', (e) => reject(new Error('relay 连不上(' + cfg.port + '): ' + e.message)))
+        req.write(data); req.end()
+      })
+    },
     // 模拟渲染层:卡片加载后 card-init(分片传 shard:1,生产同形),随后 card-send 发首条消息
     async cardInit(wc, o) { return handlers['card-init'](senderOf(wc), o || {}) },
     async cardSend(wc, text) { return handlers['card-send'](senderOf(wc), { text }) },
