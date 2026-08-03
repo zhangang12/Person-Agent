@@ -716,6 +716,37 @@ section('用例7:两道曾经无解的闸(contract 被填散文 / 纯文档节�
     NODES.evalExit(mk(['docs/速览.md'], ['按功能维度组织内容']), probe).pass === true)
 })
 
+// ══ 用例8:写归属比对必须先拉到同一坐标系(模型自己在真跑里发现的误报)══════════
+// 病灶:writeScope 是相对路径(模型按仓根写),node.result.files 是绝对路径(session.js 的 wfFiles
+//   会 resolve 成绝对再记)。直接前缀比 → 绝对路径永远不以相对归属开头 → 每个产出都被报成"在归属外",
+//   还附一句"壳层硬闸已拦"(而 result.files 只记【写成功】的文件,所以那句必然是假的)。
+//   真跑里模型为此专门写了一整条 gap 去澄清一个不存在的问题 —— 白烧决策预算,还可能让它误改边界。
+section('用例8:写归属误报(绝对路径 vs 相对归属)', () => {
+  need(RENDER, 'src/orch/render.js')
+  const DIR = '/repo'
+  const mk = (scope, files) => ({
+    id: 'R1', goal: 'g', dir: DIR, wave: 1,
+    budget: { maxNodes: 24, spawned: 1, maxDecides: 48, spentDecides: 1 },
+    ledger: { facts: [], open: [], gaps: [], assumptions: [] }, decisions: [], userNotes: [],
+    nodes: [mkNode({ id: 'n4', state: 'settled', writeScope: scope,
+      result: { final: 'ok', files, exitReport: [], contractMiss: [], unverified: false, rounds: 1, aborted: false } })],
+  })
+  const diff = (scope, files) => RENDER.renderReplan(mk(scope, files), { event: 'node-settled', nodeId: 'n4' })
+    .split('\n').filter((l) => l.indexOf('写归属') >= 0).join('\n')
+
+  const okCase = diff(['docs/exploration/server'], [DIR + '/docs/exploration/server/api.md'])
+  ok('★归属内的绝对路径产出:不报越界', okCase.indexOf('归属外') < 0, okCase)
+  ok('  路径折成相对显示(节点表才看得清)', okCase.indexOf(DIR) < 0 && okCase.indexOf('docs/exploration/server/api.md') >= 0, okCase)
+
+  const bad = diff(['docs/exploration/server'], [DIR + '/src/app.ts'])
+  ok('★真越界照样报(闸没被放松)', bad.indexOf('归属外') >= 0, bad)
+  ok('  措辞不再谎称"已拦"(result.files 只记写成功的,出现在这就是没拦住)', bad.indexOf('已拦') < 0, bad)
+
+  // 归属本身写成绝对路径也认(模型两种都可能给)
+  const absScope = diff([DIR + '/docs/exploration/server'], [DIR + '/docs/exploration/server/api.md'])
+  ok('★归属写成绝对路径同样不误报', absScope.indexOf('归属外') < 0, absScope)
+})
+
 // ── 小结 + 退出码 ───────────────────────────────────────────────────────────
 // 没有这一段的话本文件永远 exit 0 —— 断言全红也"通过",挂进 CI 等于没挂(草稿期踩到过)
 if (MISSING.length) { console.log('\n模块装载失败:'); for (const m of MISSING) console.log('  ✗ ' + m) }

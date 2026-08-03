@@ -41,6 +41,16 @@ function kb(bytes) {
 }
 // 路径归一(不 require path:本文件禁碰任何 IO 侧模块,而且这里只做字符串比对)
 function norm(p) { return str(p).replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '') }
+// 归属比对前必须先把路径拉到【同一坐标系】:writeScope 是相对路径(模型按仓根写),
+// 而 node.result.files 是【绝对路径】(session.js 的 wfFiles 会 resolve 成绝对再记)。
+// 直接前缀比 → 绝对路径永远不以相对归属开头 → 每个文件都被报成"在归属外"(实测:模型为此专门写了
+// 一整条 gap 去解释一个不存在的问题,白烧决策预算)。这里按 run.dir 剥前缀,纯字符串,不碰 path 模块。
+function relTo(dir, file) {
+  const d = norm(dir), f = norm(file)
+  if (!d) return f
+  if (f === d) return ''
+  return f.indexOf(d + '/') === 0 ? f.slice(d.length + 1) : f
+}
 function inScope(scope, file) {
   const f = norm(file)
   if (!arr(scope).length) return true
@@ -258,12 +268,15 @@ function renderDiff(r, evNode, newFacts) {
   const out = []
   const scan = evNode ? [evNode] : arr(r.nodes).filter((n) => n.state === 'verified' || n.state === 'failed')
   for (const n of scan.slice(0, 6)) {
-    const files = arr(n.result && n.result.files).map(norm)
-    const scope = arr(n.writeScope)
+    // 一律折成相对 run.dir 的路径再比、再显示:既修掉误报,也让节点表短得能看
+    const files = arr(n.result && n.result.files).map((f) => relTo(r.dir, f))
+    const scope = arr(n.writeScope).map((x) => relTo(r.dir, x))
     if (scope.length) {
       const out1 = files.filter((f) => !inScope(scope, f))
-      out.push('  · ' + n.id + ' 声明写归属 ' + scope.map(norm).join(', ') + ',实际写了 ' + (files.length ? files.slice(0, 8).join(', ') : '(什么都没写)')
-        + (out1.length ? ' ← 其中 ' + out1.join(', ') + ' 在归属外(壳层硬闸已拦)' : ''))
+      out.push('  · ' + n.id + ' 声明写归属 ' + scope.join(', ') + ',实际写了 ' + (files.length ? files.slice(0, 8).join(', ') : '(什么都没写)')
+        // 措辞如实:result.files 只记【写成功】的文件,所以出现在这儿就说明没被拦住 ——
+        // 原文案写"壳层硬闸已拦"是假的,会让模型以为有个被挡下的越权动作要处理
+        + (out1.length ? ' ← 其中 ' + out1.join(', ') + ' 落在归属外(写归属声明与实际产出对不上,注意是不是拆错了边界)' : ''))
     } else if (files.length) {
       out.push('  · ' + n.id + ' 未声明写归属,实际写了 ' + files.slice(0, 8).join(', '))
     }
