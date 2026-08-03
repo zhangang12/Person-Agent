@@ -15,8 +15,6 @@ import { renderMarkdown } from './rich'
 import { toolState, toolStateText, fmtInput, fmtOutput, truncIn, truncOut, toolLabel } from './lib/tool'
 import type { ToolState } from './lib/tool'
 
-const doneN = computed(() => s.shards.filter((x) => x.status === 'done' || x.status === 'interrupted').length)
-const queuedN = computed(() => s.shards.filter((x) => x.status === 'queued').length)
 const icon = (st: string) => st === 'done' ? '✅' : st === 'interrupted' ? '⚠' : st === 'running' ? '⏳' : '🕐'
 const cur = computed(() => s.shards.find((x) => x.id === s.shardView) || null)
 
@@ -83,13 +81,15 @@ async function popShard(id: string): Promise<void> {
 </script>
 
 <template>
-  <div v-if="s.runId && s.shards.length" class="shardpanel">
+  <!-- 节点镜像视图。编排模式下【只在点开某个节点时出现】——
+       节点表(RunPanel)已经是权威清单,再摆一排 chip 就是同一份数据的第二种画法,
+       而且 chip 显示的是工人卡的展示名、节点表显示的是 title,两套口径看着像两件事(真跑截图实锤)。 -->
+  <div v-if="s.runId && s.shardView && s.shards.length" class="shardpanel">
     <div class="sp-hd" @click="openShardView('')">
-      <span class="sp-title">分片进度 {{ doneN }}/{{ s.shards.length }}</span>
-      <span v-if="queuedN" class="sp-queued">{{ queuedN }} 片排队中</span>
-      <span v-if="s.shardView" class="sp-back">← 主控</span>
+      <span class="sp-title">节点实时会话</span>
+      <span class="sp-back">← 收起</span>
     </div>
-    <div v-if="!s.shardView" class="sp-chips">
+    <div v-if="false" class="sp-chips">
       <span v-for="sh in s.shards" :key="sh.id || sh.goal" class="sp-chipwrap">
         <button
           class="sp-chip" :class="sh.status"

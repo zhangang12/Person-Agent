@@ -33,6 +33,7 @@ const CMD_MAXBUF = 8 * 1024 * 1024
 
 function str(x) { return x === null || x === undefined ? '' : String(x) }
 function arr(x) { return Array.isArray(x) ? x : [] }
+function num(x) { const n = +x; return Number.isFinite(n) ? n : 0 }
 
 /**
  * makeOrch(deps) → S.orch
@@ -61,6 +62,24 @@ function makeOrch(deps) {
     try { out = RUN.applyEvent(run, Object.assign({ at: Date.now() }, ev), { mkId, capHint: globalCap() }) }
     catch (e) { log('[orch] applyEvent 抛错(' + str(ev && ev.type) + '):' + (e && e.stack || e)); return null }
     runs.set(run.id, out.run)
+    // ★每一次状态转移打一行 —— 这不是调试残留,是这套无人值守系统的【唯一可观测面】。
+    //   实测教训:一次真跑跑了半小时,整份日志只有一行"[orch] run 创建",节点卡死 11 分钟无从查起,
+    //   最后只能去 serve 拉会话原文 + 手读 run.json 才定位。编排是后台跑的,没有日志 = 出了事只能靠猜。
+    //   只在真的变了时打(applyEvent 无变化时 effects 为空),空转的 tick 不刷屏。
+    if (out.effects.length) {
+      const before = run, after = out.run
+      const bits = []
+      if (before.phase !== after.phase) bits.push('phase ' + before.phase + '→' + after.phase)
+      for (const n of after.nodes) {
+        const o = arr(before.nodes).find((x) => x.id === n.id)
+        if (!o) { bits.push('+' + n.id + '(' + n.kind + ')'); continue }
+        if (o.state !== n.state) bits.push(n.id + ' ' + o.state + '→' + n.state + (n.reason ? '(' + n.reason + ')' : ''))
+        if (o.attempt !== n.attempt) bits.push(n.id + ' 重做#' + n.attempt)
+        if (num(o.patches) !== num(n.patches)) bits.push(n.id + ' 补做#' + num(n.patches))
+      }
+      const fx = out.effects.filter((e) => e.type !== 'persist' && e.type !== 'ui').map((e) => e.type + (e.nodeId ? ':' + e.nodeId : '')).join(' ')
+      if (bits.length || fx) log('[orch] ' + run.id + ' ' + str(ev.type) + (bits.length ? ' | ' + bits.join(', ') : '') + (fx ? ' | fx: ' + fx : ''))
+    }
     execAll(out.run, out.effects)
     return out.run
   }
@@ -96,6 +115,7 @@ function makeOrch(deps) {
     n.brief = brief
     const r = spawnWorkflow(brief, run.model || null, {
       runId: run.id, nodeId: n.id,
+      title: n.title,                   // 展示名:卡标题 / reg.goal / 分片 chip 用它,不用整段 brief
       // verify 节点没写归属时【代码强制】只读沙箱:session.js 的写归属硬闸口径是"空 = 不设闸",
       // 模型漏写 writeScope 的验证节点就能改项目文件 —— 这是安全退化,不能指望模型自觉
       writeScope: (n.kind === 'verify' && !arr(n.writeScope).length)
@@ -175,6 +195,9 @@ function makeOrch(deps) {
     let out
     try { out = NODES.evalExit(n, probe) }
     catch (e) { log('[orch] evalExit 抛错:' + e.message); out = { pass: false, report: [{ kind: 'noEmpty', ok: false, detail: '退出检查执行失败:' + e.message }] } }
+    const bad = arr(out && out.report).filter((x) => x && !x.ok)
+    log('[orch] ' + run.id + ' evalExit ' + n.id + ' → ' + (out && out.pass ? 'PASS' : 'FAIL')
+      + (bad.length ? ' 未过: ' + bad.map((x) => str(x.kind) + '(' + str(x.detail).slice(0, 60) + ')').join('; ') : ''))
     send(run.id, {
       type: 'EXIT_RESULT', nodeId: n.id,
       pass: !!(out && out.pass), report: arr(out && out.report),

@@ -94,6 +94,10 @@ function submitNote() {
         <span v-if="n.patches" class="rn-tag patch" :title="'退出检查差一截,已在原卡补做 ' + n.patches + ' 次(没有重开卡)'">补{{ n.patches }}</span>
         <span v-if="n.attempt" class="rn-tag redo" :title="'补不动,整片重做过 ' + n.attempt + ' 次'">重{{ n.attempt }}</span>
         <span v-if="n.exitReport.length" class="rn-tag bad" :title="n.exitReport.map((x) => x.kind + ':' + x.detail).join('\n')">{{ n.exitReport.map((x) => x.kind).join('/') }}</span>
+        <!-- 撤掉/失败必须【当场说明白为什么】,不能只塞 tooltip:
+             一排灰掉的 ⊘ 看上去跟"坏了没跑"一模一样,而它其实是"你自己让重拆时撤的"(实测用户第一反应是"分片没出来")。 -->
+        <span v-if="n.state === 'skipped' && n.droppedReason" class="rn-why">— {{ n.droppedReason }}</span>
+        <span v-else-if="n.state === 'failed' && n.reason" class="rn-why bad">— {{ n.reason }}</span>
         <span class="sp"></span>
         <button v-if="n.cardId" class="rn-go" title="看这个节点的实时会话" @click="shardJump(String(n.cardId))">查看 →</button>
         <button v-if="n.state === 'failed'" class="rn-retry" title="再给它一次机会(加一次重做预算)" @click="runRetryNode(n.id)">重试</button>

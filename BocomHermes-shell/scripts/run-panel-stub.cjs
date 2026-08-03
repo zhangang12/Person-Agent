@@ -90,6 +90,10 @@ app.whenReady().then(async () => {
   ok('★补做次数可见(补1 = 原卡补做过一次,没重开卡)', await ev(`!!document.querySelector('.rn-tag.patch')`))
   ok('★重做次数与补做分开显示', await ev(`!!document.querySelector('.rn-tag.redo')`))
   ok('★没过的退出闸直接标在节点上', await ev(`!!document.querySelector('.rn-tag.bad')`))
+  ok('★被撤掉的节点当场说明白为什么(不是只塞 tooltip —— 一排灰 ⊘ 看着跟"坏了没跑"一样)',
+    await ev(`[...document.querySelectorAll('.rn-why')].some(e => /被重规划撤掉/.test(e.textContent))`),
+    await ev(`[...document.querySelectorAll('.rn-why')].map(e => e.textContent)`))
+  ok('失败节点显示失败原因', await ev(`[...document.querySelectorAll('.rn-why.bad')].some(e => /contract-miss/.test(e.textContent))`))
   ok('★波次可见(小批 replan 有没有真发生,看这个数)', await ev(`/第 2 波/.test(document.querySelector('.rp-wave').textContent)`))
   ok('在飞决策有指示', await ev(`!!document.querySelector('.rp-thinking')`))
   ok('失败节点给【重试】', await ev(`!!document.querySelector('.rn-retry')`))

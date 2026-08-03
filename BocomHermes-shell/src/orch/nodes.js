@@ -404,6 +404,19 @@ function execCode(r, thrown) {
   return { code: (code === null || code === undefined) ? (e ? 1 : 0) : code, envFail, msg }
 }
 
+// 「像不像一个代码签名」:签名是标识符(函数名/类名/接口名/端点),不是一句话。
+// 判据保守 —— 只滤掉明显不是的,宁可漏过不可错杀:太长 / 含中文标点或中文字符 / 含空格且不是 HTTP 端点。
+const CJK_RE = /[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/
+const ENDPOINT_RE = /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+\/\S*$/i
+function looksLikeSignature(x) {
+  const t = str(x).trim()
+  if (!t || t.length > 80) return false
+  if (ENDPOINT_RE.test(t)) return true
+  if (CJK_RE.test(t)) return false          // 中文/中文标点 → 是描述不是标识符
+  if (/\s/.test(t)) return false            // 含空格 → 是句子不是标识符
+  return true
+}
+
 function evalExit(node, probe) {
   const n = isObj(node) ? node : {}
   const p = isObj(probe) ? probe : {}
@@ -441,8 +454,16 @@ function evalExit(node, probe) {
   }
 
   // ③ contract:签名要在写归属文件里找得到
+  //   ★先滤掉"不像签名"的条目。实测踩中:模型把【验收要求】填进了 contract ——
+  //     ['按功能维度（非技术分层）组织内容', '覆盖仓库中所有功能模块。格式：每个模块给出目录路径', …],
+  //     而这道闸是拿它去产出文件里做【子串搜索】,于是永远搜不到 → 文件明明写出来了(5284 字节)
+  //     还是被判死 → 补做 2 次 → 重做 → 循环。签名是标识符:没有空格、没有中文标点、不会有一整句话。
+  //     滤掉不代表放过 —— 报告里如实标出来,让模型下一轮知道自己填错了字段。
   let contractMiss = []
-  const sigs = strArr(n.contract)
+  const allSigs = strArr(n.contract)
+  const sigs = allSigs.filter(looksLikeSignature)
+  const junk = allSigs.filter((x) => !looksLikeSignature(x))
+  if (junk.length) add('contract', true, 'contract 里有 ' + junk.length + ' 条不像代码签名的条目(疑似把验收要求写进了该字段),已跳过:' + junk.map((x) => str(x).slice(0, 24)).join(' / '), true)
   if (sigs.length) {
     const scope = strArr(n.writeScope)
     if (!scope.length) add('contract', true, '本节点没有写归属,契约核对跳过', true)      // 与原体 :631 早退同口径
@@ -457,8 +478,19 @@ function evalExit(node, probe) {
   const hasEv = hasVerifyEvidence(acts.length ? acts : n)
   // unverified 是【信息位】不是判据:render 的"无验证证据的节点清单"靠它,done:true 的硬校验也靠它。
   // 没有写归属的节点(探查/收口)不进这个统计 —— 原体给验证棒与索引棒开的豁免,在新引擎里等价于这一条。
-  const unverified = exit.requireEvidence ? !hasEv : (strArr(n.writeScope).length > 0 && !hasEv)
-  if (exit.requireEvidence) add('evidence', hasEv, hasEv ? '有构建/测试执行证据' : '没有任何构建/测试执行证据(本节点声明了 requireEvidence)')
+  // 【不写任何文件的节点不进证据闸】—— 不是替模型翻案,是这道闸对它【无解】:
+  // 纯勘察/读文档类节点没有可构建可测试的东西,requireEvidence 一开就必然不过 → 打回补做 →
+  // 工人收到"你没跑构建/测试"却压根没有可跑的东西 → 补做次数烧完 → failed。这是个不可能赢的循环。
+  // (第一次真跑就踩中:模型给 4 个勘察节点全开了 requireEvidence。提示词已同步改,这里是代码侧的兜底。)
+  // 判据用 writeScope 而不是 kind:它就是 session.js 写归属硬闸的口径 —— 写不了文件 = 改不了代码。
+  // 「有没有代码可构建可测试」:光看"有没有写归属"不够 —— 只写 .md 的文档节点也有写归属,
+  // 但它同样没有可跑的构建/测试(实测:一个只产出 docs/结构速览.md 的节点被要求给构建证据,死循环)。
+  const codeNode = strArr(n.writeScope).some((w) => !/\.(md|markdown|txt|rst|adoc|csv|json5?|ya?ml)$/i.test(str(w).trim()))
+  const unverified = (exit.requireEvidence && codeNode) ? !hasEv : (codeNode && !hasEv)
+  if (exit.requireEvidence) {
+    if (codeNode) add('evidence', hasEv, hasEv ? '有构建/测试执行证据' : '没有任何构建/测试执行证据(本节点声明了 requireEvidence)')
+    else add('evidence', true, '本节点没有写归属(不写任何文件),没有可跑的构建/测试 —— 证据闸不适用,跳过', true)
+  }
 
   // ⑤ verdict:要 VERDICT 字面量,且 PASS 必须带 Command run 块
   const pv = parseVerdict(res.final)

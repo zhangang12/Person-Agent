@@ -780,6 +780,8 @@ html[data-theme="dark"] .a-avatar { box-shadow: 0 0 0 1px rgba(91, 157, 255, .28
 .runpanel .rn-tag.patch { color: var(--blue); border-color: var(--blue); }
 .runpanel .rn-tag.redo { color: var(--orange); border-color: var(--orange); }
 .runpanel .rn-tag.bad { color: var(--danger); border-color: var(--danger); }
+.runpanel .rn-why { flex: 1; min-width: 0; font: var(--c2); color: var(--label-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.runpanel .rn-why.bad { color: var(--danger); }
 .runpanel .rn-go, .runpanel .rn-retry {
   flex: none; font: var(--c2); border: 1px solid var(--sep); border-radius: var(--r-sm);
   background: transparent; color: var(--blue); padding: 1px 8px; cursor: pointer;

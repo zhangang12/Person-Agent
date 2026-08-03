@@ -217,5 +217,36 @@ function makeSession(turns, outLen = 3000) {
   ok('⑤ BOCOMHERMES_CTX_GUARD_IMG_PURGE=0 关闭净化', o2.messages[0].parts[1].type === 'file' && o2.messages[0].parts[2].type === 'image')
 }
 
+// ── ⑥ 短会话(user 消息数 < keepTurns)一条都不许清 ★真跑实锤的回归护栏 ──
+// 病灶:轮次边界原来在"不足 N 轮"时写 keepFrom = msgs.length,而清理判据是 `i < keepFrom` ——
+// 对每一条都成立,于是【全部】工具结果被清光,意思正好是注释的反面。
+// 命中面最狠的是编排工人卡/子 Agent:它们整个生命周期只有 1 条 user 消息(那份 brief),
+// 于是从第一次工具调用起就什么都看不见 → 换工具 → 写脚本 → 派子 Agent → 调 run_workflow 开新卡
+// (真跑时一口气冒出 6 张脱离编排的卡)。普通对话的前两轮同样中招。
+// 老用例全用 ≥3 轮的会话,所以这个 bug 一直没被抓到 —— 这里专测短会话。
+{
+  const p = await loadPluginWithEnv({})
+  for (const turns of [1, 2]) {
+    const output = { messages: makeSession(turns, 3000) }
+    await p['experimental.chat.messages.transform']({}, output)
+    const cleaned = output.messages.filter((m) => m.parts.some((x) => x.type === 'tool' && String(x.state.output).startsWith('[已清理:')))
+    ok('★' + turns + ' 轮会话(不足 keepTurns):工具结果一条都不清', cleaned.length === 0)
+    ok('  ' + turns + ' 轮会话:内容原样可见', output.messages[1].parts[0].state.output.includes('-文件1内容'))
+  }
+  // 单 user + 多条 assistant(工人卡的真实形状:一份 brief,之后没人再说话)
+  const worker = {
+    messages: [
+      { info: { id: 'u1', role: 'user' }, parts: [{ id: 'ut1', type: 'text', text: '【总目标】…' }] },
+      { info: { id: 'a1', role: 'assistant' }, parts: [{ id: 'w1', type: 'tool', tool: 'read', state: { status: 'completed', input: { filePath: '/a.md' }, output: 'A'.repeat(4747) } }] },
+      { info: { id: 'a2', role: 'assistant' }, parts: [{ id: 'w2', type: 'tool', tool: 'glob', state: { status: 'completed', input: {}, output: 'B'.repeat(6014) } }] },
+      { info: { id: 'a3', role: 'assistant' }, parts: [{ id: 'w3', type: 'tool', tool: 'bash', state: { status: 'completed', input: {}, output: 'C'.repeat(7972) } }] },
+    ],
+  }
+  await p['experimental.chat.messages.transform']({}, worker)
+  const survived = worker.messages.slice(1).every((m) => !String(m.parts[0].state.output).startsWith('[已清理:'))
+  ok('★工人卡形状(1 条 user + 多轮工具):结果全部保留', survived)
+  ok('  工人卡:总量 18k 未触发预算降级(预算 40k)', worker.messages[1].parts[0].state.output.length === 4747)
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed ? 1 : 0)

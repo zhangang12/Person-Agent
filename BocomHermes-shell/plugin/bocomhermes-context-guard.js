@@ -177,7 +177,14 @@ export const ContextGuardPlugin = async () => {
         for (let i = msgs.length - 1; i >= 0; i--) {
           if (roleOf(msgs[i]) === 'user') { seen++; if (seen >= cfg.keepTurns) { keepFrom = i; break } }
         }
-        if (seen < cfg.keepTurns) keepFrom = msgs.length   // 不足 N 轮:全在窗口内,不按轮次清
+        // 不足 N 轮 = 整段历史都在保留窗口内 → keepFrom 必须是 0(下面按 `i < keepFrom` 清,0 表示一条都不清)。
+        // ★这里原来写的是 msgs.length,而 `i < msgs.length` 对每一条都成立 —— 意思正好反了,把【全部】工具结果清光。
+        //   命中面:任何 user 消息数 < keepTurns(默认3)的会话。
+        //   · 编排工人卡/子 Agent 会话整个生命周期只有 1 条 user 消息(那份 brief)→ 它的工具结果【从第一次调用起就全没了】,
+        //     模型读完 4747 字文件、下一轮只看到 `[已清理:read …]`,于是换工具→写脚本→派子 Agent→调 run_workflow 开新卡,
+        //     真跑时一口气冒出 6 张脱离编排的野卡(实测)。
+        //   · 普通对话的【前两轮】同样中招,工具结果全被抹掉。
+        if (seen < cfg.keepTurns) keepFrom = 0
         let totalToolChars = 0
         for (let i = 0; i < msgs.length; i++) {
           for (const p of (msgs[i] && msgs[i].parts) || []) {

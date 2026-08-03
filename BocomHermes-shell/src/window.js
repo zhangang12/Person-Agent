@@ -436,7 +436,11 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     // 新引擎节点:同样是隐藏无人值守工人卡(复用整套 shard 语义:自动过闸/权限放行/镜像回流),
     // 只是身份与写归属由 opts 结构化下发,不再从 goal 文本里 parse
     const isRunNode = !!(wo && wo.runId)
-    const id = spawnCard('工作流 · ' + g.slice(0, 20), null, workflowSystemPrompt(dir, S.settings.backendDir || '') + '\n\n【总目标】\n' + g, g,
+    // 展示名与下发文本分开:disp 只用来显示(卡标题 / reg.goal / 分片 chip / 卡坞列表),
+    // msg 才是喂给模型的完整 brief。编排节点的 brief 开头恒为"【总目标】…",拿它当展示名的话
+    // 每张卡都显示同一段前缀,谁是谁完全分不出来(真跑截图实锤)。
+    const disp = (isRunNode && wo.title) ? String(wo.title) : g
+    const id = spawnCard('工作流 · ' + disp.slice(0, 20), null, workflowSystemPrompt(dir, S.settings.backendDir || '') + '\n\n【总目标】\n' + g, disp,
       // forceModel 两条分支都要传:队列项一直存着它(wfDequeue 出队时原样透传),但独立工作流分支从来没接过 ——
       // 也就是说"forceModel 随队列走"这个契约在独立工作流上一直是空的(旧代码只在分片分支给 model)
       isRunNode ? { wf: true, shard: true, hidden: true, model: forceModel } : { flash: true, wf: true, model: forceModel })

@@ -675,6 +675,47 @@ section('用例6c:done 的缺口覆盖硬校验(validate 不传 ctx 这条就是
   ok('★不传 ctx:同一份输出被判合法(证明这条校验确实依赖 ctx,别再漏传)', noCtx.ok === true, noCtx.errors)
 })
 
+// ══ 用例7:退出闸不许被"喂垃圾"变成赢不了的死循环(真跑审计抓到的两条)════════════
+section('用例7:两道曾经无解的闸(contract 被填散文 / 纯文档节点要构建证据)', () => {
+  need(NODES, 'src/orch/nodes.js')
+  const probe = { statSync: () => ({ size: 5284 }), readFileSync: () => '# 结构速览\ncreateOrder() {}' }
+  const mk = (scope, contract) => ({
+    id: 'n1', kind: 'work', writeScope: scope, contract,
+    exit: { artifacts: [], requireEvidence: true, requireVerdict: false, verifyCmd: '', noEmpty: true },
+    result: { final: '写完了', files: [], exitReport: [] },
+  })
+  const g = (r, k) => (r.report || []).find((x) => x.kind === k) || {}
+
+  // ① contract 被填成验收要求 —— 实测原文:
+  //    ['按功能维度（非技术分层）组织内容', '覆盖仓库中所有功能模块。格式：每个模块给出目录路径', …]
+  //    这道闸是拿它去产出文件里【子串搜索】,喂散文进来就永远搜不到 → 文件明明写出来了还是被判死 →
+  //    补做 2 次 → 重做 → 循环烧钱。滤掉但如实报出来,让模型知道自己填错了字段。
+  const junky = NODES.evalExit(mk(['docs/速览.md'], ['按功能维度（非技术分层）组织内容', '1-2行职责描述。']), probe)
+  ok('★contract 被填散文:不判死', g(junky, 'contract').ok === true, g(junky, 'contract'))
+  ok('★但如实报出来(告诉模型填错字段了)', /不像代码签名/.test(String(g(junky, 'contract').detail)), g(junky, 'contract').detail)
+  ok('  该项标为 skipped(不算真通过)', g(junky, 'contract').skipped === true, g(junky, 'contract'))
+
+  // ② 真签名照常严格核对(别把闸放松掉)
+  const real = NODES.evalExit(mk(['src/a.ts'], ['createOrder']), probe)
+  ok('真签名在文件里 → 过', g(real, 'contract').ok === true, g(real, 'contract'))
+  const missing = NODES.evalExit(mk(['src/a.ts'], ['createPayment']), probe)
+  ok('★真签名缺失 → 照样判不过(闸没被放松)', g(missing, 'contract').ok === false, g(missing, 'contract'))
+  ok('  缺口写清楚是哪个签名', /createPayment/.test(String(g(missing, 'contract').detail)))
+
+  // ③ 只写文档的节点没有可跑的构建/测试 —— 光看"有没有写归属"不够,它有(docs/x.md)
+  const docNode = NODES.evalExit(mk(['docs/速览.md'], []), probe)
+  ok('★纯文档节点:证据闸不适用(它没有可构建可测试的东西)', g(docNode, 'evidence').ok === true, g(docNode, 'evidence'))
+  ok('  跳过原因写清楚', /没有代码文件|不适用|跳过/.test(String(g(docNode, 'evidence').detail)), g(docNode, 'evidence').detail)
+  const codeNode = NODES.evalExit(mk(['src/a.ts'], []), probe)
+  ok('★写代码的节点:证据闸照常生效(没跑构建就是不过)', g(codeNode, 'evidence').ok === false, g(codeNode, 'evidence'))
+  const mixed = NODES.evalExit(mk(['docs/速览.md', 'src/a.ts'], []), probe)
+  ok('  混合写归属(文档+代码)按代码算', g(mixed, 'evidence').ok === false, g(mixed, 'evidence'))
+
+  // ④ 两条合起来:文档节点整体过闸(真跑里它就是卡在这儿)
+  ok('★文档节点整体 pass(真跑里它产出了 5284 字节却被判死)',
+    NODES.evalExit(mk(['docs/速览.md'], ['按功能维度组织内容']), probe).pass === true)
+})
+
 // ── 小结 + 退出码 ───────────────────────────────────────────────────────────
 // 没有这一段的话本文件永远 exit 0 —— 断言全红也"通过",挂进 CI 等于没挂(草稿期踩到过)
 if (MISSING.length) { console.log('\n模块装载失败:'); for (const m of MISSING) console.log('  ✗ ' + m) }

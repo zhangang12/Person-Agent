@@ -450,6 +450,18 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     // 多层派发分片卡:无人值守(按主控已批准的方案跑),权限请求自动放行 —— 否则 task 子 Agent/写文档都卡在看不见的批准框上,
     // 子 Agent 永远起不来(实测病灶)。范围限本卡会话,关卡即失效;全程工具日志留痕。
     if (S.shardWc && si.wc && S.shardWc.has(si.wc.id)) {
+      // ★升格硬闸:工人节点【不许自己开新卡】。
+      // 病灶(第一次真跑实锤):工人手里有 run_workflow / run_orchestration 这两个 MCP 工具,
+      // 它一卡住(比如工具结果被上下文治理清掉、看不见自己读到什么)就会拿它们去"派个卡替我读文件",
+      // 于是凭空冒出一张可见闪烁卡、脱离编排、无人回收、还占并发位。用户看到的就是"卡自己蹦出来了"。
+      // 为什么闸落在这里:relay(/orch/run)是无身份 HTTP,拿不到调用方是谁 —— 而权限层【有身份】
+      // (si.wc.id ∈ S.shardWc 就是"我是工人节点"),这是全链唯一能机械分辨的地方。
+      // 拒绝理由写清楚,让它回到正路:要拆活儿用 task 子 Agent(有独立上下文,归它自己管)。
+      if (/(^|[._-])(run_workflow|run_orchestration)$/i.test(String(tool || ''))) {
+        log('工人节点尝试自行升格,已拒绝: ' + String(tool) + ' (wc ' + si.wc.id + ')')
+        try { si.wc.send('card-note', { text: '⛔ 编排节点不能自己开新卡(' + String(tool) + ')—— 要拆活儿请用 task 子 Agent;要改计划请在编排面板插话', tone: 'muted' }) } catch {}
+        oc.replyPermission(si.serve, sessionId, requestId, 'reject'); return
+      }
       // 写归属硬闸(编码模式):分片登记了 writeScope 时,write/edit 的目标文件必须在归属清单内 ——
       // 并行分片写冲突的头号死因就是越界写别的片的文件。
       // 默认归属 = 本仓根目录:没登记写归属(探查类/文档片)也不许写项目目录外 —— serve 的 git 快照 work-tree 锚在本仓,

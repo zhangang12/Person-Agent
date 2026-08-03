@@ -457,6 +457,31 @@ console.log('用例12c:工作路径管理 —— 分片默认围栏=本仓根(�
   h.S.handlers.onPermission({ sessionId: sid, requestId: 'f5', tool: 'bash', detail: 'npm test' })
   ok('默认围栏:无写目标的 bash 放行(once)', replies[4] && replies[4].d === 'once', replies[4])
 
+  // 1b) ★升格硬闸:工人节点不许自己开新卡(真跑实锤 —— 工人卡住时会拿 run_workflow 派卡替它读文件,
+  //     凭空冒出一张可见闪烁卡、脱离编排、无人回收。relay 是无身份 HTTP 拦不住,权限层是唯一有身份的地方)
+  const hEsc = makeHarness()
+  // 自己造一个【会记录 send】的假 wc:本段 mkWc 的 send 是空函数,拿它验不了"有没有给工人留说明"
+  const wcESent = []
+  const wcE = { id: 994, isDestroyed: () => false, send: (ch, p) => wcESent.push({ ch, p }) }
+  const sidE = 'ses_esc'
+  hEsc.S.sessionByWc.set(wcE.id, sidE)
+  hEsc.S.sessionInfo.set(sidE, { serve: hEsc.serve, wc: wcE })
+  hEsc.S.shardWc = new Set([wcE.id])
+  const rE = []
+  hEsc.oc.replyPermission = (serve, sessionId, requestId, d) => rE.push({ requestId, d })
+  hEsc.S.handlers.onPermission({ sessionId: sidE, requestId: 'e1', tool: 'run_workflow', detail: '读取文件 /x' })
+  ok('★工人节点调 run_workflow → 拒(不许自己开卡)', rE[0] && rE[0].d === 'reject', rE[0])
+  hEsc.S.handlers.onPermission({ sessionId: sidE, requestId: 'e2', tool: 'run_orchestration', detail: '再开一层' })
+  ok('★工人节点调 run_orchestration → 拒(不许递归起编排)', rE[1] && rE[1].d === 'reject', rE[1])
+  hEsc.S.handlers.onPermission({ sessionId: sidE, requestId: 'e3', tool: 'BocomHermes-orch_run_workflow', detail: 'x' })
+  ok('★带 MCP 服务前缀的同样拒(工具名常带前缀)', rE[2] && rE[2].d === 'reject', rE[2])
+  hEsc.S.handlers.onPermission({ sessionId: sidE, requestId: 'e4', tool: 'task', detail: '派子 Agent 读文件' })
+  ok('task 子 Agent 照常放行(这才是它该用的拆活儿方式)', rE[3] && rE[3].d === 'once', rE[3])
+  hEsc.S.handlers.onPermission({ sessionId: sidE, requestId: 'e5', tool: 'workflow_result', detail: 'x' })
+  ok('取成果类工具不误伤(只拦"开新卡"那两个)', rE[4] && rE[4].d === 'once', rE[4])
+  ok('拒绝时给工人留一条说明(告诉它该用 task)', wcESent.some((x) => x.ch === 'card-note' && /不能自己开新卡/.test(String(x.p && x.p.text))),
+    wcESent.map((x) => x.ch + ':' + String((x.p && x.p.text) || '').slice(0, 40)))
+
   // 2) 显式 writeScope 优先(验证棒 tmpdir 沙箱):写 tmpdir 放行、写本仓反被拒
   const h2 = makeHarness()
   const wc2 = mkWc(996)
