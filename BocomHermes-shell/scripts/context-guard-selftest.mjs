@@ -215,6 +215,58 @@ function makeSession(turns, outLen = 3000) {
   const o2 = { messages: mk() }
   await off['experimental.chat.messages.transform']({}, o2)
   ok('⑤ BOCOMHERMES_CTX_GUARD_IMG_PURGE=0 关闭净化', o2.messages[0].parts[1].type === 'file' && o2.messages[0].parts[2].type === 'image')
+
+  // ── ⑨c 轮次没结束绝不提前净化 ★会红的回归 ──────────────────────────────
+  // 病灶:判据实现是"后面存在任意 assistant 非空 text part",而意图是"模型已经就这张图给出结论"。
+  // 弱模型调工具前先吐一句"好的,我看看这张图"就满足了 —— 钩子每步 LLM 调用都跑,于是【同一轮第二步】
+  // 图就被换成占位符,还写进 decisions 永不还原:用户贴的截图模型第二步就瞎了,只看到"结论见下文"而下文没有结论。
+  // 上面 ⑨ 那组之所以一直绿,是因为它的 a1 只有一条纯结论文本、没有工具调用 —— 恰好是唯一安全形态。
+  // 每个子用例都用【全新插件实例】(decisions 是实例级的)+ 互不重名的 part id。
+  const midTurn = (extraAsst) => ({
+    messages: [
+      { info: { id: 'cu1', role: 'user' }, parts: [
+        { id: 'ct1', type: 'text', text: '看这张截图,按我说的改' },
+        { id: 'cimg', type: 'file', mime: 'image/png', url: 'data:image/png;base64,ZZZ' },
+      ] },
+      Object.assign({ info: { id: 'ca1', role: 'assistant' } }, {
+        parts: [
+          { id: 'ctx1', type: 'text', text: '好的,我看看这张图。' },   // ← 寒暄,不是结论
+          { id: 'ctool1', type: 'tool', tool: 'read', state: { status: 'completed', input: { filePath: '/x.ts' }, output: '文件内容' } },
+        ],
+      }, extraAsst || {}),
+    ],
+  })
+  {
+    const p1 = await loadPluginWithEnv({})
+    const mid = midTurn()
+    await p1['experimental.chat.messages.transform']({}, mid)
+    const img = mid.messages[0].parts[1]
+    ok('★轮次未结束(寒暄+还在调工具):图片原样保留,不提前抹',
+      img.type === 'file' && String(img.url || '').startsWith('data:image/png'), img.type)
+    // 同一轮再跑一步(钩子每步都跑)仍不许抹 —— 一旦抹了就进 decisions,后面永不还原
+    await p1['experimental.chat.messages.transform']({}, mid)
+    ok('  同一轮下一步再跑,仍不抹(抹一次就永久,没有第二次机会)',
+      mid.messages[0].parts[1].type === 'file')
+  }
+  {
+    // 轮次结束的两种形态都要能正常净化,别为了修上面把功能修没了
+    const p2 = await loadPluginWithEnv({})
+    const done = midTurn()
+    done.messages.push({ info: { id: 'cu2', role: 'user' }, parts: [{ id: 'ct2', type: 'text', text: '继续' }] })
+    await p2['experimental.chat.messages.transform']({}, done)
+    ok('  出现新 user 消息(轮次已结束)→ 照常净化', done.messages[0].parts[1].text === '[图片已读:结论见下文]')
+
+    const p3 = await loadPluginWithEnv({})
+    const fin = midTurn({ info: { id: 'ca1', role: 'assistant', finish: 'stop' } })
+    await p3['experimental.chat.messages.transform']({}, fin)
+    ok('  assistant 已收尾(finish=stop,非 tool-calls)→ 照常净化(工人卡一辈子只有 1 条 user,只靠 user 规则会永不净化)',
+      fin.messages[0].parts[1].text === '[图片已读:结论见下文]')
+
+    const p4 = await loadPluginWithEnv({})
+    const still = midTurn({ info: { id: 'ca1', role: 'assistant', finish: 'tool-calls' } })
+    await p4['experimental.chat.messages.transform']({}, still)
+    ok('  finish=tool-calls(还要接着调工具)不算结束 → 不抹', still.messages[0].parts[1].type === 'file')
+  }
 }
 
 // ── ⑥ 短会话(user 消息数 < keepTurns)一条都不许清 ★真跑实锤的回归护栏 ──

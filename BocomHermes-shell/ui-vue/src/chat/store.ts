@@ -46,7 +46,13 @@ interface BaseItem { id: number }
  */
 export interface UserItem extends BaseItem { kind: 'user'; text: string; queued: boolean; origin?: 'orch' | 'system'; shardId?: string }
 /** 分诊/提示行(非对话轮);retry=true 时带「重试本轮」按钮 */
-export interface NoteItem extends BaseItem { kind: 'note'; text: string; muted: boolean; retry: boolean }
+export interface NoteItem extends BaseItem {
+  kind: 'note'; text: string; muted: boolean; retry: boolean
+  /** 一键继续要发出的【新消息】原文;有值就渲染「继续执行」钮。空=不渲染。
+   *  与 retry 的区别很要命:retry 是把【上一条用户消息】原样重发 —— 模型会从头再做一遍;
+   *  防停提醒要的是"接着上次停下的地方继续",必须是新消息(旧页 ui/card.html:1138 本来就是这个语义,Vue 平移时被降级成了 retry)。 */
+  contMsg?: string
+}
 /** 思考块:每轮一个,答完不折叠不移除(open 保持);title 缺省「思考过程」,压缩续聊的接力摘要复用同壳;displayLen=打字机已吐字符数(可缺省=0) */
 export interface ReasonItem extends BaseItem { kind: 'reason'; body: string; open: boolean; title?: string; displayLen?: number; full?: string }
 /** AI 气泡:流式期 = segs(冻结段,只增) + tail(每帧重渲);收尾后 = finalHtml 全量一次;displayLen=打字机已吐字符数(快照→匀速吐的游标) */
@@ -344,8 +350,8 @@ export function addUser(text: string, meta?: { origin?: 'orch' | 'system'; shard
   if (meta?.shardId) it.shardId = meta.shardId
   s.items.push(it); return s.items[s.items.length - 1] as UserItem
 }
-export function addNote(text: string, opts?: { muted?: boolean; retry?: boolean }): NoteItem {
-  const it: NoteItem = { id: nextId(), kind: 'note', text, muted: opts?.muted !== false, retry: !!opts?.retry }
+export function addNote(text: string, opts?: { muted?: boolean; retry?: boolean; contMsg?: string }): NoteItem {
+  const it: NoteItem = { id: nextId(), kind: 'note', text, muted: opts?.muted !== false, retry: !!opts?.retry, contMsg: opts?.contMsg }
   s.items.push(it); return s.items[s.items.length - 1] as NoteItem
 }
 /** 静态 AI 气泡(查看本次改动等本地注入的富结果;raw=原文供复制) */
@@ -472,10 +478,25 @@ export function togglePermMode(): void {
 // ── 主进程流事件(渲染端不碰 SSE,协议不变) ────────────────────────────────
 let streamWired = false
 // hang 探针判活按内容签名:轮询通道会把同内容快照反复重发,同内容不算活(分片/主控 300s 长牙的判据)
-let lastStreamSig = ''
+// ★签名要【按 partID 各记一份】,不能用一个标量跟"上一个事件"比。
+//   主进程 pollTurnParts 每 1.2s 把本轮全部 part 原样重喂一遍(session.js feedParts),事件序列成了 A,B,A,B…;
+//   标量版每次都跟上一个事件比,A 和 B 天然不同 → 判"有新内容" → lastStreamAt 被无限续命。
+//   于是回合只要产出过 ≥2 个 part(一段思考 + 一个工具就够),90s / 5min 提示【永不触发】—— 正好是它要治的那个场景:
+//   用户对着"思考中"干等到手动 Esc,一句提示都等不到。
+//   主进程侧同一病灶早就用 per-partID 的 si.partSigs 修掉了(session.js:685-706,注释写得很清楚),这边只抄了一半。
+const lastStreamSig = new Map<string, string>()
 function streamSig(ev: StreamEvent): string {
   const t = String(ev.text || ''), o = ev.output == null ? '' : String(ev.output)
   return [ev.kind, ev.partID, ev.status, t.length + ':' + t.slice(-64), o.length + ':' + o.slice(-32), ev.title, ev.shardRoot, ev.agentId].join('|')
+}
+/** 挂死探针打点:这条事件带来新内容才算"活"。返回是否续了命(导出供回归测试直接打点,不必去碰 setInterval) */
+export function markStreamLive(ev: StreamEvent): boolean {
+  const key = String(ev.partID || '_'), sig = streamSig(ev)
+  if (lastStreamSig.get(key) === sig) return false   // 轮询原样重喂:同 part 同内容,不续命
+  if (lastStreamSig.size > 500) lastStreamSig.clear()   // 防长跑膨胀(清空代价只是多刷一次计时,无害;与主进程 partSigs 同款)
+  lastStreamSig.set(key, sig)
+  lastStreamAt = Date.now()
+  return true
 }
 export function wireStream(): void {
   if (streamWired) return
@@ -486,8 +507,7 @@ export function wireStream(): void {
       // 【必须先于挂死探针打点】—— 分片的回流事件不是主控自己的活口:主控回合撞上网关静默时,
       // 名下几片还在哗哗刷屏,原来会把 lastStreamAt 一直续命,主控这一轮就永远等不到 90s/5min 长牙(实测停摆无感知)。
       if (ev.shardRoot) { upsertShardMirror(ev); return }
-      const sig = streamSig(ev)
-      if (sig !== lastStreamSig) { lastStreamSig = sig; lastStreamAt = Date.now() }   // 静默挂死探针:有新内容才算活(90s/5min 的打点)
+      markStreamLive(ev)   // 静默挂死探针:按 partID 比签名,有新内容才算活(90s/5min 的打点)
       // 本卡 task 子 Agent 活动 → 侧边栏各自窗格(思考/工具/产出),不占主对话流
       if (ev.sub) { upsertSubAgentEvent(ev); return }
       if (ev.kind === 'tool') { upsertToolEvent(ev); return }
@@ -539,12 +559,14 @@ setInterval(() => {
   const sil = Date.now() - lastStreamAt
   if (sil >= 300000 && !hangNag300) {
     hangNag300 = true
-    if (s.shardMode || s.orchMode) {
-      addNote('⚠ 已 5 分钟没有任何新输出 —— 无人值守卡判定网关挂死,自动中断本轮(壳层按中断收官,主控会重派)')
-      try { BH()?.cardAbort?.() } catch { /* 静默 */ }
-    } else {
-      addNote('⚠ 已 5 分钟没有任何输出 —— 大概率是网关挂死(不是慢)。建议按 Esc 中断后点「重试本轮」')
-    }
+    // ★这里【只提示,不代劳】。无人值守卡(分片/主控)的自动中断归主进程:src/session.js 的挂死看门狗
+    //   按 si.lastEventAt 判 300s 静默后 oc.abort,它那边的注释也写明了分工("可见工作流卡有人看着…不代劳")。
+    //   渲染端原来也自己 cardAbort 一次 —— 同一件事两份账本。以前因为上面的签名 bug 这支从来没真跑过,
+    //   签名修好后它就会和主进程看门狗对撞(两边都到 300s,渲染端 15s 一拍先到,主进程 45s 一拍再补一刀)。
+    //   撤掉这份,留主进程那份:它拿的是 SSE 一手状态,而且不依赖卡片页还活着。
+    addNote(s.shardMode || s.orchMode
+      ? '⚠ 已 5 分钟没有任何新输出 —— 无人值守卡,壳层看门狗会自动中断本轮并交回主控重派'
+      : '⚠ 已 5 分钟没有任何输出 —— 大概率是网关挂死(不是慢)。建议按 Esc 中断后点「重试本轮」')
   }
   else if (sil >= 90000 && !hangNag90) { hangNag90 = true; addNote('模型已 90 秒没有输出 —— 可能在长考,也可能是网关挂死。可继续等,或按 Esc 中断') }
 }, 15000)
@@ -558,7 +580,7 @@ let wdWarnSet: Set<string> | null = null, wdWarnTurn = -1
 let wfTodoDoneTurn = -1, wfTodoLastTurn = -1
 // 委派驱动/防停/产出兜底运行时态
 let delegatedSeen = false, delegateNudged = false
-let contNudgeN = 0, contLastOpen = -1
+let contNudgeN = 0, contLastOpen = -1, contNudgeOff = false   // contNudgeOff:熔断粘性标志(只有真有进展才复活),见 maybeContinueNudge
 let wfProduceNag = false
 let latestOpenTodos: string[] = [], latestTodoTotal = 0
 function insertBeforeAnswer<T extends FeedItem>(it: T): T {
@@ -853,7 +875,7 @@ export async function turn(text: string, files?: any[] | null): Promise<boolean>
   turnN++
   s.planAsk = false   // 新一轮开跑即撤规划闸提示(用户在调整方案,轮末若仍待批会重挂)
   clearPlanTimers()   // 撤条必清倒计时(泄漏/二次注入防线)
-  lastStreamAt = Date.now(); lastStreamSig = ''; hangNag90 = hangNag300 = false   // hang 探针复位(新一轮重新计)
+  lastStreamAt = Date.now(); lastStreamSig.clear(); hangNag90 = hangNag300 = false   // hang 探针复位(新一轮重新计)
   if (!ctxLimitReal) refreshCtxLimit()   // 上限还没拿到真值(serve 晚起/列表为空):每个回合补刷,防开卡终身吃兜底
   s.aborting = false
   runningTools.clear(); paintRunAct()   // 状态行:新一轮从"思考中"起
@@ -1303,15 +1325,28 @@ function maybeDelegateNudge(): void {
 function maybeContinueNudge(): void {
   if (!canInject()) return   // 闸的三个分量见 canInject(此处最痛的是 compacting:摘要轮里再注入会把摘要泡顶成空气泡,实测死循环)
   const open = latestOpenTodos
-  if (!open.length) { contNudgeN = 0; contLastOpen = -1; return }
-  if (contLastOpen >= 0 && open.length < contLastOpen) contNudgeN = 0
+  if (!open.length) { contNudgeN = 0; contLastOpen = -1; contNudgeOff = false; return }   // 全干完了:整组状态归零,下个任务重新计
+  if (contLastOpen >= 0 && open.length < contLastOpen) { contNudgeN = 0; contNudgeOff = false }   // 未完项变少 = 真有进展 → 熔断复活
   contLastOpen = open.length
-  if (contNudgeN >= 3) { addNote('任务仍未完成(todo 剩 ' + open.length + ' 项),已连续催 3 次无进展 —— 不再自动催,请人工看看卡在哪'); contNudgeN = 0; return }
+  if (contNudgeOff) return   // ★已转人工:彻底闭嘴,连那句"不再自动催"也不重复贴
+  if (contNudgeN >= 3) {
+    // ★原来这里贴完 note 还把 contNudgeN 清了 0 —— 熔断只挡住【这一轮】,下个能催的轮末又从 0 起跳,
+    //   于是变成"催 3 次歇一轮再催 3 次",note 里那句"不再自动催"是假承诺,wf 卡上等于每轮末永久注入。
+    //   旧页 ui/card.html:1131 同一句 addNote 后面直接 return、不清零 —— 熔断本来就是粘的,这是平移时加错的一行。
+    //   改成粘性标志:只有"未完项变少(真有进展)"或"todo 清空"才复活,别的一律不复活。
+    contNudgeOff = true
+    addNote('任务仍未完成(todo 剩 ' + open.length + ' 项),已连续催 3 次无进展 —— 不再自动催,请人工看看卡在哪')
+    return
+  }
   contNudgeN++
   if (s.wfMode) {
     injectTurn('(系统提醒:任务还没完成 —— todo 还有 ' + open.length + ' 项未完成:「' + open.slice(0, 3).join('、') + (open.length > 3 ? '…' : '') + '」。不要停在这里,立即继续执行下一步;真遇到阻塞,明说卡在哪、需要什么。)')
   } else {
-    addNote('任务清单还有 ' + open.length + ' 项未完成，Agent 提前停下了 —— 发「继续」让它接着干', { retry: true })
+    // 按钮语义必须与文案一致:retry 是把上一条用户消息原样重发(模型从头再做一遍),而这里要的是"接着上次停下的地方"。
+    // 与旧页 ui/card.html:1138 对齐 —— 发一条新消息,不是重试。
+    addNote('任务清单还有 ' + open.length + ' 项未完成，Agent 提前停下了 —— ', {
+      contMsg: '继续执行：接着上次停下的地方，把剩余 ' + open.length + ' 项任务继续做完。',
+    })
   }
 }
 // ── 产出兜底(wf 卡,规程第 7 条):todo 全勾却零落盘产出 → 注入补 MD 提醒(一次) ──
@@ -1523,7 +1558,7 @@ export function resetConversation(): void {
   meter.reset(); s.ctxUsedChars = 0; s.ctxRealTokens = null; s.ctxCacheHit = null
   wfExecSeen = false; wfSawTodo = false   // 新会话重看规划/执行信号(planApproved 主进程侧按卡记,不动)
   ctxNag = false   // 水位提醒复位:上下文已回起点,下次涨回 90% 要允许再提醒
-  delegateNudged = false; contNudgeN = 0; contLastOpen = -1; wfProduceNag = false
+  delegateNudged = false; contNudgeN = 0; contLastOpen = -1; contNudgeOff = false; wfProduceNag = false   // contNudgeOff 必须一起复位:交棒是新一棒,不能让上一棒的熔断把防停永久哑掉
   if (!s.shardMode) {   // 看门狗账本清零(分片不清:跨棒绕圈正是分片死循环的典型形态,账本跨棒连续才抓得到)
     wdCurFiles = new Set(); wdRounds.length = 0; wdWarned = false; wdEscLoops = 0; wdWarnSet = null; wdWarnTurn = -1; s.wdBanner = false
   }

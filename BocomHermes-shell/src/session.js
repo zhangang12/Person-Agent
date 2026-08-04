@@ -567,19 +567,38 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     // edit 同享预检(oldString 未命中照样拒带纠偏)。每次放行记审计 + 卡内一行灰字(用户看得见放了什么,不发批准确认框)。
     const permModeNow = (S.permModeByWc && si.wc && S.permModeByWc.get(si.wc.id)) || S.settings.permMode
     if (permModeNow === 'auto') {
-      try { S.audit && S.audit('permission', 'auto 模式放行', { tool: String(tool || ''), detail: String(detail || '').slice(0, 200) }) } catch {}
+      // ★审计和灰字都挂在【真正的应答点】,不许提到分支之前。原来是:
+      //   · 灰字只在同步分支发 —— edit 走异步预检分支后直接 return,把灰字整个跳过了。
+      //     于是 auto 卡里 bash/write 一直在刷"已自动放行",唯独真正改文件的 edit 一条不出;
+      //     更糟的是预检【拒绝】时也一声不吭,用户既不知道放了什么、也不知道拦了什么。
+      //   · 审计写在分支之前且无条件 —— 预检拒绝的那次,审计里却记着"auto 模式放行",是条假阳记录;
+      //     而"拦下了"这件事本身零审计(对比分片分支的编辑预检拦截是记审计的)。
+      const autoNote = (text) => {
+        // 异步分支回来时卡可能已经关了,必须重查 isDestroyed(同步分支也一起走这条,口径统一)
+        try { if (si.wc && !si.wc.isDestroyed()) si.wc.send('card-note', { text, tone: 'muted' }) } catch {}
+      }
+      const autoPass = () => {
+        try { S.audit && S.audit('permission', 'auto 模式放行', { tool: String(tool || ''), detail: String(detail || '').slice(0, 200) }) } catch {}
+        oc.replyPermission(si.serve, sessionId, requestId, 'once')
+        autoNote('auto 模式已自动放行：' + tool + (detail ? ' — ' + String(detail).slice(0, 80) : ''))
+      }
       if (/^edit(_[a-z]+)*$/i.test(String(tool || ''))) {
         ;(async () => {
           try {
             const peek = await buildPermPeek(si, sessionId, tool, detail)
-            if (peek && peek.miss) { log('auto 模式 edit 预检拦截:' + peek.miss.filePath); oc.replyPermission(si.serve, sessionId, requestId, 'reject'); return }
+            if (peek && peek.miss) {
+              log('auto 模式 edit 预检拦截:' + peek.miss.filePath)
+              try { S.audit && S.audit('permission', 'auto 模式 edit 预检拦截', { tool: String(tool || ''), path: String(peek.miss.filePath || '').slice(0, 200) }) } catch {}
+              oc.replyPermission(si.serve, sessionId, requestId, 'reject')
+              autoNote('auto 模式已拦下一次 edit：' + String(peek.miss.filePath || '') + ' —— 待改内容(oldString)在文件里没找到,已拒绝并要求模型重取原文')
+              return
+            }
           } catch {}
-          oc.replyPermission(si.serve, sessionId, requestId, 'once')
+          autoPass()
         })()
         return
       }
-      oc.replyPermission(si.serve, sessionId, requestId, 'once')
-      try { si.wc.send('card-note', { text: 'auto 模式已自动放行：' + tool + (detail ? ' — ' + String(detail).slice(0, 80) : ''), tone: 'muted' }) } catch {}
+      autoPass()
       return
     }
     // 用户权限规则 allow(少弹框 UX 层):命中即放行一次,不再弹批准框(红线在前的 deny 已先判)

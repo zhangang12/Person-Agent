@@ -410,7 +410,9 @@ console.log('用例12:用户权限规则(P2.3 壳层轨) —— deny 先判/allo
 
 console.log('用例12b:permMode auto —— 写/执行自动放行;deny 红线仍先判;edit 预检未命中仍拒/命中放行;审计留痕不弹框')
 {
-  const mkWc = (id) => ({ id, isDestroyed: () => false, send: () => {} })
+  // 收 card-note:auto 模式的注释承诺「每次放行记审计 + 卡内一行灰字」,而 edit 分支曾把灰字整个跳过
+  const notes = []
+  const mkWc = (id) => ({ id, isDestroyed: () => false, send: (ch, p) => { if (ch === 'card-note') notes.push(String((p && p.text) || '')) } })
   const h = makeHarness()
   const wc = mkWc(993)
   const sid = 'ses_auto1'
@@ -437,10 +439,20 @@ console.log('用例12b:permMode auto —— 写/执行自动放行;deny 红线�
   h.S.handlers.onPermission({ sessionId: sid, requestId: 'a3', tool: 'edit', detail: 'target-file.txt' })
   await tick(); await tick()
   ok('auto:edit 预检未命中仍拒(reject)', !!replies.find((x) => x.requestId === 'a3' && x.d === 'reject'), replies)
+  // ★拦下来也要说话:原来这条路径静默 reject —— 用户既不知道拦了什么,审计里还记着一条「放行」的假阳。
+  ok('★auto:edit 被预检拦下时留灰字(原来一声不吭)', notes.some((x) => /已拦下一次 edit/.test(x)), notes)
+  ok('★auto:拦截记审计,不再假记成放行',
+    audits.some((a) => a[0] === 'permission' && /edit 预检拦截/.test(String(a[1])))
+    && !audits.some((a) => a[0] === 'permission' && String(a[1]) === 'auto 模式放行'
+      && /target-file/.test(JSON.stringify(a[2] || ''))), audits)
   h.oc.getRawMessages = async () => [{ parts: [{ type: 'tool', tool: 'edit', state: { status: 'running', input: { filePath: 'target-file.txt', oldString: 'line1 actual content', newString: 'x' } } }] }]
   h.S.handlers.onPermission({ sessionId: sid, requestId: 'a4', tool: 'edit', detail: 'target-file.txt' })
   await tick(); await tick()
   ok('auto:edit 预检通过自动放行(once)', !!replies.find((x) => x.requestId === 'a4' && x.d === 'once'), replies)
+  // ★病灶:edit 走异步预检分支后直接 return,把同步分支末尾那句灰字整个跳过 ——
+  //   auto 卡里 bash/write 都在刷「已自动放行」,唯独真正改文件的 edit 一条不出,用户以为 auto 没在动文件。
+  ok('auto:bash 放行留灰字', notes.some((x) => /auto 模式已自动放行/.test(x) && /bash/.test(x)), notes)
+  ok('★auto:edit 放行同样留灰字(修前 bash 有、edit 没有)', notes.some((x) => /auto 模式已自动放行/.test(x) && /edit/.test(x)), notes)
 
   // 分片卡不受 auto 影响(分片分支在前,本就自动放行 + 写归属闸)—— 这里只验 auto 不把 deny 翻掉
   const h2 = makeHarness()

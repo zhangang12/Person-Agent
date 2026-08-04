@@ -100,6 +100,27 @@ function hasLaterAssistantText(msgs, mi, pi) {
   }
   return false
 }
+/**
+ * 该图片所属的【用户轮次】是否已经结束(它之后出现过新的 user 消息,或某步 assistant 已收尾且不是"还要接着调工具")。
+ *
+ * ★净化必须等轮次结束,不能只看"后面有没有 assistant 文本"。
+ *   hasLaterAssistantText 的意图是"模型已经就这张图给出结论",实现却是"后面存在任意 assistant 非空 text part" ——
+ *   弱模型在调工具前先吐一句"好的,我看看这张图"就满足了。钩子每步 LLM 调用都会跑,于是【同一轮的第二步】图就被换成
+ *   占位符,还写进 decisions('img:'+id) 永不还原:用户贴的截图,模型第二步开始只看得到"[图片已读:结论见下文]",
+ *   而下文根本没有结论 —— 于是瞎猜、要求重发、或直说看不到图。贴图让我干活是主用例,这条静默得很难查。
+ *   老自测正好只造了"a1 只有一条纯结论文本、没有工具调用"这一种形态,是唯一安全形态,所以一直没红。
+ *
+ * finish 分支的必要性:工人卡/子 Agent 卡一辈子只有 1 条 user 消息,只按 user 规则的话它们的图永不净化。
+ * finish 字段缺席时不下结论(退回 user 规则),别拿不确定的信号去抹用户的图。
+ */
+function turnEnded(msgs, mi) {
+  for (let i = mi + 1; i < msgs.length; i++) {
+    if (roleOf(msgs[i]) === 'user') return true
+    const inf = (msgs[i] && msgs[i].info) || {}
+    if (roleOf(msgs[i]) === 'assistant' && inf.finish && inf.finish !== 'tool-calls') return true
+  }
+  return false
+}
 /** 图片占位 part(确定性同文,保 KV-cache;保留原 part 的 id) */
 function imgPlaceholder(p) {
   const ph = { type: 'text', text: IMG_MARK }
@@ -168,6 +189,7 @@ export const ContextGuardPlugin = async () => {
               const id = String(p.id || '')
               const key = 'img:' + id
               if (id && decisions.has(key)) { parts[j] = imgPlaceholder(p); continue }   // 同 ID 同决策
+              if (!turnEnded(msgs, i)) continue                 // ★轮次还没结束:模型可能还要回头看这张图,绝不提前抹(见 turnEnded 注释)
               if (!hasLaterAssistantText(msgs, i, j)) continue   // 模型还没读它/还没给结论:不动
               if (decisions.size > 5000) decisions.clear()
               if (id) decisions.set(key, IMG_MARK)

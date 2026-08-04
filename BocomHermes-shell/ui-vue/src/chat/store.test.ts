@@ -261,6 +261,85 @@ describe('⑦b 看门狗轮末闸:摘要轮里不许再套一层注入', () => {
   })
 })
 
+// ── ⑦f 挂死探针按 partID 判活 ─────────────────────────────────────────────
+// 病灶:渲染端用一个【标量】只跟上一个事件比签名,而主进程 pollTurnParts 每 1.2s 把本轮全部 part 原样重喂,
+// 事件序列成了 A,B,A,B… → 每次都判"有新内容" → 计时被无限续命。回合只要有 ≥2 个 part(一段思考+一个工具就够),
+// 90s/5min 提示永不触发 —— 正好是它要治的那个场景。主进程侧同款病灶早用 per-partID 的 si.partSigs 修掉了,这边只抄了一半。
+describe('⑦f 挂死探针:轮询把 ≥2 个 part 原样重喂不许续命', () => {
+  const A = { kind: 'reasoning', partID: 'hp_a', text: '在想' } as any
+  const B = { kind: 'tool', partID: 'hp_b:tool', text: 'read', status: 'running', output: '' } as any
+  it('★A,B 首次算活;第二遍原样重喂两条都不算活(标量版这里会判"活" → 红)', () => {
+    expect(store.markStreamLive(A)).toBe(true)
+    expect(store.markStreamLive(B)).toBe(true)
+    expect(store.markStreamLive(A)).toBe(false)
+    expect(store.markStreamLive(B)).toBe(false)
+    expect(store.markStreamLive(A)).toBe(false)   // 轮询一直重喂,一直不算活
+  })
+  it('内容真变了照常算活(别把探针修成永远不续命)', () => {
+    expect(store.markStreamLive({ ...B, output: '读到了内容' })).toBe(true)
+    expect(store.markStreamLive({ ...A, text: '在想更多' })).toBe(true)
+  })
+})
+
+// ── ⑦d 长任务防停:熔断之后不许自己复活 ───────────────────────────────────
+// 病灶:熔断分支贴完"不再自动催"就把 contNudgeN 清了 0 —— 只挡住这一轮,下个能催的轮末又从 0 起跳,
+// 于是变成"催 3 次歇一轮再催 3 次",note 里那句承诺是假的(wf 卡上等于每轮末永久注入)。
+// 旧页 ui/card.html:1131 同一句 addNote 后面直接 return、不清零,熔断本来就是粘的 —— 这是 Vue 平移时加错的一行。
+describe('⑦d 防停熔断是粘的,不是每 3 次歇一轮', () => {
+  const feedTodo = (n: number, tag: string) => {
+    // 喂一份 todo:n 项未完(latestOpenTodos 据此计算);同一 partID 覆盖更新
+    streamCb!({
+      kind: 'tool', partID: 'cn_' + tag, text: 'todowrite', status: 'completed',
+      input: { todos: Array.from({ length: n }, (_, i) => ({ content: '第' + i + '项', status: 'pending' })) },
+    })
+  }
+  it('★连催 3 次后彻底闭嘴:后续轮末既不催也不重复贴熔断提示(修前第 4 轮起又催 → 红)', async () => {
+    s.ready = true; s.wfMode = true
+    // ★关掉自动交棒:前面用例把 ctxLimitTokens 留成了 1000,水位到线会触发 compactCore →
+    //   resetConversation() 把熔断复位(这是有意设计:新一棒重新开始),但会把本用例要测的东西盖掉。
+    s.ctxLimitTokens = 0
+    store.resetConversation()   // 把上面用例留下的 contNudge* 状态清干净
+    feedTodo(2, 'a')
+    sent.length = 0
+    // 连跑 8 个回合:每轮末 maybeContinueNudge 都有机会催。todo 一直不动 → 永远没有"进展"
+    for (let k = 0; k < 8; k++) { store.submit('第 ' + k + ' 轮', []); await settle() }
+    const nags = sent.filter((t) => t.includes('任务还没完成 —— todo 还有'))
+    // 修前:3 次一组、清零、再 3 次…… 8 轮里会催 5~6 次。修后:总共只催 3 次,之后彻底停
+    expect(nags.length).toBe(3)
+    const offNotes = s.items.filter((i: any) => i.kind === 'note' && String(i.text).includes('不再自动催'))
+    expect(offNotes.length).toBe(1)   // 那句"不再自动催"也只贴一次,不是每轮重复贴
+    s.wfMode = false
+  })
+  it('未完项变少(真有进展)→ 熔断复活,可以再催', async () => {
+    s.ready = true; s.wfMode = true
+    s.ctxLimitTokens = 0   // 同上:隔离自动交棒
+    store.resetConversation()
+    feedTodo(3, 'b')
+    for (let k = 0; k < 5; k++) { store.submit('推进 ' + k, []); await settle() }   // 先催满 3 次并熔断
+    sent.length = 0
+    feedTodo(1, 'b')   // 3 项 → 1 项:有进展
+    store.submit('又推进了', []); await settle()
+    expect(sent.some((t) => t.includes('任务还没完成 —— todo 还有'))).toBe(true)
+    s.wfMode = false
+  })
+})
+
+describe('⑦e 普通卡的"继续"按钮是发新消息,不是重发上一条', () => {
+  it('★note 带 contMsg(接着上次停下的地方),而不是 retry(把上一条原样重发,模型从头再做一遍)', async () => {
+    s.ready = true; s.wfMode = false
+    store.resetConversation()
+    streamCb!({
+      kind: 'tool', partID: 'cn_c', text: 'todowrite', status: 'completed',
+      input: { todos: [{ content: '甲', status: 'pending' }, { content: '乙', status: 'pending' }] },
+    })
+    store.submit('帮我做甲和乙', []); await settle()
+    const note = s.items.find((i: any) => i.kind === 'note' && String(i.text).includes('Agent 提前停下了')) as any
+    expect(note).toBeTruthy()
+    expect(note.retry).toBe(false)                       // retry=重发上一条用户消息 → 从头再做一遍,与文案相反
+    expect(String(note.contMsg)).toContain('接着上次停下的地方')
+  })
+})
+
 // ── ⑦c 结构契约:轮末系统注入必须走唯一闸门 ────────────────────────────────
 // 行为测试只能证明"今天这几个注入点有闸";这条证明的是"以后新加的也必须有"。
 // 病根就是同一道闸散成 5 份各抄一遍:抄对 3 份、漏掉 2 份(wdCheck / maybePlanGate),
