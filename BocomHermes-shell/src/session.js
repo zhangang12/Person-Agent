@@ -1272,6 +1272,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
       if (si) { oldServe = si.serve; try { oc.abort(si.serve, old) } catch {} }
       S.sessionInfo.delete(old); S.streamBuf.delete(old); S.sentPrompt.delete(old); S.firstMsgCtx.delete(old)
       knowledgeSeed.delete(old); turnBusy.delete(old)
+      try { if (S.setCardBusy) S.setCardBusy(e.sender.id, false) } catch {}   // 旧会话已中止:同步转闲,否则交棒后侧栏永远转圈
       S.dropPendingQuestion(old)   // 旧会话已中止:它名下没答的提问逐个 reject,别让 question 工具空等挂死(R6)
     }
     S.sessionByWc.delete(e.sender.id)
@@ -1309,6 +1310,10 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
     if (!si) throw new Error('session not ready')
     turnBusy.add(sessionId)
+    // 回合序号:下面 finally 的尾部补拉要 await 6~12s,这期间完全可能已经开了新回合
+    // (严格模式 card-inject、编排派发都会立刻再发一条)。摘 busy 时要认这个号,免得旧回合把新回合的忙态摘掉。
+    const myTurn = (si.turnSeq = (si.turnSeq || 0) + 1)
+    try { if (S.setCardBusy) S.setCardBusy(e.sender.id, true) } catch {}   // 忙闲上报:Vue 卡不发 card-busy,由主进程回合态代发(侧栏转圈/未读点/托盘/关卡确认闸都靠它)
     si.lastEventAt = Date.now()   // 挂死看门狗起点:回合刚开始还没流事件,别拿"从未有事件"当静默
     try { if (S.wfTurnStart) S.wfTurnStart(e.sender.id) } catch {}   // 分片收官兜底(window.js):新回合开始=还活着,解除 45s 落定计时
     // 首条消息：静默注入项目上下文前缀（用户看到原文，Serve 收到"背景+原文"）
@@ -1529,7 +1534,10 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
       // 过不了 Electron IPC 结构化克隆,渲染端只剩一句 "An object could not be cloned",真实原因被吞(实测)。
       throw new Error(m)
     } finally {
-      stopPoll(); stopQPoll(); stopChildPoll(); turnBusy.delete(sessionId)
+      stopPoll(); stopQPoll(); stopChildPoll()
+      // ★turnBusy.delete 不在这里 —— 挪到本 finally 的最末尾。
+      //   下面还要 await pollTurnParts(6000) + pollChildren(6000),摘早了这 6~12s 在并发闸眼里就是"这张卡闲着",
+      //   于是回合还没真收尾就被补位,注释里那句"防机制性超发"直接失守。
       // P3.3 todo 权威数据源:serve 的 GET /session/:id/todo 比解析 todowrite 工具入参可靠(弱模型参数畸形会漏判)。
       // fire-and-forget:仅 wf 卡打;返回非空数组才覆盖注册表,空/异常一律不动(保留现有工具入参学习兜底);
       // oc 缺该函数(老版本)也可选链安全跳过。全程 try/catch,绝不阻塞回合收尾。
@@ -1546,6 +1554,12 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
       try { const tailParts = await oc.pollTurnParts(si.serve, sessionId, { timeoutMs: 6000 }); if (tailParts) feedParts(tailParts) } catch {}
       // 回合收尾再扫一遍子会话:最后一个 tick 之后落盘的子 Agent 产出/工具终态也补进侧边栏(不留差一口气的终态);同样 6s 限时
       try { await pollChildren(6000) } catch {}
+      // ★真正的转闲点:尾部补拉全跑完才摘 busy,并同步上报壳层(3s 宽限打点 + 出队补位 + 侧栏/托盘都挂在那一条出口)。
+      //   seq 守卫:上面两次 await 期间若已开了新回合,这一轮不许摘 —— 否则新回合全程被记成空闲。
+      if ((si.turnSeq || 0) === myTurn) {
+        turnBusy.delete(sessionId)
+        try { if (S.setCardBusy) S.setCardBusy(e.sender.id, false) } catch {}
+      }
     }
   })
 

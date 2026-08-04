@@ -83,6 +83,37 @@ async function openCard(h, wcId) {
 
 async function main() {
 
+console.log('用例0:回合忙闲必须上报主进程 —— Vue 卡不发 card-busy,侧栏转圈/未读点/托盘/关卡二次确认闸全靠这条')
+{
+  // 病灶:busyCards 的唯一写入点是 card-busy IPC,而它的唯一发送方 preload.reportBusy 只被 legacy 页调用,
+  // ui-vue 整棵树零调用 —— 默认 cardImpl 就是 vue。于是挂在那条通道上的五样东西一起是死的:
+  //   3s 宽限打点 / 出队补位 / 任务栏闪烁 / 托盘计数 / 侧栏忙闲广播(shell 的「运行中关卡要确认」闸因此形同虚设,
+  //   正在生成的会话点侧栏 × 直接被 abort,零确认)。修法是让主进程回合态喂进同一个写者 S.setCardBusy。
+  const busyLog = []
+  const seq = []   // 事件时序:要证明"转闲"排在尾部补拉【之后】
+  let release = null
+  const h = makeHarness({ oc: {
+    sendMessage: () => new Promise((r) => { release = () => r('终答文本') }),
+    pollTurnParts: async () => { seq.push('尾部补拉 pollTurnParts'); return [] },
+  } })
+  h.S.settings.projectDir = PROJ
+  h.S.setCardBusy = (wcId, busy) => { busyLog.push({ wcId, busy }); seq.push(busy ? '报忙' : '报闲') }
+  const { ev } = await openCard(h, 4242)
+  const p = h.handlers['card-send'](ev, '干活')
+  await tick(); await tick()
+  ok('★回合起手上报忙(修前一次都不报)', busyLog.some((x) => x.wcId === 4242 && x.busy === true), busyLog)
+  ok('  起手时还没报闲', !busyLog.some((x) => x.busy === false), busyLog)
+  release(); await p
+  // ★摘 busy 的时机:必须在尾部补拉(pollTurnParts/pollChildren,各 6s 限时)【之后】——
+  //   摘早了这 6~12s 在并发闸眼里就是"这张卡闲着",回合没收尾就被补位,"防机制性超发"直接失守。
+  const idle = busyLog.filter((x) => x.busy === false)
+  ok('★回合落定上报闲', idle.length === 1 && idle[0].wcId === 4242, busyLog)
+  ok('  顺序是先忙后闲', busyLog[0].busy === true && busyLog[busyLog.length - 1].busy === false, busyLog)
+  ok('  上报的是 wcId(壳层按 wcId 找侧栏条目/托盘/闪烁)', busyLog.every((x) => x.wcId === 4242))
+  ok('★报闲排在尾部补拉之后(摘早了 = 回合没收尾就被并发闸当空位补位)',
+    seq.indexOf('报闲') > seq.lastIndexOf('尾部补拉 pollTurnParts'), seq)
+}
+
 console.log('用例1:R6 dropPendingQuestion —— 会话没了,它名下未答提问逐个 reject 再删(契约:挂在 S 上)')
 {
   const h = makeHarness()

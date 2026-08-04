@@ -2067,8 +2067,8 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   })
 
   // ── 任务完成通知 ────────────────────────────────────────────────────────────
-  const busyCards = new Set()   // card-busy IPC 上报的 webContents id(渲染端驱动;Vue 卡从不上报 —— 只作补充来源,不再是唯一权威)
-  const busyEndAt = new Map()   // wcId → 最近一次转闲的时间戳:出队补位给 3s 宽限 —— 分片轮间空窗(过规划闸/交棒)瞬间"闲"是假象,曾被机制性超发(4 并发跑出 8 张活卡,加剧内网 429)
+  const busyCards = new Set()   // 忙碌卡的 webContents id。写入唯一经 applyBusy:主进程回合态(session.js 回合起手/落定回调)+ legacy card-busy IPC
+  const busyEndAt = new Map()   // wcId → 最近一次转闲的时间戳(由 applyBusy 打点,不再依赖已死的 card-busy IPC):出队补位给 3s 宽限 —— 分片轮间空窗(过规划闸/交棒)瞬间"闲"是假象,曾被机制性超发(4 并发跑出 8 张活卡,加剧内网 429)
   // 回合 busy 改主进程推导(实锤:busyCards 唯一来源是渲染端 card-busy IPC,默认 Vue 卡从不上报 →
   // wfConcurrency 并发闸形同虚设、看门狗门槛永不真、'忙着别杀'守卫失效):wcId → sid → 在回合中。
   // 权威记录 = session.js 的 turnBusy(sid 键 Set,经 S.turnBusy 挂载);挂载未就绪时回退 sessionInfo 字段形态,
@@ -2087,32 +2087,47 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   S.isCardBusy = (wcId) => turnBusyByWc(wcId) || busyCards.has(wcId)   // 暴露给 relay:/orch/result 据此区分"干活中"与"空闲(等批准/等插话)"
   S.isCardBusyLately = (wcId) => S.isCardBusy(wcId) || (Date.now() - (busyEndAt.get(wcId) || 0) < 3000)
   function updateTrayBusy() {
-    if (!S.tray) return
+    if (!S.tray || S.tray.isDestroyed()) return
     const n = busyCards.size
     S.tray.setToolTip(n > 0 ? `BocomHermes · ${n} 个任务运行中` : 'BocomHermes')
   }
-  ipcMain.on('card-busy', (e, busy) => {
-    const wcId = e.sender.id
+  // ── 忙闲的唯一写者 ────────────────────────────────────────────────────────
+  // 这里挂着一整串副作用:3s 宽限打点、出队补位、任务栏闪烁、托盘计数、侧栏忙闲广播。
+  // ★它们原来【全部】只长在 ipcMain.on('card-busy') 里,而 card-busy 的唯一发送方是 preload 的 reportBusy,
+  //   reportBusy 只被 legacy 的 ui/card.html 和 ui/mailcenter.html 调用 —— ui-vue 整棵树零调用,
+  //   而默认 cardImpl 就是 vue。于是对今天真正在跑的那些卡,上面五样【一起是死的】:
+  //     · busyEndAt 恒空 → isCardBusyLately 退化成 isCardBusy,注释里"防机制性超发(4 并发跑出 8 张活卡)"成死代码
+  //     · wfDequeue 的出队触发点② 失效 → 轮末释放了并发位却没人补位,排队分片要等某张卡真收官才动
+  //     · 侧栏 c.busy 恒 false → shell/store.ts 的「运行中关卡要二次确认」闸形同虚设:
+  //       正在生成的会话点侧栏 × 直接走全清理链 abort 掉,零确认(这条最要命)
+  //     · 托盘计数与任务栏闪烁同哑
+  //   修法不是把五个消费端逐个改去读 S.isCardBusy(要改四处,还会漏掉未读点),而是让主进程推导轨
+  //   喂进同一个集合 —— 收敛成这一个写者,legacy IPC 与主进程回合态共用它。
+  function applyBusy(wcId, busy) {
+    if (wcId == null) return
     const wasBusy = busyCards.has(wcId)
-    if (busy) {
-      busyCards.add(wcId)
-    } else {
+    if (busy) busyCards.add(wcId)
+    else {
       busyCards.delete(wcId)
-      busyEndAt.set(wcId, Date.now())   // 转闲打点:并发闸按 isCardBusyLately 计占位(3s 宽限),轮间空窗不被补位
-      try { wfDequeue() } catch {}   // 卡一空闲(回合结束/被中止)就尝试补位 —— 并发闸按"正在干活"计数,空闲立即放行排队分片
-      if (wasBusy) {
-        const win = BrowserWindow.fromWebContents(e.sender)
+      busyEndAt.set(wcId, Date.now())   // 先打点再补位:此刻本卡仍按 3s 宽限计占位,不会把自己的轮间空窗当成空位
+      try { wfDequeue() } catch {}      // 卡一空闲(回合结束/被中止)就尝试补位
+      // 隐藏分片工人卡不闪任务栏:没人在看它,闪了只是噪音
+      if (wasBusy && !(S.shardWc && S.shardWc.has(wcId))) {
+        const win = (S.embedWc && S.embedWc.has(wcId))
+          ? S.mainWin
+          : BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents && w.webContents.id === wcId)
         if (win && !win.isDestroyed() && !win.isFocused()) {
           win.flashFrame(true)
           win.once('focus', () => win.flashFrame(false))
         }
       }
     }
-    if (busyCards.size > 0) updateTrayBusy()
-    else if (S.tray) S.tray.setToolTip('BocomHermes')
+    updateTrayBusy()   // 复位也走它(原来 size===0 时在处理器里另写了个 else 分支,最后一张卡转闲时 tooltip 不复位)
     // 波2:忙闲转发主窗口侧栏(按 wcId 找会话条目改状态点/转圈);内嵌 guest 卡的 sender 即 guest wcId
     try { if (S.mainWin && !S.mainWin.isDestroyed()) S.mainWin.webContents.send('shell-sess-status', { wcId, busy: !!busy }) } catch {}
-  })
+  }
+  S.setCardBusy = applyBusy   // session.js 在回合起手/真正落定时回调 —— Vue 卡不发 card-busy,这是它唯一的入口
+  ipcMain.on('card-busy', (e, busy) => applyBusy(e.sender.id, !!busy))   // legacy 卡(card.html/mailcenter)仍走 IPC,与上面合一条路
   // 卡片关闭时清掉它的"忙"记录 —— 否则正在生成的卡被关，wcId 永留 busyCards,托盘提示会一直"运行中"
   function forgetBusy(wcId) {
     wfTurnBusy.delete(wcId)   // 主进程推导轨同步摘除(关卡即闲)
@@ -2151,7 +2166,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       if (S.shardWc && S.shardWc.has(wcId)) continue
       const h = S.history.find((x) => x.id === sid)
       const reg = S.wfCardByWc && S.wfCardByWc.get(wcId)
-      out.push({ sid, wcId, title: (h && h.title) || (reg && reg.goal) || null, dir: (h && h.dir) || '', busy: busyCards.has(wcId), wf: reg ? reg.kind : '', embed: !!(S.embedWc && S.embedWc.has(wcId)), pinned: !!(S.pinnedWc && S.pinnedWc.has(wcId)) })
+      out.push({ sid, wcId, title: (h && h.title) || (reg && reg.goal) || null, dir: (h && h.dir) || '', busy: !!(S.isCardBusy && S.isCardBusy(wcId)), wf: reg ? reg.kind : '', embed: !!(S.embedWc && S.embedWc.has(wcId)), pinned: !!(S.pinnedWc && S.pinnedWc.has(wcId)) })
     }
     return out
   })
