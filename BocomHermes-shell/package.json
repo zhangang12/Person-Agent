@@ -48,7 +48,8 @@
     "ui:test": "node scripts/electron-node.cjs node_modules/vitest/vitest.mjs run --config ui-vue/vitest.config.ts",
     "ui:stub": "electron scripts/chat-p2a2-stub.cjs",
     "orch:stub": "electron scripts/orch-shard-stub.cjs",
-    "run:stub": "electron scripts/run-panel-stub.cjs"
+    "run:stub": "electron scripts/run-panel-stub.cjs",
+    "bragent:test": "node scripts/browser-agent-selftest.mjs"
   },
   "dependencies": {
     "mammoth": "^1.8.0",

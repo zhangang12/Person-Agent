@@ -92,7 +92,7 @@ module.exports = function initAgentMd(ctx) {
       L.push('', '## 前端自验')
       for (const c of li(d.devCmd, '（待确认）')) L.push('- 起 dev 服务：`' + c + '`')
       L.push('- 入口 URL：' + (d.devUrl || '（待确认：通常 ' + (d.eco.includes('vue') ? 'http://127.0.0.1:8080' : 'http://127.0.0.1:3000') + '，以实际输出为准）'))
-      L.push('- 页面验证步骤：browser_navigate 打开入口 → browser_eval 收集 console 错误与失败资源 → browser_screenshot 截图留证；console 有错/资源 4xx/白屏任一即按失败处理。')
+      L.push('- 页面验证步骤：browser_open 打开入口（内嵌浏览器，带登录态、用户看得见）→ browser_assert 验 no_console_error / no_failed_request → 再断一条本次改动的具体预期（text_present 或 selector_exists）→ browser_shot 截图并把图读一遍 → browser_close 出报告。VERDICT 由壳层机判：零断言算 INCONCLUSIVE，不算通过。')
     }
     if (d.eco.includes('java-maven') || d.eco.includes('java-gradle')) {
       L.push('', '## 后端自验')

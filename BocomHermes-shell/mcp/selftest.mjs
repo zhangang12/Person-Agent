@@ -11,6 +11,7 @@ srv.stdout.setEncoding('utf8')
 srv.stdout.on('data', (d) => { buf += d; let i; while ((i = buf.indexOf('\n')) !== -1) { const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (!line) continue; let m; try { m = JSON.parse(line) } catch { continue } if (m.id && waiters.has(m.id)) { waiters.get(m.id)(m); waiters.delete(m.id) } } })
 const req = (method, params, timeout = 30000) => { const myId = ++id; return new Promise((res, rej) => { const to = setTimeout(() => { waiters.delete(myId); rej(new Error('超时 ' + method)) }, timeout); waiters.set(myId, (m) => { clearTimeout(to); res(m) }); srv.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: myId, method, params }) + '\n') }) }
 const notify = (method, params) => srv.stdin.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n')
+// 注意:本文件的 ok 是 (条件, 名称),与仓里其它自测的 (名称, 条件) 相反 —— 写反了断言会恒真(名称字符串永远 truthy)
 let pass = 0, fail = 0; const ok = (c, m) => { if (c) { pass++; console.log('  ✓ ' + m) } else { fail++; console.log('  ✗ ' + m) } }
 
 try {
@@ -18,8 +19,29 @@ try {
   ok(init.result?.serverInfo?.name === 'BocomHermes-browser', 'initialize 返回 serverInfo')
   notify('notifications/initialized')
   const list = await req('tools/list')
-  ok(Array.isArray(list.result?.tools) && list.result.tools.some((t) => t.name === 'browser_navigate'), 'tools/list 含 browser_navigate（' + (list.result?.tools?.length || 0) + ' 个工具）')
+  ok(Array.isArray(list.result?.tools) && list.result.tools.some((t) => t.name === 'headless_navigate'), 'tools/list 含 headless_navigate（' + (list.result?.tools?.length || 0) + ' 个工具）')
   ok(list.result.tools.some((t) => t.name === 'doc_read'), 'tools/list 含 doc_read(任务编排加工环节)')
+  // ── 契约:两套浏览器工具族必须都在、且【绝不重名】────────────────────────
+  // browser_*  = 内嵌浏览器(用户真在用的那个:带登录态、看得见、强引擎)——端到端验证走这组
+  // headless_* = MCP 进程内另起的一次性无头浏览器(无登录态、看不见)——只适合公网只读页
+  // 重名是硬故障:tools/list 里两个同名不同 schema 的条目,模型必然随机挑一个,而且没人会发现。
+  // (这里真踩过:新族的会话收口和弱族的关浏览器都叫 browser_close。)
+  {
+    const names = (list.result?.tools || []).map((t) => t.name)
+    const dup = names.filter((n, i) => names.indexOf(n) !== i)
+    ok(dup.length === 0, '★工具名零重复' + (dup.length ? ' —— 重了: ' + dup.join(',') : ''))
+    for (const n of ['browser_open', 'browser_read', 'browser_act', 'browser_assert', 'browser_shot', 'browser_diag', 'browser_close']) {
+      ok(names.includes(n), '  内嵌浏览器族含 ' + n)
+    }
+    for (const n of ['headless_navigate', 'headless_get_text', 'headless_close']) {
+      ok(names.includes(n), '  无头族已改名带 headless_ 前缀:' + n)
+    }
+    ok(!names.some((n) => ['browser_navigate', 'browser_get_text', 'browser_eval', 'browser_screenshot', 'browser_click', 'browser_type', 'browser_get_html'].includes(n)),
+      '★弱族不再占用 browser_ 前缀(否则模型挑错的那个,验的就不是真实环境)')
+    const open = (list.result?.tools || []).find((t) => t.name === 'browser_open')
+    ok(!!open && Array.isArray(open.inputSchema?.required) && open.inputSchema.required.includes('purpose'),
+      '  browser_open 强制要 purpose(用户得知道 Agent 在他浏览器里干嘛)')
+  }
 
   // ── doc_read:任务编排链路的加工积木(不依赖浏览器/relay,先测) ──
   {
@@ -63,17 +85,17 @@ try {
   }
 
   const html = 'data:text/html,' + encodeURIComponent('<title>TS-OK</title><body><h1 id=h>HELLO_BOCOMHERMES</h1>')
-  const nav = await req('tools/call', { name: 'browser_navigate', arguments: { url: html } }, 60000)
+  const nav = await req('tools/call', { name: 'headless_navigate', arguments: { url: html } }, 60000)
   const navText = nav.result?.content?.[0]?.text || ''
   if (nav.result?.isError) {
     console.log('  ! 浏览器不可用（MCP 协议已通过，运行时需 Edge/Chrome + Node22+）：' + navText.replace(/\n/g, ' '))
   } else {
     ok(/TS-OK/.test(navText), 'navigate 返回标题（' + navText.replace(/\n/g, ' ') + '）')
-    const txt = await req('tools/call', { name: 'browser_get_text', arguments: {} }, 20000)
+    const txt = await req('tools/call', { name: 'headless_get_text', arguments: {} }, 20000)
     ok(/HELLO_BOCOMHERMES/.test(txt.result?.content?.[0]?.text || ''), 'get_text 取到正文')
-    const ev = await req('tools/call', { name: 'browser_eval', arguments: { expression: 'document.querySelector("#h").id' } }, 20000)
+    const ev = await req('tools/call', { name: 'headless_eval', arguments: { expression: 'document.querySelector("#h").id' } }, 20000)
     ok((ev.result?.content?.[0]?.text || '') === 'h', 'eval 返回元素 id')
-    await req('tools/call', { name: 'browser_close', arguments: {} }, 10000)
+    await req('tools/call', { name: 'headless_close', arguments: {} }, 10000)
   }
 } catch (e) { console.error('selftest error:', e.message); fail++ }
 

@@ -201,16 +201,29 @@ desc: 改完前端代码后,用内嵌浏览器真正打开页面验证(加载/�
 ---
 你现在执行【浏览器自验】。目的:验证前端改动真的能在浏览器里跑起来——读过代码不算验证,打开页面才算。严格按步骤来,不许跳步、不许凭感觉下结论。
 
-【步骤】(全部用 browser_ 系 MCP 工具,bash 只用于起服务)
+【步骤】(用 browser_open/read/act/assert/shot/diag/close 这一组,bash 只用于起服务)
+0. 先认清用哪套浏览器:browser_open 开的是【内嵌浏览器】——用户真在用的那个,带登录态、他全程看得见、选择器有兜底。
+   另有一组 browser_navigate/get_text/click/... 跑在 MCP 进程内的无头浏览器里:没有登录态、用户看不见、
+   和真实使用环境不是同一个东西。验证一律用前者;后者只在"纯公网只读页面"时才考虑。
 1. 确认前端在跑:任务已给入口 URL 就直接进第 2 步;否则按项目文档(CLAUDE.md/README/package.json scripts)用 bash 起 dev 服务(后台起),等到能访问再继续。起不来 → 如实报告"服务起不来+报错原文"并停止,不要编造验证结果。
-2. browser_navigate 打开入口 URL,记下页面标题与最终 URL。
-3. 装错误收集器并刷新:browser_eval 执行
-   window.__errlog=[];addEventListener('error',e=>__errlog.push(String(e.message||e)));addEventListener('unhandledrejection',e=>__errlog.push('Promise:'+String(e.reason)));location.reload();'ok'
-4. 等页面加载(bash sleep 3),然后 browser_eval 收集:
-   JSON.stringify({errors:window.__errlog||[],failedRes:performance.getEntriesByType('resource').filter(r=>r.responseStatus>=400).map(r=>r.name).slice(0,10),bodyLen:document.body.innerText.trim().length,title:document.title})
-5. 若改动涉及交互(按钮/表单/跳转):用 browser_click / browser_type 走一遍关键交互,再按第 4 步收集一次。
-6. browser_screenshot 截图,记下返回的图片路径(作为证据随回报给出)。
-7. browser_close 关闭浏览器。
+2. browser_open(url=入口, purpose="一句话说清这次验什么")。它会另开一个标签页并返回首屏结构(可交互元素带现成选择器)。
+   越出围栏会被拒(默认只放行本机)——照它给的指引报告即可,不要绕路去用无头那套冒充。
+3. 立刻验两条底线断言(这两条查的是浏览器自己从头采集的控制台与网络,比在页面里手搓收集器可靠得多——
+   手搓的监听器装上去时首屏错误早就发生完了,那是漏报的主因):
+   browser_assert(kind="no_console_error", label="首屏无 JS 报错")
+   browser_assert(kind="no_failed_request", label="首屏无失败请求")
+4. 验页面真的渲染出了东西,而不是白屏或错误页:
+   browser_assert(kind="text_present", expect="<本次改动必然出现的一段文案>", label="…")
+   或 browser_assert(kind="selector_exists", expect="<关键元素选择器>", label="…")
+   ★"没报错"不等于"对了":必须至少有一条断言指向【本次改动的具体预期】。
+5. 若改动涉及交互(按钮/表单/跳转):browser_read 看清当前页 → browser_act 走一遍关键路径 →
+   再断言一次结果(text_present / url_matches / no_console_error)。
+6. browser_shot 截图,然后【把图当附件读一遍】再下结论——布局崩没崩、内容对不对,只有看图才知道
+   (带图消息会自动切到读图模型)。截图路径作为证据随回报给出。
+7. 断言不过时用 browser_diag 拿控制台错误与失败请求的明细,写进报告。
+8. browser_close(status="done"|"failed") 收会话出报告。报告里的 VERDICT 是壳层机器算的:
+   有断言失败或步骤失败 → FAIL;一条断言都没做 → INCONCLUSIVE(那只是"打开看了一眼",不算验证)。
+   把这份报告原样贴进你的回报里——它就是你的命令证据。
 
 【判定】
 - 通过:errors 为空 且 failedRes 为空 且 bodyLen > 50(不是白屏)。
@@ -279,7 +292,10 @@ desc: 代码改动后的自主验证：基线构建测试→补最小测试/复�
 - Bug 修复必须先复现再验证,不许直接宣布修好了。
 
 【分类型实测】
-- 前端:起 dev 服务 → browser_navigate 打开 → 收集 console 错误与失败资源 → browser_screenshot 截图 → 有交互就 browser_click/type 走一遍关键路径;console 有错/资源 4xx/白屏 = FAIL。
+- 前端:起 dev 服务 → browser_open(内嵌浏览器,带登录态、用户看得见) → 立刻 browser_assert 验 no_console_error + no_failed_request
+  → 再断一条指向本次改动的预期(text_present/selector_exists;"没报错"不等于"对了") → 有交互就 browser_act 走一遍关键路径再断言
+  → browser_shot 截图并把图读一遍 → browser_close 出报告(VERDICT 机判,零断言算 INCONCLUSIVE)。
+  别用 browser_navigate 那组:它跑在 MCP 进程内的无头浏览器里,没有登录态、用户看不见,验的不是真实环境。
 - 后端/接口:curl 调关键接口,校验响应体形状与字段(不只看状态码);异常参数也要测(空/畸形/边界)。
 - 库/工具函数:从全新上下文 import 当消费者调公开 API。
 

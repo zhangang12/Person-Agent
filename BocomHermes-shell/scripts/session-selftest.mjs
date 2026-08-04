@@ -114,6 +114,27 @@ console.log('用例0:回合忙闲必须上报主进程 —— Vue 卡不发 card
     seq.indexOf('报闲') > seq.lastIndexOf('尾部补拉 pollTurnParts'), seq)
 }
 
+console.log('用例0b:契约 —— 浏览器自验必须指向【内嵌浏览器】那组工具,不许漂回无头弱引擎')
+{
+  // 为什么要钉:仓里有两套同名族的浏览器工具 ——
+  //   browser_open/read/act/assert/shot/diag/close → 内嵌浏览器(带用户登录态、用户看得见、强引擎选择器兜底)
+  //   browser_navigate/get_text/click/eval/...     → MCP 进程内另起的无头浏览器(无登录态、看不见)
+  // 验证棒一旦被写成用后者,"打开页面验过了"这句话就没有含金量:验的根本不是用户的真实环境。
+  // 提示词是纯文本,没有编译期保护,漂回去不会有任何东西报错 —— 所以用契约测试钉住。
+  const src = fs.readFileSync(new URL('../src/session.js', import.meta.url), 'utf8')
+  const skill = (src.match(/'browser-verify':\s*`([\s\S]*?)`,/) || [])[1] || ''
+  ok('取到 browser-verify 技能正文', skill.length > 500, skill.length)
+  for (const t of ['browser_open', 'browser_assert', 'browser_close']) {
+    ok('  提示词用到 ' + t, skill.includes(t))
+  }
+  ok('★明确要求验 no_console_error / no_failed_request(首屏错误只有 CDP 采集抓得到)',
+    skill.includes('no_console_error') && skill.includes('no_failed_request'))
+  ok('★明确说破"没报错 ≠ 对了"(必须有一条断言指向本次改动的预期)', /没报错.*不等于|不等于.*对了/.test(skill))
+  ok('★点名区分两套浏览器,别让模型随手挑错的那个', /无头/.test(skill) && /登录态/.test(skill))
+  // 老流程在页面里手搓 error 监听器:装上去时首屏错误早发生完了,是漏报主因 —— 不许再出现
+  ok('★不再教它手搓 __errlog 收集器(装晚了,首屏错误必漏)', !skill.includes('__errlog'))
+}
+
 console.log('用例1:R6 dropPendingQuestion —— 会话没了,它名下未答提问逐个 reject 再删(契约:挂在 S 上)')
 {
   const h = makeHarness()

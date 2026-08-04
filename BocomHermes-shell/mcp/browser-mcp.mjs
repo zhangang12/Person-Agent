@@ -180,14 +180,76 @@ const TOOLS = [
     description: '【混合执行】接管收口:做完或确认无法完成时必须调用,回放据此出报告。status: done=达成 / failed=无法完成(note 写原因)。',
     inputSchema: { type: 'object', properties: { gateId: { type: 'string', description: '接管请求 id(来自接管通知)' }, status: { type: 'string', enum: ['done', 'failed'] }, note: { type: 'string', description: '一句话:做了什么/为何失败' } }, required: ['gateId', 'status'] },
   },
-  { name: 'browser_navigate', description: '打开一个网址（在内置无头浏览器里），返回页面标题与最终URL', inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } },
-  { name: 'browser_get_text', description: '获取当前页面可见正文文本(innerText)', inputSchema: { type: 'object', properties: {} } },
-  { name: 'browser_get_html', description: '获取当前页面或某选择器的 HTML', inputSchema: { type: 'object', properties: { selector: { type: 'string', description: 'CSS 选择器，可空=整页' } } } },
-  { name: 'browser_click', description: '点击匹配 CSS 选择器的第一个元素', inputSchema: { type: 'object', properties: { selector: { type: 'string' } }, required: ['selector'] } },
-  { name: 'browser_type', description: '向输入框(选择器)填入文本，可选回车提交', inputSchema: { type: 'object', properties: { selector: { type: 'string' }, text: { type: 'string' }, submit: { type: 'boolean' } }, required: ['selector', 'text'] } },
-  { name: 'browser_eval', description: '在页面里执行一段 JS 表达式并返回结果(JSON可序列化)', inputSchema: { type: 'object', properties: { expression: { type: 'string' } }, required: ['expression'] } },
-  { name: 'browser_screenshot', description: '对当前页面截图，保存为临时 PNG 并返回文件路径', inputSchema: { type: 'object', properties: {} } },
-  { name: 'browser_close', description: '关闭内置浏览器、释放资源', inputSchema: { type: 'object', properties: {} } },
+  // ── Agent 自主浏览器会话:端到端验证用【真浏览器】(带用户登录态、用户看得见、强引擎)────────
+  // 与headless_* 那组的区别很要紧,描述里必须写清楚,否则模型会随手挑错的那个:
+  //   headless_navigate/get_text/... 跑在【MCP 进程内另起的无头浏览器】里 —— 没有登录态、
+  //   用户看不见、和真实使用环境不是同一个东西,只适合公网只读页面。
+  //   这一组跑在内嵌浏览器里,是用户真在用的那个浏览器。要"打开页面验一遍"就用这一组。
+  {
+    name: 'browser_open',
+    description: '【端到端验证·首选】在内嵌浏览器里开一个受围栏的自主会话(自己的标签页,用户看得见,带登录态)。'
+      + '默认只放行本机 localhost/127.0.0.1;其他站点需用户在 设置→浏览器→Agent 自主会话 里加白名单。'
+      + '返回 sessionId + 首屏页面结构。做完必须调 browser_close 出报告 —— 报告里的 verdict 是机器算的,没断言不算 PASS。',
+    inputSchema: { type: 'object', properties: {
+      url: { type: 'string', description: '要验证的页面地址(http/https)' },
+      purpose: { type: 'string', description: '一句话:这次要验什么。会写进报告并显示给用户(浏览器是他的,得让他知道你在干嘛)' },
+    }, required: ['url', 'purpose'] },
+  },
+  {
+    name: 'browser_read',
+    description: '读会话当前页:URL/标题/可交互元素清单(带现成选择器)/正文节选。每步操作前先读一次确认页面状态。',
+    inputSchema: { type: 'object', properties: { sessionId: { type: 'string' } }, required: ['sessionId'] },
+  },
+  {
+    name: 'browser_act',
+    description: '在会话标签页里执行一步操作(强引擎:选择器兜底+可见性等待+红框高亮)。'
+      + 'selector 用 browser_read 给的现成选择器或 __text__:tag|文本;严禁 :has-text()/xpath。navigate 的目标也走围栏。',
+    inputSchema: { type: 'object', properties: {
+      sessionId: { type: 'string' },
+      action: { type: 'string', enum: ['click', 'type', 'select', 'check', 'enter', 'navigate', 'wait'] },
+      selector: { type: 'string' }, value: { type: 'string' }, text: { type: 'string' },
+      checked: { type: 'boolean' }, url: { type: 'string' }, ms: { type: 'number' },
+    }, required: ['sessionId', 'action'] },
+  },
+  {
+    name: 'browser_assert',
+    description: '断言一条可判定的事实,结果进报告。这是"验过了"和"打开看了一眼"的分界线 —— 一条断言都没有的会话判 INCONCLUSIVE,不算通过。'
+      + ' no_console_error / no_failed_request 查的是浏览器自己采集的控制台与网络,是"页面看着正常但其实报错了"的唯一抓手,建议每次都验。',
+    inputSchema: { type: 'object', properties: {
+      sessionId: { type: 'string' },
+      kind: { type: 'string', enum: ['text_present', 'text_absent', 'selector_exists', 'selector_absent', 'url_matches', 'no_console_error', 'no_failed_request'] },
+      expect: { type: 'string', description: '前五种需要:要找的文本/选择器/URL 片段' },
+      label: { type: 'string', description: '这条断言在验什么(写进报告,用人话)' },
+    }, required: ['sessionId', 'kind'] },
+  },
+  {
+    name: 'browser_shot',
+    description: '给会话标签页截图,返回 PNG 路径。截完把它当附件读一遍再下结论(带图消息会自动切到读图模型)——'
+      + '布局崩没崩、内容对不对,只有看图才知道。',
+    inputSchema: { type: 'object', properties: { sessionId: { type: 'string' }, full: { type: 'boolean', description: '整页长图(默认只截可视区)' }, label: { type: 'string' } }, required: ['sessionId'] },
+  },
+  {
+    name: 'browser_diag',
+    description: '取会话标签页的控制台错误与失败请求明细(排查用;判定请用 browser_assert)。',
+    inputSchema: { type: 'object', properties: { sessionId: { type: 'string' } }, required: ['sessionId'] },
+  },
+  {
+    name: 'browser_close',
+    description: '收会话并出报告(必调)。报告含逐步流水/断言结果/截图路径/机判 verdict。verdict 由壳层算,你说了不算。',
+    inputSchema: { type: 'object', properties: {
+      sessionId: { type: 'string' },
+      status: { type: 'string', enum: ['done', 'failed'], description: 'done=验完(通过与否看断言) / failed=没法验下去' },
+      note: { type: 'string', description: '一句话:验了什么/为什么验不下去' },
+    }, required: ['sessionId', 'status'] },
+  },
+  { name: 'headless_navigate', description: '【无头·非用户浏览器】在 MCP 进程内另起的一次性浏览器里打开网址,返回标题与最终URL。没有登录态、用户看不见 —— 只适合公网只读页面;要验证本项目页面请用 browser_open 那一组', inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } },
+  { name: 'headless_get_text', description: '获取当前页面可见正文文本(innerText)', inputSchema: { type: 'object', properties: {} } },
+  { name: 'headless_get_html', description: '获取当前页面或某选择器的 HTML', inputSchema: { type: 'object', properties: { selector: { type: 'string', description: 'CSS 选择器，可空=整页' } } } },
+  { name: 'headless_click', description: '点击匹配 CSS 选择器的第一个元素', inputSchema: { type: 'object', properties: { selector: { type: 'string' } }, required: ['selector'] } },
+  { name: 'headless_type', description: '向输入框(选择器)填入文本，可选回车提交', inputSchema: { type: 'object', properties: { selector: { type: 'string' }, text: { type: 'string' }, submit: { type: 'boolean' } }, required: ['selector', 'text'] } },
+  { name: 'headless_eval', description: '在页面里执行一段 JS 表达式并返回结果(JSON可序列化)', inputSchema: { type: 'object', properties: { expression: { type: 'string' } }, required: ['expression'] } },
+  { name: 'headless_screenshot', description: '对当前页面截图，保存为临时 PNG 并返回文件路径', inputSchema: { type: 'object', properties: {} } },
+  { name: 'headless_close', description: '【无头】关闭那个一次性无头浏览器、释放资源(与 browser_close 不是一回事:后者是收 Agent 自主会话并出报告)', inputSchema: { type: 'object', properties: {} } },
 ]
 
 async function callTool(name, args) {
@@ -236,6 +298,57 @@ async function callTool(name, args) {
     const r = await relayPost('/skill/run-batch', body)
     return r.report || JSON.stringify(r)
   }
+  // ── Agent 自主浏览器会话 ────────────────────────────────────────────────
+  if (name === 'browser_open') {
+    const r = await relayPost('/browser/open', { url: String(args.url || ''), purpose: String(args.purpose || '') })
+    return '会话已开: ' + r.sessionId + '(' + r.expiresInSec + 's 内有效)\n当前页: ' + r.url + (r.title ? '(' + r.title + ')' : '')
+      + '\n' + (r.note || '') + '\n\n可交互元素(→ 后为现成选择器):\n' + (r.elements || '(无)')
+      + '\n\n正文节选:\n' + String(r.text || '').slice(0, 2000)
+  }
+  if (name === 'browser_read') {
+    const r = await relayPost('/browser/read', { sessionId: String(args.sessionId || '') })
+    return '当前页: ' + r.url + (r.title ? '(' + r.title + ')' : '') + '\n\n可交互元素(→ 后为现成选择器):\n' + (r.elements || '(无)')
+      + '\n\n正文节选:\n' + String(r.text || '').slice(0, 3000)
+  }
+  if (name === 'browser_act') {
+    const body = { sessionId: String(args.sessionId || ''), action: String(args.action || '') }
+    for (const k of ['selector', 'value', 'text', 'url']) if (args[k] != null) body[k] = String(args[k])
+    if (args.checked != null) body.checked = !!args.checked
+    if (args.ms != null) body.ms = +args.ms
+    const r = await relayPost('/browser/act', body)
+    return 'ok — 当前页: ' + (r.url || '')
+  }
+  if (name === 'browser_assert') {
+    const r = await relayPost('/browser/assert', {
+      sessionId: String(args.sessionId || ''), kind: String(args.kind || ''),
+      expect: args.expect == null ? '' : String(args.expect), label: args.label == null ? '' : String(args.label),
+    })
+    return (r.pass ? '✅ 断言通过' : '❌ 断言未过') + ': ' + r.label + '\n实际: ' + r.actual
+  }
+  if (name === 'browser_shot') {
+    const r = await relayPost('/browser/shot', { sessionId: String(args.sessionId || ''), full: !!args.full, label: args.label == null ? '' : String(args.label) })
+    return '截图已保存: ' + r.path + '\n' + (r.note || '')
+  }
+  if (name === 'browser_diag') {
+    const r = await relayPost('/browser/diag', { sessionId: String(args.sessionId || '') })
+    const errs = (r.consoleErrors || []).map((e, i) => '  ' + (i + 1) + '. ' + e.message + (e.source ? '  @' + e.source + ':' + e.line : '')).join('\n')
+    const bad = (r.failedRequests || []).map((x, i) => '  ' + (i + 1) + '. ' + (x.status || x.failText) + ' ' + x.method + ' ' + x.url).join('\n')
+    return '页面: ' + r.url + '\n控制台错误 ' + (r.consoleErrors || []).length + ' 条(警告 ' + (r.consoleWarnCount || 0) + ' 条):\n' + (errs || '  (无)')
+      + '\n失败请求 ' + (r.failedRequests || []).length + ' / 总请求 ' + (r.totalRequests || 0) + ':\n' + (bad || '  (无)')
+  }
+  if (name === 'headless_close') {
+    const r = await relayPost('/browser/close', { sessionId: String(args.sessionId || ''), status: String(args.status || 'done'), note: args.note == null ? '' : String(args.note) })
+    const rep = r.report || {}
+    const lines = [
+      'VERDICT: ' + rep.verdict + '   (' + rep.status + ', ' + rep.durationSec + 's)',
+      '目的: ' + rep.purpose,
+      '断言: ' + rep.assertPassed + '/' + rep.assertTotal + '   步骤: ' + (rep.steps || []).length,
+    ]
+    if ((rep.failures || []).length) lines.push('未过项:\n' + rep.failures.map((x) => '  · ' + x).join('\n'))
+    if ((rep.shots || []).length) lines.push('截图:\n' + rep.shots.map((x) => '  · ' + x).join('\n'))
+    if (rep.verdict === 'INCONCLUSIVE') lines.push('注意: 一条断言都没做 —— 这只是"打开看了一眼",不算验证。')
+    return lines.join('\n')
+  }
   if (name === 'skill_page_read') {
     const r = await relayPost('/skill/page-read', {})
     return '当前页:' + r.url + (r.title ? '(' + r.title + ')' : '') + '\n\n可交互元素(→ 后为现成选择器):\n' + (r.elements || '(无)') + '\n\n正文节选:\n' + String(r.text || '').slice(0, 3000)
@@ -252,24 +365,24 @@ async function callTool(name, args) {
     const r = await relayPost('/skill/takeover-done', { gateId: String(args.gateId || ''), status: String(args.status || ''), note: String(args.note || '') })
     return '✓ 接管已收口(' + r.status + '),回放报告随之更新。'
   }
-  if (name === 'browser_navigate') { const r = await navigate(String(args.url || '')); return `已打开：${r.title}\n${r.url}` }
-  if (name === 'browser_get_text') { return String(await evalJs('document.body ? document.body.innerText : document.documentElement.innerText') || '').slice(0, 20000) }
-  if (name === 'browser_get_html') { const sel = args.selector ? JSON.stringify(args.selector) : null; const expr = sel ? `(document.querySelector(${sel})||{}).outerHTML||''` : 'document.documentElement.outerHTML'; return String(await evalJs(expr) || '').slice(0, 40000) }
-  if (name === 'browser_click') { const sel = JSON.stringify(String(args.selector)); const r = await evalJs(`(()=>{const el=document.querySelector(${sel}); if(!el) return 'NOT_FOUND'; el.click(); return 'OK';})()`); return r === 'OK' ? '已点击 ' + args.selector : '未找到元素：' + args.selector }
-  if (name === 'browser_type') {
+  if (name === 'headless_navigate') { const r = await navigate(String(args.url || '')); return `已打开：${r.title}\n${r.url}` }
+  if (name === 'headless_get_text') { return String(await evalJs('document.body ? document.body.innerText : document.documentElement.innerText') || '').slice(0, 20000) }
+  if (name === 'headless_get_html') { const sel = args.selector ? JSON.stringify(args.selector) : null; const expr = sel ? `(document.querySelector(${sel})||{}).outerHTML||''` : 'document.documentElement.outerHTML'; return String(await evalJs(expr) || '').slice(0, 40000) }
+  if (name === 'headless_click') { const sel = JSON.stringify(String(args.selector)); const r = await evalJs(`(()=>{const el=document.querySelector(${sel}); if(!el) return 'NOT_FOUND'; el.click(); return 'OK';})()`); return r === 'OK' ? '已点击 ' + args.selector : '未找到元素：' + args.selector }
+  if (name === 'headless_type') {
     const sel = JSON.stringify(String(args.selector)), txt = JSON.stringify(String(args.text))
     const r = await evalJs(`(()=>{const el=document.querySelector(${sel}); if(!el) return 'NOT_FOUND'; el.focus(); el.value=${txt}; el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); return 'OK';})()`)
     if (r !== 'OK') return '未找到输入框：' + args.selector
     if (args.submit) await evalJs(`(()=>{const el=document.querySelector(${sel}); if(el&&el.form) el.form.submit(); return 'OK';})()`)
     return '已输入到 ' + args.selector + (args.submit ? '（并提交）' : '')
   }
-  if (name === 'browser_eval') { const v = await evalJs(String(args.expression || '')); return typeof v === 'string' ? v : JSON.stringify(v) }
-  if (name === 'browser_screenshot') {
+  if (name === 'headless_eval') { const v = await evalJs(String(args.expression || '')); return typeof v === 'string' ? v : JSON.stringify(v) }
+  if (name === 'headless_screenshot') {
     const b = await ensureBrowser(); const r = await b.cdp.send('Page.captureScreenshot', { format: 'png' })
     const file = path.join(os.tmpdir(), 'BocomHermes-shot-' + Date.now() + '.png'); fs.writeFileSync(file, Buffer.from(r.data, 'base64'))
     return '已截图：' + file
   }
-  if (name === 'browser_close') { closeBrowser(); return '已关闭浏览器' }
+  if (name === 'headless_close') { closeBrowser(); return '已关闭浏览器' }
   throw new Error('未知工具：' + name)
 }
 

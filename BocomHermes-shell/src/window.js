@@ -11,6 +11,7 @@ const { extractMeeting } = require('./meeting-extract')
 const todoExtractLLM = require('./todo-extract-llm')   // 邮件待办语义提取(攒批 LLM 复核,规则法太宽被弃用)
 const { RECORDER_JS, selExpr, findElExpr, anchorExpr, frameFor, safeOrigin, applyParams, applyBaseUrl, JS_LIKE, diffReport, coverageHits, clusterErrs, compactEvents, markHumanGates, upgradeToSkill, skillMd, composePostPipelineGoal, applyRefinePatch, rowToParamValues, relocateSelectors, takeoverDigest, redactRec } = require('./recorder-core')
 const initRecorder = require('./recorder')
+const initBrowserAgent = require('./browser-agent')   // Agent 自主浏览器会话(端到端验证:自己开、围栏内操作、断言取证、出报告)
 const { cdpConsoleLevel, fmtRO, fmtException, resolveFrame } = require('./cdp-format')
 const initMail = require('./mail')
 const initMcpConfig = require('./mcp-config')
@@ -1004,6 +1005,13 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     } catch (e) { log('persistHeal err: ' + e.message) }
   }
   const { injectRecorder, waitNetIdle, waitForEl, highlightTarget, execStep, startCoverage, stopCoverage, checkAssertions, replayRec } = initRecorder({ S, brActive, session, log, snapshotBad, RECORDER_JS, frameFor, findElExpr, anchorExpr, coverageHits, gitChangedFiles, resolveBus, relocateSelectors, persistHeal, takeoverDigest, pageRead: skillPageRead })
+
+  // Agent 自主浏览器会话:必须在 initRecorder 之后 —— 它复用 execStep/waitNetIdle 这两个强引擎原语,
+  // 不另起一套弱实现(弱实现正是 mcp/browser-mcp.mjs 里那个无登录态无头浏览器的老问题)。
+  const brAgent = initBrowserAgent({ S, log, brActive, newTab, closeTab, activateTab, createBrowser, brScreenshot, execStep, waitNetIdle, pageRead: skillPageRead })
+  // 挂 S:relay(mail.js)在本行【之前】就被 initMail 构造了,而 brAgent 是 const —— 直接传进去会踩 TDZ。
+  // 本仓跨层访问的惯例本来就是挂 S(S.setCardBusy / S.dropPendingPerm 同款),relay 调用期再取,顺序天然安全。
+  S.brAgent = brAgent
 
   // ── 调试分诊 + 多 agent 对抗分析（工作台「发给 Agent」的大脑）──────────────────
   const tinyJson = (t) => { try { const m = String(t || '').replace(/<think>[\s\S]*?<\/think>/gi, ' ').match(/\{[\s\S]*\}/); return m ? JSON.parse(m[0]) : null } catch { return null } }
@@ -2334,6 +2342,29 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
         .catch((e) => log('setProxy err: ' + e.message))
     }
     if (patch && typeof patch.browserArgs === 'string') S.settings.browserArgs = patch.browserArgs.trim()
+    // Agent 自主浏览器会话的围栏白名单。★这里必须自己再规范化+校验一遍,不能信 UI 传来的形状:
+    //   这是条安全边界,而设置面板只是它的一个调用方(以后还会有别的,比如导入配置/命令行/内网下发)。
+    //   一律削成 protocol//host —— 围栏比的就是这个;削不出来的直接丢弃,不入白名单(宁可不放行,不可放错)。
+    if (patch && patch.browserAgent && typeof patch.browserAgent === 'object') {
+      const cur = S.settings.browserAgent || {}
+      const ba = { enabled: cur.enabled !== false, origins: Array.isArray(cur.origins) ? cur.origins : [] }
+      if (typeof patch.browserAgent.enabled === 'boolean') ba.enabled = patch.browserAgent.enabled
+      if (Array.isArray(patch.browserAgent.origins)) {
+        const out = []
+        for (const x of patch.browserAgent.origins) {
+          try {
+            const u = new URL(/^https?:\/\//i.test(String(x)) ? String(x) : 'https://' + String(x))
+            if (u.protocol !== 'http:' && u.protocol !== 'https:') continue
+            const o = u.protocol + '//' + u.host
+            if (!out.includes(o)) out.push(o)
+          } catch { /* 丢弃:填不出 origin 的一律不放行 */ }
+        }
+        ba.origins = out.slice(0, 50)
+      }
+      if (patch.browserAgent.minutes !== undefined) ba.minutes = Math.max(1, Math.min(parseInt(patch.browserAgent.minutes) || 10, 30))
+      S.settings.browserAgent = ba
+      log('[browser-agent] 围栏更新: ' + (ba.enabled ? '开' : '关') + ',白名单 ' + ba.origins.length + ' 个' + (ba.origins.length ? ' — ' + ba.origins.join(', ') : ''))
+    }
     if (patch && typeof patch.planMode === 'boolean') S.settings.planMode = patch.planMode
     if (patch && patch.outboxHoldSeconds !== undefined) S.settings.outboxHoldSeconds = Math.max(0, Math.min(parseInt(patch.outboxHoldSeconds) || 0, 3600))
     // 阈值旋钮:只收白名单 9 键,数值化(非数值忽略,防脏值进 settings.json)
@@ -3025,8 +3056,9 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   // ── 混合执行 · Agent 直接操作内嵌浏览器的三个动作面(relay /skill/page-*,browser-mcp 转发)────
   // 复用确定性引擎的同一套加固原语(waitForEl/原生 setter+事件/__text__),Element-UI 等框架事件才触发得对。
   // 读页任何时候可用;【执行】仅在接管期(S.browser._takeover.active)开放 —— 防 Agent 随手戳生产页面。
-  async function skillPageRead() {
-    const tab = brActive(); if (!tab) return { error: '没有活跃标签' }
+  // tab 可选:Agent 自主会话有自己的标签页,不能读 brActive()(那是用户正在看的那个)
+  async function skillPageRead(tab0) {
+    const tab = tab0 || brActive(); if (!tab) return { error: '没有活跃标签' }
     const wc = tab.view.webContents
     let text = '', els = ''
     try { text = String(await wc.executeJavaScript('(document.body&&document.body.innerText)||""', true) || '').slice(0, 6000) } catch {}

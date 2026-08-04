@@ -150,6 +150,7 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 .sd-in{width:100%;height:32px;background:var(--bg);border:1px solid var(--line);border-radius:8px;
   color:var(--txt);font-size:12px;font-family:'SF Mono',monospace;padding:0 10px;outline:none}
 .sd-in:focus{border-color:var(--accent)}
+.sd-ck{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fg);margin:2px 0 7px;cursor:pointer}
 .sd-chips{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
 .sd-chip{font-size:11px;color:var(--accent);background:var(--accent-dim);border:1px solid transparent;
   border-radius:7px;padding:4px 10px;cursor:pointer}
@@ -502,6 +503,17 @@ body.ws .rr-mask{left:calc(var(--wsleftw) + 6px)}
           <button class="sd-chip" data-arg="--ignore-certificate-errors">忽略证书错误</button>
         </div>
         <div class="sd-hint">含 <code>--disable-web-security</code> 时<b>新开的标签页</b>立刻关掉同源策略（解决本地项目跨域），无需重启；其余开关重启后生效。注：<code>--user-data-dir</code> 会丢设置，已自动忽略。</div>
+      </div>
+      <div class="sd-grp">
+        <label class="sd-lbl">Agent 自主会话（端到端验证）</label>
+        <label class="sd-ck"><input type="checkbox" id="sdBaOn"> 允许 Agent 自己开浏览器做验证</label>
+        <input id="sdBaOrigins" class="sd-in" placeholder="https://uat.example.com  https://test.example.com（空格或换行分隔）" spellcheck="false">
+        <div class="sd-hint">
+          Agent 会另开<b>自己的标签页</b>操作（你全程看得见），做完出一份带断言的报告。<br>
+          <b>默认只放行本机</b>（localhost / 127.0.0.1）。这个浏览器带着你的内网登录态，让它在真业务系统上自由点击风险太大 ——
+          要放行别的站点，在上面按 <code>协议://域名[:端口]</code> 逐个填（如 <code>https://uat.example.com</code>）。
+          子域、不同协议、不同端口都算不同站点，不会互相顺延。
+        </div>
       </div>
       <div class="sd-save"><span class="sd-ok" id="sdOk"></span><button class="sd-btn" id="sdSave">保存</button></div>
     </div>
@@ -873,8 +885,15 @@ url.addEventListener('focus', () => {
 ;(function () {
   const drawer = $('settingsDrawer'); if (!drawer) return
   const proxyIn = $('sdProxy'), argsIn = $('sdArgs'), ok = $('sdOk')
+  const baOn = $('sdBaOn'), baOrigins = $('sdBaOrigins')
   const openDrawer = () => {
-    try { const s = H.getSettings() || {}; proxyIn.value = s.proxy || ''; argsIn.value = s.browserArgs || '' } catch {}
+    try {
+      const s = H.getSettings() || {}
+      proxyIn.value = s.proxy || ''; argsIn.value = s.browserArgs || ''
+      const ba = s.browserAgent || {}
+      baOn.checked = ba.enabled !== false                      // 缺省开(只放行本机,本身已足够安全)
+      baOrigins.value = (Array.isArray(ba.origins) ? ba.origins : []).join('\n')
+    } catch {}
     ok.textContent = ''; drawer.hidden = false; H.browserSettingsOverlay(true)
   }
   const closeDrawer = () => { drawer.hidden = true; H.browserSettingsOverlay(false) }
@@ -889,8 +908,22 @@ url.addEventListener('focus', () => {
   }))
   $('sdSave').addEventListener('click', async () => {
     try {
-      await H.setSettings({ proxy: proxyIn.value.trim(), browserArgs: argsIn.value.trim() })
-      ok.textContent = '✓ 已保存：代理即时生效，启动参数对新标签页生效'
+      // origin 规范化:用户多半会整条 URL 粘进来(带路径),这里统一削成 protocol//host —— 围栏比的就是这个。
+      // 削不出来的当场标红退回:填错了要立刻知道,不能等 Agent 撞了墙才发现白名单没生效。
+      const raw = baOrigins.value.split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean)
+      const origins = [], bad = []
+      for (const x of raw) {
+        try {
+          const u = new URL(/^https?:\/\//i.test(x) ? x : 'https://' + x)
+          if (u.protocol !== 'http:' && u.protocol !== 'https:') { bad.push(x); continue }
+          const o = u.protocol + '//' + u.host
+          if (!origins.includes(o)) origins.push(o)
+        } catch { bad.push(x) }
+      }
+      if (bad.length) { ok.textContent = '✗ 这些站点填得不对：' + bad.join('、'); return }
+      baOrigins.value = origins.join('\n')
+      await H.setSettings({ proxy: proxyIn.value.trim(), browserArgs: argsIn.value.trim(), browserAgent: { enabled: !!baOn.checked, origins } })
+      ok.textContent = '✓ 已保存：代理即时生效，启动参数对新标签页生效，Agent 围栏对新会话生效'
       setTimeout(() => { ok.textContent = '' }, 3200)
     } catch (err) { ok.textContent = '✗ 保存失败' }
   })

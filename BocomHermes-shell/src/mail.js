@@ -421,6 +421,18 @@ module.exports = function initMail(ctx) {
           if (req.url === '/skill/takeover-done') {
             try { return reply(skillTakeoverDone(a)) } catch (e) { return reply({ error: e.message }) }
           }
+          // ── Agent 自主浏览器会话(端到端验证)──────────────────────────────
+          // 与上面 /skill/* 的分工:那组是【回放录好的技能】+ 回放失败后的人工点名接管;
+          // 这组是 Agent 自己开一个受围栏的会话,拿自己的标签页,做完出报告。两条路互不干扰。
+          // S.brAgent 由 window.js 在 initMail 之后挂上(const 的 TDZ,不能直接注进 ctx)。
+          if (req.url.startsWith('/browser/')) {
+            const ba = S.brAgent
+            if (!ba) return reply({ error: '浏览器 Agent 会话未就绪(壳层还没装配完)' })
+            const route = req.url.slice('/browser/'.length)
+            const fn = { open: ba.agentOpen, read: ba.agentRead, act: ba.agentAct, assert: ba.agentAssert, shot: ba.agentShot, diag: ba.agentDiag, close: ba.agentClose }[route]
+            if (!fn) return reply({ error: 'unknown ' + req.url })
+            try { return reply(await fn(a)) } catch (e) { return reply({ error: e.message }) }
+          }
           return reply({ error: 'unknown ' + req.url })
         } catch (e) { reply({ error: e.message }) }
       })
