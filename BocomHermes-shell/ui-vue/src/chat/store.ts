@@ -1387,12 +1387,20 @@ export function wireQuestion(): void {
 }
 export async function sendQuestion(it: QuestionItem): Promise<void> {
   if (it.sent || !quizCanSend(it.answers, it.questions)) return
-  it.sent = true
+  it.sent = true   // 先置位挡住重复点击;送不到再放回去(下面 revert)
+  // ★送不到就把卡改回【可重答】。原来无论成败都定格 sent=true,作答 UI(QuestionCard 按 !sent 渲染)直接消失,
+  //   用户只剩一句"没送达",连再点一次的入口都没有 —— 而主进程那边现在会把 pendingQuestion 记录留着等重答。
+  //   两端必须一起改:只改主进程(留记录)而卡片仍定格,记录就成了永远没人来取的孤儿,
+  //   还会让兜底轮询的 `S.pendingQuestion.has(rid)` 恒真,把"重弹一张新卡"这条唯一的恢复路径也堵死。
+  const revert = (msg: string) => { it.sent = false; it.doneText = ''; addNote(msg, { muted: true }) }
   try {
     // 响应式代理过不了 IPC 结构化克隆(实测 "An object could not be cloned")—— 剥成纯数组再发
     const r = await BH()?.questionReply?.(it.requestId, it.answers.map((a) => (Array.isArray(a) ? [...a] : a)))
-    it.doneText = (r && r.ok) ? quizSummary(it.answers) : ('⚠ 回答没送达:' + ((r && r.err) || '未知错误') + '(可直接把答复打在输入框发出)')
-  } catch (e: any) { it.doneText = '⚠ 回答没送达:' + ((e && e.message) || e) }
+    if (r && r.ok) { it.doneText = quizSummary(it.answers); return }
+    revert('⚠ 回答没送达:' + ((r && r.err) || '未知错误') + ' —— 提问卡已恢复可作答,请再点一次提交(或直接把答复打在输入框发出)')
+  } catch (e: any) {
+    revert('⚠ 回答没送达:' + ((e && e.message) || e) + ' —— 提问卡已恢复可作答,请再点一次提交')
+  }
 }
 export async function rejectQuestion(it: QuestionItem): Promise<void> {
   if (it.sent) return

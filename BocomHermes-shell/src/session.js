@@ -1421,12 +1421,21 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     const startQPoll = () => { if (qPoll) return; qPoll = setInterval(async () => {
       try {
         const si2 = S.sessionInfo.get(sessionId); if (!si2 || !si2.wc || si2.wc.isDestroyed()) return
-        const list = typeof oc.listPendingQuestions === 'function' ? await oc.listPendingQuestions(si2.serve) : null
+        // ★带 sessionId:GET /question 是整台 serve 的清单,同目录多卡共用一台 serve 是常态。
+        //   不过滤就是"谁先轮到谁冒领本卡的 sessionId",而先轮到的若是分片隐藏卡,
+        //   onQuestion 会走无人值守分支【当场自动拒答】—— 该弹提问卡的那张卡什么也不弹(见 opencode.listPendingQuestions 注释)。
+        const list = typeof oc.listPendingQuestions === 'function' ? await oc.listPendingQuestions(si2.serve, sessionId) : null
         for (const q of (Array.isArray(list) ? list : [])) {
           const rid = q && (q.id ?? q.requestID ?? q.questionID ?? q.requestId)
           if (!rid || questionSeen.has(rid) || S.pendingQuestion.has(rid)) continue
+          // 归属证不出来(老 fork 条目不带 sessionID):可见卡宁可多弹一次让人看见,
+          // 无人值守卡(分片/scope)绝不认领 —— 认领 = 替别人当场拒答,是不可逆的误伤。
+          if (q._unowned && ((S.shardWc && si2.wc && S.shardWc.has(si2.wc.id)) || (si2.tag && si2.tag.scope))) {
+            log('question ' + rid + ' 无归属信息且本卡无人值守 → 不认领(交给可见卡)')
+            continue
+          }
           questionSeen.add(rid)
-          log('question ' + rid + ' 经兜底轮询发现 → 弹到卡片')
+          log('question ' + rid + ' 经兜底轮询发现 → 弹到卡片' + (q._unowned ? '(条目无 sessionID,按本卡认领)' : ''))
           onQuestion({ sessionId, requestId: rid, questions: Array.isArray(q.questions) ? q.questions : [], v2: false, serve: si2.serve })
         }
       } catch {}
@@ -1694,19 +1703,37 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
   })
 
   // 交互提问卡的应答回传:reply=用户点选/自定义的答案(labels 按问题序),reject=拒绝回答(等价 TUI 的 Esc)
+  // 【顺序契约·勿改】先 await 送达成功,再摘 pendingQuestion 记录。
+  // ★原来是 get 完立刻 delete 再 await,而 replyQuestion 不吞错直接抛(api() 对非 2xx 与连接错都 reject)——
+  //   一次网络抖动,记录就没了,requestId 再也查不回来:
+  //     ① 提问卡这边已置 sent=true,作答 UI 消失,用户只剩一句"没送达",连重答的入口都没有;
+  //     ② 关卡清理链(S.dropPendingQuestion)也找不到它,连"兜底 reject 解放 serve"这条退路一起断掉;
+  //     ③ serve 侧的 question 工具继续干等,本轮就挂在那(注释里记录过的 88s 病灶)。
+  //   送不到就把记录留着 —— 卡片据此改回可重答态,清理链也还能兜底 reject。
+  // sending 标记不能省:delete-first 以前顺带充当了防重入闸(第二次 invoke 拿不到 q 就返回失效),
+  // 改成保留记录后,慢请求 + 用户重复点会并发两次 POST。
   ipcMain.handle('question-reply', async (_e, { requestId, answers }) => {
-    const q = S.pendingQuestion.get(requestId); S.pendingQuestion.delete(requestId)
+    const q = S.pendingQuestion.get(requestId)
     if (!q) return { ok: false, err: '这个提问已失效(可能已被应答或回合中断)' }
+    if (q.sending) return { ok: false, err: '正在送达中,别重复提交' }
+    S.pendingQuestion.set(requestId, Object.assign({}, q, { sending: true }))
     try {
       await oc.replyQuestion(q.serve, q.sessionId, requestId, Array.isArray(answers) ? answers : [], q.v2)
+      S.pendingQuestion.delete(requestId)   // 送达成功才摘
       try { S.audit && S.audit('question', '回答提问', { requestId, answers: JSON.stringify(answers || []).slice(0, 300), sessionId: q.sessionId }) } catch {}
       return { ok: true }
-    } catch (e) { return { ok: false, err: String((e && e.message) || e) } }
+    } catch (e) {
+      S.pendingQuestion.set(requestId, Object.assign({}, q, { sending: false }))   // 留住记录 + 解锁,让卡片能重答
+      return { ok: false, err: String((e && e.message) || e), retryable: true }
+    }
   })
+  // 拒答同理:rejectQuestion 内部吞错(fire-and-forget),这里靠返回值判不了成败,
+  // 所以维持"先删",但把删挪到 await 之后 —— 至少 serve 真的收到过一次拒答请求。
   ipcMain.handle('question-reject', async (_e, { requestId }) => {
-    const q = S.pendingQuestion.get(requestId); S.pendingQuestion.delete(requestId)
+    const q = S.pendingQuestion.get(requestId)
     if (!q) return { ok: false, err: '这个提问已失效(可能已被应答或回合中断)' }
     try { await oc.rejectQuestion(q.serve, q.sessionId, requestId, q.v2) } catch {}
+    S.pendingQuestion.delete(requestId)
     try { S.audit && S.audit('question', '拒绝回答提问', { requestId, sessionId: q.sessionId }) } catch {}
     return { ok: true }
   })

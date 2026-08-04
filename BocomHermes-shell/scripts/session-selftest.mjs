@@ -753,6 +753,53 @@ console.log('用例15:提问兜底轮询 —— serve 不推 question.asked 时,
   release(); await p
 }
 
+console.log('用例15b:无归属信息的待答 —— 无人值守卡绝不认领(认领 = 替别人当场自动拒答,不可逆)')
+{
+  intervals.length = 0
+  let release = null
+  const rejects = []
+  const h = makeHarness({ oc: {
+    sendMessage: async () => new Promise((r) => { release = () => r('ok') }),
+    // opencode 侧已按 sessionID 过滤;这里模拟"老 fork 条目不带 sessionID",被打了 _unowned 标交上层决定
+    listPendingQuestions: async () => [{ id: 'q_unowned', _unowned: true, questions: [{ question: '选哪个?' }] }],
+    rejectQuestion: (...a) => rejects.push(a),
+  } })
+  h.S.settings.projectDir = PROJ
+  const { ev, sid } = await openCard(h, 115)
+  h.S.shardWc = new Set([115])   // 这张是分片隐藏卡:onQuestion 对它走无人值守分支,认领即自动拒答
+  const p = h.handlers['card-send'](ev, { text: '继续' })
+  await tick()
+  const iv = intervals.find((t) => t.ms === 3000)
+  await iv.fn()
+  ok('★分片隐藏卡不认领无归属的待答(修前:它抢先认领 → 把可见卡的提问当场拒掉,那张卡什么也不弹)',
+    rejects.length === 0 && ev.sent.filter((s) => s.ch === 'question-request').length === 0,
+    { rejects: rejects.length, sent: ev.sent.map((s) => s.ch) })
+  ok('  也不进 pendingQuestion(否则可见卡那边的去重会被它顶掉)', !h.S.pendingQuestion.has('q_unowned'))
+  release(); await p
+}
+
+console.log('用例15c:question-reply 送达失败 —— 记录必须留着(先删后送就永久失联)')
+{
+  let boom = true
+  const h = makeHarness({ oc: { replyQuestion: async () => { if (boom) throw new Error('POST /question/qX/reply -> 502'); } } })
+  h.S.pendingQuestion.set('qX', { sessionId: 'ses_q', v2: false, serve: h.serve })
+  const r1 = await h.handlers['question-reply']({}, { requestId: 'qX', answers: ['甲'] })
+  ok('送达失败如实回报', r1 && r1.ok === false && /502/.test(String(r1.err)), r1)
+  // ★病灶:delete 排在 await 之前,而 replyQuestion 不吞错直接抛 —— 记录没了,requestId 再也查不回来:
+  //   卡片那边已定格"没送达"且作答 UI 消失,关卡清理链(dropPendingQuestion)也找不到它去 reject 解放 serve,
+  //   serve 侧的 question 工具就一直干等,本轮挂住(注释里记录过的 88s 病灶)。
+  ok('★失败后记录仍在(卡片据此改回可重答;关卡清理链据此兜底 reject)', h.S.pendingQuestion.has('qX'))
+  ok('  失败后解锁,允许重答(不是永久锁在 sending)', !h.S.pendingQuestion.get('qX').sending)
+  boom = false
+  const r2 = await h.handlers['question-reply']({}, { requestId: 'qX', answers: ['甲'] })
+  ok('重答成功', r2 && r2.ok === true, r2)
+  ok('成功后才摘记录', !h.S.pendingQuestion.has('qX'))
+  // 防重入:delete-first 以前顺带当了防重复提交闸,改成保留记录后必须靠 sending 标记
+  h.S.pendingQuestion.set('qY', { sessionId: 'ses_q', v2: false, serve: h.serve, sending: true })
+  const r3 = await h.handlers['question-reply']({}, { requestId: 'qY', answers: ['乙'] })
+  ok('  正在送达中拒绝重复提交(防两次并发 POST)', r3 && r3.ok === false && /重复提交/.test(String(r3.err)), r3)
+}
+
 console.log('用例16:看门狗内容签名判活 —— 轮询重喂同一内容不续命;真变化照常刷新;300s 无变化自动中止分片;S.turnBusy 挂载')
 {
   intervals.length = 0

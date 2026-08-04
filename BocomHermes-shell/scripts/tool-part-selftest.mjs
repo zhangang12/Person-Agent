@@ -410,5 +410,42 @@ await (async () => {
   ok('数组形:按文件数折算', got[1] && got[1].files === 2 && got[1].additions === 0, got[1])
 })()
 
+// ── listPendingQuestions 会话归属过滤 ★会红的回归 ─────────────────────────
+// 病灶:GET /question 是【整台 serve】的清单(端点自述 across all sessions,条目带 sessionID),
+// 而同目录多张卡共用一台池化 serve 是常态。不过滤 = 谁先轮到谁按【自己的】sessionId 冒领;
+// 先轮到的若是分片隐藏卡,session.js 的 onQuestion 会走无人值守分支【当场自动拒答】——
+// 该弹提问卡的那张卡什么也不弹,用户只看见回合莫名其妙继续了。
+// 起真的本地 http server 跑(api() 走 node http,顺带把 api 这一段也覆盖到)。
+await (async () => {
+  console.log('用例N:GET /question 待答清单按会话归属过滤(整台 serve 共用时不许冒领)')
+  const http = (await import('node:http')).default
+  const BODY = [
+    { id: 'q_mine', sessionID: 'ses_mine', questions: [{ question: '我的' }] },
+    { id: 'q_other', sessionID: 'ses_other', questions: [{ question: '别人的' }] },
+    { id: 'q_child', sessionID: 'ses_child', questions: [{ question: '我派的子 Agent 问的' }] },
+    { id: 'q_legacy', questions: [{ question: '老 fork 不带 sessionID' }] },
+  ]
+  const srv = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify(BODY))
+  })
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r))
+  const base = 'http://127.0.0.1:' + srv.address().port
+  try {
+    oc.__test.noteChild('ses_child', 'ses_mine', '子 Agent', base)   // 子会话经 rootSession 归到父卡(与 SSE 路由同构)
+    const mine = await oc.listPendingQuestions(base, 'ses_mine')
+    const ids = (mine || []).map((q) => q.id)
+    ok('★别人会话的待答被过滤掉(不冒领 → 不会替别人自动拒答)', !ids.includes('q_other'), ids)
+    ok('  自己的待答留下', ids.includes('q_mine'), ids)
+    ok('  自己派的子 Agent 的待答也留下(rootSession 归并)', ids.includes('q_child'), ids)
+    // 老 fork 条目没有 sessionID:证不出归属 —— 不丢也不静默冒领,打标交上层决定
+    // (可见卡宁可多弹一次让人看见;无人值守卡不认领,认领=替别人当场拒答,不可逆)
+    const legacy = (mine || []).find((q) => q.id === 'q_legacy')
+    ok('  无 sessionID 的条目不丢,打 _unowned 标交上层', !!legacy && legacy._unowned === true, legacy)
+    const all = await oc.listPendingQuestions(base)
+    ok('  不传 sessionId 时原样返回(老调用方不受影响)', (all || []).length === 4)
+  } finally { srv.close() }
+})()
+
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

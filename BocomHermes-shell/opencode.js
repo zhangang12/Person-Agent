@@ -758,13 +758,28 @@ const is404 = (e) => /->\s*404\b/.test(String(e && e.message || ''))   // api �
 // 待答提问兜底清单:这台 serve 的 /event 可能不推 question.asked(与流式静默同源,实测 question 工具干等 93s 无选项挂死)——
 // 回合期间轮询 GET /question 待答清单就是发现通道;404 记 Set 熔断(fork 缺端点不每回合白打)。第一参容忍传 info 对象或 base 串。
 const unsupportedQuestionList = new Set()   // base → GET /question 404 熔断
-async function listPendingQuestions(base) {
+// 待答清单。★GET /question 是【整台 serve】的清单(端点自述 across all sessions,条目 schema 带 sessionID),
+// 而同目录多张卡共用一台池化 serve 是常态 —— 不过滤就是"谁先轮到谁冒领":
+// 先轮到的若是分片隐藏卡,onQuestion 走无人值守分支【当场自动拒答】,该弹提问卡的那张卡什么也不弹,
+// 用户只看见回合莫名其妙地继续了。所以第二参传本卡 sessionId 时按归属过滤。
+// 子会话(task 子 Agent)的提问经 rootSession 归到父卡,与 SSE dispatch 的路由同构。
+// 老 fork 的条目可能不带 sessionID:这种"证不了归属"的不丢也不冒领,打 _unowned 标交给上层决定
+// (可见卡放行,无人值守卡拦住 —— 别一刀切 filter,那会让兜底轮询在老 fork 上整体失效,退回 question 工具干等的老病灶)。
+async function listPendingQuestions(base, sessionId) {
   base = (base && base.base) || base
   if (!base || unsupportedQuestionList.has(base)) return null
   try {
     const r = await api(base, 'GET', '/question')
     const arr = Array.isArray(r) ? r : (r && (Array.isArray(r.data) ? r.data : (Array.isArray(r.questions) ? r.questions : null)))
-    return arr
+    if (!Array.isArray(arr) || !sessionId) return arr
+    const mine = rootSession(String(sessionId))
+    const out = []
+    for (const q of arr) {
+      const owner = q && (q.sessionID || q.sessionId)
+      if (!owner) { out.push(Object.assign({ _unowned: true }, q)); continue }
+      if (rootSession(String(owner)) === mine) out.push(q)
+    }
+    return out
   } catch (e) {
     if (is404(e)) { if (unsupportedQuestionList.size > 100) unsupportedQuestionList.clear(); unsupportedQuestionList.add(base) }
     return null
