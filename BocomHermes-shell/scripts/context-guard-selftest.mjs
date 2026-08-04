@@ -246,6 +246,44 @@ function makeSession(turns, outLen = 3000) {
   const survived = worker.messages.slice(1).every((m) => !String(m.parts[0].state.output).startsWith('[已清理:'))
   ok('★工人卡形状(1 条 user + 多轮工具):结果全部保留', survived)
   ok('  工人卡:总量 18k 未触发预算降级(预算 40k)', worker.messages[1].parts[0].state.output.length === 4747)
+
+  // ★同样是工人卡形状,但总量【超】预算 —— 聚合预算必须真的开始降级。
+  // 病灶:降级循环的上界写的是 lastUserIdx(最后一条 user 的下标),意思是"本轮永远不动"。
+  // 工人卡一辈子只有 1 条 user 消息(下标 0)→ 上界 0 → `i < 0` 一次都不进,预算对它彻底失效;
+  // 而工人卡恰恰是几十次工具调用、最容易撑爆上下文的那一类。普通对话里一个超长回合同理被整轮豁免。
+  // 上界改成 max(lastUserIdx, msgs.length - PROTECT_TAIL) 后:老的照降,最新 8 条照样安全。
+  const bigWorker = { messages: [{ info: { id: 'u1', role: 'user' }, parts: [{ id: 'ut1', type: 'text', text: '【总目标】…' }] }] }
+  for (let i = 0; i < 20; i++) {
+    bigWorker.messages.push({
+      info: { id: 'a' + i, role: 'assistant' },
+      parts: [{ id: 'bw' + i, type: 'tool', tool: 'read', state: { status: 'completed', input: { filePath: '/f' + i + '.md' }, output: 'X'.repeat(5000) } }],
+    })
+  }
+  const totalBefore = bigWorker.messages.slice(1).reduce((n, m) => n + m.parts[0].state.output.length, 0)   // 100k > 40k 预算
+  await p['experimental.chat.messages.transform']({}, bigWorker)
+  const isClean = (m) => String(m.parts[0].state.output).startsWith('[已清理:')
+  const totalAfter = bigWorker.messages.slice(1).reduce((n, m) => n + m.parts[0].state.output.length, 0)
+  ok('★工人卡超预算(100k > 40k):聚合预算真的降级了(旧代码一条都不降)', totalAfter < totalBefore, { totalBefore, totalAfter })
+  ok('  最新 8 条消息受保护(模型当下在推理的那批结果不动)', bigWorker.messages.slice(-8).every((m) => !isClean(m)))
+  ok('  从最老开始降(第一条工具结果先被清)', isClean(bigWorker.messages[1]))
+  // 保护尾本身就有 8×5000=40k,正好顶着预算线 —— 所以这一档降不到线下是对的,能降的都降了即可
+  ok('  保护尾之外的全部降级(尽力而为:尾部撑满预算时降不到线下也不再硬砍)',
+    bigWorker.messages.slice(1, -8).every(isClean), totalAfter)
+
+  // 够了就停:预算放宽到 80k,只需砍掉 4 条就够 → 非尾部里应当仍有大量原样保留的,不能一刀切全清
+  const p80 = await loadPluginWithEnv({ BOCOMHERMES_CTX_GUARD_BUDGET: '80000' })
+  const w80 = { messages: [{ info: { id: 'u1', role: 'user' }, parts: [{ id: 'ut1', type: 'text', text: '【总目标】…' }] }] }
+  for (let i = 0; i < 20; i++) {
+    w80.messages.push({
+      info: { id: 'a' + i, role: 'assistant' },
+      parts: [{ id: 'q' + i, type: 'tool', tool: 'read', state: { status: 'completed', input: { filePath: '/g' + i + '.md' }, output: 'Y'.repeat(5000) } }],
+    })
+  }
+  await p80['experimental.chat.messages.transform']({}, w80)
+  const after80 = w80.messages.slice(1).reduce((n, m) => n + m.parts[0].state.output.length, 0)
+  const cleaned80 = w80.messages.slice(1).filter(isClean).length
+  ok('  够了就停:预算 80k 只降到刚过线,不是一刀切', after80 <= 80000 && cleaned80 >= 4 && cleaned80 <= 6, { after80, cleaned80 })
+  ok('  停手后中段仍有原样保留的结果', w80.messages.slice(1, -8).some((m) => !isClean(m)))
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

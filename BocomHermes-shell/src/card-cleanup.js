@@ -23,7 +23,9 @@ module.exports = function makeCardCleanup({ S, oc, log, BrowserWindow, getShardS
         const si = S.sessionInfo.get(s)
         if (si && si.wc && si.wc.id === wcId) si.wc = null   // detach:死 wc 置空(条目留);abort/删 sid 键表/清 pending 全跳 —— 会话还活着
       } else {
-        const si = S.sessionInfo.get(s); if (si) { oldServe = si.serve; oc.abort(si.serve, s) } S.sessionInfo.delete(s); S.streamBuf.delete(s); S.sentPrompt.delete(s); S.firstMsgCtx.delete(s); S.dropPendingPerm && S.dropPendingPerm(s); if (typeof S.dropPendingQuestion === 'function') S.dropPendingQuestion(s)   // 未答的审批/提问记录随卡清,别在 pendingPerm/pendingQuestion 里留孤儿
+        const si = S.sessionInfo.get(s); if (si) { oldServe = si.serve; oc.abort(si.serve, s) } S.sessionInfo.delete(s); S.streamBuf.delete(s); S.sentPrompt.delete(s); S.firstMsgCtx.delete(s); S.dropPendingPerm(s); S.dropPendingQuestion(s)   // 未答的审批/提问记录随卡清 + reject,别在 pendingPerm/pendingQuestion 里留孤儿,也别让 serve 那侧空等
+        // ★这两处原来是 `S.dropPendingPerm && …` / `typeof … === 'function'` 的软调用:dropPendingPerm 压根没实现,短路后静默跳过了一年。
+        //   现在两个都在 session.js 里实打实挂上了,直调 —— 真没挂上就当场 TypeError,而不是又悄悄不清理。
       }
     }
     S.sessionByWc.delete(wcId)

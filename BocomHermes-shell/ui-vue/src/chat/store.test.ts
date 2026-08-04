@@ -5,20 +5,30 @@
 //   ④ 壳层直发注入按 origin 分形态(分片回流不冒充用户气泡)+ 分片派发块可辨识可跳转
 //   ⑤ 分片回流事件不给主控的挂死探针续命(主控自己哑了要能被发现)
 import { describe, it, expect, beforeAll } from 'vitest'
+import { readFileSync } from 'node:fs'
 
 const sent: string[] = []
 let streamCb: ((ev: any) => void) | null = null
 let injectCb: ((p: any) => void) | null = null
 let runCb: ((p: any) => void) | null = null
 const runCalls: any[][] = []
+// ⑦ 单会话审计用:cardSend 的可控回包 + 发送瞬间的回调钩子(用来在"摘要轮正在飞"的窗口里插队发消息)
+let sendReply: string | null = null            // 非 null 时本次 cardSend 返回它(一次性,用完复位)
+let onSend: ((t: string) => void) | null = null // 本次 cardSend 期间执行(一次性),模拟用户在回合中打字
+const compactLogged: string[] = []
 const mock = {
-  cardSend: async (text: string) => { sent.push(String(text)); return '摘要正文' },
+  cardSend: async (text: string) => {
+    sent.push(String(text))
+    if (onSend) { const f = onSend; onSend = null; f(String(text)) }
+    if (sendReply !== null) { const r = sendReply; sendReply = null; return r }
+    return '摘要正文'
+  },
   cardReinit: async () => ({ project: '', dir: '/d', model: null, sessionId: 'ses_new' }),
   cardUsage: async () => null,
   listModels: async () => [{ providerID: 'p', modelID: 'm', name: 'M', ctx: 1000 }],
   getSettings: () => ({ knobs: { ctxHandoffPct: 0.55, autoCompactMax: 5 } }),
   compactLogLast: async () => '',
-  compactLogAppend: () => {},
+  compactLogAppend: (p: any) => { compactLogged.push(String((p && p.text) || '')) },
   onStream: (cb: (ev: any) => void) => { streamCb = cb },
   onCardInject: (cb: (p: any) => void) => { injectCb = cb },
   onRunSnapshot: (cb: (p: any) => void) => { runCb = cb },
@@ -177,4 +187,111 @@ describe('⑥ 编排面板:只读投影 + 显式动作(不再靠嗅探)', () => 
     expect(runCalls[1][2]).toBe('先把甲收口')
     expect(s.run!.phase).toBe(before)            // 本地一个字段都没改
   })
+})
+
+// ── ⑦ 单会话审计回归(压缩/队列/看门狗)─────────────────────────────────────
+// 四条都要"没修就红":每条注掉对应修复都会立刻失败,不是恰好绕开的绿。
+const settle = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0)) }
+
+describe('⑦ 压缩续聊的三个坑(摘要冒领 / 排队消息蒸发 / 失败不放水)', () => {
+  it('★摘要轮空答:判失败,不把上一条普通回答冒领成交接单', async () => {
+    s.ready = true; s.wfMode = false
+    sent.length = 0; compactLogged.length = 0
+    // 先跑一轮普通问答,feed 里留下一条【有正文】的 ai —— 这正是旧代码会误抓的那条
+    sendReply = '这是一条普通回答,不是交接单'
+    store.submit('随便问一句', [])
+    await settle()
+    expect(s.items.some((i: any) => i.kind === 'ai' && i.raw === '这是一条普通回答,不是交接单')).toBe(true)
+
+    sendReply = ''   // 摘要轮空答(网关静默):ai 条目照样新增,但 raw 为空
+    const ok = await compactCore({})
+    await settle()
+    // 旧代码 `reverse().find(i => i.kind==='ai' && !!i.raw)` 会跳过这条空摘要、抓住上面那条普通回答,
+    // 于是 ok=true、普通回答被当交接单落盘并注入下一棒。锚定"本轮新增条目"后,空就是空。
+    expect(ok).toBe(false)
+    expect(compactLogged.some((t) => t.includes('这是一条普通回答'))).toBe(false)
+  })
+
+  it('★压缩期间打的字不蒸发:气泡还在,压缩完自动发出去', async () => {
+    s.ready = true; s.wfMode = false
+    sent.length = 0
+    onSend = () => { store.submit('压缩期间打的字', []) }   // 摘要轮正在飞时插队:compacting=true → 入队
+    const ok = await compactCore({})
+    await settle()
+    expect(ok).toBe(true)
+    // 旧代码:resetConversation() 里 s.items=[] 连气泡一起清 + queue.length=0 连正文一起清 → 这条消息人间蒸发
+    expect(sent).toContain('压缩期间打的字')
+    const bub = s.items.find((i: any) => i.kind === 'user' && i.text === '压缩期间打的字') as any
+    expect(bub).toBeTruthy()
+    expect(bub.queued).toBe(false)   // 已转正发出,不该还挂着"排队中"
+  })
+
+  it('★压缩失败也要放水:排队消息不会永久卡在队列里', async () => {
+    s.ready = true; s.wfMode = false
+    sent.length = 0
+    sendReply = ''                                              // 摘要空答 → 走失败 return false
+    onSend = () => { store.submit('失败路径排的队', []) }
+    const ok = await compactCore({})
+    await settle()
+    expect(ok).toBe(false)
+    // 旧代码:失败分支直接 return,finally 只清 compacting 不 drain;而 drain 首行按 compacting 短路,
+    // 成功路径那次 drain 也是空转 → 这条消息要等用户【再发一条】才顺带被带出来,不发就一直挂着。
+    expect(sent).toContain('失败路径排的队')
+  })
+})
+
+describe('⑦b 看门狗轮末闸:摘要轮里不许再套一层注入', () => {
+  it('★压缩摘要轮收尾时,绕圈提醒不注入(轮末链另三个注入点都有这道闸,只有它漏了)', async () => {
+    s.ready = true; s.wfMode = true
+    // 连续两轮读同一个文件 → wdRounds 攒到 2(阈值 watchdogRounds 默认 3,差最后一脚)
+    for (let k = 0; k < 2; k++) {
+      onSend = () => { streamCb!({ kind: 'tool', partID: 'wd' + k, text: 'read', status: 'running', input: { filePath: '/同一个文件.ts' } }) }
+      store.submit('第 ' + k + ' 轮', [])
+      await settle()
+    }
+    sent.length = 0
+    // 第三脚踩在【摘要轮】上:这一轮同样读同一个文件,轮末 wdCheck 判定成立。
+    // 没闸的话它会 turn() 注入绕圈提醒 —— 而此刻正在压缩,等于往摘要轮里套嵌套回合
+    // (兄弟闸 maybeContinueNudge 的注释原话:摘要泡被顶成空气泡,实测死循环)。
+    onSend = () => { streamCb!({ kind: 'tool', partID: 'wd2', text: 'read', status: 'running', input: { filePath: '/同一个文件.ts' } }) }
+    await compactCore({ wf: true })
+    await settle()
+    expect(sent.some((t) => t.includes('检测到你可能在绕圈'))).toBe(false)
+    s.wfMode = false
+  })
+})
+
+// ── ⑦c 结构契约:轮末系统注入必须走唯一闸门 ────────────────────────────────
+// 行为测试只能证明"今天这几个注入点有闸";这条证明的是"以后新加的也必须有"。
+// 病根就是同一道闸散成 5 份各抄一遍:抄对 3 份、漏掉 2 份(wdCheck / maybePlanGate),
+// 而漏掉的那两份没有任何测试会发现。收敛成 canInject()/injectTurn() 之后,用源码断言钉住这个收敛。
+describe('⑦c 结构契约:5 个轮末注入点不许绕开 canInject/injectTurn', () => {
+  const GATED = ['maybePlanGate', 'wdCheck', 'maybeDelegateNudge', 'maybeContinueNudge', 'maybeWfProduceNag']
+  const src = readFileSync(new URL('./store.ts', import.meta.url), 'utf8')
+  // 注释要先剥掉:这些函数的注释里本来就在讲 "turn()"(例如 wdCheck 解释 doCompact 靠 turn() 发摘要),
+  // 不剥就会把说明文字当成违规调用。按行切,只砍【引号外】的 //(注入提示词是单引号长串,别把串里的内容误砍)。
+  const stripComments = (t: string) =>
+    t.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((ln) => {
+      for (let i = 0; i < ln.length - 1; i++) {
+        if (ln[i] === '/' && ln[i + 1] === '/') {
+          const quotes = (ln.slice(0, i).match(/'/g) || []).length
+          if (quotes % 2 === 0) return ln.slice(0, i)
+        }
+      }
+      return ln
+    }).join('\n')
+  const bodyOf = (name: string) => {
+    const at = src.indexOf('function ' + name + '(')
+    if (at < 0) throw new Error('找不到函数 ' + name + '(改名了?契约测试要同步更新)')
+    const end = src.indexOf('\n}', at)
+    return stripComments(src.slice(at, end))
+  }
+  for (const name of GATED) {
+    it(name + ' 经闸门起回合,不直调 turn()', () => {
+      const body = bodyOf(name)
+      // 直调 turn( = 绕开闸门(injectTurn( 不匹配:前面是字母,\b 边界挡住)
+      expect(/(?<![A-Za-z_])turn\s*\(/.test(body), name + ' 里出现了直调 turn(,应改用 injectTurn(').toBe(false)
+      expect(/canInject\(\)|injectTurn\(/.test(body), name + ' 既没过 canInject 也没走 injectTurn').toBe(true)
+    })
+  }
 })

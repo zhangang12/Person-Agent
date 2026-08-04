@@ -61,6 +61,9 @@ const COMPACT_RULES = [
 
 const CLEAN_MARK = '[已清理:'
 const IMG_MARK = '[图片已读:结论见下文]'
+// 聚合预算的保护尾:无论如何都留住最新的这么多条消息(模型当下正在推理的那批工具结果)。
+// 用"尾部条数"而不是"最后一条 user 之后"当保护线 —— 后者会把任意长的单个回合整段豁免(见下面 bound 处注释)。
+const PROTECT_TAIL = 8
 
 /** 提取 tool part 的输出字符串所在位置(state.output 优先,兼容扁平 output) */
 function toolOut(p) {
@@ -198,7 +201,14 @@ export const ContextGuardPlugin = async () => {
         if (cfg.budget > 0 && totalToolChars > cfg.budget && keepFrom < msgs.length) {
           let lastUserIdx = msgs.length
           for (let i = msgs.length - 1; i >= 0; i--) { if (roleOf(msgs[i]) === 'user') { lastUserIdx = i; break } }
-          for (let i = 0; i < lastUserIdx && totalToolChars > cfg.budget; i++) {
+          // ★保护线不能只认"最后一条 user 之后":那等于把【本轮】整段无条件豁免,而"本轮"可以任意长。
+          //   编排工人卡/子 Agent 会话一辈子只有 1 条 user 消息(那份 brief)→ lastUserIdx=0 → `i < 0` 一次都不进,
+          //   于是预算对这类会话彻底失效 —— 偏偏它们才是几十次工具调用、最容易撑爆上下文的那种。
+          //   普通对话里一个长回合(几十条 tool 消息)同样豁免整轮,预算形同虚设。
+          //   改成"永远留住最新的 PROTECT_TAIL 条":模型当下正在推理的那批结果照样安全,更老的即使同属本轮也可降级。
+          //   短会话(msgs.length ≤ PROTECT_TAIL)算出来 bound ≤ 0,循环不进 —— 太短就不动,与原行为一致。
+          const bound = Math.max(lastUserIdx, msgs.length - PROTECT_TAIL)
+          for (let i = 0; i < bound && totalToolChars > cfg.budget; i++) {
             for (const p of (msgs[i] && msgs[i].parts) || []) {
               if (!p || p.type !== 'tool') continue
               totalToolChars -= cleanPart(p)

@@ -42,7 +42,7 @@ let sidSeq = 0
 function makeHarness(over = {}) {
   const handlers = {}
   const ipcMain = { handle: (n, fn) => { handlers[n] = fn }, on: (n, fn) => { handlers[n] = fn } }
-  const calls = { ensureServe: 0, listModels: [], getRawMessages: [], rejectQuestion: [], recordHistory: [], replaceHistoryId: [], sendMessage: [] }
+  const calls = { ensureServe: 0, listModels: [], getRawMessages: [], rejectQuestion: [], replyPermission: [], recordHistory: [], replaceHistoryId: [], sendMessage: [] }
   const serve = { base: 'http://127.0.0.1:4999', dir: PROJ }
   const oc = Object.assign({
     AUTO_ALLOW: new Set(),
@@ -52,7 +52,7 @@ function makeHarness(over = {}) {
     getMessages: async () => [],
     sendMessage: async (...a) => { calls.sendMessage.push(a); return '终答文本' },
     listModels: async (...a) => { calls.listModels.push(a); return [] },
-    abort: async () => {}, replyPermission: () => {}, replyQuestion: async () => {},
+    abort: async () => {}, replyPermission: (...a) => { calls.replyPermission.push(a) }, replyQuestion: async () => {},
     rejectQuestion: (...a) => { calls.rejectQuestion.push(a) },
     listSessions: async () => [],
     getRawMessages: (...a) => { calls.getRawMessages.push(a); return [] },
@@ -96,6 +96,31 @@ console.log('用例1:R6 dropPendingQuestion —— 会话没了,它名下未答�
     && h.calls.rejectQuestion.some((a) => a[0] === h.serve && a[1] === 'ses_a' && a[2] === 'q1' && a[3] === false)
     && h.calls.rejectQuestion.some((a) => a[2] === 'q2' && a[3] === true), h.calls.rejectQuestion)
   h.S.dropPendingQuestion(null); h.S.dropPendingQuestion('ses_不存在')
+  ok('空参/未知会话不炸', true)
+}
+
+console.log('用例1b:dropPendingPerm —— 同因清理的审批版(此前只有注释和调用点,函数从没实现过)')
+{
+  const h = makeHarness()
+  // pendingPerm 是双键表:requestId → sessionId,requestId+':meta' → { tool, detail, serve }
+  h.S.pendingPerm.set('p1', 'ses_a'); h.S.pendingPerm.set('p1:meta', { tool: 'write', detail: 'a.txt', serve: h.serve })
+  h.S.pendingPerm.set('p2', 'ses_a'); h.S.pendingPerm.set('p2:meta', { tool: 'bash', detail: 'ls', serve: h.serve })
+  h.S.pendingPerm.set('p3', 'ses_b'); h.S.pendingPerm.set('p3:meta', { tool: 'edit', detail: 'b.txt', serve: h.serve })
+  // ★这条断言就是"测试恰好绕开"的解药:旧版 card-cleanup 写 `S.dropPendingPerm && …`,函数不存在就静默短路,
+  //   而它唯一的测试自带同名桩,于是测的是桩、恒绿。这里用真装配的 S,函数没挂上就直接红。
+  ok('S.dropPendingPerm 已导出(card-cleanup 关卡清理链直调,不再软调用短路)', typeof h.S.dropPendingPerm === 'function')
+  h.S.dropPendingPerm('ses_a')
+  ok('该会话的主键+:meta 一起删,别的会话不动',
+    !h.S.pendingPerm.has('p1') && !h.S.pendingPerm.has('p1:meta')
+    && !h.S.pendingPerm.has('p2') && !h.S.pendingPerm.has('p2:meta')
+    && h.S.pendingPerm.has('p3') && h.S.pendingPerm.has('p3:meta'), [...h.S.pendingPerm.keys()])
+  // 只删不 reject = serve 那侧的 permission 永久空等(等同 R6 提问挂死),所以必须发 reject
+  ok('逐个 replyPermission(…, "reject")(serve 从 :meta 随记录走)', h.calls.replyPermission.length === 2
+    && h.calls.replyPermission.every((a) => a[0] === h.serve && a[1] === 'ses_a' && a[3] === 'reject')
+    && h.calls.replyPermission.some((a) => a[2] === 'p1') && h.calls.replyPermission.some((a) => a[2] === 'p2'), h.calls.replyPermission)
+  // :meta 的值是对象,按值筛 sessionId 天然跳过,不会被当成主键重复处理
+  ok('不把 :meta 条目误判成主键', h.calls.replyPermission.every((a) => !String(a[2]).endsWith(':meta')))
+  h.S.dropPendingPerm(null); h.S.dropPendingPerm('ses_不存在')
   ok('空参/未知会话不炸', true)
 }
 

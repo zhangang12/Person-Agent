@@ -385,6 +385,25 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
   // 会话没了(关卡/工作流收尾/会话被杀)→ 把它名下【弹了框但没人答】的审批记录一起清掉。
   // pendingPerm 以前唯一的删除点是 permission-reply,于是"弹了审批框但没点就关卡"的记录永远留在 Map 里(无上限,长跑必涨)。
   // 挂在 S 上:window.js(关卡)与 orch.js(工作流收尾)都要用,而 pendingPerm 的所有权在这一层。
+  //
+  // ★这段注释一直在,函数却从来没落地过 —— card-cleanup.js 那行写的是 `S.dropPendingPerm && S.dropPendingPerm(s)`,
+  //   短路后静默跳过;而它唯一的测试自带同名桩,于是永远绿。结果:未答审批既不清也不 reject,serve 侧一直等应答。
+  // 两条不变量,都靠"记录自带 serve"来保证(不回头查 sessionInfo):
+  //   1. 清理链里 S.sessionInfo.delete(s) 排在本函数【之前】,回查必然拿到 undefined —— 所以 serve 存在 :meta 里随记录走。
+  //   2. 必须 reject 而不只是删:serve 侧 permission 在等应答,只删本地记录 = 那一侧永久挂着(等同 R6 的提问挂死)。
+  // pendingPerm 双键:requestId → sessionId(字符串),requestId+':meta' → { tool, detail, serve }。
+  // 按值筛 sessionId 天然跳过 :meta 条目(它的值是对象),两个键一起删。
+  S.dropPendingPerm = (sessionId) => {
+    if (!sessionId || !S.pendingPerm) return
+    for (const [k, v] of S.pendingPerm) {
+      if (v !== sessionId) continue
+      const meta = S.pendingPerm.get(k + ':meta')
+      S.pendingPerm.delete(k); S.pendingPerm.delete(k + ':meta')
+      const serve = meta && meta.serve
+      if (serve) { try { oc.replyPermission(serve, sessionId, k, 'reject') } catch {} }
+    }
+  }
+
   // 提问版同因清理(R6 提问挂死):会话没了而它的交互提问【弹了卡但没人答】,serve 的 question 工具会一直等应答,
   // 回合挂死(实测 88s 等用户 Esc)。逐个 reject 再删,仿 dropPendingPerm;挂在 S 上供 window.js 关卡清理链调用。
   // pendingQuestion: requestId → { sessionId, v2, serve }(rejectQuestion 内部吞错打日志,fire-and-forget 即可)。
@@ -567,7 +586,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     const permAllowHit = permRulesHit('allow', tool, detail)
     if (permAllowHit) { log('权限规则放行(allow):' + permAllowHit + ' 命中 ' + String(tool)); oc.replyPermission(si.serve, sessionId, requestId, 'once'); return }
     S.pendingPerm.set(requestId, sessionId)
-    S.pendingPerm.set(requestId + ':meta', { tool, detail: detail || '' })   // 供审计留痕(批准/拒绝了什么)
+    S.pendingPerm.set(requestId + ':meta', { tool, detail: detail || '', serve: si.serve })   // 供审计留痕(批准/拒绝了什么)+ serve 随记录走,供 dropPendingPerm 关卡时 reject(那时 sessionInfo 已删,回查拿不到)
     // edit/write 类:尽力带 diff 预览 + 编辑预检(批准前看见"要改成什么样";oldString 未命中还要亮黄牌);取不到不挡路,照样弹
     ;(async () => {
       let peek = { diff: '', miss: null }

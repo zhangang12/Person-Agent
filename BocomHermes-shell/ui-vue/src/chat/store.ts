@@ -1091,10 +1091,13 @@ function maybePlanGate(): void {
   if (wfSawTodo && !wfExecSeen) { if (!s.planAsk) { s.planAsk = true; armPlanAuto() } return }
   // 模型已实质执行(没守"首轮只规划")→ 闸没意义:撤闸并注入继续指令(只埋闸不吭声会让守规矩等批准的模型软死锁,实测)
   if (wfExecSeen) {
+    // 撤闸和"已通知它继续"必须同进同出:planApproved 一旦置真,下个轮末会在上面第二行就 return,这段再也不会走第二次。
+    // 所以闸没过时【什么都不做】,整体推迟到下一个干净轮末 —— 否则就是闸撤了、通知没发出去,模型继续干等批准(软死锁)。
+    if (!canInject()) return
     s.planApproved = true; s.planAsk = false; clearPlanTimers()
     try { BH()?.wfPlanApproved?.() } catch { /* 静默 */ }
     addNote('模型已开始实质执行 —— 计划批准闸已自动跳过(已通知它继续,不用等批准)')
-    turn('(系统提醒:你已提前开始实质执行,计划批准闸已自动跳过 —— 不用等批准,请继续按当前计划执行直至总目标完成;执行中保持 todo 勾选可见。)')
+    injectTurn('(系统提醒:你已提前开始实质执行,计划批准闸已自动跳过 —— 不用等批准,请继续按当前计划执行直至总目标完成;执行中保持 todo 勾选可见。)')
   }
 }
 export function approvePlan(auto?: boolean): void {
@@ -1189,6 +1192,28 @@ export function shardJump(id: string): boolean {
 function handoffDue(): boolean {   // 交棒优先于一切轮末催办:水位到线的轮末谁也别起新回合(催办曾把交棒饿死,实测回归)
   return s.wfMode && !!s.ctxLimitTokens && ctxPctVal(s.ctxRealTokens, s.ctxUsedChars, s.ctxLimitTokens) >= knobNum('ctxHandoffPct', 0.55)
 }
+
+// ── 系统注入的唯一闸门 ────────────────────────────────────────────────────
+// 轮末链上有 5 处会以"系统提醒"的名义自己起一个回合(计划闸 / 看门狗 / 委派驱动 / 长任务防停 / 产出兜底)。
+// 原先每处在函数首行各抄一遍同一道闸 —— 抄对 3 份、漏掉 2 份:
+//   · wdCheck 整条闸都没抄 → 压缩摘要轮收尾时照样注入,等于往摘要轮里套嵌套回合(把摘要泡顶成空气泡)
+//   · maybePlanGate 同样没抄,且它撤闸后只会走一次,注入没送出去就是永久丢失
+// 同一条判断散成 5 份,漏一份就是一个活 bug,而且不会有人发现。这里收成一份:谁要起系统回合都从这里过。
+// 三个分量各有出处,别随手删:
+//   busy       —— 同一条轮末链里前面的注入已经开跑,再起一个会两个回合抢同一份 answerParts
+//   compacting —— 摘要轮 / 交棒 reinit 窗口内一律不开新轮(compacting 闸)
+//   handoffDue —— 水位到线时交棒优先,催办曾经把交棒活活饿死(实测回归)
+function canInject(): boolean { return !s.busy && !compacting && !handoffDue() }
+/**
+ * 起一个系统提醒回合。闸没过就不起并返回 false。
+ * ★"只催一次"的记账标志一律要在闸【之后】才置位:先置位再被闸挡下 = 这次提醒永远送不出去,
+ *   而下一轮末因为标志已置位不会再来第二次。所以调用方要么先 canInject() 再记账,要么按返回值决定记不记。
+ */
+function injectTurn(text: string): boolean {
+  if (!canInject()) return false
+  turn(text)
+  return true
+}
 function maybeAutoCompact(): void {
   compactClock++   // 轮末节拍:本函数每轮末调一次,熔断冷却按它数
   if (compacting || !s.wfMode || s.busy || !s.ctxLimitTokens) return   // compacting 闸:摘要轮/交棒进行中绝不重入
@@ -1217,6 +1242,12 @@ function wdFinalizeRound(): void {
 }
 function wdCheck(): void {
   if (!s.wfMode) return
+  // busy/compacting/交棒闸:轮末链上另外三个注入点(maybeDelegateNudge/maybeContinueNudge/maybeWfProduceNag)首行都有这道闸,
+  // 只有这里漏了 —— 而本函数在链首,是四个里唯一能在【压缩摘要轮】收尾时开跑的。doCompact() 内部靠 turn() 发摘要,
+  // 那一轮的 finally 照样走整条链:三个兄弟按 compacting 躲开,它不躲,于是往摘要轮里套嵌套回合(兄弟注释原话:实测死循环)。
+  // 整体返回而不是"只跳过注入":一级分支会置 wdWarned/wdWarnTurn/wdWarnSet,若记了账却没真发出提醒,
+  // 二级就会拿一句从没送达的警告去升级中止。这里退出不丢检测 —— wdRounds 仍由 wdFinalizeRound 累积,下一个干净轮末原样复算。
+  if (!canInject()) return
   const N = Math.max(2, Math.round(knobNum('watchdogRounds', 3)))
   const ov = knobNum('watchdogOverlap', 0.7)
   const M = Math.max(1, Math.round(knobNum('watchdogEscalateRounds', 2)))
@@ -1232,7 +1263,7 @@ function wdCheck(): void {
     wdWarned = true; wdEscLoops = 0; wdWarnTurn = turnN; wdWarnSet = union
     addNote('看门狗：检测到连续 ' + N + ' 轮反复读同一批文件且无进展，已提醒 Agent 换策略')
     // 提醒带总目标背诵(recitation):弱模型被纠偏后容易漂,把目标重进上下文尾部(近期注意力区)
-    turn('(系统提醒:检测到你可能在绕圈 —— 连续多轮反复读取同一批文件,而计划没有任何进展。重申总目标:「' + s.title.slice(0, 80) + '」。请立即停止重复读取:先汇聚已有发现给出结论;信息不够就换策略(不同工具/关键词/换个角度),不要再读相同的文件。)')
+    injectTurn('(系统提醒:检测到你可能在绕圈 —— 连续多轮反复读取同一批文件,而计划没有任何进展。重申总目标:「' + s.title.slice(0, 80) + '」。请立即停止重复读取:先汇聚已有发现给出结论;信息不够就换策略(不同工具/关键词/换个角度),不要再读相同的文件。)')
     return
   }
   // 第二级(已警告):只看"是不是还在绕那批文件" —— 无读文件轮不计数也不复位
@@ -1256,13 +1287,13 @@ function wdCheck(): void {
 // ── 委派驱动(harness,旧页 1061-1078):复杂任务主 Agent 一直单干 = 必走歪路 ──
 // todo ≥3 步 且 已实质干活 且 ≥2 轮 且 从未派过 task → wf 自动注入派子 Agent 规程;普通卡给可见建议。每任务只催一次。
 function maybeDelegateNudge(): void {
-  if (s.busy || compacting || delegatedSeen || delegateNudged || handoffDue()) return   // busy/compacting 闸:同一轮末链里已有注入开跑了,下轮末再催(防并发回合撞 answerParts)
+  if (!canInject() || delegatedSeen || delegateNudged) return   // 闸的三个分量见 canInject;记账标志(delegateNudged)在闸之后才置位
   if (latestTodoTotal < 3 || turnN < 2) return
   if (!wdRounds.length && !wfExecSeen) return
   delegateNudged = true
   if (s.wfMode) {
     addNote('委派驱动:检测到复杂任务在单干,已提醒按规程派子 Agent 并行')
-    turn('(系统提醒:这是一个多步骤复杂任务,你已多轮亲自单干 —— 按规程第 4 条:满足【彼此独立 + 需深读很多文件 + 能同时干】的工作块,用 task 一条消息一次派多个子 Agent 并行(各自独立 128k),指令只写目标/文件路径清单/边界/回报格式,贴原文会被壳层拦停。你只保留综合与验收;琐碎块可以自干,大片深读/大改造必须下放。)')
+    injectTurn('(系统提醒:这是一个多步骤复杂任务,你已多轮亲自单干 —— 按规程第 4 条:满足【彼此独立 + 需深读很多文件 + 能同时干】的工作块,用 task 一条消息一次派多个子 Agent 并行(各自独立 128k),指令只写目标/文件路径清单/边界/回报格式,贴原文会被壳层拦停。你只保留综合与验收;琐碎块可以自干,大片深读/大改造必须下放。)')
   } else {
     addNote('这个任务有多步且已读了不少文件 —— 适合对我说「派子 Agent 并行干」或从卡坞开【动态工作流】,比单会话串行啃快且不容易丢上下文')
   }
@@ -1270,7 +1301,7 @@ function maybeDelegateNudge(): void {
 // ── 长任务防停(旧页 1082-1103):todo 还有未完项就催它继续 ──
 // wf 自动注入"继续"(停下=链死);普通卡出可见「继续执行」按钮。连催 3 次且无进展 → 停催转人工;未完项变少即复位。
 function maybeContinueNudge(): void {
-  if (s.busy || compacting || handoffDue()) return   // busy/compacting 闸:压缩/交棒期间不催 —— 摘要轮里再注入会起嵌套回合,把摘要泡顶成空气泡(实测死循环)
+  if (!canInject()) return   // 闸的三个分量见 canInject(此处最痛的是 compacting:摘要轮里再注入会把摘要泡顶成空气泡,实测死循环)
   const open = latestOpenTodos
   if (!open.length) { contNudgeN = 0; contLastOpen = -1; return }
   if (contLastOpen >= 0 && open.length < contLastOpen) contNudgeN = 0
@@ -1278,19 +1309,19 @@ function maybeContinueNudge(): void {
   if (contNudgeN >= 3) { addNote('任务仍未完成(todo 剩 ' + open.length + ' 项),已连续催 3 次无进展 —— 不再自动催,请人工看看卡在哪'); contNudgeN = 0; return }
   contNudgeN++
   if (s.wfMode) {
-    turn('(系统提醒:任务还没完成 —— todo 还有 ' + open.length + ' 项未完成:「' + open.slice(0, 3).join('、') + (open.length > 3 ? '…' : '') + '」。不要停在这里,立即继续执行下一步;真遇到阻塞,明说卡在哪、需要什么。)')
+    injectTurn('(系统提醒:任务还没完成 —— todo 还有 ' + open.length + ' 项未完成:「' + open.slice(0, 3).join('、') + (open.length > 3 ? '…' : '') + '」。不要停在这里,立即继续执行下一步;真遇到阻塞,明说卡在哪、需要什么。)')
   } else {
     addNote('任务清单还有 ' + open.length + ' 项未完成，Agent 提前停下了 —— 发「继续」让它接着干', { retry: true })
   }
 }
 // ── 产出兜底(wf 卡,规程第 7 条):todo 全勾却零落盘产出 → 注入补 MD 提醒(一次) ──
 function maybeWfProduceNag(): void {
-  if (!s.wfMode || s.busy || compacting || wfProduceNag || handoffDue() || !latestTodoTotal) return
+  if (!s.wfMode || !canInject() || wfProduceNag || !latestTodoTotal) return   // 闸的三个分量见 canInject;wfProduceNag 在闸之后才置位
   if (latestOpenTodos.length) return   // 还有未完项,不算"快完成"
   if (s.artFiles.length) return
   wfProduceNag = true
   addNote('⚠ 系统提醒:尚无落盘产出 —— 请补写 MD 文档')
-  turn('(系统提醒:工作流即将完成,但尚未有任何落盘产出。按规程第 7 条【默认必须落盘产出 MD】:把最终成果写成 docs/ 下的 MD 文档(报告/手册/清单/改动说明),写完再交付;确有理由不落盘的,请在交付回答里明确说明理由。)')
+  injectTurn('(系统提醒:工作流即将完成,但尚未有任何落盘产出。按规程第 7 条【默认必须落盘产出 MD】:把最终成果写成 docs/ 下的 MD 文档(报告/手册/清单/改动说明),写完再交付;确有理由不落盘的,请在交付回答里明确说明理由。)')
 }
 // ── 普通对话卡水位主动提醒(不自动压缩 —— 会清可见对话,越权):≥knobs.chatHandoffPct(缺省 0.9,0=不提醒)且轮末空闲 → 提醒一次 ──
 let ctxNag = false
@@ -1478,9 +1509,16 @@ const SUM_PROMPT_WF = '请把本工作流到目前为止压缩成一份「接力
 const RESUME_MSG = '接力摘要已随本消息注入（见上方摘要块）。摘要中的已读文件清单直接采信，不要重读；请先用 todowrite 恢复摘要里的计划清单，然后按未完成事项继续执行，直至总目标完成。'
 /** 清场:压缩续聊/切目录专用 —— feed/队列/工具账本/成果抽屉全清,会话级草稿键由调用方负责换 */
 export function resetConversation(): void {
+  // ★排队消息跨清场存活:queue 里躺的是【用户已经打完、气泡还挂着 queued】的消息。原来这里 s.items=[] 连气泡一起清、
+  //   紧接着 queue.length=0 连正文一起清 —— 交棒/切目录期间打的字连条痕迹都不剩,用户既看不到也等不来(实测直接蒸发)。
+  //   正确语义是"这几条还没送出去",清场只该换会话、不该替用户撤回,所以队列原样留着,送进新会话。
+  //   气泡对象必须在 s.items=[] 之前抓出来再挂回去:否则 queue 里的 item 成了不在 feed 上的孤儿,
+  //   drain 时消息发得出去、气泡却永远不出现(看着像又丢了一条)。挂回后仍是 queued 态,等 compactCore 的 finally 统一 drain。
+  const keptQueued = queue.map((q) => q.item)
   s.items = []; s.archived = 0
   toolItems.clear(); artFileSeen.clear(); s.artFiles = []; s.lastFinalText = ''
-  queue.length = 0; curAnswer = null; reasonItems.clear()
+  for (const it of keptQueued) { it.queued = true; s.items.push(it) }
+  curAnswer = null; reasonItems.clear()
   answerParts = new Map(); reasonParts = new Map()
   meter.reset(); s.ctxUsedChars = 0; s.ctxRealTokens = null; s.ctxCacheHit = null
   wfExecSeen = false; wfSawTodo = false   // 新会话重看规划/执行信号(planApproved 主进程侧按卡记,不动)
@@ -1514,9 +1552,15 @@ export async function compactCore(opts?: { wf?: boolean; auto?: boolean }): Prom
       const prev = lastCompactSummary || (typeof (BH() as any)?.compactLogLast === 'function' ? await (BH() as any).compactLogLast(cardId || 'card') : '')
       if (prev && String(prev).trim()) sumPrompt += '\n\n【上一棒交接单(基座,直接采信)】\n' + String(prev).trim() + '\n【/上一棒交接单】\n要求:以它为基座,只把本段新内容增量合并进来(保留仍成立的事实,删掉过期事实,别整段重写)。'
     } catch { /* 静默 */ }
+    // ★摘要必须取【本轮新产生】的那条 ai,不能全 feed 倒着找。
+    //   原来的 `reverse().find(i => i.kind==='ai' && !!i.raw)` 带了个 raw 非空条件:摘要轮一旦空答(网关静默/模型直接收尾),
+    //   这条空摘要被跳过,find 顺势抓到【上一条普通回答】—— 于是"压缩失败"被判成成功,把一段普通对话回答当交接单
+    //   写进 lastCompactSummary、落盘 compactLogAppend、再注入新会话。下一棒拿着一份驴唇不对马嘴的摘要接着干,且完全无感。
+    //   锚定用"轮前条目集合"而不是下标:轮末 maybeCapFeed 会裁剪 feed 头部(320→280),下标会整体漂移,引用不会。
+    const before = new Set(s.items)
     const ok = await turn(sumPrompt)
-    const lastAi = [...s.items].reverse().find((i): i is AiItem => i.kind === 'ai' && !!(i as AiItem).raw)
-    let summary = ok && lastAi ? String(lastAi!.raw || '') : ''
+    const lastAi = [...s.items].reverse().find((i): i is AiItem => i.kind === 'ai' && !before.has(i))
+    let summary = ok && lastAi ? String(lastAi.raw || '') : ''   // 新条目存在但 raw 为空 → summary 空 → 老实走下面的失败分支(计熔断、不落盘)
     // analysis 机械剥离(CC 摘要模板同款纪律):模型先打 <analysis> 草稿再定稿,只许定稿进新会话(CoT 提质量但不该花 token 带进下一棒)
     const am = summary.match(/<analysis>[\s\S]*?<\/analysis>/i)
     if (am) summary = summary.replace(am[0], '').trim()
@@ -1547,11 +1591,15 @@ export async function compactCore(opts?: { wf?: boolean; auto?: boolean }): Prom
         await turn(resume)
       } else {
         addNote('已压缩续聊：新会话就绪，摘要已注入，直接继续提问即可。')
-        drain()
-      }
+      }   // drain 不在这里调:此刻 compacting 还是 true(要等下面 finally 才清),drain 首行就 `if (compacting) return`,纯空转。统一挪到 finally
       return true
     } catch (e: any) { s.busy = false; compactFailStreak++; compactFailSeq = compactClock; addNote('开新会话失败：' + ((e && e.message) || e) + '（原会话不受影响）'); return false }
-  } finally { compacting = false }
+  // 先落闸再放水,且放在唯一出口:compacting 期间 submit 一律入队,而 drain 首行按 compacting 短路 ——
+  // 原来两条失败路径(摘要为空 / cardReinit 抛错)直接 return,谁也没再 drain,队列就永久卡着,
+  // 得等用户【再发一条】才顺带带出来一条(不发就一直挂着)。成功路径那次 drain 又因 compacting 尚未清而空转。
+  // 收敛成 finally 里的一次:成功/失败/抛异常全覆盖。若此刻 s.busy(auto 分支刚开的恢复轮),drainNext 返回空,
+  // 由那一轮自己的轮末 drain 接手,不会漏。
+  } finally { compacting = false; drain() }
 }
 
 // ── 启动引导(cardInit 生命周期) ───────────────────────────────────────────
