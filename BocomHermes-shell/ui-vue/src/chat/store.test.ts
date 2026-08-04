@@ -261,6 +261,52 @@ describe('⑦b 看门狗轮末闸:摘要轮里不许再套一层注入', () => {
   })
 })
 
+// ── ⑦g boot 失败不是死路:能重连,排队的消息随后自动发出 ────────────────────
+// 病灶:s.ready 是全仓唯一的发信闸,而它只有 cardInit 成功那一支上的一个赋值点;catch 里只写 s.busy=false。
+// 于是 cardInit 一抛错,s.ready 永久钉死 false:submit 每条都入队,drain 首行 !ready 直接返回,
+// 页面内没有任何路径能救回来 —— 只能关卡重开(连队列里的正文一起没,会话没建起来 draftKey 是空的,草稿也存不下)。
+// 而且 s.busy===false 让输入框显示的是"发送"而不是停止图标,用户完全看不出被挡下了。
+describe('⑦g cardInit 失败后可「重试连接」,排队消息不丢', () => {
+  it('★首次 boot 抛错 → 标记 bootFailed + 挂出重试钮;重连成功后 ready 恢复且队列自动发出', async () => {
+    ;(globalThis as any).location = { search: '' }
+    let boom = true
+    ;(mock as any).cardInit = async () => {
+      if (boom) throw new Error('serve down')
+      return { project: '', dir: '/d', model: null, sessionId: 'ses_boot' }
+    }
+    store.resetConversation()
+    s.ready = false; s.busy = false; s.wfMode = false; s.ctxLimitTokens = 0
+    await store.boot()
+    await settle()
+    expect(s.ready).toBe(false)
+    expect(s.bootFailed).toBe(true)
+    // 自救入口必须真的挂出来(修前 catch 里只有 s.busy=false,feed 上没有任何可点的东西)
+    expect(s.items.some((i: any) => i.kind === 'note' && i.retryBoot === true)).toBe(true)
+
+    // 没连上时打的字:照旧排队(正文保住),但要有一条说人话的提示,不能闷头堆气泡
+    sent.length = 0
+    store.submit('没连上时打的一句话', [])
+    await settle()
+    expect(sent).not.toContain('没连上时打的一句话')   // 确实没发出去
+    expect(s.items.some((i: any) => i.kind === 'note' && String(i.text).includes('这条先排着'))).toBe(true)
+
+    boom = false
+    await store.retryBoot()
+    await settle()
+    expect(s.ready).toBe(true)
+    expect(s.bootFailed).toBe(false)
+    expect(sent).toContain('没连上时打的一句话')   // 重连后队列自动放水
+  })
+  it('★重试不重复铺首条用户气泡(它在 cardInit【之前】就进 feed 了,重跑一次就成两条)', () => {
+    // 注:wire* 更不能重跑 —— 那是 onStream/onCardInject 的注册点,重复注册会让同一条流式正文渲染两遍。
+    // 所以 retryBoot 只调 bootSession,不调 boot;这条断言守的是 bootSession 内部的 retry 分支。
+    // 按固定文案断言,不用 s.title —— 首轮成功后 maybeAutoTitle() 会把卡名改成首条消息前 24 字,
+    // 到这一步 s.title 已经不是当初铺气泡时的那个值了(search 为空 → 当时的 dispMsg 是默认标题「新对话」)。
+    const first = s.items.filter((i: any) => i.kind === 'user' && i.text === '新对话')
+    expect(first.length).toBe(1)
+  })
+})
+
 // ── ⑦f 挂死探针按 partID 判活 ─────────────────────────────────────────────
 // 病灶:渲染端用一个【标量】只跟上一个事件比签名,而主进程 pollTurnParts 每 1.2s 把本轮全部 part 原样重喂,
 // 事件序列成了 A,B,A,B… → 每次都判"有新内容" → 计时被无限续命。回合只要有 ≥2 个 part(一段思考+一个工具就够),

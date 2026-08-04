@@ -48,6 +48,8 @@ export interface UserItem extends BaseItem { kind: 'user'; text: string; queued:
 /** 分诊/提示行(非对话轮);retry=true 时带「重试本轮」按钮 */
 export interface NoteItem extends BaseItem {
   kind: 'note'; text: string; muted: boolean; retry: boolean
+  /** 挂「重试连接」钮:cardInit 失败后唯一的自救入口(见 s.bootFailed) */
+  retryBoot?: boolean
   /** 一键继续要发出的【新消息】原文;有值就渲染「继续执行」钮。空=不渲染。
    *  与 retry 的区别很要命:retry 是把【上一条用户消息】原样重发 —— 模型会从头再做一遍;
    *  防停提醒要的是"接着上次停下的地方继续",必须是新消息(旧页 ui/card.html:1138 本来就是这个语义,Vue 平移时被降级成了 retry)。 */
@@ -188,6 +190,10 @@ export const s = reactive({
   agentName: '',
   busy: false,
   ready: false,
+  /** cardInit 抛过错 = 本卡还没连上引擎。s.ready 是唯一的发信闸,而它只在 cardInit 成功那一支被置真,
+   *  失败后没有任何路径能把它救回来 —— 之后每条消息都静默排队(且 s.busy===false 让输入框显示的是"发送"
+   *  而不是停止图标,完全看不出被挡下了),只能关卡重开。有了这一位才能挂出「重试连接」。 */
+  bootFailed: false,
   /** 本轮成功结束(标题 ✓,多卡扫一眼就知道谁跑完了) */
   done: false,
   // 启动参数
@@ -350,8 +356,8 @@ export function addUser(text: string, meta?: { origin?: 'orch' | 'system'; shard
   if (meta?.shardId) it.shardId = meta.shardId
   s.items.push(it); return s.items[s.items.length - 1] as UserItem
 }
-export function addNote(text: string, opts?: { muted?: boolean; retry?: boolean; contMsg?: string }): NoteItem {
-  const it: NoteItem = { id: nextId(), kind: 'note', text, muted: opts?.muted !== false, retry: !!opts?.retry, contMsg: opts?.contMsg }
+export function addNote(text: string, opts?: { muted?: boolean; retry?: boolean; contMsg?: string; retryBoot?: boolean }): NoteItem {
+  const it: NoteItem = { id: nextId(), kind: 'note', text, muted: opts?.muted !== false, retry: !!opts?.retry, contMsg: opts?.contMsg, retryBoot: !!opts?.retryBoot }
   s.items.push(it); return s.items[s.items.length - 1] as NoteItem
 }
 /** 静态 AI 气泡(查看本次改动等本地注入的富结果;raw=原文供复制) */
@@ -1000,6 +1006,12 @@ export function submit(
   if (s.busy || !s.ready || compacting) {   // compacting 期间一律入队:摘要轮/交棒 reinit 窗口不开新轮(compacting 闸,旧页平移)
     el.queued = true
     queue.push({ text: full || '(见附件)', files: images, item: el })
+    // 引擎没连上时的排队是【无限期】的(s.ready 再也不会变真),跟"等这一轮跑完"完全两回事 ——
+    // 不说清楚,用户只看见气泡半透明地堆着,还以为在正常等。每次失败只贴一次,不刷屏。
+    if (s.bootFailed && !bootQueueNoted) {
+      bootQueueNoted = true
+      addNote('引擎还没连上,这条先排着不会发出 —— 点上面的「重试连接」,连上后排队的消息会自动依次发出', { retryBoot: true, muted: false })
+    }
     return
   }
   turn(full || '(见附件)', images)
@@ -1573,6 +1585,7 @@ export function resetConversation(): void {
 }
 // 交棒熔断(借鉴 CC autoCompact consecutiveFailures,依据 借鉴清单 A1):成功复位、失败不耗棒次、
 // 连败 2 次停自动重试转人工、失败隔一个轮末再试(冷却按 maybeAutoCompact 的轮末节拍数)。台账见 docs/项目记忆/弱模型行为台账.md
+let bootQueueNoted = false   // boot 失败后那句「这条先排着」的解释只贴一次,不随每条消息刷屏
 let compactFailStreak = 0, compactFailSeq = -1, compactClock = 0, compactFailNoted = false
 // compacting 闸(旧页 card.html:992 平移):摘要轮的轮末 finally 会再触发 maybeAutoCompact/催办链,没这闸会重入交棒(实测死循环);
 // 入口置位、finally 复位;compacting 期间 submit 一律入队、drain 不开轮(reinit 窗口不持忙的回归一并修)
@@ -1672,6 +1685,12 @@ export async function boot(): Promise<void> {
   wireShardProgress()  // 主控卡分片进度面板
   wireRun()            // 编排面板:主进程 run-snapshot 只读投影
   initVerbose()        // 过程详情偏好(localStorage cardVerbose)
+  // ★wire* 只许跑这一次:它们是 onStream/onCardInject 等 IPC 回调的注册点,重复注册 = 同一条流式文本渲染两遍。
+  //   所以「重试连接」只重跑下面的 bootSession,绝不重跑 boot。
+  await bootSession(false)
+}
+/** 会话初始化(可重入):cardInit + 首屏。retry=true 表示这是「重试连接」,气泡与参数都已就位,不重复铺 */
+async function bootSession(retry: boolean): Promise<void> {
   const p = new URLSearchParams(location.search)
   s.title = p.get('title') || '新对话'
   cardId = p.get('id') || ''   // 滚动 session memory 落盘键(compactLog*)
@@ -1688,7 +1707,9 @@ export async function boot(): Promise<void> {
   try { purgeStaleDrafts(localStorage) } catch { /* 静默 */ }
 
   s.busy = true
-  if (!s.runId && !sid && (!s.embedded || (s.chatEmbed && p.get('msg')))) addUser(dispMsg)
+  s.bootFailed = false; bootQueueNoted = false   // 本次尝试开始:先清旧的失败态(失败了下面 catch 会重新置起)
+  // 重试时不再铺一遍用户气泡:第一次尝试在 cardInit 之前就把它加进 feed 了,重复 addUser 会出现两条一样的气泡
+  if (!retry && !s.runId && !sid && (!s.embedded || (s.chatEmbed && p.get('msg')))) addUser(dispMsg)
   const bootItem = addAi()
   bootItem.plainText = sid ? '正在续接对话…' : (s.embedded && !s.chatEmbed) ? '正在连接调试助手…' : '正在启动引擎…（首次较慢，请稍候）'
   try {
@@ -1745,7 +1766,18 @@ export async function boot(): Promise<void> {
     bootItem.status = 'error'
     bootItem.plainText = (sid ? '无法续接：' : '引擎未就绪：') + ((e && e.message) || e) + (sid ? '' : '（确认 opencode/bocomcode 已装、模型已配）')
     s.busy = false
+    // ★这里原来只写 s.busy = false 就完了 —— s.ready 留在 false,而它是全仓唯一的发信闸且只有上面那一个赋值点:
+    //   之后用户每打一条都变成半透明"排队中"气泡堆着,drain 首行 !ready 直接返回,页面内没有任何路径能把它救回来,
+    //   只能关卡重开(连队列里的正文也一起没了 —— 会话没建起来,draftKey 是空的,草稿也存不下)。
+    //   排队本身不改:它至少把用户打的字保住了。补的是【自救入口】+ 一句人话。
+    s.bootFailed = true
+    addNote('引擎没连上,本卡还不能发消息 —— 你打的内容会先排队留着。修好后(或直接)点这里重连：', { retryBoot: true, muted: false })
   }
+}
+/** 「重试连接」:只重跑会话初始化,不碰 wire*(重复注册回调会让同一条正文渲染两遍) */
+export async function retryBoot(): Promise<void> {
+  if (s.ready || s.busy) return
+  await bootSession(true)
 }
 
 // ── 给第二棒的挂载点(HANDOFF) ─────────────────────────────────────────────

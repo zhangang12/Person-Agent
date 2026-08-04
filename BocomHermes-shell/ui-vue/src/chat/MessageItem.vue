@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Feed 条目分发:用户气泡 / 壳层回流条 / 提示行(可带重试钮) / 思考块 / 工具块 / todo 卡 / 权限条 / 提问卡 / AI 气泡
 import type { FeedItem, UserItem } from './store'
-import { cancelQueuedItem, retryLast, shardJump, submit } from './store'
+import { cancelQueuedItem, retryLast, shardJump, submit, retryBoot } from './store'
 import ReasonBlock from './ReasonBlock.vue'
 import AnswerBubble from './AnswerBubble.vue'
 import ToolBlock from './ToolBlock.vue'
@@ -41,6 +41,7 @@ const cont = (msg: string) => submit(msg, [])
     <span>{{ item.text }}</span>
     <button v-if="item.retry" class="retrybtn" @click="retryLast">重试本轮</button>
     <button v-else-if="item.contMsg" class="retrybtn" @click="cont(item.contMsg)">继续执行</button>
+    <button v-else-if="item.retryBoot" class="retrybtn" @click="retryBoot()">重试连接</button>
   </div>
   <ReasonBlock v-else-if="item.kind === 'reason'" :item="item" />
   <ToolBlock v-else-if="item.kind === 'tool'" :item="item" />
