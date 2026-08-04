@@ -528,6 +528,21 @@ module.exports = function initBrowser(ctx) {
   }
   async function brShotVisible(tab) { return saveShot((await tab.view.webContents.capturePage()).toPNG()) }
   // full=true 走 CDP 整页截图（captureBeyondViewport，含视口外内容）；失败/无调试器则回退可视区
+  // CDP 截图(不依赖合成表面):窗口隐藏/视图没被绘制时,capturePage 会报
+  // "Current display surface not available for capture" —— 而 Page.captureScreenshot 照样能出图。
+  // Agent 自主会话常在窗口没亮到前台时截图,全靠这条路。
+  async function brShotCdp(tab, full) {
+    const dbg = tab.view.webContents.debugger
+    const opt = { format: 'png' }
+    if (full) {
+      const m = await dbg.sendCommand('Page.getLayoutMetrics')
+      const cs = m.cssContentSize || m.contentSize || { width: 1280, height: 800 }
+      const w = Math.max(1, Math.ceil(cs.width)), h = Math.max(1, Math.min(Math.ceil(cs.height), 30000))   // 30000px 上限防超大页爆内存
+      Object.assign(opt, { captureBeyondViewport: true, clip: { x: 0, y: 0, width: w, height: h, scale: 1 } })
+    }
+    const shot = await dbg.sendCommand('Page.captureScreenshot', opt)
+    return saveShot(Buffer.from(shot.data, 'base64'))
+  }
   async function brScreenshot(full) {
     const tab = brActive(); if (!tab) return null
     try {
@@ -542,6 +557,11 @@ module.exports = function initBrowser(ctx) {
       return await brShotVisible(tab)
     } catch (e) {
       log('browser screenshot err: ' + e.message)
+      // ★兜底不能是"再调一次刚失败的那个方法"。原来这里 catch 完又调 brShotVisible ——
+      //   而最常见的失败原因正是它自己:视图没被合成(窗口隐藏/未绘制)时 capturePage 必报
+      //   "Current display surface not available for capture",重试一万次也是同一个错。
+      //   换条真不一样的路:CDP 截图不走合成表面,窗口没亮也能出图。
+      if (tab.dbg) { try { return await brShotCdp(tab, full) } catch (e2) { log('browser screenshot cdp 兜底也失败: ' + e2.message) } }
       try { return await brShotVisible(tab) } catch { return null }
     }
   }
