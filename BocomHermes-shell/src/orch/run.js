@@ -40,6 +40,7 @@
 // ══════════════════════════════════════════════════════════════════════════════
 const N = require('./nodes')
 const L = require('./ledger')
+const SHAPE = require('./shapes')   // 形状模板:DAG 骨架归代码(强制汇总收尾 / 拆窄了重问一次)
 
 const PHASES = ['planning', 'awaiting-approval', 'executing', 'awaiting-user', 'suspended', 'done', 'failed', 'cancelled']
 const TERMINAL_PHASES = ['done', 'failed', 'cancelled']
@@ -280,6 +281,18 @@ function onPlanDecided(t, dec, data) {
   addNodes(t, made, 'plan', 1)
   if (v && v.truncated) t.eff.push({ type: 'notify', level: 'warn', text: '节点数超出预算,已截断到 ' + r.budget.maxNodes + ' 个' })
   if (v && arr(v.errors).length) t.eff.push({ type: 'notify', level: 'warn', text: '部分节点被校验丢弃:' + arr(v.errors).slice(0, 3).join(';') })
+  // ★拆窄了就重问一次(只一次)。判据看的是【能并行的片数】而不是总片数 —— 串成一条链的 5 个节点,
+  //   并发位照样空着。重问不消耗 attempt,只花一次 decide 预算;第二次还是窄就认了,不跟模型死磕。
+  const narrow = SHAPE.tooNarrow(r, made)
+  if (narrow && !r.budget.shapeReasked) {
+    r.budget.shapeReasked = 1
+    for (const n of arr(r.nodes)) if (n.origin === 'plan' && n.state === 'pending') n.state = 'dropped'   // 这批作废,重来
+    r.nodes = arr(r.nodes).filter((n) => n.state !== 'dropped')
+    t.eff.push({ type: 'notify', level: 'info', text: '只拆出 ' + narrow.parallel + ' 片能并行(并发 ' + narrow.cap + ')—— 让规划器按视角再拆一次' })
+    startDecision(t, 'plan', 'too-narrow', '')
+    return
+  }
+  shapeReduce(t)                      // 汇总收尾:模型没给就代码补
   r.phase = 'awaiting-approval'; r.phaseAt = t.at
 }
 
@@ -360,6 +373,9 @@ function mergeGraph(t, data) {
       // 直接 `+= 1` 会得到 NaN,序列化成 null,面板上"第几波"整列变空,而这正是验收小批 replan 的那个数
       r.wave = posInt(r.wave, 1) + 1
       addNodes(t, made, 'replan', r.wave)
+      // 扇出常发生在勘察之后(第一波只有 probe,真正的宽度是 replan 铺的)——
+      // 所以汇总兜底两处都要挂,只挂 plan 那侧会漏掉最常见的形态。
+      if (shapeReduce(t)) changedGraph = true
       changedGraph = true
     }
     if (v && v.truncated) t.eff.push({ type: 'notify', level: 'warn', text: '新增节点超出预算,已截断' })
@@ -369,6 +385,22 @@ function mergeGraph(t, data) {
 }
 
 // 节点入图:nodes.js 已经校验过字段,这里只补状态机自己的那几格(不覆盖它已给的值)
+// ── 形状兜底:汇总收尾 ────────────────────────────────────────────────────
+// 探索/调研/成文类目标,只要有 ≥2 片各自产文件而全图没有 reduce,就由代码补一个 ——
+// 否则交付是 N 篇互不知道对方存在的散装文档(实测症状)。模型自己给了 reduce 就不补。
+// 造出来的是 spec,照样走 N.validateNodeSpecs 同一条校验,不绕过不变量。
+function shapeReduce(t) {
+  const r = t.r
+  const targets = SHAPE.needsReduce(r)
+  if (!targets) return false
+  const v = N.validateNodeSpecs([SHAPE.makeReduceSpec(r, targets)], r, t.cx)
+  const made = arr(v && v.nodes)
+  if (!made.length) return false
+  addNodes(t, made, 'shape', posInt(r.wave, 1))
+  t.eff.push({ type: 'notify', level: 'info', text: '已自动补一个汇总节点收尾(' + targets.length + ' 片产出合成一份文档)—— 规划里没有它,散着交等于没交' })
+  return true
+}
+
 function addNodes(t, made, origin, wave) {
   const r = t.r
   for (const raw of made) {

@@ -645,6 +645,93 @@ section('用例6:全局并发余量 capHint(不给就会造出"running 却没有
   ok('全局满:不发 dispatch', !has(full.effects, 'dispatch'), ty(full.effects))
 })
 
+section('用例6h:形状模板 —— 骨架归代码(纯函数判据)', () => {
+  const SHAPE = tryReq('../src/orch/shapes.js')
+  need(SHAPE, 'src/orch/shapes.js')
+  const prod = (id, art) => ({ id, kind: 'work', deps: [], exit: { artifacts: art ? ['docs/' + id + '.md'] : [] } })
+
+  // ① 汇总兜底的触发条件:三条都要满足,少一条都不补
+  ok('探索类 + 两片各产文件 + 没有 reduce → 该补',
+    !!SHAPE.needsReduce({ id: 'R1', goal: '探索并成文:摸清认证模块', nodes: [prod('a', 1), prod('b', 1)] }))
+  ok('  只有一片产文件 → 不补(它自己那份就是最终文档,套一层是浪费)',
+    !SHAPE.needsReduce({ id: 'R1', goal: '探索并成文', nodes: [prod('a', 1)] }))
+  ok('  模型自己给了 reduce → 不补(代码是兜底,不是替它做主)',
+    !SHAPE.needsReduce({ id: 'R1', goal: '探索并成文', nodes: [prod('a', 1), prod('b', 1), { id: 'c', kind: 'reduce', deps: [], exit: { artifacts: ['x.md'] } }] }))
+  ok('★写代码类目标不补(交付是代码,硬塞一份汇总文档是噪音)',
+    !SHAPE.needsReduce({ id: 'R1', goal: '把订单服务从 v1 迁到 v2', nodes: [prod('a', 1), prod('b', 1)] }))
+  ok('  不产文件的片不算数(勘察类只回报不落盘)',
+    !SHAPE.needsReduce({ id: 'R1', goal: '调研', nodes: [prod('a', 0), prod('b', 0)] }))
+
+  // ② 汇总节点的正文就是最终文档的质量下限 —— 拼接摘要等于白做一层
+  const spec = SHAPE.makeReduceSpec({ id: 'R1', goal: '探索并成文' }, [prod('a', 1), prod('b', 1)])
+  ok('reduce spec:kind/deps/产出都对', spec.kind === 'reduce'
+    && spec.deps.join(',') === 'a,b' && spec.artifacts.length === 1 && spec.writeScope.length === 1, spec)
+  ok('  产出路径带 run id(不跨 run 撞车)', /汇总报告-R1\.md$/.test(spec.artifacts[0]), spec.artifacts[0])
+  ok('★正文点名四件事:交叉印证/去重/排先后/补缺口',
+    /交叉印证/.test(spec.goal) && /去重/.test(spec.goal) && /排先后/.test(spec.goal) && /补缺口/.test(spec.goal))
+  ok('★点破"矛盾被抹平是汇总最坏的失败"(拼接摘要的典型退化)', /矛盾/.test(spec.goal))
+  ok('  要求先把各片产出读完再动笔(别只看标题猜)', /读完再动笔/.test(spec.goal))
+  ok('  不给它开构建证据闸(汇总节点没有可跑的东西)', spec.requireEvidence === false)
+
+  // ③ 拆窄判据:看【能并行的片数】,不是总片数
+  const wide = { id: 'R1', goal: '排查全站表单问题', concurrency: 4 }
+  ok('★串成一条链的 5 片仍算窄(并发位照样空着)',
+    !!SHAPE.tooNarrow(wide, [{ kind: 'work', deps: [] }, { kind: 'work', deps: ['1'] }, { kind: 'work', deps: ['2'] },
+      { kind: 'work', deps: ['3'] }, { kind: 'work', deps: ['4'] }]))
+  ok('  4 片能同时开跑 → 不算窄', !SHAPE.tooNarrow(wide, [0, 1, 2, 3].map(() => ({ kind: 'work', deps: [] }))))
+  ok('★只有勘察片不算窄(probe 跑完还会被再问一次,那时才是真正拆宽的时机)',
+    !SHAPE.tooNarrow(wide, [{ kind: 'probe', deps: [] }]))
+  ok('  实现类目标不判宽度(拆宽靠按对象,不该按视角硬拆)',
+    !SHAPE.tooNarrow({ id: 'R1', goal: '实现订单导出功能', concurrency: 4 }, [{ kind: 'work', deps: [] }]))
+})
+
+section('用例6i:形状兜底在状态机里真的生效(补的节点走同一条校验)', () => {
+  need(RUN, 'src/orch/run.js')
+  // ★这些节点是代码造的 —— addNodes 原注释写着"没有 auto,代码不造节点",本波有意推翻。
+  //   所以要钉两件事:一是它确实补出来了,二是它【没有绕过校验/不变量】(origin 记 shape,可追溯)。
+  const run = mkRun({ goal: '探索成文:摸清项目结构', concurrency: 4, phase: 'planning', nodes: [],
+    pendingDecision: { id: 'd1', point: 'plan', event: 'start', nodeId: '', at: T0 } })
+  const out = step(run, { type: 'DECIDED', decisionId: 'd1', point: 'plan', ok: true, data: {
+    needGrounding: false, more: 'no', why: '按视角拆',
+    nodes: [1, 2, 3, 4].map((i) => ({ title: '视角' + i, goal: '从第 ' + i + ' 个角度扫一遍并落盘', kind: 'work',
+      deps: [], writeScope: ['docs/v' + i + '.md'], contract: [], artifacts: ['docs/v' + i + '.md'],
+      requireEvidence: false, requireVerdict: false, verifyCmd: '' })),
+  } }, '6i')
+  const nodes = out.run.nodes
+  const red = nodes.filter((n) => n.kind === 'reduce')
+  ok('★代码补出了汇总节点', red.length === 1, nodes.map((n) => n.kind + '/' + n.origin))
+  ok('  origin 记成 shape(与 plan/replan/user 分得开,面板能看出是代码补的)', red[0] && red[0].origin === 'shape', red[0] && red[0].origin)
+  ok('  deps 挂到全部 4 片产出上(汇总要等它们跑完)', red[0] && red[0].deps.length === 4, red[0] && red[0].deps)
+  ok('  它自己也有产出闸(汇总不落盘等于没汇总)', red[0] && (red[0].exit.artifacts || []).length === 1)
+  ok('  仍然进入待批准(代码补骨架不越过人这一关)', out.run.phase === 'awaiting-approval', out.run.phase)
+  ok('  通知里说清是自动补的', of(out.effects, 'notify').some((e) => /自动补一个汇总节点/.test(String(e.text || ''))), ty(out.effects))
+})
+
+section('用例6j:拆窄了打回重问一次(且只一次)', () => {
+  need(RUN, 'src/orch/run.js')
+  const mk = () => mkRun({ goal: '排查全站表单问题', concurrency: 4, phase: 'planning', nodes: [],
+    pendingDecision: { id: 'd1', point: 'plan', event: 'start', nodeId: '', at: T0 } })
+  const narrowPlan = { needGrounding: false, more: 'no', why: '一片够了',
+    nodes: [{ title: '全量排查', goal: '把所有表单从头到尾查一遍', kind: 'work', deps: [],
+      writeScope: ['docs/a.md'], contract: [], artifacts: ['docs/a.md'],
+      requireEvidence: false, requireVerdict: false, verifyCmd: '' }] }
+
+  const run = mk()
+  const out = step(run, { type: 'DECIDED', decisionId: 'd1', point: 'plan', ok: true, data: narrowPlan }, '6j')
+  ok('★只拆 1 片(并发 4)→ 不接受,重新发起规划', has(out.effects, 'decide'), ty(out.effects))
+  const dec = of(out.effects, 'decide')[0]
+  ok('  重问带 too-narrow 事件(渲染层据此加硬约束)', dec && dec.event === 'too-narrow', dec)
+  ok('  那一批窄节点没留在图上(否则会跟重问的结果并存)', out.run.nodes.length === 0, out.run.nodes.map((n) => n.title))
+  ok('  没有进入待批准(还没定稿)', out.run.phase !== 'awaiting-approval', out.run.phase)
+
+  // 第二次还是窄就认了 —— 不跟模型死磕,否则预算烧光还开不了工
+  const run2 = out.run
+  run2.pendingDecision = { id: 'd2', point: 'plan', event: 'too-narrow', nodeId: '', at: T0 }
+  const out2 = step(run2, { type: 'DECIDED', decisionId: 'd2', point: 'plan', ok: true, data: narrowPlan }, '6j')
+  ok('★第二次仍窄就接受(不死磕,免得预算烧光还开不了工)', out2.run.phase === 'awaiting-approval', out2.run.phase)
+  ok('  节点确实入图了', out2.run.nodes.length >= 1, out2.run.nodes.length)
+})
+
 section('用例6g:规划/复规划提示词必须教会"拆宽"与"汇总"(纯文本,没有编译期保护)', () => {
   const RENDER = tryReq('../src/orch/render.js')
   need(RENDER, 'src/orch/render.js')

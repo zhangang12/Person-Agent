@@ -59,7 +59,7 @@ function makeDecider(deps) {
   // 也就不需要给它工具,规程里那 181 字的"片数演算 + 反例"整块消失
   function render(point, ctx) {
     return point === 'plan'
-      ? RENDER.renderPlan(ctx.run, ctx.survey)
+      ? RENDER.renderPlan(ctx.run, ctx.survey, ctx.event)   // event 透传:壳层判定拆窄了、打回重问时,渲染层据此加一段硬约束
       : RENDER.renderReplan(ctx.run, { event: ctx.event, nodeId: ctx.nodeId })
   }
 
