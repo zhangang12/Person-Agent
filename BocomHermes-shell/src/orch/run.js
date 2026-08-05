@@ -571,6 +571,14 @@ function onTurnStart(t) {
   if (n.state === 'running') {
     n.lastTurnAt = t.at
     t.eff.push({ type: 'clearTimer', key: tkey(t.r, n.id, 'silent') })   // 有轮在跑就不算静默
+    // ★stall 也要续弦。它的注释写的是"15min 没有任何一轮 = 挂死",但原来只在【派发】和
+    //   verified→running 两处上弦,轮开始时只清 silent、不碰 stall —— 于是它量的其实是
+    //   "距派发 15 分钟",跟"有没有新一轮"无关。一轮只要跑够 15 分钟,就会在【干活途中】被判挂死、
+    //   kill 掉卡、stalled 属 HARD_FAIL 不给补做 → 整节点重来。
+    //   而 4243cb5 已把单轮预算提到 2h(内网慢端点 prefill + 长 reasoning),两者差了 8 倍,
+    //   慢端点上一轮跑二十分钟很正常 —— 这就是"timeout 报错要重跑"的来源。
+    //   续弦后语义才对上:每来一轮就重新计 15 分钟,真的"一轮都没有"才判死。
+    t.eff.push({ type: 'armTimer', key: tkey(t.r, n.id, 'stall'), nodeId: n.id, kind: 'stall', ms: STALL_MS })
     t.changed = true
     return
   }
@@ -741,7 +749,16 @@ function reasonOf(res) {
   if (bad.indexOf('evidence') >= 0) return 'no-evidence'
   if (bad.indexOf('verdict') >= 0) return 'verdict-fail'
   if (bad.indexOf('cmd') >= 0) return 'cmd-nonzero'
-  if (bad.indexOf('noEmpty') >= 0 || bad.indexOf('artifacts') >= 0) return 'zero-output'
+  // ★artifacts 与 noEmpty 必须分开,不能都叫 zero-output。
+  //   上面补做分支的注释把意图写得很清楚:"六类闸里只有 noEmpty 意味着这张卡根本没干活,
+  //   其余五类(缺产出文件/缺契约签名/…)都是活干了但差一截" —— 而这一行把【缺产出文件】也归成
+  //   zero-output,zero-output 又在 HARD_FAIL 里,于是补做分支的 !HARD_FAIL.has(n.reason) 直接把它挡在门外:
+  //   patchableMissing 特意放行 artifacts 的那份代码从来没生效过,声明路径写偏一次就整节点重跑
+  //   (实测表现:内网工作流"每轮都有文档产出,却总报 artifacts,要重跑 1~2 次")。
+  //   拆开后 artifact-missing 不属 HARD_FAIL → 走补做:原卡原会话,上下文还在,通常一个回合就把文件挪对,
+  //   也不消耗 attempt。真正"什么都没产出"才继续叫 zero-output 并判死。
+  if (bad.indexOf('noEmpty') >= 0) return 'zero-output'
+  if (bad.indexOf('artifacts') >= 0) return 'artifact-missing'
   return ''
 }
 // 拒因追加进 brief 留痕(重派时 composeNodeBrief 也会从 exitReport 重新渲染一遍,两条路都不丢)

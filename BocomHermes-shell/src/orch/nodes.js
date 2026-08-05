@@ -462,10 +462,18 @@ function evalExit(node, probe) {
   }
 
   // ② noEmpty:零产出 = 网关静默 / 空答耗尽的典型形态,不能叫完成
+  // ★判据必须包含【磁盘】。原来只看 res.final 与 res.files,而这两份都是"观察来的":
+  //   · final 挂在回合正常收尾上,回合报错/超时就是空的(4243cb5 已补了回 serve 拉原文的回填);
+  //   · files 只来自壳层偷看 write/edit 工具事件(认 filePath|path|filename),
+  //     内网 fork 换个入参名、或慢端点丢了事件,落盘就全隐形。
+  //   于是出现"每轮都有文档生成,却判零产出"。磁盘上真有非空产出,那就definitionally不是零产出 ——
+  //   声明的 artifacts 存在且非空即可作数(上面 ① 已经逐个 stat 过,这里直接复用它的结论,不重复读盘)。
   if (exit.noEmpty !== false) {
     const hasFinal = !!str(res.final).trim()
     const hasFiles = arr(res.files).length > 0
-    add('noEmpty', hasFinal || hasFiles, (hasFinal || hasFiles) ? '有回报或有文件产出' : '既没有终答也没有文件产出(零产出)')
+    const artOk = report.some((x) => x.kind === 'artifacts' && x.ok && !x.skipped)   // 磁盘实证:声明产出确实在且非空
+    const why = hasFinal ? '有回报' : hasFiles ? '有文件产出' : artOk ? '声明产出已在磁盘上(终答/工具事件没收到,但活确实干了)' : ''
+    add('noEmpty', hasFinal || hasFiles || artOk, why || '既没有终答、也没有文件产出、声明产出在磁盘上也找不到(零产出)')
   }
 
   // ③ contract:签名要在写归属文件里找得到

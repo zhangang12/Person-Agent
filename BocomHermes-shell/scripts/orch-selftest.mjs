@@ -645,6 +645,85 @@ section('用例6:全局并发余量 capHint(不给就会造出"running 却没有
   ok('全局满:不发 dispatch', !has(full.effects, 'dispatch'), ty(full.effects))
 })
 
+section('用例6d:缺产出文件走【补做】,不是整节点重跑', () => {
+  need(RUN, 'src/orch/run.js')
+  // 病灶:补做分支的注释写着"六类闸里只有 noEmpty 意味着这张卡根本没干活,其余五类(缺产出文件/…)
+  // 都是活干了但差一截",patchableMissing 也特意只排除了 noEmpty、放行 artifacts。
+  // 但 reasonOf 把 artifacts 也归成 zero-output,而 zero-output 在 HARD_FAIL 里 ——
+  // 补做分支的 !HARD_FAIL.has(n.reason) 直接把它挡在门外,那份放行从来没生效过。
+  // 实测表现:内网工作流"每轮都有文档产出,却总报 artifacts,要重跑 1~2 次"。
+  // exitReport 由 EXIT_RESULT 事件带进来(run.js 里 n.result.exitReport = arr(e.report)),不是预置在节点上
+  const mk = () => mkRun({ nodes: [mkNode({ id: 'n1', state: 'settled', cardId: 'c1', attempt: 0, patches: 0,
+    result: { final: '写完了', files: ['/proj/docs/draft/a.md'] } })] })
+  // ① 只缺产出文件 → 补做:原卡原会话接着干,不开新卡、不耗 attempt
+  {
+    const run = mk()
+    const out = step(run, { type: 'EXIT_RESULT', nodeId: 'n1', pass: false,
+      report: [{ kind: 'artifacts', ok: false, detail: 'docs/a.md 不存在' }] }, '6d')
+    const n = out.run.nodes[0]
+    ok('缺产出 → 回 running 接着补(不是 pending 重排)', n.state === 'running', n.state)
+    ok('  reason 是 artifact-missing,不再冒充 zero-output', n.reason === 'artifact-missing', n.reason)
+    ok('  发的是 patchNode(原卡),不是 dispatch(新卡)', has(out.effects, 'patchNode') && !has(out.effects, 'dispatch'), ty(out.effects))
+    ok('  不耗 attempt(那是留给整片重来的预算)', n.attempt === 0 && n.patches === 1, { a: n.attempt, p: n.patches })
+    const pn = of(out.effects, 'patchNode')[0]
+    ok('  补做指令带上缺的那一项', pn && (pn.missing || []).some((m) => m.kind === 'artifacts'), pn && pn.missing)
+  }
+  // ② 真·零产出(noEmpty 不过)仍然判死重来 —— 别把闸修松了
+  //    注:重做在同一个事件里就走完 pending→dispatch,所以状态照样是 running;
+  //    区分补做/重做要看 attempt 与发的是 dispatch(新卡)还是 patchNode(原卡)。
+  {
+    const run = mk()
+    const out = step(run, { type: 'EXIT_RESULT', nodeId: 'n1', pass: false,
+      report: [{ kind: 'noEmpty', ok: false, detail: '既没有终答也没有文件产出(零产出)' }] }, '6d')
+    const n = out.run.nodes[0]
+    ok('★零产出仍走重做(补无可补):耗 attempt + 开新卡', n.attempt === 1 && n.patches === 0
+      && has(out.effects, 'dispatch') && !has(out.effects, 'patchNode'), { a: n.attempt, p: n.patches, fx: ty(out.effects) })
+    ok('  reason 仍是 zero-output', n.reason === 'zero-output', n.reason)
+  }
+})
+
+section('用例6e:noEmpty 要认磁盘 —— 声明产出真在盘上就不算零产出', () => {
+  need(NODES, 'src/orch/nodes.js')
+  // 病灶:noEmpty 只看 res.final 与 res.files,而这两份都是"观察来的" ——
+  // final 挂在回合正常收尾上(回合报错/超时就空),files 只来自壳层偷看 write/edit 工具事件
+  // (认 filePath|path|filename,内网 fork 换个入参名或慢端点丢事件就全隐形)。
+  // 于是"每轮都有文档生成,却判零产出"。磁盘上真有非空产出,那就不是零产出。
+  const mk = (files) => ({ id: 'n1', kind: 'work', writeScope: [], contract: [],
+    exit: { artifacts: ['docs/a.md'], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true },
+    result: { final: '', files, exitReport: [] } })
+  const onDisk = { statSync: () => ({ size: 2048, isDirectory: () => false }) }
+  const noDisk = { statSync: () => { throw new Error('ENOENT') } }
+
+  const r1 = NODES.evalExit(mk([]), onDisk)
+  const e1 = (r1.report || []).find((x) => x.kind === 'noEmpty')
+  ok('★终答空 + 工具事件全丢,但声明产出在盘上 → 不判零产出', e1.ok && /磁盘/.test(e1.detail), e1 && e1.detail)
+
+  const r2 = NODES.evalExit(mk([]), noDisk)
+  const e2 = (r2.report || []).find((x) => x.kind === 'noEmpty')
+  ok('三样都没有才判零产出(闸没被修松)', !e2.ok && /零产出/.test(e2.detail), e2 && e2.detail)
+
+  // 磁盘兜底不能把"跳过"当成实证:probe 没注入 statSync 时 artifacts 记的是 skipped
+  const r3 = NODES.evalExit(mk([]), {})
+  const e3 = (r3.report || []).find((x) => x.kind === 'noEmpty')
+  ok('★artifacts 是"跳过"时不算磁盘实证(否则没注入 probe 就人人过闸)', !e3.ok, e3 && e3.detail)
+})
+
+section('用例6f:stall 计时器要按【每一轮】续弦,不是从派发起算', () => {
+  need(RUN, 'src/orch/run.js')
+  // 病灶:注释写的是"15min 没有任何一轮 = 挂死",但 stall 只在派发与 verified→running 两处上弦;
+  // onTurnStart 在 running 上只清 silent、不碰 stall —— 它量的其实是"距派发 15 分钟"。
+  // 而 4243cb5 已把单轮预算提到 2h(内网慢端点),一轮跑够 15 分钟就会在【干活途中】被判挂死、
+  // kill 卡、stalled 属 HARD_FAIL 不给补做 → 整节点重来。这就是"timeout 报错要重跑"。
+  const run = mkRun({ nodes: [mkNode({ id: 'n1', state: 'running', cardId: 'c1' })] })
+  const out = step(run, { type: 'WORKER_TURN_START', nodeId: 'n1' }, '6f')
+  const arms = of(out.effects, 'armTimer')
+  ok('★轮开始时给 stall 续弦(否则长回合会被自己的挂死闸砍掉)',
+    arms.some((e) => String(e.key).endsWith(':n1:stall') && e.kind === 'stall'), arms.map((e) => e.key + '/' + e.kind))
+  ok('  同时仍清掉 silent(有轮在跑不算静默)',
+    of(out.effects, 'clearTimer').some((e) => String(e.key).endsWith(':n1:silent')), ty(out.effects))
+  ok('  节点还在 running(续弦不改状态)', out.run.nodes[0].state === 'running')
+})
+
 section('用例6c:artifacts 判失败时要说清"这一轮实际写了什么"(否则重跑原样再错一次)', () => {
   need(NODES, 'src/orch/nodes.js')
   // 病灶:失败只报一句"docs/x.md 不存在",节点被打回重跑时模型不知道自己错在哪 ——
