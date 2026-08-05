@@ -45,7 +45,8 @@ const PHASES = ['planning', 'awaiting-approval', 'executing', 'awaiting-user', '
 const TERMINAL_PHASES = ['done', 'failed', 'cancelled']
 const NODE_STATES = ['pending', 'queued', 'running', 'settled', 'verified', 'rejected', 'failed', 'skipped', 'cancelled']
 const NODE_TERMINAL = ['verified', 'failed', 'skipped', 'cancelled']
-const SILENT_MS = 45 * 1000            // 轮末静默 45s 判落定(闸13 消不掉的退让:worker 层不动,"停没停"只能这么推断)
+const SILENT_MS = 45 * 1000            // 轮末静默 45s 判落定(闸13 消不掉的退让:worker 层不动,"停没停"只能这么推断)。
+                                       // 窗口值与探活都在执行层(index.js doArm):knobs.orchSilentSec 可放宽,到点先探活续命——纯逻辑层不管这些,它只认 TIMER 事件
 const STALL_MS = 15 * 60 * 1000        // 15min 没有任何一轮 = 挂死
 const MAX_DECISIONS_KEPT = 200         // 决策留痕上限(只截最老的,给用户看"它为什么这么决定")
 const MAX_INVALID_STREAK = 3           // 连续拿不到合法决策 → 转人工(不是自动收口)
@@ -651,6 +652,10 @@ function onExitResult(t) {
   n.result.cmdExit = (e.cmdExit === null || e.cmdExit === undefined) ? null : num(e.cmdExit)
   n.result.contractMiss = arr(e.contractMiss).map(str)
   n.result.unverified = !!e.unverified
+  // 终答回填(2026-08-04,慢模型晚收官实测):终答收集挂在回合正常收尾上,回合一旦报错/超时,
+  // 流式明明吐过字、final 却是空的 → 误判零产出。evalExit 执行层判前回 serve 拉了会话原文,
+  // 随本事件带回 —— 只补空缺,绝不覆盖已有 final。
+  if (!str(n.result.final).trim() && str(e.final).trim()) n.result.final = str(e.final)
   t.changed = true
   if (e.pass) {
     n.state = 'verified'

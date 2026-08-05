@@ -29,7 +29,10 @@
 const SCHEMA = require('./schema')
 const RENDER = require('./render')
 
-const TIMEOUT = { plan: 90000, replan: 60000 }
+// 内网弱模型做规划 reasoning 长、且每次决策都是全新会话(无 KV 缓存,全量 prefill 首轮基线)——
+// 任何固定预算都会被慢端点打穿(决策留痕 plan(不合法:timeout),连续两次就转人工,把"慢"误判成"不合法")。
+// 所以默认【不限时】(0):模型多慢都等完,用户在面板上可随时中止整个 run。想设限用 knobs.orchDecideTimeoutSec(秒,>0 生效)。
+const TIMEOUT = { plan: 0, replan: 0 }
 // 提示词末行(dbgTriage 生产已验证有效):弱模型很吃这一句
 const TAIL = '\n\n只输出 JSON,不要调用任何工具,不要解释,不要用 markdown 代码围栏包裹。'
 const RETRY_ASK = '你上次的输出不合法:{ERR}。请只重新输出一个合法 JSON,不要解释。'
@@ -42,13 +45,14 @@ function str(x) { return x === null || x === undefined ? '' : String(x) }
  *   ctx = { run, event, nodeId, dir, model, survey }
  *     ★ survey(目录量级事实:N 个文件/总字节/顶层分布)由 index.js 用代码算好传进来 ——
  *       不让模型估量级,也就不需要给它工具。规程里那 181 字的"片数演算 + 反例"整块消失。
+ *   timeoutOf(point) 返回毫秒;【0/负数 = 不限时】(默认),此时 invalid:'timeout' 不再可能出现。
  */
 function makeDecider(deps) {
   const d = deps || {}
   const oc = d.oc
   const S = d.S || {}
   const log = typeof d.log === 'function' ? d.log : () => {}
-  const timeoutOf = typeof d.timeoutOf === 'function' ? d.timeoutOf : (p) => TIMEOUT[p] || 60000
+  const timeoutOf = typeof d.timeoutOf === 'function' ? d.timeoutOf : (p) => (p in TIMEOUT ? TIMEOUT[p] : 0)
 
   // 渲染签名以 render.js 为准:renderPlan(run, facts) / renderReplan(run, ev)
   // facts = index.js 用代码算出的目录量级事实(N 个文件/总字节/顶层分布)—— 不让模型估量级,
@@ -60,6 +64,7 @@ function makeDecider(deps) {
   }
 
   async function ask(serve, sid, text, model, ms) {
+    if (!(ms > 0)) return oc.sendMessage(serve, sid, text, model)   // 默认不限时:慢模型等到底,面板可中止
     let timer = null
     try {
       return await Promise.race([

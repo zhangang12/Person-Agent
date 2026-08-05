@@ -25,7 +25,7 @@ const writescope = require('./writescope')   // 分片写归属(编码模式):go
 const standards = require('./standards')     // 内置编码规范库(后端/前端/UI·UX/SQL/架构):编码模式全量注入
 const makeCardCleanup = require('./card-cleanup')   // 卡关闭清理链工厂(波2 抽出/波3 独立成可测模块)
 const { makeOrch } = require('./orch')                // 编排状态机装配层(编排的唯一实现)
-const { makeDecider } = require('./orch/decide')      // 决策器:模型在整套编排里唯一出现的地方(plan / replan 两点)
+const { makeDecider } = require('./orch/decide')      // 决策器:模型在整套编排里唯一出现的地方(plan / replan 两点,默认不限时)
 
 module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }) {
   // 纯文件 IO 函数搬进 recorder-core 的 initStore 工厂,这里注入依赖后解构使用
@@ -54,6 +54,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     ctxLimitMax: 192000,          // 水位上限硬顶(MiniMax M2.5 实测 192k):生效上限=min(serve 上报 limit.context, 此值) —— serve 报 192k 就用满 192k,报更大(公网 256k/1M)按此收口,防阈值线算到真实上限之外
     promptAsync: 0,               // prompt_async 发送通道（1=开）：POST 不再挂起等回合，R4 类在飞断开问题免疫；内网 fork 无该端点自动回落
     readWarnMax: 100000,          // 读字节提醒线(按文件去重累计,字符):正常编码 3-5 个中等文件不报警;老内容已被 context-guard 清理,这里只拦"还在读"的节奏
+    orchDecideTimeoutSec: 0,      // 编排决策(plan/replan)模型响应限时(秒):0=不限时(内网慢模型默认,多慢都等完);>0 时 plan 用该值、replan 取其半保底 60s
+    orchSilentSec: 45,            // 编排节点轮末静默判落定窗口(秒):到点先探活(卡在启动/有回合在飞/卡片忙/内容在动则续命一轮,见 orch/index.js doArm),真静才落定;内网慢端点轮间空隙大可放宽到 120+
   }
   const mergeKnobs = (k) => ({ ...DEFAULT_KNOBS, ...((k && typeof k === 'object') ? k : {}) })
   // 弱模型拖尾收口(性能审查⑤):context-guard 插件的 chat.params 钳制读 serve 进程环境——
@@ -299,7 +301,12 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // ── 编排引擎装配 ──────────────────────────────────────────────────────────
   // 装配失败不许影响启动:startOrchRun 会显式报错,别的功能(单工作流/pipeline/邮件/技能)照常。
   try {
-    const realDecide = makeDecider({ oc, S, log })
+    const realDecide = makeDecider({ oc, S, log, timeoutOf: (p) => {
+      // 决策限时旋钮:knobs.orchDecideTimeoutSec(秒,>0 才限时,replan 取其半保底 60s);缺省/0 = 不限时(内网慢模型多慢都等完,面板上可中止整个 run)
+      const sec = +(S.settings.knobs && S.settings.knobs.orchDecideTimeoutSec) || 0
+      if (sec > 0) return p === 'plan' ? sec * 1000 : Math.max(60000, Math.floor(sec / 2) * 1000)
+      return 0
+    } })
     S.orch = makeOrch({
       S, oc, log, app, spawnCard, spawnWorkflow, wcById, BrowserWindow, Notification,
       // 决策器留一个注入缝:S.orchDecide 存在就用它。
@@ -1032,7 +1039,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       `只输出 JSON、不要调用任何工具、不要解释：{"difficulty":1-5,"layers":["frontend"|"backend"|"contract"...],"strategy":"single"|"multi","reason":"一句中文理由"}`
     try {
       const sid = await oc.createSession(serve, '分诊')
-      const txt = await Promise.race([oc.sendMessage(serve, sid, p, model || null), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 45000))])
+      const txt = await oc.sendMessage(serve, sid, p, model || null)   // 不限时:内网慢模型多慢都等完(曾经 45s race 把它误判成不可用,白回退启发式)
       const j = tinyJson(txt)
       if (j && (j.strategy === 'single' || j.strategy === 'multi')) {
         return { difficulty: +j.difficulty || heur.difficulty, layers: (Array.isArray(j.layers) && j.layers.length) ? j.layers : heur.layers, strategy: j.strategy, reason: j.reason || '' }

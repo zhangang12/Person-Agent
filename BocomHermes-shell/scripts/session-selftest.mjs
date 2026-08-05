@@ -300,7 +300,7 @@ console.log('用例6:P4 看门狗降载 —— 判挂先带 {limit:1} 拉,返回
   const h = makeHarness(); h.S.settings.projectDir = PROJ
   const { sid } = await openCard(h, 71)
   h.S.isCardBusy = () => true
-  h.oc.listSessions = async () => [{ id: 'ses_child', parentID: sid, title: '子任务', time: { updated: Date.now() - 10 * 60 * 1000 } }]
+  h.oc.listSessions = async () => [{ id: 'ses_child', parentID: sid, title: '子任务', time: { updated: Date.now() - 40 * 60 * 1000 } }]   // 静默 40min:超 30min 判死线(SUB_STALL_MS 口径 5→30min,2026-08-04)
   const aborted = []
   h.oc.abort = async (...a) => { aborted.push(a) }
   h.oc.generationStalled = () => true
@@ -314,7 +314,7 @@ console.log('用例6:P4 看门狗降载 —— 判挂先带 {limit:1} 拉,返回
   const h2 = makeHarness(); h2.S.settings.projectDir = PROJ
   const { sid: sid2 } = await openCard(h2, 72)
   h2.S.isCardBusy = () => true
-  h2.oc.listSessions = async () => [{ id: 'ses_child2', parentID: sid2, title: '子', time: { updated: Date.now() - 10 * 60 * 1000 } }]
+  h2.oc.listSessions = async () => [{ id: 'ses_child2', parentID: sid2, title: '子', time: { updated: Date.now() - 40 * 60 * 1000 } }]   // 同上:40min 静默才过判死线
   h2.oc.getRawMessages = async (...a) => { h2.calls.getRawMessages.push(a); return 'not-an-array' }   // 第一次(limit)返回坏形状
   let fellBack = false
   h2.oc.generationStalled = (msgs) => { fellBack = fellBack || Array.isArray(msgs); return false }
@@ -821,7 +821,7 @@ console.log('用例15c:question-reply 送达失败 —— 记录必须留着(先
   ok('  正在送达中拒绝重复提交(防两次并发 POST)', r3 && r3.ok === false && /重复提交/.test(String(r3.err)), r3)
 }
 
-console.log('用例16:看门狗内容签名判活 —— 轮询重喂同一内容不续命;真变化照常刷新;300s 无变化自动中止分片;S.turnBusy 挂载')
+console.log('用例16:看门狗内容签名判活 —— 轮询重喂同一内容不续命;真变化照常刷新;1800s 无变化自动中止分片;S.turnBusy 挂载')
 {
   intervals.length = 0
   let release = null
@@ -846,11 +846,11 @@ console.log('用例16:看门狗内容签名判活 —— 轮询重喂同一内�
   h.oc.pollTurnParts = async () => [{ partID: 'p1', kind: 'text', text: '半截结论真的变长了' }]
   await iv.fn()
   ok('内容真变化(SSE/轮询同规)→ 照常刷新', si.lastEventAt > 1000, si.lastEventAt)
-  si.lastEventAt = Date.now() - 400000
+  si.lastEventAt = Date.now() - 1900000   // 1900s 静默:过 1800s 判死线(口径 300s→1800s,2026-08-04 慢端点放宽)
   const aborted = []
   h.oc.abort = async (...a) => { aborted.push(a) }
   await intervals.filter((t) => t.ms === 45000).pop().fn()
-  ok('挂死看门狗:300s 无内容变化 → 自动中止分片主回合', aborted.some((a) => a[1] === sid), aborted)
+  ok('挂死看门狗:1800s 无内容变化 → 自动中止分片主回合', aborted.some((a) => a[1] === sid), aborted)
   release(); await p
   ok('回合落定后 S.turnBusy 移除本 sid', !h.S.turnBusy.has(sid))
 }

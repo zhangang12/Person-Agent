@@ -182,6 +182,12 @@ function drivePhaseBody() {
   // R8 EXIT_RESULT → 节点终态 → 每节点必调 replan
   L.R8 = step(mkRun({ nodes: [mkNode({ id: 'n1', state: 'settled', result: { final: '干完了' } })] }),
     { type: 'EXIT_RESULT', nodeId: 'n1', pass: true, report: [{ kind: 'noEmpty', ok: true, detail: '有终答' }], verdict: '', cmdExit: null, contractMiss: [], unverified: false }, 'R8')
+  // R8b 终答回填:节点 final 空(慢模型晚收官/回合报错没收到),EXIT_RESULT 带回 evalExit 拉到的会话原文 → 只补空缺
+  L.R8b = step(mkRun({ nodes: [mkNode({ id: 'n1', state: 'settled', result: { final: '' } })] }),
+    { type: 'EXIT_RESULT', nodeId: 'n1', pass: true, report: [{ kind: 'noEmpty', ok: true, detail: '有回报' }], verdict: '', cmdExit: null, contractMiss: [], unverified: false, final: '晚到的终答' }, 'R8b')
+  // R8c 已有 final 不被回填覆盖
+  L.R8c = step(mkRun({ nodes: [mkNode({ id: 'n1', state: 'settled', result: { final: '原终答' } })] }),
+    { type: 'EXIT_RESULT', nodeId: 'n1', pass: true, report: [{ kind: 'noEmpty', ok: true, detail: '有终答' }], verdict: '', cmdExit: null, contractMiss: [], unverified: false, final: '不该覆盖' }, 'R8c')
   // R9 frontier:无 ready 无 running 无 pendingDecision → 仍发 replan(代码不替它宣布收口)
   L.R9 = step(mkRun({ nodes: [mkNode({ id: 'n1', state: 'verified' }), mkNode({ id: 'n2', state: 'skipped' })] }), { type: 'TICK' }, 'R9')
   // R10 replan 增删合并 → wave++
@@ -374,6 +380,9 @@ section('用例2:Run.phase 转移表 R7~R18(§3.3 上表续)', () => {
   ok('R8 节点终态 → run 仍 executing', L.R8.run.phase === 'executing', dbg(L.R8))
   ok('R8 ★节点 settled 后必发 decide(replan,node-settled)', of(L.R8.effects, 'decide').some((e) => e.point === 'replan' && String(e.event) === 'node-settled'), of(L.R8.effects, 'decide'))
   ok('R8 decide 带上是哪个节点', of(L.R8.effects, 'decide').some((e) => e.nodeId === 'n1'), of(L.R8.effects, 'decide'))
+  ok('R8b 空 final 被事件回填(慢模型晚收官不判零产出)', L.R8b.run.nodes[0].result.final === '晚到的终答', L.R8b.run.nodes[0].result)
+  ok('R8b 回填后照常 verified', L.R8b.run.nodes[0].state === 'verified', L.R8b.run.nodes[0].state)
+  ok('R8c 已有 final 不被回填覆盖', L.R8c.run.nodes[0].result.final === '原终答', L.R8c.run.nodes[0].result)
 
   // R9 frontier ★代码不替它宣布收口
   ok('R9 frontier 空 → 仍 executing(不是 done)', L.R9.run.phase === 'executing', dbg(L.R9))

@@ -698,7 +698,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
   // 病灶:主 Agent 把文件原文/大段代码贴进委派指令 → 子 Agent 128k 迅速撑满 → serve 侧静默压缩 → 变笨/写结论挂死。
   // 【精确狙杀,不株连】:只 abort 能解析出子会话ID(taskChild,opencode.js extractChildSessionId)的那个超限调用;
   // 并行 fan-out 的兄弟子 Agent 绝不受牵连。解析不到 ID(老 serve 运行期不带 sessionID)就降级为只警告,
-  // 真挂死交给 5min 看门狗 —— 宁可放过,不可错杀(教训:会话级 flag+补扫曾把一整波并行子 Agent 团灭)。
+  // 真挂死交给 30min 看门狗 —— 宁可放过,不可错杀(教训:会话级 flag+补扫曾把一整波并行子 Agent 团灭)。
   const condemnedTasks = new Map()   // partID → { chars, max, aborted }(同一 part 多次状态推送只拦一次)
   // 多层派发会话回流:分片(隐藏卡,不开窗)的对话流镜像一份给主控卡(shardRoot=分片注册id),
   // 主控卡把镜像存进分片专属缓冲,点分片进度卡即在主区域渲染该分片的会话 —— 一窗看全部,不另开空间。
@@ -899,10 +899,11 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
 
   // ── 分片主回合挂死看门狗(无人值守兜底;可见卡有人按 Esc,隐藏卡没有)──────────────────
   // 病灶:回合进行中无任何计时器(45s 落定只在轮末 arm),网关保持连接永不响应 → 分片永远 running+占并发位,
-  // 主控永远等不到这片,整链静默卡死(审查实测)。挂死看门狗(子会话 5min 那只)只盯 task 子会话,不盯卡主回合。
-  // 判据:分片卡(或主控卡)有回合在飞(turnBusy)且 300s 无【内容变化】(onText 探针按 partLivenessSig 签名判活,
+  // 主控永远等不到这片,整链静默卡死(审查实测)。挂死看门狗(子会话 30min 那只)只盯 task 子会话,不盯卡主回合。
+  // 判据:分片卡(或主控卡)有回合在飞(turnBusy)且 1800s 无【内容变化】(onText 探针按 partLivenessSig 签名判活,
   // 轮询重喂不变内容不续命 —— 曾因此判据永不满足,挂死分片永远 running)→ oc.abort,
   // 中止后走 aborted/报错通道按 interrupted 收官 —— 宁可误杀可重派,不可静默卡死无人知。
+  // 口径:300s→1800s(2026-08-04):内网慢端点 prefill+长 reasoning 常超 5 分钟无 part 变化,5min 把"慢"误杀成"挂死"。
   setInterval(() => {
     try {
       const now = Date.now()
@@ -912,7 +913,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
         const unattended = (S.shardWc && S.shardWc.has(si.wc.id)) || (S.wfCardByWc && S.wfCardByWc.get(si.wc.id) && S.wfCardByWc.get(si.wc.id).kind === 'orch')
         if (!unattended) continue   // 可见工作流卡有人看着(90s/5min 提醒在渲染端),不代劳
         const last = si.lastEventAt || 0
-        if (now - last < 300000) continue
+        if (now - last < 1800000) continue
         log('[ctx-hang] 挂死看门狗:分片/主控主回合 ' + Math.round((now - last) / 1000) + 's 静默 → 自动中止 (sid=' + sid.slice(0, 18) + ')')
         si.lastEventAt = now   // 本轮只杀一次;abort 没生效的话下个 tick 再杀
         try { oc.abort(si.serve, sid) } catch {}
@@ -960,9 +961,10 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
 
   // ── 卡死子 Agent 看门狗(判死不判慢,与卡内"绕圈看门狗"互补:那条治主 Agent 反复读同批文件,这条治子 Agent 写结论挂死)──
   // 实测病灶(2026-07-20,两次):子 Agent 探查全做完、写最终结论的 LLM 调用无声挂死(文本空、消息不收尾、serve 无请求级超时),
-  // 父卡 task 永 running 拖住整波。判据:父卡在忙 + 子会话静默 > 5min + generationStalled(最后 assistant 未收尾且无工具在跑)
+  // 父卡 task 永 running 拖住整波。判据:父卡在忙 + 子会话静默 > 30min + generationStalled(最后 assistant 未收尾且无工具在跑)
   // → 只中止这个子会话(task 报"Task cancelled",主 Agent 重派或带其余结果综合,实测恢复路径)。有工具在跑/已收尾一律放过:慢≠死。
-  const SUB_STALL_MS = 5 * 60 * 1000   // 旋钮候选:生成挂起容忍(网关掉链子常见,但 5min 无字基本是真死)
+  // 口径:5min→30min(2026-08-04):内网慢端点长 reasoning 常超 5 分钟无动静,5min 把慢模型误杀。
+  const SUB_STALL_MS = 30 * 60 * 1000   // 旋钮候选:生成挂起容忍(网关掉链子常见;30min 无字才基本是真死,慢端点不误伤)
   const SUB_CTX_WARN = Math.round(((+(S.settings.knobs && S.settings.knobs.ctxLimitMax)) > 0 ? +(S.settings.knobs && S.settings.knobs.ctxLimitMax) : 192000) * 0.8)   // 子 Agent 上下文预警线 = 口径 80%(随 knobs.ctxLimitMax,默认 192k):隔离上下文不进卡片水位,这里直接看它的真实用量
   const subCtxWarned = new Set()   // 每个子会话只预警一次
   setInterval(async () => {
@@ -999,9 +1001,9 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
               stalled = oc.generationStalled(msgs || [])
             } catch {}
             if (!stalled) continue
-            log('watchdog: 子会话 ' + c.id + ' (' + (c.title || '') + ') 静默 >5min 且生成挂死 → 自动中止(父卡可重派)')
+            log('watchdog: 子会话 ' + c.id + ' (' + (c.title || '') + ') 静默 >30min 且生成挂死 → 自动中止(父卡可重派)')
             try { await oc.abort(serve, c.id) } catch {}
-            try { if (!wc.isDestroyed()) wc.send('card-note', { text: '⚠ 子 Agent「' + String(c.title || c.id).slice(0, 40) + '」写结论时挂死(5 分钟无进展),已自动中止 —— 主 Agent 会重派或带其余结果继续;若反复发生多半是任务过大触发压缩循环,重派请拆小(指令≤2000字、只给路径)', tone: 'muted' }) } catch {}
+            try { if (!wc.isDestroyed()) wc.send('card-note', { text: '⚠ 子 Agent「' + String(c.title || c.id).slice(0, 40) + '」写结论时挂死(30 分钟无进展),已自动中止 —— 主 Agent 会重派或带其余结果继续;若反复发生多半是任务过大触发压缩循环,重派请拆小(指令≤2000字、只给路径)', tone: 'muted' }) } catch {}
           }
         }
       }

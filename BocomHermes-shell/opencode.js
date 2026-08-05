@@ -498,16 +498,18 @@ function pickTurnText(list) {
     sig: asst.length + ':' + nParts + ':' + text.length + ':' + rLen + ':' + (toolRunning ? 1 : 0) + ':' + tLen }   // 收尾 = 最后一条 assistant 已完成【且带文本】
 }
 // maxMs=绝对上限(防永久 hang);idleMs=空转上限(sig 一直不动才算空转)。
+// 口径(2026-08-04 放宽):maxMs 30min→2h、idleMs 10min→30min、工具在跑的空转放宽 25min→60min ——
+// 内网慢端点大上下文 prefill + 长 reasoning 常超 10 分钟无 part 变化,旧口径把"慢"误判成"死"。
 // 超时【抛错,不再返回空串】:返回 '' 会让上层无法区分"黑洞会话"和"跑完了没话说" —— 编排层照单全收记成
 // status:'ok' 的空产出:不重试、不报错,空白直接流进下游上下文与最终汇总(这正是"任务全绿、成果很薄"的一条根)。
 // 已经吐了半截文本的,返回半截(有总比无强);一个字都没有的,抛错让上层重试/报错。
-async function waitAssistantText(info, sessionId, maxMs = 1800000, idleMs = 600000, opts = {}) {
+async function waitAssistantText(info, sessionId, maxMs = 7200000, idleMs = 1800000, opts = {}) {
   const onRaw = opts && opts.onRawMessages   // P1(契约③):每拍拿到全量消息回调一次,上层同一份数据喂 pollTurnParts,消灭双轮询
   const t0 = Date.now()
   let prev = '', stable = 0, doneNoTextTicks = 0, sig = '', lastMove = Date.now(), lastErr = null, toolBusy = false, pollTimeouts = 0
-  // 工具在跑(如 task 子agent的 fan-out 长波)时空转容忍放宽到 25 分钟:父消息可能整波都不动,10 分钟就收会截走半截;
+  // 工具在跑(如 task 子agent的 fan-out 长波)时空转容忍放宽到 60 分钟:父消息可能整波都不动,30 分钟就收会截走半截;
   // 真黑洞仍有 maxMs 绝对上限兜底。工具不跑时维持原 idleMs。
-  while (Date.now() - t0 < maxMs && Date.now() - lastMove < (toolBusy ? Math.max(idleMs, 1500000) : idleMs)) {
+  while (Date.now() - t0 < maxMs && Date.now() - lastMove < (toolBusy ? Math.max(idleMs, 3600000) : idleMs)) {
     // 自适应轮询:前 6 秒密探(450ms)——简单问题一完成就尽快收,少等半拍;之后疏探(750ms)——
     // 长任务不必频繁打 GET /message。实测这台 serve 首字要 12s(模型 TTFT),客户端能省的就这半秒量级。
     await sleep(Date.now() - t0 < 6000 ? 450 : 750)

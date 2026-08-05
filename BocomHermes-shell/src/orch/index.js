@@ -17,6 +17,11 @@
 // card-cleanup 的级联杀看 `wfCardByWc.get(wcId).kind==='orch'`,session.js 的 shardSnapshot 同理。
 // 面板卡不进这三张表,分片镜像会当场变空、关面板不再杀工人。所以它照常建卡、照常建一段会话 ——
 // 只是那段会话【永远不发消息】(编排不再是"跟一个 Agent 聊天")。
+//
+// 【计时器探活】轮末静默到点 ≠ 落定:doArm 到点先查工人是否还真活着(卡在启动/有回合在飞/卡片忙/
+// 静默窗内内容还在动),活着就续命一轮 —— 内网慢端点轮间空隙常超 45s,把"慢"误判成"干完了"会按
+// 空磁盘 evalExit 出 artifacts/noEmpty 零产出,错杀慢工。窗口旋钮 = knobs.orchSilentSec(默认 45s);
+// 续命上限由 stall(15min)与 30min 挂死看门狗收,探活只管"别冤枉慢"。
 // ══════════════════════════════════════════════════════════════════════════════
 const path = require('path')
 const fs = require('fs')
@@ -179,8 +184,40 @@ function makeOrch(deps) {
 
   // 退出检查:要读盘、要跑命令,所以住在这里而不是 run.js
   function doEvalExit(run, fx) {
+    doEvalExitAsync(run, fx).catch((e) => log('[orch] evalExit 执行异常:' + (e && e.stack || e)))
+  }
+  // 零产出回填(2026-08-04,实测:内网慢模型"壳层先判 zero-output,模型随后才答完"):
+  // 终答收集挂在回合正常收尾上(session.js wfTurnDone);回合一旦报错/超时,流式明明吐过字、reg.final 却是空的。
+  // evalExit 是判零产出的【最后责任点】:判之前回 serve 拉一次会话原文(最后一个 user 之后的全部 assistant 文本,
+  // 与 session.js 轮末取终答同口径),拉到就回填进事件 —— 不冤枉慢模型;拉不到(真没产出)照常判。
+  async function backfillFinal(run, n) {
+    if (!n.sid || !oc || typeof oc.getMessages !== 'function') return ''
+    try {
+      const si = S.sessionInfo && S.sessionInfo.get(n.sid)
+      const serve = (si && si.serve) || (run.dir && typeof oc.ensureServe === 'function' ? await oc.ensureServe(run.dir, S.handlers, log) : null)
+      if (!serve) return ''
+      const msgs = await oc.getMessages(serve, n.sid)
+      let lastU = -1; arr(msgs).forEach((m, i) => { if (m && m.role === 'user') lastU = i })
+      const t = arr(msgs).slice(lastU + 1).filter((m) => m && m.role === 'assistant' && m.text).map((m) => str(m.text)).join('\n').trim()
+      if (t) {
+        log('[orch] evalExit 回填终答 ' + t.length + ' 字 → ' + n.id + '(慢模型晚收官,不判零产出)')
+        try {   // 注册表同步:存档/卡坞/legacy 兜底读的 reg.final 也不落空
+          const reg = n.cardId && S.wfRegistry && S.wfRegistry.get(String(n.cardId))
+          if (reg && !str(reg.final).trim()) reg.final = t
+        } catch {}
+      }
+      return t
+    } catch (e) { log('[orch] evalExit 回填终答失败(' + n.id + '):' + str(e && e.message)); return '' }
+  }
+  async function doEvalExitAsync(run, fx) {
     const n = findNode(run, fx.nodeId); if (!n) return
     const base = run.dir || (S.settings && S.settings.projectDir) || '.'
+    let backfilled = ''
+    let evalNode = n
+    if (!str(n.result && n.result.final).trim() && !arr(n.result && n.result.files).length) {
+      backfilled = await backfillFinal(run, n)
+      if (backfilled) evalNode = Object.assign({}, n, { result: Object.assign({}, n.result, { final: backfilled }) })
+    }
     const probe = {
       statSync: (p) => fs.statSync(path.resolve(base, p)),
       readFileSync: (p) => fs.readFileSync(path.resolve(base, p), 'utf8'),
@@ -193,7 +230,7 @@ function makeOrch(deps) {
       actions: (nn) => { try { return arr((S.wfRegistry && S.wfRegistry.get(String(nn && nn.cardId))) ? S.wfRegistry.get(String(nn.cardId)).actions : []) } catch { return [] } },
     }
     let out
-    try { out = NODES.evalExit(n, probe) }
+    try { out = NODES.evalExit(evalNode, probe) }
     catch (e) { log('[orch] evalExit 抛错:' + e.message); out = { pass: false, report: [{ kind: 'noEmpty', ok: false, detail: '退出检查执行失败:' + e.message }] } }
     const bad = arr(out && out.report).filter((x) => x && !x.ok)
     log('[orch] ' + run.id + ' evalExit ' + n.id + ' → ' + (out && out.pass ? 'PASS' : 'FAIL')
@@ -203,16 +240,62 @@ function makeOrch(deps) {
       pass: !!(out && out.pass), report: arr(out && out.report),
       verdict: str(out && out.verdict), cmdExit: (out && out.cmdExit != null) ? out.cmdExit : null,
       contractMiss: arr(out && out.contractMiss), unverified: !!(out && out.unverified),
+      final: backfilled,   // 回填的终答(run.js 只补空缺):零产出判定以会话原文为准,不看回合收尾成没成功
     })
+  }
+
+  // ── 静默到点探活(只探不判)──────────────────────────────────────────────
+  // 轮末静默到点 ≠ 落定。内网慢端点的轮间空隙(网关排队/prefill/serve 冷启动)常超 45s,
+  // 把"慢"误判成"干完了",就会按空磁盘 evalExit 出 artifacts/noEmpty 零产出 → 错杀慢工、开新卡重烧。
+  // 所以 silent 计时器到点先查工人是否还真活着:活着 → 续命一轮;真静了 → 放行 TIMER 给状态机。
+  // 活信号全是壳内事实,不多一次网络往返;返回值非空 = 活着的证据(兼作日志)。
+  //   ★ sid 现解:n.sid 目前恒 null(doDispatch 时卡还没绑会话),从 S.sessionByWc(wcId→sid)补。
+  //   ★ 续命无上限但不失控:真挂死由 stall(15min)与 30min 挂死看门狗收口,探活只管"别冤枉慢"。
+  //   ★ 只在节点 running 时续命:其余状态放行 TIMER,由 run.js onTimer 吸收(终态/queued 不该被计时器纠缠)。
+  //   ★ "内容在动"比的是【挂计时那一刻】(armedAt),不是 now-窗口 —— 语义是"我开始等静默之后又动过",
+  //     顺带让回放(手动拨计时器、墙钟不走)能确定性分辨"挂后动过"与"挂前就在动"。
+  function silentMs(fxMs) {
+    const k = num(S.settings && S.settings.knobs && S.settings.knobs.orchSilentSec)
+    return Math.max(1000, k > 0 ? k * 1000 : (Number(fxMs) || 45000))
+  }
+  function silentAlive(runId, nodeId, armedAt) {
+    const cur = runs.get(str(runId))
+    if (!cur) return ''
+    const n = findNode(cur, nodeId)
+    if (!n || n.state !== 'running') return ''
+    const sid = n.sid || (n.wcId != null && S.sessionByWc ? S.sessionByWc.get(n.wcId) : null)
+    if (n.cardId && !sid) return '卡在启动(会话未绑定)'                    // 慢 serve 冷启动:卡开了会话还没绑上
+    try { if (sid && S.turnBusy && S.turnBusy.has(sid)) return '有回合在飞(turnBusy)' } catch {}   // card-send 起手即入册,网关排队/prefill 慢也盖得住
+    try { if (n.wcId != null && typeof S.isCardBusy === 'function' && S.isCardBusy(n.wcId)) return '卡片忙(isCardBusy)' } catch {}
+    try {
+      const si = sid && S.sessionInfo && S.sessionInfo.get(sid)
+      const last = si && num(si.lastEventAt)
+      // 内容签名打点(轮询重喂不续命):挂了静默计时之后还在动 = turn end 判早了/晚答还在落。
+      // ★2s 宽限:轮末收尾的簿记性 onText 会在挂计时后几百毫秒内最后蹭一下签名(实测),
+      //   那不是"还在产"——真在流式晚答会一路写越过这条线;收在宽限内的,本来就已静默,该落定。
+      if (last && last > num(armedAt) + 2000) return '内容在动(挂计时后 ' + Math.round((last - num(armedAt)) / 1000) + 's 还在写)'
+    } catch {}
+    return ''
   }
 
   function doArm(run, fx) {
     doClear(fx)
     const key = str(fx.key)
+    const kind = str(fx.kind)
+    const ms = kind === 'silent' ? silentMs(fx.ms) : Math.max(1000, Number(fx.ms) || 45000)
+    const armedAt = Date.now()
     timers.set(key, setTimeout(() => {
       timers.delete(key)
-      send(run.id, { type: 'TIMER', nodeId: fx.nodeId, key, kind: fx.kind })
-    }, Math.max(1000, Number(fx.ms) || 45000)))
+      if (kind === 'silent') {
+        const alive = silentAlive(run.id, fx.nodeId, armedAt)
+        if (alive) {
+          log('[orch] ' + run.id + ' ' + str(fx.nodeId) + ' 静默到点但工人仍活(' + alive + '),续命 ' + Math.round(ms / 1000) + 's')
+          doArm(run, fx)      // 续命:同口径重挂一轮(armedAt 随之刷新);doArm 只用 run.id,闭包里是旧 run 对象无碍
+          return
+        }
+      }
+      send(run.id, { type: 'TIMER', nodeId: fx.nodeId, key, kind })
+    }, ms))
   }
   function doClear(fx) {
     const key = str(fx.key)
