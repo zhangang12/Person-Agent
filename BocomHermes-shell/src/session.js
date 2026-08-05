@@ -911,7 +911,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
         if (!turnBusy.has(sid)) continue
         if (!si || !si.wc || si.wc.isDestroyed()) continue
         const unattended = (S.shardWc && S.shardWc.has(si.wc.id)) || (S.wfCardByWc && S.wfCardByWc.get(si.wc.id) && S.wfCardByWc.get(si.wc.id).kind === 'orch')
-        if (!unattended) continue   // 可见工作流卡有人看着(90s/5min 提醒在渲染端),不代劳
+        if (!unattended) continue   // 可见工作流卡有人看着(渲染端 90s/5min 只报静默时长、不下挂死结论,措辞与本行判死线对齐),不代劳
         const last = si.lastEventAt || 0
         if (now - last < 1800000) continue
         log('[ctx-hang] 挂死看门狗:分片/主控主回合 ' + Math.round((now - last) / 1000) + 's 静默 → 自动中止 (sid=' + sid.slice(0, 18) + ')')
