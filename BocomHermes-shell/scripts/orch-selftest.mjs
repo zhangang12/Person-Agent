@@ -645,6 +645,39 @@ section('用例6:全局并发余量 capHint(不给就会造出"running 却没有
   ok('全局满:不发 dispatch', !has(full.effects, 'dispatch'), ty(full.effects))
 })
 
+section('用例6g:规划/复规划提示词必须教会"拆宽"与"汇总"(纯文本,没有编译期保护)', () => {
+  const RENDER = tryReq('../src/orch/render.js')
+  need(RENDER, 'src/orch/render.js')
+  // 病灶:原提示词每一条都在劝保守 —— "单个节点就能干完就给 1 个"、"只给现在有把握的"、
+  // "什么都不用改返回空数组也是合法答案",而且【全程不告诉模型并发是几】,也没有任何扇出形态的词汇。
+  // 于是实测表现为"一直派发单片,并发位空着"。CC 那种宽度不是模型更聪明,是脚本里写死了扇出形态 ——
+  // 这里把形态写进提示词,并用本用例钉住,免得日后被"精简提示词"顺手删回去。
+  const run = mkRun({ concurrency: 4, nodes: [] })
+  const plan = RENDER.renderPlan(run, { n: 120, bytes: 900000, tops: [], tree: '', readmeHead: '' })
+  ok('规划提示词拿得到', typeof plan === 'string' && plan.length > 800, plan && plan.length)
+  ok('★告诉模型并发是几(不说它就不知道该拆多宽)', /【并发】/.test(plan) && /同时】跑 4 片/.test(plan), (plan.match(/【并发】.{0,40}/) || [])[0])
+  ok('★三种扇出形态都在', /按对象扇出/.test(plan) && /按视角扇出/.test(plan) && /按发现扇出/.test(plan))
+  ok('★点破"看同一批文件不冲突,写同一个文件才冲突"(否则只读节点不敢并行拆)',
+    /看同一批文件不冲突/.test(plan))
+  ok('★reduce 有解释且点名成文类必须留收尾(不然交出去是散装文档)',
+    /reduce\s*=\s*汇总蒸馏/.test(plan) && /散装文档/.test(plan))
+  ok('五种 kind 逐个解释(原来只在 schema 里列了名字)',
+    ['work', 'probe', 'verify', 'check', 'reduce'].every((k) => new RegExp(k + '\\s*=').test(plan)))
+
+  const rp = RENDER.renderReplan(mkRun({ concurrency: 4, nodes: [mkNode({ id: 'n1', state: 'verified' })] }),
+    { event: 'node-settled', nodeId: 'n1', at: T0 })
+  ok('复规划提示词拿得到', typeof rp === 'string' && rp.length > 500)
+  ok('★收官时提示"三条过一遍":核实 / 换视角 / 汇总', /没人核实过/.test(rp) && /换个检查维度/.test(rp) && /reduce/.test(rp))
+  ok('  并发位空着不会更稳,只会更慢', /并发位空着/.test(rp))
+
+  const brief = RENDER.composeNodeBrief(mkRun({ nodes: [] }),
+    mkNode({ id: 'n1', goal: '摸清认证模块', exit: { artifacts: [], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true } }))
+  ok('★工人简报写明文档下限(弱模型给"写成文档"四个字会交回一页提纲)',
+    /产出文档的下限/.test(brief) && /文件:行号/.test(brief), (brief.match(/【产出文档的下限[^】]*】/) || [])[0])
+  ok('  明确禁空话("存在一些问题/建议进一步优化")', /建议进一步优化/.test(brief))
+  ok('  要求反例照写(下一棒不重走)', /反例照写/.test(brief))
+})
+
 section('用例6d:缺产出文件走【补做】,不是整节点重跑', () => {
   need(RUN, 'src/orch/run.js')
   // 病灶:补做分支的注释写着"六类闸里只有 noEmpty 意味着这张卡根本没干活,其余五类(缺产出文件/…)
