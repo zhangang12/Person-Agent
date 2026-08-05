@@ -430,12 +430,27 @@ function evalExit(node, probe) {
     return it
   }
 
+  // 产出对不上时,把【这一轮实际写了什么】一起说出来。
+  // ★原来失败只报一句"docs/x.md 不存在" —— 节点被打回重跑,模型不知道自己错在哪,
+  //   十有八九原样再写一遍同一个别的名字,于是"跑 1~2 次才过"。而绝大多数这类失败根本不是没干活:
+  //   要么写在了别的路径(声明 docs/需求分析报告.md、实际写 docs/需求分析.md),
+  //   要么落在了子目录里。同名不同径的情况单独点破,模型一眼就知道该改声明还是改文件名。
+  //   注:files 只记到"壳层观察到的 write/edit 工具调用",慢端点丢事件时可能是空的 —— 空就不硬说,只提示没观察到。
+  const baseOf = (x) => str(x).replace(/\\/g, '/').split('/').pop()
+  function wroteHint(want) {
+    const wrote = strArr(res.files)
+    if (!wrote.length) return '(本轮没观察到任何 write/edit 落盘 —— 可能真没写,也可能是慢端点把工具事件丢了)'
+    const same = wrote.filter((f) => baseOf(f) === baseOf(want))
+    if (same.length) return '(但本轮写了同名不同径的文件:' + same.slice(0, 3).join('、') + ' —— 要么改声明要么改落盘路径)'
+    return '(本轮实际写了:' + wrote.slice(0, 5).join('、') + (wrote.length > 5 ? ' 等 ' + wrote.length + ' 个' : '') + ')'
+  }
+
   // ① artifacts:必须存在且非空(0 字节的文件是"创建了但没写"的典型形态,不算产出)
   for (const a of strArr(exit.artifacts)) {
     if (typeof p.statSync !== 'function') { add('artifacts', true, a + ':未注入 probe.statSync,跳过', true); continue }
     let st = null, err = ''
     try { st = p.statSync(a) } catch (e) { err = str(e && e.message ? e.message : e) }
-    if (!st) { add('artifacts', false, a + ' 不存在' + (err ? '(' + err.slice(0, 80) + ')' : '')); continue }
+    if (!st) { add('artifacts', false, a + ' 不存在' + (err ? '(' + err.slice(0, 80) + ')' : '') + wroteHint(a)); continue }
     if (typeof st.isDirectory === 'function' && st.isDirectory()) {
       const names = (typeof p.readdir === 'function' ? (function () { try { return p.readdir(a) } catch (e) { return null } })() : null)
       if (names === null) { add('artifacts', true, a + ':是目录,没法查空(未注入 probe.readdir),跳过', true); continue }
@@ -443,7 +458,7 @@ function evalExit(node, probe) {
       continue
     }
     const size = num(st.size, 0)
-    add('artifacts', size > 0, a + (size > 0 ? '(' + size + ' 字节)' : ' 是空文件(0 字节)'))
+    add('artifacts', size > 0, a + (size > 0 ? '(' + size + ' 字节)' : ' 是空文件(0 字节)' + wroteHint(a)))
   }
 
   // ② noEmpty:零产出 = 网关静默 / 空答耗尽的典型形态,不能叫完成

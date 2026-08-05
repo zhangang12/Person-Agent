@@ -645,6 +645,41 @@ section('用例6:全局并发余量 capHint(不给就会造出"running 却没有
   ok('全局满:不发 dispatch', !has(full.effects, 'dispatch'), ty(full.effects))
 })
 
+section('用例6c:artifacts 判失败时要说清"这一轮实际写了什么"(否则重跑原样再错一次)', () => {
+  need(NODES, 'src/orch/nodes.js')
+  // 病灶:失败只报一句"docs/x.md 不存在",节点被打回重跑时模型不知道自己错在哪 ——
+  // 而这类失败绝大多数不是没干活,是写在了别的路径(内网慢端点上表现为"每轮都有文档,却总报零产出/artifact")。
+  const mk = (artifacts, files) => ({ id: 'n1', kind: 'work', writeScope: [], contract: [],
+    exit: { artifacts, requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true },
+    result: { final: '写完了', files, exitReport: [] } })
+  const miss = { statSync: () => { throw new Error('ENOENT') } }
+
+  // ① 同名不同径:最常见的一种,要单独点破
+  const r1 = NODES.evalExit(mk(['docs/需求分析报告.md'], ['/proj/docs/draft/需求分析报告.md']), miss)
+  const a1 = (r1.report || []).find((x) => x.kind === 'artifacts')
+  ok('同名不同径被点破(告诉它改声明还是改路径)', !a1.ok && /同名不同径/.test(a1.detail) && /draft/.test(a1.detail), a1 && a1.detail)
+
+  // ② 写了别的文件:把实际清单列出来
+  const r2 = NODES.evalExit(mk(['docs/a.md'], ['/proj/docs/b.md', '/proj/docs/c.md']), miss)
+  const a2 = (r2.report || []).find((x) => x.kind === 'artifacts')
+  ok('列出本轮实际写了哪些', !a2.ok && /docs\/b\.md/.test(a2.detail) && /docs\/c\.md/.test(a2.detail), a2 && a2.detail)
+
+  // ③ 一个都没观察到:如实说"没观察到",不硬说"没写" —— 慢端点会丢工具事件,files 本来就可能是空的
+  const r3 = NODES.evalExit(mk(['docs/a.md'], []), miss)
+  const a3 = (r3.report || []).find((x) => x.kind === 'artifacts')
+  ok('零记录时如实说"没观察到落盘"(不武断说没写)', !a3.ok && /没观察到/.test(a3.detail) && /丢了/.test(a3.detail), a3 && a3.detail)
+
+  // ④ 0 字节文件(创建了但没写)同样带上这一轮的落盘线索
+  const r4 = NODES.evalExit(mk(['docs/a.md'], ['/proj/docs/b.md']), { statSync: () => ({ size: 0, isDirectory: () => false }) })
+  const a4 = (r4.report || []).find((x) => x.kind === 'artifacts')
+  ok('空文件也带落盘线索', !a4.ok && /0 字节/.test(a4.detail) && /docs\/b\.md/.test(a4.detail), a4 && a4.detail)
+
+  // ⑤ 正常通过时不加噪音
+  const r5 = NODES.evalExit(mk(['docs/a.md'], ['/proj/docs/a.md']), { statSync: () => ({ size: 120, isDirectory: () => false }) })
+  const a5 = (r5.report || []).find((x) => x.kind === 'artifacts')
+  ok('通过时不掺提示', a5.ok && !/实际写了|没观察到/.test(a5.detail), a5 && a5.detail)
+})
+
 section('用例6b:证据闸的原料来自 probe.actions(供不上就永远过不了闸)', () => {
   need(NODES, 'src/orch/nodes.js')
   const n = { id: 'n1', kind: 'work', writeScope: ['src/a'], contract: [],
