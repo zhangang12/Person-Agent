@@ -66,5 +66,32 @@ console.log('用例4:契约签名解析(收官缺口核对)')
   ok('中文冒号+顿号也认', parseContract('契约：fnA、fnB()').join('|') === 'fnA|fnB', parseContract('契约：fnA、fnB()'))
 }
 
+console.log('用例N:工具入参里的文件路径提取(别名表)—— fork 换个入参名不能让落盘全隐形')
+{
+  const { filePathOf, TOOL_PATH_KEYS } = require('../src/writescope.js')
+  // 病灶:壳层好几处靠"偷看 write/edit 入参"拿落盘路径(编排产出清单/成果抽屉/edit 预检/read 水位),
+  // 原来各处各写一串 `inp.filePath || inp.path || inp.filename`。opencode 用 filePath,
+  // 但 Anthropic 系工具用 file_path,别的 fork 还有 target_file —— 换个名字就【全部隐形】:
+  // 落盘明明成功,产出清单却是空的 → 编排判零产出 → 整节点重跑。
+  ok('opencode 口径 filePath', filePathOf({ filePath: 'src/a.ts' }) === 'src/a.ts')
+  ok('★Anthropic 口径 file_path(原来取不到)', filePathOf({ file_path: '/proj/docs/a.md' }) === '/proj/docs/a.md')
+  ok('★target_file 也认', filePathOf({ target_file: 'docs/b.md' }) === 'docs/b.md')
+  ok('path / file / filename 兼容', filePathOf({ path: 'p' }) === 'p' && filePathOf({ file: 'f' }) === 'f' && filePathOf({ filename: 'n' }) === 'n')
+  ok('入参是 JSON 字符串也认(轮询通道会把 input 序列化)', filePathOf('{"file_path":"x.md"}') === 'x.md')
+  ok('取不到给空串,不是 undefined/null(调用方都按空串判)', filePathOf({ foo: 1 }) === '' && filePathOf(null) === '' && filePathOf('不是json') === '')
+  ok('空白值不算数(有键但没填 → 继续找下一个别名)', filePathOf({ filePath: '   ', file_path: 'real.md' }) === 'real.md')
+  ok('两边空白裁掉', filePathOf({ filePath: '  a.md  ' }) === 'a.md')
+  ok('按别名表顺序取第一个命中', filePathOf({ file_path: 'B', filePath: 'A' }) === 'A', TOOL_PATH_KEYS[0])
+
+  // ★跨运行时契约:渲染端 import 不到 src/,只能各留一份实现 —— 两份别名表必须一字不差,
+  //   否则会出现"主进程记到了产出、成果抽屉却看不见"这种各说各话(本仓踩过同类问题多次)。
+  const fs2 = require('fs'), url = require('url')
+  const ts = fs2.readFileSync(new URL('../ui-vue/src/chat/lib/tool.ts', import.meta.url), 'utf8')
+  const m = ts.match(/export const TOOL_PATH_KEYS = \[([^\]]*)\]/)
+  ok('渲染端也导出了 TOOL_PATH_KEYS', !!m)
+  const uiKeys = m ? m[1].split(',').map((x) => x.trim().replace(/^'|'$/g, '')).filter(Boolean) : []
+  ok('★两份别名表完全一致(主进程 vs 渲染端)', JSON.stringify(uiKeys) === JSON.stringify(TOOL_PATH_KEYS), { ui: uiKeys, main: TOOL_PATH_KEYS })
+}
+
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

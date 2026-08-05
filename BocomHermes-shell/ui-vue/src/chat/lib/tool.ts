@@ -108,10 +108,22 @@ export function todoModel(input: unknown): TodoModel | null {
 }
 
 // ── 成果抽屉路径(旧页 artAbs/artRel) ───────────────────────────────────────
-/** write/edit 入参里的落盘路径(filePath || path || filename) */
+/**
+ * write/edit 入参里的落盘路径。
+ * ★别名表必须与主进程 src/writescope.js 的 TOOL_PATH_KEYS 保持一致 —— 两边是同一件事的两份实现
+ * (跨运行时,渲染端 import 不到 src/,只能各留一份),有 scripts/tool-part-selftest 的契约用例钉住。
+ * 各家工具的入参名不一样:opencode 用 filePath,Anthropic 系用 file_path,还有 path/file/target_file……
+ * 只认 filePath 的话,内网 fork 一换名字,成果抽屉就一个文件都收不到。
+ */
+export const TOOL_PATH_KEYS = ['filePath', 'file_path', 'path', 'file', 'filename', 'file_name', 'target_file', 'targetFile', 'filepath']
 export function extractFilePath(input: unknown): string {
-  const obj = asObj(input)
-  return String((obj && (obj.filePath || obj.path || obj.filename)) || '')
+  const obj = asObj(input) as Record<string, unknown> | null
+  if (!obj) return ''
+  for (const k of TOOL_PATH_KEYS) {
+    const v = obj[k]
+    if (typeof v === 'string' && v.trim()) return v.trim()
+  }
+  return ''
 }
 /** 相对路径按本卡目录拼绝对(读文件走主进程白名单校验) */
 export function artAbs(p: unknown, curDir: string): string {

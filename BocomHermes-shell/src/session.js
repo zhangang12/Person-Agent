@@ -645,7 +645,8 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
         const st = String((p.state && p.state.status) || '')
         if (TERM.test(st)) continue
         const inp = (p.state && p.state.input) || {}
-        if (detail && inp.filePath && String(inp.filePath).length >= 8 && !String(detail).includes(String(inp.filePath))) continue
+        const fpIn = writescope.filePathOf(inp)   // 别名表统一取(fork 换入参名时,预检原来会整段静默跳过)
+        if (detail && fpIn && fpIn.length >= 8 && !String(detail).includes(fpIn)) continue
         const oldS = String(inp.oldString || ''), newS = String(inp.newString != null ? inp.newString : (inp.content != null ? inp.content : ''))
         if (!oldS && !newS) return out
         const L = []
@@ -653,10 +654,10 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
         if (newS) { for (const l of newS.split('\n').slice(0, 20)) L.push('+ ' + l); if (newS.split('\n').length > 20) L.push('…') }
         out.diff = L.join('\n').slice(0, 4000)
         // 编辑预检:oldString 对不上文件 → 给实际区域(行号标注),让模型拿着真内容重写,别白撞
-        if (oldS && inp.filePath) {
+        if (oldS && fpIn) {
           try {
             const base = path.resolve((si.serve && si.serve.dir) || '.')
-            const abs = path.resolve(base, String(inp.filePath))
+            const abs = path.resolve(base, fpIn)
             const rel = path.relative(base, abs)
             if (!rel.startsWith('..') && !path.isAbsolute(rel)) {   // 围栏:只读本仓(防止借预检读任意文件)
               const content = fs.readFileSync(abs, 'utf8')
@@ -669,7 +670,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
                   const from = Math.max(0, idx - 3), to = Math.min(lines.length, idx + 5)
                   region = lines.slice(from, to).map((l, j) => (from + j + 1) + '  ' + l).join('\n')
                 }
-                out.miss = { filePath: String(inp.filePath), probe: probe.slice(0, 60), region }
+                out.miss = { filePath: fpIn, probe: probe.slice(0, 60), region }
               }
             }
           } catch {}
@@ -800,7 +801,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
       if (/^(write|edit)(_[a-z]+)*$/i.test(String(text || '')) && toolInput && S.wfFiles && !toolError && /complet|success|done/i.test(String(status || ''))) {
         try {
           const inp = typeof toolInput === 'string' ? JSON.parse(toolInput) : toolInput
-          const fp = inp && (inp.filePath || inp.path || inp.filename)
+          const fp = writescope.filePathOf(inp)   // 别名表见 writescope.TOOL_PATH_KEYS(内网 fork 用 file_path 之类时,原来这里取不到 → 产出清单全空 → 判零产出)
           if (fp) S.wfFiles(si.wc.id, path.isAbsolute(String(fp)) ? String(fp) : path.resolve((si.serve && si.serve.dir) || '.', String(fp)))
         } catch {}
       }
@@ -827,7 +828,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
             if (to || subj) S.wfAction(si.wc.id, { kind: 'mail', label: '发信：' + (subj || '(无主题)'), detail: '收件人 ' + (to || '?') })
           // doc_read:读了哪个文档(路径)
           } else if (/(^|[._-])doc_read$/i.test(tname)) {
-            const fp = String(inp.path || inp.file || inp.filePath || '')
+            const fp = writescope.filePathOf(inp)
             if (fp) S.wfAction(si.wc.id, { kind: 'doc', label: '读文档：' + path.basename(fp), detail: fp })
           // bash:命令流水(验证证据闸的原料 —— 编码分片"跑没跑过构建/测试"据此机判,不靠模型自觉汇报)
           } else if (/^bash$/i.test(tname)) {
@@ -856,7 +857,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
         if (/^read$/i.test(String(text || '')) && !subagent && toolOutput && !toolError) {
           const isWf = S.wfCardByWc && S.wfCardByWc.has(si.wc.id)
           const n = String(toolOutput).length
-          const fp = (() => { try { const inp = typeof toolInput === 'string' ? JSON.parse(toolInput) : (toolInput || {}); return String(inp.filePath || inp.path || '') } catch { return '' } })()
+          const fp = writescope.filePathOf(toolInput)
           si.readMap = si.readMap || new Map()
           si.readMap.set(fp || ('_nopath_' + (si._npSeq = (si._npSeq || 0) + 1)), Math.max(si.readMap.get(fp) || 0, n))
           si.readBytes = [...si.readMap.values()].reduce((a, b) => a + b, 0)

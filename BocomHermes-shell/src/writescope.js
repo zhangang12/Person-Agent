@@ -4,6 +4,27 @@
 // 匹配语义:文件精确命中 / 目录前缀包含(都按 serveDir 解析);归属为空 = 不设闸(探查类分片照常)。
 const path = require('path')
 
+// ── 工具入参里的文件路径:别名表 + 提取器 ──────────────────────────────────
+// 为什么要有它:壳层好几处功能靠"偷看 write/edit 工具入参"拿落盘路径 ——
+// 编排的产出清单(reg.files,noEmpty/存档/workflow_result/续接简报都吃它)、成果抽屉、edit 预检、read 水位。
+// 而入参名各家不一样:opencode 用 filePath,Anthropic 系工具用 file_path,还有 path/file/target_file……
+// 原来各处各写一串 `inp.filePath || inp.path || inp.filename`,内网 fork 换个名字就【全部隐形】:
+// 落盘明明成功,产出清单却是空的 → 编排判零产出 → 整节点重跑(实测症状)。
+// 收敛成一份表,加名字只改这里。
+// 注:写归属围栏不走这条路(它读权限事件的 detail,不认入参名),所以这里放宽【不会】放松那道闸。
+const TOOL_PATH_KEYS = ['filePath', 'file_path', 'path', 'file', 'filename', 'file_name', 'target_file', 'targetFile', 'filepath']
+/** 从工具入参对象里取文件路径(按别名表顺序,取到第一个非空字符串);取不到返回 '' */
+function filePathOf(input) {
+  let inp = input
+  if (typeof inp === 'string') { try { inp = JSON.parse(inp) } catch { return '' } }
+  if (!inp || typeof inp !== 'object') return ''
+  for (const k of TOOL_PATH_KEYS) {
+    const v = inp[k]
+    if (typeof v === 'string' && v.trim()) return v.trim()
+  }
+  return ''
+}
+
 function parseWriteScope(goal) {
   const m = String(goal || '').match(/^写归属[:：]\s*(.+)$/m)
   if (!m) return []
@@ -68,4 +89,4 @@ function parseContract(goal) {
   return m[1].split(/[,、;；]/).map((s) => s.trim().replace(/\(\s*\)$/, '').replace(/^["'`]|["'`]$/g, '')).filter(Boolean)
 }
 
-module.exports = { parseWriteScope, matchScope, bashWriteTargets, parseContract }
+module.exports = { parseWriteScope, matchScope, bashWriteTargets, parseContract, TOOL_PATH_KEYS, filePathOf }
