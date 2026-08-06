@@ -449,10 +449,38 @@ function dedupeFindings(run, list, exceptNodeId) {
   return out
 }
 
-/** 一条发现 → 一个廉价的 verify 节点 spec */
-function makeFindingVerifySpec(run, srcNode, f, idx) {
+// ── 核实的两个视角 ────────────────────────────────────────────────────────
+// 【为什么同一条要两个人核,而不是一个人核两遍】一个核实员只会沿着一条思路走到底:
+// 他要么在"证据对不对"上打转,要么在"能不能复现"上打转,两种漏法完全不同。
+// 换成两个人、各给一条【互不重叠的路子】,才是真的两票 —— 同一个人问两遍等于问一遍。
+// 只给【高】严重度开两票:低严重度多花一个节点不值,而预算是硬的(maxNodes)。
+const VERIFY_LENSES = [
+  { key: 'refute', name: '证伪', how: [
+    '  · 你的默认立场是【这条是错的】。先努力证伪,证伪不掉才算它成立 ——',
+    '    提出这条的人已经说服过自己一次了,你再顺着他想一遍没有任何信息量。',
+    '  · 顺着它给的证据【自己走一遍】:打开那个文件那一行 / 跑那条命令 / 调那个接口,亲眼看结果。',
+    '  · 证据对不上、或它压根没给证据 → 你自己去找;找不到就判 FAIL,别替它圆。',
+  ] },
+  { key: 'repro', name: '可复现', how: [
+    '  · 你只回答一个问题:【这件事在什么条件下真的会发生】。',
+    '    写出触发条件(什么输入 / 什么时序 / 什么配置),能跑就跑一遍给出实际输出。',
+    '  · 条件写不出来、或写出来之后发现现实中走不到那条路(有上游校验挡着、那段代码是死代码、',
+    '    配置默认关着)→ 判 FAIL 并说明是哪一种。【描述成立但现实中触发不到】是最常见的假阳性。',
+    '  · 顺带看一眼影响面:真发生了会伤到什么,比它说的严重度更大还是更小。',
+  ] },
+]
+
+/** 一条发现该派几个核实员(高 → 两个不同视角;其余 → 一个)。room 不够就降到 1 */
+function verifyLensesFor(f, room) {
+  const two = str(f && f.sev) === '高' && num(room) >= 2
+  return two ? VERIFY_LENSES : [VERIFY_LENSES[0]]
+}
+
+/** 一条发现 → 一个廉价的 verify 节点 spec。lens 缺省用【证伪】那个视角 */
+function makeFindingVerifySpec(run, srcNode, f, idx, lens) {
+  const L = lens || VERIFY_LENSES[0]
   return {
-    title: '核实#' + (idx + 1) + ' ' + str(f.what).slice(0, 12),
+    title: '核实#' + (idx + 1) + '·' + str(L.name) + ' ' + str(f.what).slice(0, 10),
     kind: 'verify',
     deps: [str(srcNode.id)],
     writeScope: [],          // 只读:核实的人不许顺手改(又当裁判又当运动员)
@@ -464,19 +492,17 @@ function makeFindingVerifySpec(run, srcNode, f, idx) {
     sourceNode: str(srcNode.id),
     findingKey: findingKey(f),      // 跨片去重靠它:同一件事被两片查到,只核一次
     goal: [
-      '你是【核实员】,只核一条,核完就走。不要顺手做别的,也不要改任何文件。',
+      '你是【核实员 · ' + str(L.name) + '视角】,只核一条,核完就走。不要顺手做别的,也不要改任何文件。',
       '',
       '【要核的这一条】(来自「' + str(srcNode.title || srcNode.id) + '」)',
       '  严重度:' + str(f.sev),
       '  说法:' + str(f.what),
       '  它给的证据:' + (str(f.ev) || '(没给)'),
       '',
-      '【怎么核】',
-      '  · 顺着它给的证据【自己走一遍】:打开那个文件那一行 / 跑那条命令 / 调那个接口,亲眼看结果。',
-      '  · 证据对不上、或它压根没给证据 → 你自己去找;找不到就判 FAIL,别替它圆。',
-      '  · ★你的默认立场是【这条是错的】。先努力证伪,证伪不掉才算它成立 ——',
-      '    提出这条的人已经说服过自己一次了,你再顺着他想一遍没有任何信息量。',
-      '  · 顺带看一眼:它说的严重度对不对?范围是不是比它说的更大或更小?',
+      '【怎么核 —— 只走你这一条路子】',
+      arr(L.how).join('\n'),
+      '  ★这一条可能还有另一个人从别的角度在核。你【不要】替他把那个角度也想一遍 ——',
+      '    两个人各走各的路才是两票;你顺带把他的活也干了,就退化成一票了。',
       '',
       '【收尾】最后一行必须是 VERDICT: PASS(这条成立)或 VERDICT: FAIL(不成立/证据不足)。',
       '  上面一行写清楚:你实际做了什么来核它、看到了什么。没做过就说没做过,不许写成做过的样子。',
@@ -490,5 +516,5 @@ module.exports = {
   goalShape, isDocGoal, isWideGoal,
   producers, hasReduce, needsReduce, makeReduceSpec, reducePath,
   tooNarrow, widthTarget, parallelHeads, lensSetFor, lensesUsed, needsWiden, makeLensSpec, lensPath, LENS_SETS,
-  normFindings, findingKey, dedupeFindings, sevOf,
+  normFindings, findingKey, dedupeFindings, sevOf, verifyLensesFor, VERIFY_LENSES,
 }

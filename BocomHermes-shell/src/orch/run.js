@@ -351,6 +351,16 @@ function onReplanDecided(t, dec, data) {
       tick(t, false)
       return
     }
+    // ★收口闸:模型说"够了"不等于真的够了。这里只查【代码查得出来】的三件事,
+    //   查出来就当场补活并驳回这次收口 —— 不是跟模型辩论,是把它没看见的活摆出来。
+    const dry = dryGate(t)
+    if (dry) {
+      dec.why = (dec.why ? dec.why + ' ' : '') + '(壳层驳回收口:' + dry + ')'
+      r.budget.doneBlocked = num(r.budget.doneBlocked) + 1
+      t.eff.push({ type: 'notify', level: 'info', text: '模型想收口,但' + dry + ' —— 已补上,跑完会再问一次' })
+      tick(t, false)
+      return
+    }
     const fin = (data.final && typeof data.final === 'object') ? data.final : {}
     r.result = {
       summary: str(fin.summary) || str(data.why),
@@ -415,6 +425,38 @@ function mergeGraph(t, data) {
 // 探索/调研/成文类目标,只要有 ≥2 片各自产文件而全图没有 reduce,就由代码补一个 ——
 // 否则交付是 N 篇互不知道对方存在的散装文档(实测症状)。模型自己给了 reduce 就不补。
 // 造出来的是 spec,照样走 N.validateNodeSpecs 同一条校验,不绕过不变量。
+// ── 收口闸:说"够了"之前,代码先查三件它可能没看见的事 ──────────────────────
+// 【为什么需要】CC 那种彻底靠的是 loop-until-dry:连续几轮没有新东西才停。这套原来没有 ——
+// 模型一句 done:true 就收口,而弱模型在"还要不要继续"上和"要不要多拆"一样,永远倾向于早收。
+// 但纯粹"再问一次"没有信息量(它上一轮就是这么想的),所以这里只查【代码查得出来】的缺口,
+// 查出来就【当场补活】再驳回 —— 摆出没干完的活,比跟它辩论有用。
+// 三件事都是可判定的,不掺"你觉得够不够":
+//   ① 上报了发现却没人核 —— 那些结论一条都没被验证过就进交付,是这套编排最不该出的错;
+//   ② 视角没铺满且预算还有 —— 说明覆盖面本来就没到位(shapeWiden 会真的补上);
+//   ③ 有产出片没进汇总 deps —— 汇总读不到它们,那几片白跑(extendReduceDeps 会接上)。
+// 【一定要能收口】连着驳回 MAX_DONE_BLOCK 次就不再拦:出口必须存在,否则就成了新的死锁 ——
+// 这套编排里每一道强制都配了这样一个让步,原因见 too-narrow 那条(硬事实不该被代码硬掰)。
+const MAX_DONE_BLOCK = 2
+
+function dryGate(t) {
+  const r = t.r
+  if (num(r.budget.doneBlocked) >= MAX_DONE_BLOCK) return ''      // 让步:拦够两次就放行
+  // ① 上报了但没人核的发现
+  const naked = []
+  for (const n of arr(r.nodes)) {
+    if (!n || str(n.kind) === 'verify') continue
+    if (!arr(n.result && n.result.findings).length) continue
+    if (SHAPE.findingsVerified(r, n.id)) continue
+    naked.push(n)
+  }
+  for (const n of naked) if (shapeVerifyFindings(t, n)) return '有片报了发现却还没人核实过'
+  // ② 视角没铺满(shapeWiden 自己判预算与去重,补不动就返回 false)
+  if (shapeWiden(t)) return '覆盖面还没铺满(这类目标该看的面还有没看的)'
+  // ③ 有产出片没进汇总
+  if (shapeReduce(t) || extendReduceDeps(t)) return '还有产出没进汇总(汇总读不到它们,那几片等于白跑)'
+  return ''
+}
+
 // ── 形状兜底:按视角补宽 ────────────────────────────────────────────────────
 // 【为什么这一条必须由代码造节点,而不是再劝模型一次】
 // 全仓的形状兜底里,汇总节点代码自己造、验收节点自己造、按发现扇出也是代码自己造 ——
@@ -523,7 +565,14 @@ function shapeVerifyFindings(t, n) {
   const room = num(r.budget.maxNodes) - arr(r.nodes).length   // 预算不够就少派几条,不硬挤
   if (room <= 0) { t.eff.push({ type: 'notify', level: 'warn', text: '「' + str(n.title || n.id) + '」报了 ' + fs2.length + ' 条发现,但节点预算已满 —— 这些结论没人复核,收口时请自己看' }); return false }
   const use = fs2.slice(0, Math.min(fs2.length, room))
-  const specs = use.map((f, i) => SHAPE.makeFindingVerifySpec(r, n, f, i))
+  // 高严重度的一条派两个核实员,各走【互不重叠】的路子(证伪 / 可复现)——
+  // 同一个人问两遍等于问一遍;两条路才是两票。room 不够时自动降回一票,不硬挤。
+  const specs = []
+  for (let i = 0; i < use.length; i++) {
+    const left = room - specs.length
+    if (left <= 0) break
+    for (const lens of SHAPE.verifyLensesFor(use[i], left)) specs.push(SHAPE.makeFindingVerifySpec(r, n, use[i], i, lens))
+  }
   const v = N.validateNodeSpecs(specs, r, t.cx)
   const made = arr(v && v.nodes)
   if (!made.length) return false

@@ -81,7 +81,11 @@ export default {
     ok('  (诊断)节点收官状态与退出检查', nAfter.state === 'verified',
       { state: nAfter.state, reason: nAfter.reason, report: nAfter.result.exitReport, final: String(nAfter.result.final || '').slice(0, 60), findings: (nAfter.result.findings || []).length })
     const vs = S.orch.get(r.id).nodes.filter((n) => n.kind === 'verify')
-    ok('★工具报的两条各派了一个新眼睛去核', vs.length === 2, vs.map((n) => n.title))
+    // 高严重度那条开两票(证伪 / 可复现,两条互不重叠的路子),中的一票 → 共 3 个
+    ok('★工具报的两条都派了新眼睛去核(高的两票、中的一票)', vs.length === 3, vs.map((n) => n.title))
+    ok('  高严重度那条拿到两个【不同视角】(同一个人问两遍等于问一遍)',
+      new Set(vs.filter((n) => /订单金额/.test(n.title)).map((n) => n.title.split('·')[1].split(' ')[0])).size === 2,
+      vs.map((n) => n.title))
     // ★下面三条都必须先要求 vs 非空 —— every 对空数组恒真,写成 vs.every(...) 就是又一条
     //   "为了错误的理由而通过"的断言(这个仓这一趟已经抓到过五条)。
     ok('  核实节点是只读的(不许边核边改)', vs.length > 0 && vs.every((n) => (n.writeScope || []).length === 0))

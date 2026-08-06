@@ -800,17 +800,28 @@ section('用例6k:A —— 按发现扇出(CC 的 Verify 那一层)', () => {
   const run = mkRun({ goal: '排查订单模块', nodes: [src] })
   const out = step(run, { type: 'EXIT_RESULT', nodeId: 'n1', pass: true, report: [] }, '6k')
   const vs = out.run.nodes.filter((n) => n.kind === 'verify')
-  ok('★两条发现 → 派了两个核实节点', vs.length === 2, out.run.nodes.map((n) => n.kind + '/' + n.origin))
+  // 一条【高】+ 一条【中】→ 3 个核实节点:高的开两票(证伪 / 可复现,两条互不重叠的路子),
+  // 中低各一票。同一个人问两遍等于问一遍,所以两票必须是两个【视角】而不是两次同样的核。
+  ok('★两条发现 → 高的开两票、中的一票(共 3 个核实节点)', vs.length === 3, out.run.nodes.map((n) => n.kind + '/' + n.origin))
+  ok('  高严重度那条拿到了两个不同视角', new Set(vs.filter((n) => /订单金额/.test(n.title)).map((n) => n.title.split('·')[1])).size === 2,
+    vs.map((n) => n.title))
+  ok('  中严重度那条只派一个(低严重度多花一个节点不值,预算是硬的)',
+    vs.filter((n) => /重复提交/.test(n.title)).length === 1, vs.map((n) => n.title))
   ok('  origin=shape(代码派的,面板看得出)', vs.every((n) => n.origin === 'shape'))
   ok('  只读(核实员不许边核边改)', vs.every((n) => n.writeScope.length === 0))
   ok('  要 VERDICT(壳层机判,不看它自述)', vs.every((n) => n.exit.requireVerdict === true))
   ok('  各自挂回源片(deps + sourceNode)', vs.every((n) => n.deps[0] === 'n1' && n.sourceNode === 'n1'))
-  ok('★核实指令要求"默认立场是这条是错的"(顺着想一遍没有信息量)', /默认立场是【这条是错的】/.test(vs[0].goal))
+  ok('★证伪视角要求"默认立场是这条是错的"(顺着想一遍没有信息量)',
+    vs.some((n) => /默认立场是【这条是错的】/.test(n.goal)))
+  ok('★可复现视角问的是另一个问题(触发条件),不是把证伪再做一遍',
+    vs.some((n) => /在什么条件下真的会发生/.test(n.goal) && /触发不到/.test(n.goal)))
+  ok('  并且明说"别替另一个人把他那个角度也想一遍"(否则两票退化成一票)',
+    vs.some((n) => /退化成一票/.test(n.goal)))
 
   // ③ 不重复派 + 不套娃
   const out2 = step(out.run, { type: 'EXIT_RESULT', nodeId: 'n1', pass: true, report: [] }, '6k')
   ok('★同一片重跑不重复派(靠 sourceNode 去重,否则几轮就把预算烧穿)',
-    out2.run.nodes.filter((n) => n.kind === 'verify').length === 2)
+    out2.run.nodes.filter((n) => n.kind === 'verify').length === 3)
   const vsrc = mkNode({ id: 'v9', kind: 'verify', state: 'settled', cardId: 'c9',
     result: { final: blk(['F| 高 | 核实员自己又发现了一条足够长的问题 | x.ts:1']), files: [] } })
   const run3 = mkRun({ goal: '排查', nodes: [vsrc] })
@@ -1150,7 +1161,8 @@ section('用例6s:★发现走工具上报 —— 格式约定的静默失败换
     const o = step(settled, { type: 'EXIT_RESULT', nodeId: 'n1', pass: true, report: [{ kind: 'noEmpty', ok: true, detail: '有终答' }], verdict: '', cmdExit: null, contractMiss: [], unverified: false }, '6s')
     const vs = o.run.nodes.filter((n) => n.kind === 'verify')
     ok('★工具报过 → 只按工具那份扇出(不再把正文里的也算一遍)',
-      vs.length === 1 && /工具报上来的/.test(String(vs[0].goal || '')), vs.map((n) => n.title))
+      vs.length > 0 && vs.every((n) => /工具报上来的/.test(String(n.goal || ''))), vs.map((n) => n.title))
+    ok('  这条是高严重度 → 两个视角各一票', vs.length === 2 && new Set(vs.map((n) => n.title.split('·')[1])).size === 2, vs.map((n) => n.title))
     ok('  派出去的核实节点记下 findingKey(跨片去重靠它)', vs[0] && !!vs[0].findingKey, vs[0] && vs[0].findingKey)
   }
   {
@@ -1160,7 +1172,8 @@ section('用例6s:★发现走工具上报 —— 格式约定的静默失败换
         result: { final: '干完了\n<发现>\nF| 高 | 正文里这一条要能兜住 | a.ts:1\n</发现>', files: ['docs/a.md'], rounds: 1, aborted: false, exitReport: [], verdict: '', cmdExit: null, contractMiss: [], unverified: false, findings: [] }, deps: [] })] })
     const o = step(settled, { type: 'EXIT_RESULT', nodeId: 'n1', pass: true, report: [{ kind: 'noEmpty', ok: true, detail: '有终答' }], verdict: '', cmdExit: null, contractMiss: [], unverified: false }, '6s')
     ok('  工具没调 → 正文那条降级路径仍然生效(不是二选一删掉一条)',
-      o.run.nodes.filter((n) => n.kind === 'verify').length === 1)
+      o.run.nodes.filter((n) => n.kind === 'verify').length >= 1,
+      o.run.nodes.map((n) => n.kind))
   }
 
   // ── 指令里必须给出上报凭据,而且带 runId ──
@@ -1174,6 +1187,73 @@ section('用例6s:★发现走工具上报 —— 格式约定的静默失败换
       /report_findings/.test(brief) && /退回/.test(brief))
     ok('  点破正文格式那条的真实风险(格式写错你不会收到任何提示)',
       /并不会收到任何提示/.test(brief))
+  }
+})
+
+section('用例6t:★收口闸 —— 模型说"够了"之前,代码先查它可能没看见的活', () => {
+  const SHAPE = tryReq('../src/orch/shapes.js')
+  need(RUN, 'src/orch/run.js'); need(SHAPE, 'src/orch/shapes.js')
+  // 病灶:模型一句 done:true 就收口。而弱模型在"还要不要继续"上和"要不要多拆"一样,永远倾向早收。
+  // CC 那种彻底靠的是 loop-until-dry(连续几轮没新东西才停),这套原来完全没有对应机制。
+  // 但纯粹"再问一次"没有信息量(它上一轮就是这么想的),所以只查【代码查得出来】的缺口,
+  // 查出来就当场补活再驳回 —— 摆出没干完的活,比跟它辩论有用。
+  const doneData = { needGrounding: false, done: true, addNodes: [], dropNodes: [], facts: [], open: [],
+    why: '够了', final: { summary: '完事', deliverables: [], gaps: [] } }
+  const mkDone = (over) => {
+    const base = mkRun(Object.assign({ goal: '排查全站表单问题', phase: 'executing',
+      pendingDecision: { id: 'd9', point: 'replan', event: 'frontier', nodeId: '', at: T0 } }, over))
+    return step(base, decided(base, { point: 'replan', ok: true, data: doneData }), '6t')
+  }
+  const prod = (id, arts) => mkNode({ id, kind: 'work', state: 'verified',
+    exit: { artifacts: arts || ['docs/' + id + '.md'], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true } })
+
+  // ① 有片报了发现却没人核 —— 那些结论一条都没被验证过就进交付
+  {
+    const n1 = prod('a'); n1.result.findings = [{ sev: '高', what: '订单金额用 float 累加会丢精度', ev: 'a.ts:1' }]
+    const o = mkDone({ nodes: [n1, prod('b'), mkNode({ id: 'r1', kind: 'reduce', state: 'verified', deps: ['a', 'b'], exit: { artifacts: ['docs/汇总.md'], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true } })] })
+    ok('★上报的发现没人核 → 驳回收口', o.run.phase !== 'done', o.run.phase)
+    ok('  而且【当场补上核实节点】(不是只驳回,是把活摆出来)',
+      o.run.nodes.some((n) => n.kind === 'verify' && n.sourceNode === 'a'), o.run.nodes.map((n) => n.kind))
+    ok('  驳回理由写进决策留痕(用户要看得见壳层为什么不让收)',
+      /驳回收口/.test(String((o.run.decisions[o.run.decisions.length - 1] || {}).why || '')),
+      (o.run.decisions[o.run.decisions.length - 1] || {}).why)
+  }
+  // ② 覆盖面还没铺满
+  {
+    const o = mkDone({ nodes: [prod('a'), prod('b'), mkNode({ id: 'r1', kind: 'reduce', state: 'verified', deps: ['a', 'b'], exit: { artifacts: ['docs/汇总.md'], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true } })] })
+    ok('★视角没铺满 → 驳回并真的补上剩下的面', o.run.phase !== 'done' && o.run.nodes.some((n) => n.lensKey),
+      { phase: o.run.phase, lens: o.run.nodes.filter((n) => n.lensKey).length })
+  }
+  // ③ 有产出片没进汇总
+  {
+    const lensDone = SHAPE.LENS_SETS.audit.map((l) => { const n = prod('L' + l.key); n.lensKey = l.key; return n })
+    const red = mkNode({ id: 'r1', kind: 'reduce', state: 'pending', deps: ['Lapi'], exit: { artifacts: ['docs/汇总.md'], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true } })
+    const o = mkDone({ nodes: lensDone.concat([red]) })
+    ok('★有产出没进汇总 → 驳回并把它们接进 deps(汇总读不到 = 那几片白跑)',
+      o.run.phase !== 'done' && o.run.nodes.find((n) => n.kind === 'reduce').deps.length === lensDone.length,
+      o.run.nodes.find((n) => n.kind === 'reduce').deps)
+  }
+  // ④ 什么都不缺 → 正常收口(闸不能变成永远收不了口)
+  {
+    const lensDone = SHAPE.LENS_SETS.audit.map((l) => { const n = prod('L' + l.key); n.lensKey = l.key; return n })
+    const red = mkNode({ id: 'r1', kind: 'reduce', state: 'verified', deps: lensDone.map((n) => n.id), exit: { artifacts: ['docs/汇总.md'], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true } })
+    const aud = mkNode({ id: 'a1', kind: 'verify', state: 'verified', deps: ['r1'] })
+    const o = mkDone({ nodes: lensDone.concat([red, aud]) })
+    ok('★该干的都干完了 → 照常收口', o.run.phase === 'done', { phase: o.run.phase, why: (o.run.decisions.slice(-1)[0] || {}).why })
+  }
+  // ⑤ 让步:拦够两次就放行(每一道强制都必须有出口,否则就是新的死锁)
+  {
+    const o = mkDone({ budget: { maxNodes: 24, spawned: 2, maxDecides: 48, spentDecides: 0, maxWallMs: 6 * 3600e3, startedAt: T0, invalidStreak: 0, resumeCredit: 1, doneBlocked: 2 },
+      nodes: [prod('a'), prod('b')] })
+    ok('★连着驳回两次之后不再拦(硬事实不该被代码硬掰 —— 与 too-narrow 同一条让步)',
+      o.run.phase === 'done', o.run.phase)
+  }
+  // ⑥ 实现类目标不受这道闸约束(它本来就不铺视角、不汇总)
+  {
+    const base = mkRun({ goal: '重构订单模块的下单流程', phase: 'executing', nodes: [prod('a'), prod('b')],
+      pendingDecision: { id: 'd9', point: 'replan', event: 'frontier', nodeId: '', at: T0 } })
+    const o = step(base, decided(base, { point: 'replan', ok: true, data: doneData }), '6t')
+    ok('  实现类目标说收口就收口(不铺视角也不硬塞汇总)', o.run.phase === 'done', o.run.phase)
   }
 })
 
