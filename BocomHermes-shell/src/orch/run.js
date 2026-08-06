@@ -309,6 +309,7 @@ function onPlanDecided(t, dec, data) {
     startDecision(t, 'plan', 'too-narrow', '')
     return
   }
+  shapeWiden(t)                       // 宽度:重问过一次还是窄 → 代码按视角铺齐(必须在 shapeReduce 之前:补出来的片也要进汇总)
   shapeReduce(t)                      // 汇总收尾:模型没给就代码补
   r.phase = 'awaiting-approval'; r.phaseAt = t.at
 }
@@ -361,9 +362,16 @@ function onReplanDecided(t, dec, data) {
     return
   }
   const changedGraph = mergeGraph(t, data)
+  // ★宽度在 replan 也要判。原来两个调用点都在 onPlanDecided —— 第一波之后就再没人管过宽度,
+  //   而 probe 跑完那次 replan 恰恰是最该拆宽的时刻(现在才真正知道里面长什么样),实测常常缩回 1~2 片。
+  const widened = shapeWiden(t)
+  const reduced = shapeReduce(t)      // 顺序:先补宽再挂汇总,汇总的 deps 才吃得到补出来的片
+  const linked = extendReduceDeps(t)  // 汇总早就挂上了、后来又多出产出片 → 把新的接进它的 deps
   // ★反空转:frontier 问了一圈图还是没动 —— 计数,连着 N 次就转人工(出口是人,不是代码宣布 done)
-  if (dec.event === 'frontier' && !changedGraph) r.budget.idleFrontier += 1
-  else if (changedGraph) r.budget.idleFrontier = 0
+  //   代码补宽/挂汇总也算"图动了":这一轮确实多出了活,不该记进空转账
+  const moved = changedGraph || widened || reduced || linked
+  if (dec.event === 'frontier' && !moved) r.budget.idleFrontier += 1
+  else if (moved) r.budget.idleFrontier = 0
   tick(t, false)   // 内部 tick 只派发,不发起 frontier 决策 —— 否则"空 replan → 立刻再问"会自我循环烧预算
 }
 
@@ -390,10 +398,10 @@ function mergeGraph(t, data) {
       // 直接 `+= 1` 会得到 NaN,序列化成 null,面板上"第几波"整列变空,而这正是验收小批 replan 的那个数
       r.wave = posInt(r.wave, 1) + 1
       addNodes(t, made, 'replan', r.wave)
-      // 扇出常发生在勘察之后(第一波只有 probe,真正的宽度是 replan 铺的)——
-      // 所以汇总兜底两处都要挂,只挂 plan 那侧会漏掉最常见的形态。
-      if (shapeReduce(t)) changedGraph = true
       changedGraph = true
+      // ★汇总兜底原来挂在这里,现在挪到 onReplanDecided 里 mergeGraph 之【后】——
+      //   补宽(shapeWiden)必须先跑完,汇总才能把补出来的视角片一并纳入 deps;
+      //   顺序反了的话汇总的 deps 里没有它们,那几片写的文档就【没人读】,等于白跑。
     }
     if (v && v.truncated) t.eff.push({ type: 'notify', level: 'warn', text: '新增节点超出预算,已截断' })
     if (v && arr(v.errors).length) t.eff.push({ type: 'notify', level: 'warn', text: '部分新增节点被校验丢弃:' + arr(v.errors).slice(0, 3).join(';') })
@@ -406,6 +414,57 @@ function mergeGraph(t, data) {
 // 探索/调研/成文类目标,只要有 ≥2 片各自产文件而全图没有 reduce,就由代码补一个 ——
 // 否则交付是 N 篇互不知道对方存在的散装文档(实测症状)。模型自己给了 reduce 就不补。
 // 造出来的是 spec,照样走 N.validateNodeSpecs 同一条校验,不绕过不变量。
+// ── 形状兜底:按视角补宽 ────────────────────────────────────────────────────
+// 【为什么这一条必须由代码造节点,而不是再劝模型一次】
+// 全仓的形状兜底里,汇总节点代码自己造、验收节点自己造、按发现扇出也是代码自己造 ——
+// 唯独【宽度】原来只会"再问模型一次",问完还是窄就认了。而 CC 的宽度恰恰是脚本里写死的数组:
+// 模型【没有"要不要拆"的投票权】,只负责填每片内容。弱模型在"要不要多拆"上永远倾向少拆
+// (少拆看起来更稳),靠提示词劝不动 —— 真机实测重问一次照旧只给两片。
+//
+// 分工:tooNarrow 先给模型一次机会(它更懂这个项目,自己拆的视角通常更贴切);
+//       本函数是问完仍不够时的兜底 —— 代码直接铺,不再商量。
+// 自终止:needsWiden 按 lensKey 去重,视角铺完就返回 null,不会越补越多。
+function shapeWiden(t) {
+  const r = t.r
+  // 给汇总 + 验收留 2 个位:补宽把预算占满,收尾就没位置了 —— 那等于用宽度换掉了交付
+  const room = num(r.budget.maxNodes) - arr(r.nodes).length - 2
+  const w = SHAPE.needsWiden(r, room)
+  if (!w) return false
+  const specs = arr(w.lenses).map((l) => SHAPE.makeLensSpec(r, l, w.shape))
+  const v = N.validateNodeSpecs(specs, r, t.cx)
+  const made = arr(v && v.nodes)
+  if (!made.length) {
+    // 多半是写归属跟已有节点撞了(比如模型某片声明了整个 docs/)。这条路走不通要出声 ——
+    // 静默返回等于"宽度强制存在但从没生效",正是这次要修的那类病
+    t.eff.push({ type: 'notify', level: 'warn', text: '想补 ' + w.lenses.length + ' 个视角片补宽,但都没通过校验:' + arr(v && v.errors).slice(0, 2).join(';') })
+    return false
+  }
+  addNodes(t, made, 'shape', posInt(r.wave, 1))
+  t.eff.push({ type: 'notify', level: 'info', text: '只有 ' + w.have + ' 片能并行(这个目标有 ' + w.want + ' 个面)—— 代码已按视角补上 ' + made.length + ' 片:' + w.lenses.map((l) => l.name).join('、') })
+  return true
+}
+
+// ── 形状兜底:把后来多出的产出片接进汇总 ────────────────────────────────────
+// needsReduce 见到图里已有 reduce 就返回 null,于是【汇总一旦挂上,deps 就冻住了】。
+// 而扇出是分波的:勘察→铺宽→按发现核实,后面几波产出的文档全都不在汇总的 deps 里 ——
+// 汇总看不见它们(composeNodeBrief 的【上游已查明】是按 deps 列的),那几片等于白跑。
+// 交付质量差的一条隐形成因。只对【还没开跑】的汇总接线:已经在跑的改 deps 没有意义。
+function extendReduceDeps(t) {
+  const r = t.r
+  const red = arr(r.nodes).find((n) => n && str(n.kind) === 'reduce' && (n.state === 'pending' || n.state === 'queued'))
+  if (!red) return false
+  const have = new Set(arr(red.deps).map(str))
+  const add = SHAPE.producers(r.nodes).filter((n) => str(n.id) !== str(red.id) && !have.has(str(n.id)))
+  if (!add.length) return false
+  red.deps = arr(red.deps).map(str).concat(add.map((n) => str(n.id)))
+  // goal 正文里列着"要汇总哪几片",不一起更新的话工人只会去读老的那几份 —— deps 与正文是同一件事的两面
+  const spec = SHAPE.makeReduceSpec(r, SHAPE.producers(r.nodes).filter((n) => str(n.id) !== str(red.id)))
+  if (spec && spec.goal) red.goal = str(spec.goal)
+  t.changed = true
+  t.eff.push({ type: 'notify', level: 'info', text: '汇总节点已接上后来新增的 ' + add.length + ' 份产出(否则它读不到这几片)' })
+  return true
+}
+
 function shapeReduce(t) {
   const r = t.r
   const targets = SHAPE.needsReduce(r)

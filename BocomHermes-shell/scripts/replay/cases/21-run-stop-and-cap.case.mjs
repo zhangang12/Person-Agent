@@ -40,7 +40,8 @@ export default {
       return { ok: true, data: { addNodes: [], dropNodes: [], done: false, more: 'unknown', why: '接着等' } }
     }
 
-    const r = S.orch.createRun('并发与停止测试', {})
+    // 目标取实现类：本用例测并发闸与「全部停止」，补宽出来的片会把节点计数冲掉(见 ㈖)
+    const r = S.orch.createRun('重构调度与停止逻辑', {})
     await waitFor(() => S.orch.get(r.id).phase === 'awaiting-approval', { name: 'plan 没落地' })
     S.orch.approve(r.id)
 

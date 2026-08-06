@@ -220,6 +220,9 @@ function makeNode(spec, ctx) {
     // 这条 verify 是在核【哪一片报的发现】。按发现扇出的去重靠它 ——
     // 丢了的话节点每重跑一次就会把同一批发现再派一遍校验(预算按节点数算,几轮就烧穿)。
     sourceNode: str(first(s.sourceNode, '')),
+    // 这一片是代码按【哪个视角】铺的(shapes.LENS_SETS 的 key)。补宽的去重靠它 ——
+    // 丢了的话每次补宽都会把同一批视角再铺一遍(和 sourceNode 同构的坑,那次是重跑重复派校验)。
+    lensKey: str(first(s.lensKey, '')),
     // goal 不截断(契约 §2):截了就写不下一个现编角色;title 缺了从 goal 截 20 字当 UI 标签
     title: str(first(s.title, '')).trim() || goal.slice(0, 20),
     goal,
@@ -404,6 +407,7 @@ function validateNodeSpecs(specs, run, ctx) {
         noEmpty: first(r.spec.noEmpty, r.spec.exit && r.spec.exit.noEmpty),
         maxAttempts: r.spec.maxAttempts,
         sourceNode: r.spec.sourceNode,
+        lensKey: r.spec.lensKey,
       }, { id: r.id, wave: first(C.wave, R.wave, 1), origin: first(C.origin, 'plan'), at: num(C.at, 0) }))
     } catch (e) {
       errors.push(r.label + ' ' + str(e && e.message ? e.message : e))

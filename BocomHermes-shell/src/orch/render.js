@@ -21,6 +21,7 @@
 //   brief 【不重复它】,只负责"这一个任务的上下文":总目标 + 本任务 + 上游 facts + 写归属 + 契约 + 产出 + 回报格式。
 // ══════════════════════════════════════════════════════════════════════════════
 const L = require('./ledger')
+const SHAPE = require('./shapes')   // 只取宽度目标:提示词里要人拆几片,得跟壳层实际强制的那个数一致
 
 const STATE_MARK = { pending: '○', queued: '⏸', running: '▶', settled: '⧗', verified: '✓', rejected: '↺', failed: '✗', skipped: '⊘', cancelled: '⊗' }
 const TAIL = '只输出 JSON、不要调用任何工具、不要解释'
@@ -65,7 +66,7 @@ function nodeById(run, id) { return arr(run && run.nodes).find((n) => n.id === s
 // ── renderPlan ───────────────────────────────────────────────────────
 // facts = index.js 算好的目录事实 { n, bytes, tops:[{path,n,bytes}|string], tree, readmeHead }
 // ★这些数字全部由代码算 —— 提示词里【没有】任何"你自己估量级""按公式算片数"的演算
-// event='too-narrow' 表示这是壳层【打回重问】的一次:上一版拆得比并发还窄,并发位空着。
+// event='too-narrow' 表示这是壳层【打回重问】的一次:上一版几乎没拆(能同时开跑的不到 2 片)。
 // 重问必须带硬约束,不然模型多半原样再给一遍(它上次就是这么想的)。
 function renderPlan(run, facts, event) {
   const r = run || {}
@@ -92,7 +93,9 @@ function renderPlan(run, facts, event) {
     '',
     open.length ? '【已知未决】\n' + bullets(open, 12) + '\n' : '',
     '【预算】还能开 ' + left + ' 个节点(上限 ' + num(b.maxNodes) + ')。本次不限批量 —— 只给出你【现在有把握定义清楚的】那些,其余写进 open。',
-    '【并发】壳层能【同时】跑 ' + (num(r.concurrency) || 4) + ' 片。拆得比这个数少,并发位就空着 —— 这是本编排最常见的浪费。',
+    // ★这个数不是并发旋钮。宽度是【任务有几个面】,并发只是派发节奏(超了进队列排着,活照样做完)——
+    //   原来这里写的是 run.concurrency,于是用户把旋钮调成 4,再大的目标也只被要求拆 4 片。
+    widthLine(r),
     '  串行一片一片做出来的东西不会比并行的更深,只是更慢:每片自带独立上下文,分头深挖再汇总,',
     '  比一片从头啃到尾读得更细,也不容易让早期发现在中途被上下文挤掉。',
     '',
@@ -115,7 +118,7 @@ function renderPlan(run, facts, event) {
       : '',
     str(event) === 'too-narrow'
       ? '【★这是打回重问 —— 上一版被壳层退回了】\n'
-        + '  上一版要么一个节点都没给(判定"不值得拆"),要么能【同时开跑】的片数比并发还少 —— 并发位空着。\n'
+        + '  上一版要么一个节点都没给(判定"不值得拆"),要么只给了一片 —— 这不像是拆过。\n'
         + '  ★如果你上一版的理由是【硬事实】(比如目标里的东西根本不在这个工作目录),那就原样再说一遍,壳层会认;\n'
         + '  但如果只是觉得"一个节点也能干完",那多半是判断失误 —— 按下面重拆。\n'
         + '  这一版请按上面【三种扇出形态】重拆,重点是②按视角:同一批材料,每片换一个检查维度,\n'
@@ -139,6 +142,18 @@ function renderPlan(run, facts, event) {
     '',
     TAIL,
   ])
+}
+
+// 宽度那一行。★口径必须与 shapes.widthTarget 同源 —— 提示词要几片、壳层强制几片,
+// 两边各写一个数就是"同一件事两份账本",而这正是本仓反复踩过的那类错。
+function widthLine(r) {
+  const want = SHAPE.widthTarget(r)
+  if (want < 2) return '【宽度】这个目标看着是单点实现类 —— 该拆就拆,不该拆就给 1 片,不用凑数。'
+  const set = SHAPE.lensSetFor(r.goal) || []
+  return '【宽度】这类目标通常有 ' + want + ' 个面要看,请至少给出 ' + want + ' 片【能同时开跑】的(deps 留空)。\n'
+    + '  拆不够的话壳层会【自己按视角补齐】—— 补出来的是通用视角(' + set.slice(0, 3).map((l) => l.name).join('、') + '…),\n'
+    + '  远不如你按这个项目的实际情况拆得贴切。所以这一版就拆够,别留给代码兜底。\n'
+    + '  注意:这不是并发上限。开得比同时能跑的多没关系 —— 多出来的进队列排着,活照样做完。'
 }
 
 function planSchemaText() {
@@ -232,7 +247,8 @@ function renderReplan(run, ev) {
     '      ① 它的产出里有没有【没人核实过】的结论?→ 每条开一个廉价的 kind:"verify" 节点(新眼睛,一两个回合)。',
     '      ② 它只从一个角度看了这批材料吗?→ 换个检查维度再铺一层只读节点(writeScope 留空,可与它重叠)。',
     '      ③ 已经有 ≥2 片各写各的文档了吗?→ 该加 kind:"reduce" 收尾了,否则最终交付就是一堆散装文档。',
-    '    并发位空着不会更稳,只会更慢 —— 当前能同时跑 ' + (num(r.concurrency) || 4) + ' 片。',
+    '    少拆不会更稳,只会更慢也更浅 —— 这类目标通常有 ' + (SHAPE.widthTarget(r) || (num(r.concurrency) || 4)) + ' 个面要看,'
+      + '当前能同时开跑的只有 ' + SHAPE.parallelHeads(nodes).length + ' 片。',
     '',
     '【输出格式】',
     replanSchemaText(),

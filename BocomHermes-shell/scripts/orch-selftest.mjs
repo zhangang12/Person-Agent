@@ -119,7 +119,9 @@ function mkRun(over) {
   const o = over || {}
   const nodes = o.nodes || []
   return Object.assign({
-    id: 'R-test', goal: '哨兵总目标·把采购模块拆干净', dir: '/proj', backendDir: '/proj/backend', model: null,
+    // ★默认目标刻意是【实现类】(goalShape → impl):形状兜底(按视角补宽 / 汇总收尾)对 impl 型不生效,
+    //   相位测试才能只测相位。共享夹具不该把每个用例都顺带报名参加形状行为 —— 宽度有它自己的用例(6r)。
+    id: 'R-test', goal: '重构采购模块的下单流程', dir: '/proj', backendDir: '/proj/backend', model: null,
     alias: 'OC-a3f9', createdAt: T0, updatedAt: T0,
     phase: 'executing', nodes,
     decisions: [], userNotes: [], concurrency: 2, pendingDecision: null,
@@ -155,7 +157,7 @@ if (MISSING.length) { for (const m of MISSING) console.log('  ! 装载失败:' +
 /** Run.phase 表:R1~R6 走真实流程(顺带覆盖 createRun) */
 function drivePhaseHead() {
   const L = {}
-  const run0 = RUN.createRun({ goal: '哨兵总目标·把采购模块拆干净', dir: '/proj', backendDir: '/proj/backend', model: null, alias: 'OC-a3f9', concurrency: 2, budget: { maxNodes: 8 } }, { at: T0, mkId })
+  const run0 = RUN.createRun({ goal: '重构采购模块的下单流程', dir: '/proj', backendDir: '/proj/backend', model: null, alias: 'OC-a3f9', concurrency: 2, budget: { maxNodes: 8 } }, { at: T0, mkId })
   L.created = run0
   const r1 = step(run0, { type: 'RUN_START' }, 'R1'); L.R1 = r1
   // R4:plan 连撞两次不合法 → 第一次窄重问,第二次转人工(绝不静默兜底成默认拆法)
@@ -165,7 +167,7 @@ function drivePhaseHead() {
   const solo = step(RUN.createRun({ goal: '就问一句', dir: '/proj', backendDir: '', model: null, alias: 'OC-solo', concurrency: 2 }, { at: T0, mkId }), { type: 'RUN_START' }, 'R3a')
   L.R3 = step(solo.run, decided(solo.run, { point: 'plan', ok: true, data: { needGrounding: false, nodes: [], more: 'no', open: [], why: '一句话能答' } }), 'R3')
   // R2:合法方案 → 待批
-  const r2base = step(RUN.createRun({ goal: '哨兵总目标·把采购模块拆干净', dir: '/proj', backendDir: '', model: null, alias: 'OC-a3f9', concurrency: 2, budget: { maxNodes: 8 } }, { at: T0, mkId }), { type: 'RUN_START' }, 'R2a')
+  const r2base = step(RUN.createRun({ goal: '重构采购模块的下单流程', dir: '/proj', backendDir: '', model: null, alias: 'OC-a3f9', concurrency: 2, budget: { maxNodes: 8 } }, { at: T0, mkId }), { type: 'RUN_START' }, 'R2a')
   const r2 = step(r2base.run, decided(r2base.run, { point: 'plan', ok: true, data: { needGrounding: false, nodes: PLAN3, more: 'no', open: [], why: '三片' } }), 'R2'); L.R2 = r2
   // R6:打回重规划
   L.R6 = step(r2.run, { type: 'USER_REJECT', note: '哨兵打回理由' }, 'R6')
@@ -907,7 +909,11 @@ section('用例6i:形状兜底在状态机里真的生效(补的节点走同一�
   const red = nodes.filter((n) => n.kind === 'reduce')
   ok('★代码补出了汇总节点', red.length === 1, nodes.map((n) => n.kind + '/' + n.origin))
   ok('  origin 记成 shape(与 plan/replan/user 分得开,面板能看出是代码补的)', red[0] && red[0].origin === 'shape', red[0] && red[0].origin)
-  ok('  deps 挂到全部 4 片产出上(汇总要等它们跑完)', red[0] && red[0].deps.length === 4, red[0] && red[0].deps)
+  // 模型给了 4 片,壳层按视角补宽到 6 片(6r 专测补宽) —— 汇总必须【全都挂上】。
+  // 这条是"补宽与汇总的顺序"的守门测试:先补宽再挂汇总才吃得到补出来的片,顺序反了这里就退回 4。
+  const prod = nodes.filter((n) => n.kind !== 'reduce' && (n.exit.artifacts || []).length)
+  ok('  deps 挂到全部产出片上(含代码补宽出来的 —— 顺序反了这里会退回 4)',
+    red[0] && red[0].deps.length === prod.length && prod.length > 4, red[0] && { deps: red[0].deps, prod: prod.length })
   ok('  它自己也有产出闸(汇总不落盘等于没汇总)', red[0] && (red[0].exit.artifacts || []).length === 1)
   ok('  仍然进入待批准(代码补骨架不越过人这一关)', out.run.phase === 'awaiting-approval', out.run.phase)
   ok('  通知里说清是自动补的', of(out.effects, 'notify').some((e) => /自动补一个汇总节点/.test(String(e.text || ''))), ty(out.effects))
@@ -971,6 +977,120 @@ section('用例6j:拆窄了打回重问一次(且只一次)', () => {
   ok('  节点确实入图了', out2.run.nodes.length >= 1, out2.run.nodes.length)
 })
 
+section('用例6r:★宽度归代码 —— 「拆的分片不够多」的五条独立成因', () => {
+  const SHAPE = tryReq('../src/orch/shapes.js')
+  need(RUN, 'src/orch/run.js'); need(SHAPE, 'src/orch/shapes.js')
+  // 用户实测反复报"拆的分片 Agent 不够多"。查下来不是一个原因,是五条叠在一起,每条单独都足以把宽度压死:
+  //   ① 并发旋钮持久化成 4,而宽度目标写的就是并发数 → 无论目标多大,永远只要求 4 片;
+  //   ② 宽度强制被【目标措辞】把门(白名单关键词),没命中就整条不触发,而且不吭声;
+  //   ③ 只重问模型一次,第二次还是窄就认了;
+  //   ④ ★代码从不自己造宽度 —— 汇总/验收/按发现扇出都是代码自己造的,唯独宽度只会"再问一次";
+  //   ⑤ 只在 plan 判一次,replan(尤其勘察跑完那次)完全不管宽度。
+
+  // ── ①② 分型:白名单换成"默认拆宽,除非明显是单点实现" ────────────────────
+  ok('★「看看订单模块有什么问题」判为 audit(原白名单一个词都不命中 → 宽度强制整条静默不触发)',
+    SHAPE.goalShape('看看订单模块有什么问题') === 'audit', SHAPE.goalShape('看看订单模块有什么问题'))
+  ok('★「帮我把这块业务逻辑理清楚」判为 survey(同上,原来也漏)',
+    SHAPE.goalShape('帮我把这块业务逻辑理清楚') === 'survey', SHAPE.goalShape('帮我把这块业务逻辑理清楚'))
+  ok('  「修复登录超时的 bug」判为 impl(单点改动不该被铺成 6 片)',
+    SHAPE.goalShape('修复登录超时的 bug') === 'impl', SHAPE.goalShape('修复登录超时的 bug'))
+  ok('  「就问一句」判为 impl(关键词全没命中 + 太短 → 兜底不铺:认不出的一句话更可能是随口一问)',
+    SHAPE.goalShape('就问一句') === 'impl', SHAPE.goalShape('就问一句'))
+  ok('  「排查订单模块」判为 audit(命中关键词的短目标不受长度兜底限制)',
+    SHAPE.goalShape('排查订单模块') === 'audit', SHAPE.goalShape('排查订单模块'))
+  ok('  「重构后排查一遍」判为 audit(复合目标里真正的活是排查,按 impl 走会拆成 0 片)',
+    SHAPE.goalShape('重构后排查一遍') === 'audit', SHAPE.goalShape('重构后排查一遍'))
+
+  // ── ① 宽度不再绑并发旋钮 ───────────────────────────────────────────────
+  const wt = (c) => SHAPE.widthTarget({ goal: '排查全站表单问题', concurrency: c })
+  ok('★宽度目标与并发脱钩(并发只管派发节奏,超了进队列排着,活照样做完)',
+    wt(1) === wt(4) && wt(4) === wt(8) && wt(4) > 4, { c1: wt(1), c4: wt(4), c8: wt(8) })
+  ok('  实现类目标宽度目标为 0(不铺视角:实现类拆宽靠按对象)',
+    SHAPE.widthTarget({ goal: '实现订单导出功能', concurrency: 8 }) === 0)
+
+  // ── ③④ needsWiden:代码自己补齐,不再商量 ──────────────────────────────
+  {
+    const mkN = (i) => ({ id: 'n' + i, kind: 'work', state: 'pending', deps: [], writeScope: ['src/' + i], exit: { artifacts: [] } })
+    const r2 = { id: 'R1', goal: '排查全站表单问题', nodes: [mkN(1), mkN(2)] }
+    const w = SHAPE.needsWiden(r2, 99)
+    ok('★模型只给 2 片 → 代码补齐到宽度目标(不再"问一次就认")',
+      w && w.have === 2 && w.lenses.length === SHAPE.widthTarget(r2) - 2, w && { have: w.have, add: w.lenses.length })
+    ok('  预算不够就少补几片,不硬挤', (SHAPE.needsWiden(r2, 2) || {}).lenses.length === 2)
+    ok('  预算为 0 → 不补', SHAPE.needsWiden(r2, 0) === null)
+    ok('  实现类目标不补(硬造视角是噪音)',
+      SHAPE.needsWiden({ id: 'R1', goal: '实现订单导出功能', nodes: [mkN(1)] }, 99) === null)
+    // 去重靠 lensKey:丢了的话每次补宽都把同一批视角再铺一遍(与 sourceNode 同构的坑)
+    const used = SHAPE.LENS_SETS.audit.map((l, i) => ({ id: 'L' + i, kind: 'work', state: 'pending', deps: [], lensKey: l.key, exit: { artifacts: [] } }))
+    ok('★已铺过的视角不重复铺(lensKey 去重 —— 这也是补宽会自终止的原因)',
+      SHAPE.needsWiden({ id: 'R1', goal: '排查全站表单问题', nodes: used.slice(0, 2) }, 99).lenses
+        .every((l) => l.key !== 'api' && l.key !== 'data'))
+    ok('  视角全铺满 → 返回 null(不会越补越多)',
+      SHAPE.needsWiden({ id: 'R1', goal: '排查全站表单问题', nodes: used }, 99) === null)
+    // 串成链的节点不算宽度:并发位照样空着
+    const chain = [mkN(1), Object.assign(mkN(2), { deps: ['n1'] }), Object.assign(mkN(3), { deps: ['n2'] })]
+    ok('  依赖没满足的片不算"能并行"(5 个串成一条链 = 宽度 1)',
+      SHAPE.parallelHeads(chain).length === 1, SHAPE.parallelHeads(chain).map((n) => n.id))
+  }
+
+  // ── ④ 状态机端到端:plan 给 2 片 → 代码铺齐 ────────────────────────────
+  const twoPlan = { needGrounding: false, more: 'no', why: '两片',
+    nodes: [1, 2].map((i) => ({ title: '模块' + i, goal: '查模块 ' + i, kind: 'work', deps: [],
+      writeScope: ['docs/m' + i + '.md'], contract: [], artifacts: ['docs/m' + i + '.md'],
+      requireEvidence: false, requireVerdict: false, verifyCmd: '' })) }
+  const planned = step(mkRun({ goal: '排查全站表单问题', concurrency: 4, phase: 'planning', nodes: [],
+    pendingDecision: { id: 'd1', point: 'plan', event: 'start', nodeId: '', at: T0 } }),
+  { type: 'DECIDED', decisionId: 'd1', point: 'plan', ok: true, data: twoPlan }, '6r')
+  const lens = planned.run.nodes.filter((n) => n.lensKey)
+  ok('★给了 2 片(≥重问下限)→ 不再多烧一轮规划,代码直接补宽',
+    !has(planned.effects, 'decide') && lens.length > 0, { fx: ty(planned.effects), lens: lens.length })
+  ok('  补到宽度目标', SHAPE.parallelHeads(planned.run.nodes).length === SHAPE.widthTarget(planned.run),
+    SHAPE.parallelHeads(planned.run.nodes).length)
+  ok('  补出来的片 origin 记 shape(面板/验收要看得出是代码补的)', lens.every((n) => n.origin === 'shape'))
+  ok('  补出来的片都无依赖(有依赖就不是宽度,是链)', lens.every((n) => n.deps.length === 0))
+  ok('  每片各写各的文件(写归属两两不交 —— 否则会被同一条校验挡回去)',
+    new Set(lens.map((n) => n.writeScope.join())).size === lens.length && lens.every((n) => n.writeScope.length === 1))
+  ok('  每片都有产出闸(不落盘的话下游汇总的 substance 闸必然过不去)',
+    lens.every((n) => (n.exit.artifacts || []).length === 1))
+  ok('  不给只读片开构建证据闸(开了必然过不去 —— 它没有可跑的东西)',
+    lens.every((n) => n.exit.requireEvidence === false))
+  ok('  通知里说清是代码补的、补了哪几个面',
+    of(planned.effects, 'notify').some((e) => /按视角补上/.test(String(e.text || ''))), ty(planned.effects))
+  ok('  补宽仍然要过人审那一关(代码补骨架不越过人)', planned.run.phase === 'awaiting-approval', planned.run.phase)
+
+  // ── ⑤ replan 也要判宽度(原来两个调用点都在 onPlanDecided)────────────────
+  {
+    // 勘察跑完、replan 只加了一片 —— 这恰恰是最该拆宽的时刻(现在才真正知道里面长什么样)
+    const base = mkRun({ goal: '排查全站表单问题', concurrency: 4, phase: 'executing',
+      nodes: [mkNode({ id: 'p1', kind: 'probe', state: 'verified' })],
+      pendingDecision: { id: 'd9', point: 'replan', event: 'node-settled', nodeId: 'p1', at: T0 } })
+    const out = step(base, decided(base, { point: 'replan', ok: true, data: {
+      needGrounding: false, done: false, dropNodes: [], facts: [], open: [], why: '接着查',
+      addNodes: [{ title: '查一片', goal: '查表单校验', kind: 'work', deps: [], writeScope: ['docs/one.md'],
+        contract: [], artifacts: ['docs/one.md'], requireEvidence: false, requireVerdict: false, verifyCmd: '' }],
+    } }), '6r')
+    ok('★replan 只加 1 片 → 代码在 replan 这一侧也补宽(原来这里完全不管宽度)',
+      out.run.nodes.filter((n) => n.lensKey).length > 0, out.run.nodes.map((n) => n.kind + '/' + (n.lensKey || n.origin)))
+    ok('  补宽算"图动了",不记进反空转账(它确实多出了活)', !out.run.budget.idleFrontier, out.run.budget.idleFrontier)
+  }
+
+  // ── 汇总要接得住后来补出来的片 ─────────────────────────────────────────
+  {
+    // 汇总一旦挂上,needsReduce 就返回 null,deps 从此冻住 —— 后面几波产出的文档【没人读】。
+    const prod = (id) => mkNode({ id, kind: 'work', state: 'pending', exit: { artifacts: ['docs/' + id + '.md'], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true } })
+    const base = mkRun({ goal: '排查全站表单问题', concurrency: 4, phase: 'executing',
+      nodes: [prod('a'), prod('b'), prod('c'),
+        mkNode({ id: 'r1', kind: 'reduce', state: 'pending', deps: ['a', 'b'], exit: { artifacts: ['docs/汇总.md'], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true } })],
+      pendingDecision: { id: 'd9', point: 'replan', event: 'frontier', nodeId: '', at: T0 } })
+    const out = step(base, decided(base, { point: 'replan', ok: true, data: {
+      needGrounding: false, done: false, addNodes: [], dropNodes: [], facts: [], open: [], why: '看看' } }), '6r')
+    const red = out.run.nodes.find((n) => n.kind === 'reduce')
+    ok('★后来多出的产出片被接进汇总 deps(否则汇总读不到它们,那几片白跑)',
+      red && red.deps.indexOf('c') >= 0, red && red.deps)
+    ok('  正文里的"要汇总哪几片"同步更新(deps 与正文是同一件事的两面)',
+      red && /docs\/c\.md/.test(String(red.goal || '')), red && String(red.goal || '').slice(0, 200))
+  }
+})
+
 section('用例6g:规划/复规划提示词必须教会"拆宽"与"汇总"(纯文本,没有编译期保护)', () => {
   const RENDER = tryReq('../src/orch/render.js')
   need(RENDER, 'src/orch/render.js')
@@ -978,10 +1098,21 @@ section('用例6g:规划/复规划提示词必须教会"拆宽"与"汇总"(纯�
   // "什么都不用改返回空数组也是合法答案",而且【全程不告诉模型并发是几】,也没有任何扇出形态的词汇。
   // 于是实测表现为"一直派发单片,并发位空着"。CC 那种宽度不是模型更聪明,是脚本里写死了扇出形态 ——
   // 这里把形态写进提示词,并用本用例钉住,免得日后被"精简提示词"顺手删回去。
-  const run = mkRun({ concurrency: 4, nodes: [] })
+  const SHAPE2 = tryReq('../src/orch/shapes.js')
+  const run = mkRun({ goal: '排查全站表单问题', concurrency: 4, nodes: [] })
   const plan = RENDER.renderPlan(run, { n: 120, bytes: 900000, tops: [], tree: '', readmeHead: '' })
   ok('规划提示词拿得到', typeof plan === 'string' && plan.length > 800, plan && plan.length)
-  ok('★告诉模型并发是几(不说它就不知道该拆多宽)', /【并发】/.test(plan) && /同时】跑 4 片/.test(plan), (plan.match(/【并发】.{0,40}/) || [])[0])
+  // ★宽度那个数必须与 shapes.widthTarget 同源。原来提示词写的是 run.concurrency,
+  //   于是用户把并发旋钮调成 4,再大的目标也只被要求拆 4 片 —— 提示词与强制口径是两本账。
+  ok('★告诉模型该拆多宽,且数字与 widthTarget 同源(两边各写一个数 = 两本账)',
+    /【宽度】/.test(plan) && plan.indexOf('至少给出 ' + SHAPE2.widthTarget(run) + ' 片') > 0,
+    (plan.match(/【宽度】.{0,60}/) || [])[0])
+  ok('★点破"宽度不是并发上限"(多出来的进队列排着,活照样做完)',
+    /这不是并发上限/.test(plan) && /进队列排着/.test(plan))
+  ok('  并说清拆不够会被代码按通用视角补齐(给模型一个自己拆得更贴切的理由)',
+    /自己按视角补齐/.test(plan))
+  ok('  实现类目标不喊宽度(硬造视角是噪音)',
+    !/【宽度】这类目标通常有/.test(RENDER.renderPlan(mkRun({ goal: '实现订单导出功能', nodes: [] }), {})))
   ok('★三种扇出形态都在', /按对象扇出/.test(plan) && /按视角扇出/.test(plan) && /按发现扇出/.test(plan))
   ok('★点破"看同一批文件不冲突,写同一个文件才冲突"(否则只读节点不敢并行拆)',
     /看同一批文件不冲突/.test(plan))
@@ -990,11 +1121,12 @@ section('用例6g:规划/复规划提示词必须教会"拆宽"与"汇总"(纯�
   ok('五种 kind 逐个解释(原来只在 schema 里列了名字)',
     ['work', 'probe', 'verify', 'check', 'reduce'].every((k) => new RegExp(k + '\\s*=').test(plan)))
 
-  const rp = RENDER.renderReplan(mkRun({ concurrency: 4, nodes: [mkNode({ id: 'n1', state: 'verified' })] }),
+  const rp = RENDER.renderReplan(mkRun({ goal: '排查全站表单问题', concurrency: 4, nodes: [mkNode({ id: 'n1', state: 'verified' })] }),
     { event: 'node-settled', nodeId: 'n1', at: T0 })
   ok('复规划提示词拿得到', typeof rp === 'string' && rp.length > 500)
   ok('★收官时提示"三条过一遍":核实 / 换视角 / 汇总', /没人核实过/.test(rp) && /换个检查维度/.test(rp) && /reduce/.test(rp))
-  ok('  并发位空着不会更稳,只会更慢', /并发位空着/.test(rp))
+  ok('  收官前提醒"这类目标有几个面、现在只有几片能跑"(替代原来那句按并发算的话术)',
+    /个面要看/.test(rp) && /当前能同时开跑的只有/.test(rp), (rp.match(/少拆不会更稳.{0,60}/) || [])[0])
 
   const brief = RENDER.composeNodeBrief(mkRun({ nodes: [] }),
     mkNode({ id: 'n1', goal: '摸清认证模块', exit: { artifacts: [], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true } }))

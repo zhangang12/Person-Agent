@@ -26,16 +26,54 @@ function str(x) { return x == null ? '' : String(x) }
 function arr(x) { return Array.isArray(x) ? x : [] }
 function num(x) { const n = +x; return Number.isFinite(n) ? n : 0 }
 
-// 需要"汇总收尾"的目标类型:探索/调研/成文这一类,产出本身就是文档,散着交等于没交。
-// 写代码/改 bug 类不在此列 —— 那种任务的交付是代码,硬塞一份汇总文档是噪音。
-const DOC_GOAL_RE = /探索|调研|摸底|盘点|梳理|综述|成文|报告|分析|审计|排查|评估|调查|研究|对比|清单/
-// 同上,用于判断"该不该按视角拆宽"。比 DOC_GOAL_RE 略窄:实现类任务拆宽靠按对象,不靠按视角。
-const WIDE_GOAL_RE = /探索|调研|摸底|盘点|梳理|综述|报告|分析|审计|排查|评估|调查|研究|对比|清单/
+// ── 目标分型:一个分类器,不是两张关键词表 ──────────────────────────────────
+// 【为什么推翻原来的两张正则表】原来是 DOC_GOAL_RE / WIDE_GOAL_RE 两张【白名单】关键词表:
+// 命中才强制。实测的后果是【静默漏判】—— 目标写成「看看订单模块有什么问题」「帮我把这块理清楚」,
+// 一个关键词都不命中,于是拆宽强制、汇总收尾【整条都不触发】,而且不吭一声。
+// 用户报的"拆的分片不够多",这是其中一条独立成因。
+//
+// 【改成黑名单:默认拆宽,除非明显是单点实现】依据是两边的代价不对称 ——
+//   · 对窄目标误判成宽:代价是【重问一次】,而且重问话术明说"理由是硬事实就原样再说一遍,壳层会认";
+//   · 对宽目标漏判成窄:代价是整件事只派 1~2 片、没人汇总,而且【没有任何信号】说明这里少判了。
+// 一个吵一次,一个静默失败。所以默认站在"拆宽"这一边。
+//
+// 三型:
+//   impl   = 单点实现/修改(交付是代码,硬塞视角节点与汇总文档都是噪音)→ 不铺宽、不汇总
+//   audit  = 排查/审查/测试/评估(找问题)  → 按"容易出问题的维度"铺宽
+//   survey = 探索/调研/梳理/需求分析(摸清楚)→ 按"要摸清的面"铺宽
+const NARROW_RE = new RegExp([
+  '^(修复|修一下|修个|改一下|改个|删掉|删除|去掉|重命名|加一个|添加一个|新增一个|升级|回滚|还原)',
+  '把.{1,24}(改成|换成|挪到|改为)',
+  '(修复|解决)一下?.{0,20}(bug|BUG|报错|异常|问题)$',
+].join('|'))
+const AUDIT_RE = /排查|审查|审计|评估|检查|测试|验证|复核|找出?问题|有什么问题|有没有问题|漏洞|风险点|回归/
+const SURVEY_RE = /探索|调研|摸底|摸清|盘点|梳理|理清|搞清|综述|成文|调查|研究|对比|清单|需求分析|技术方案|现状/
+const IMPL_RE = /实现|开发|重构|迁移|迁到|迁往|接入|联调|上线|打包|部署|写一个|做一个|改造|升级到/
 
-/** 这个目标是不是"产出文档"型 */
-function isDocGoal(goal) { return DOC_GOAL_RE.test(str(goal)) }
+// 兜底(什么关键词都没命中)时的最短长度。"就问一句""看下这个"这类一句话请求不该被铺成 6 片 ——
+// 兜底的含义是【我认不出这是什么】,而认不出来的一句话,更可能是随口一问而不是一个调研项目。
+// 明写了关键词的短目标不受此限:「排查订单模块」6 个字,照样按 audit 铺。
+const FALLBACK_MIN_LEN = 12
+
+/** 目标分型 → 'impl' | 'audit' | 'survey' */
+function goalShape(goal) {
+  const g = str(goal).trim()
+  if (!g) return 'impl'                       // 空目标不造任何骨架(它连拆都还没拆)
+  if (NARROW_RE.test(g)) return 'impl'        // 明写着单点改动 → 交付是代码
+  // 白名单在前、IMPL 在后:「重构后排查一遍」「迁移前先摸清依赖」这类复合目标,
+  // 真正的活是排查/摸清,实现只是背景 —— 按后者拆会拆成 0 片。
+  if (AUDIT_RE.test(g)) return 'audit'
+  if (SURVEY_RE.test(g)) return 'survey'
+  if (IMPL_RE.test(g)) return 'impl'
+  // ★关键词全没命中才走长度兜底,且兜底站在拆宽这边(见上面的代价不对称)。
+  //   明写了关键词的短目标不受长度限制 —— 「排查订单模块」6 个字照样铺。
+  return g.length >= FALLBACK_MIN_LEN ? 'survey' : 'impl'
+}
+
+/** 这个目标是不是"产出文档"型(该有 reduce 收尾) */
+function isDocGoal(goal) { return goalShape(goal) !== 'impl' }
 /** 这个目标是不是"该拆宽"型 */
-function isWideGoal(goal) { return WIDE_GOAL_RE.test(str(goal)) }
+function isWideGoal(goal) { return goalShape(goal) !== 'impl' }
 
 /** 会产出文件的节点(reduce 要汇总的就是这些) */
 function producers(nodes) {
@@ -108,24 +146,153 @@ function makeReduceSpec(run, targets) {
   }
 }
 
+// ── 宽度:目标该有几个面,不是机器能同时跑几片 ──────────────────────────────
+// 【原来错在哪】宽度目标写的是 run.concurrency(并发旋钮)。这把两件不相干的事绑死了:
+//   并发只决定【派发节奏】—— 超了就进队列排着,活照样做完;
+//   宽度决定【覆盖面】—— 4 片各啃 1/4,和 6 片各盯一个面,后者每片更聚焦、也更深。
+// 绑死的后果:用户 settings.json 里 wfConcurrency 持久化成 4(默认改成 8 也盖不掉它),
+// 于是无论目标多大,壳层永远只要求 4 片能并行 —— 队列明明就在那儿,却没人用。
+// 现在:宽度 = 视角清单的长度(任务的属性),并发只管派发。
+//
+// 【视角清单为什么写死在代码里】这正是 CC 与"求模型多拆一点"的分水岭:
+// CC 的宽度是脚本里的数组(DIMENSIONS.map(...)),模型【没有"要不要拆"的投票权】,只负责填每片内容。
+// 弱模型在"要不要多拆"上永远倾向于少拆(少拆看起来更稳),靠提示词劝是劝不动的 —— 实测重问一次也照旧。
+const LENS_SETS = {
+  audit: [
+    { key: 'api', name: '接口与边界', ask: '对外接口/函数的入参校验:必填、类型、长度、范围、非法值;错误码与提示是否一致、是否泄露内部信息。' },
+    { key: 'data', name: '数据与精度', ask: '金额/数量的精度与舍入、时间与时区、编码、空值与默认值、单位换算 —— 这一类错了不会报错,只会算错。' },
+    { key: 'fail', name: '异常与回滚', ask: '失败路径:异常吞掉没有、事务边界在哪、部分成功怎么补偿、重试会不会放大伤害。' },
+    { key: 'race', name: '并发与幂等', ask: '重复提交、并发写同一条记录、超时重试、唯一约束与锁 —— 只跑一遍看不出来的那一类。' },
+    { key: 'auth', name: '权限与可见性', ask: '鉴权在哪一层、能不能越权取到别人的数据、批量接口的数据范围是不是也过滤了。' },
+    { key: 'env', name: '配置与环境', ask: '硬编码、环境差异(本地/测试/生产)、开关与降级、依赖版本与外部服务不可用时的行为。' },
+  ],
+  survey: [
+    { key: 'flow', name: '入口与主流程', ask: '从哪些入口进来、主干怎么走、关键分叉在哪 —— 画得出一条能跟着读代码的主线。' },
+    { key: 'model', name: '数据模型与存储', ask: '有哪些表/实体、关键字段与含义、它们之间的关系、一条记录的生命周期。' },
+    { key: 'dep', name: '外部依赖与集成', ask: '调了谁、被谁调、用什么协议、对方挂了会怎样、有没有重试与超时。' },
+    { key: 'env', name: '配置与运行环境', ask: '怎么起起来、依赖哪些配置与外部服务、各环境的差异在哪。' },
+    { key: 'debt', name: '演进痕迹与遗留', ask: '废弃代码、TODO/FIXME、注释里写的坑、明显是临时方案的地方 —— 这些是后来人最容易踩的。' },
+    { key: 'risk', name: '风险与未决', ask: '哪些地方没有测试、哪些逻辑没人说得清、哪些改动会牵连一大片。' },
+  ],
+}
+
+/** 这个目标该铺哪套视角(impl 型不铺:实现类拆宽靠按对象,硬造视角是噪音) */
+function lensSetFor(goal) { return LENS_SETS[goalShape(goal)] || null }
+
+/** 宽度目标:任务该有几个面。0 表示这类目标不强制宽度 */
+function widthTarget(run) {
+  const set = lensSetFor((run || {}).goal)
+  return set ? set.length : 0
+}
+
+/** 第一批就能同时开跑的节点(无依赖,或依赖已全部终结)。勘察片不算宽度 —— 它本来就是"先看一眼再拆" */
+function parallelHeads(nodes) {
+  const all = arr(nodes)
+  const settled = new Set(all.filter((n) => n && (str(n.state) === 'verified' || str(n.state) === 'skipped')).map((n) => str(n.id)))
+  return all.filter((n) => {
+    if (!n || str(n.kind) === 'probe') return false
+    const st = str(n.state || 'pending')
+    if (['pending', 'queued', 'running'].indexOf(st) < 0) return false
+    return !arr(n.deps).some((d) => !settled.has(str(d)))
+  })
+}
+
+// 重问的下限:能并行的片数【少于 2】才值得为它多烧一轮规划。
+// 【为什么不是"没达标就重问"】代码补宽落地之后,重问的边际价值只剩"模型自己拆的视角更贴这个项目";
+// 而它的代价是每条 run 都多一轮决策 —— 内网一轮就是好几分钟,还挡着人审那一步。
+// 所以分工改成:给了 0~1 片 = 它根本没在拆 → 值得问一次(真机上撞到的正是这一档);
+//               给了 2 片以上但不够宽 → 代码直接补齐,不再商量。
+const REASK_FLOOR = 2
+
 /**
- * 规划拆得够不够宽。
- * 只对"该拆宽"型目标判;返回 null 表示不用管。
- * 判据刻意只看【能并行的片数】而不是总片数:串成一条链的 5 个节点,并发位照样空着。
+ * 规划拆得够不够宽(用于【重问模型一次】,不是补宽的判据)。
+ * 返回 null 表示不用管。判据只看【能并行的片数】而不是总片数:串成一条链的 5 个节点,并发位照样空着。
  */
 function tooNarrow(run, madeNodes) {
   const r = run || {}
-  if (!isWideGoal(r.goal)) return null
-  const cap = num(r.concurrency) || 4
-  if (cap < 2) return null
+  const want = widthTarget(r)
+  if (want < 2) return null
   const made = arr(madeNodes)
   if (!made.length) return null
-  // 勘察片(probe)不算宽度:它本来就是"先看一眼再拆",后面还会被再问一次
   const real = made.filter((n) => n && str(n.kind) !== 'probe')
   if (!real.length) return null
   const rootless = real.filter((n) => !arr(n.deps).length)   // 无依赖 = 第一批就能同时跑的
-  if (rootless.length >= cap) return null
-  return { cap, made: real.length, parallel: rootless.length }
+  if (rootless.length >= Math.min(want, REASK_FLOOR)) return null
+  return { cap: want, made: real.length, parallel: rootless.length }
+}
+
+/** 这条 run 已经铺过哪些视角(按 lensKey 记,重跑/多次补宽不重复铺) */
+function lensesUsed(run) {
+  const out = new Set()
+  for (const n of arr((run || {}).nodes)) if (n && str(n.lensKey)) out.add(str(n.lensKey))
+  return out
+}
+
+/**
+ * 该不该由【代码】补宽,补哪几个视角。
+ * 与 tooNarrow 的分工:tooNarrow 是"再问模型一次"(它更懂这个项目,先给它机会);
+ * 本函数是问完还是不够时的兜底 —— 代码直接铺,不再商量。
+ * room = 预算还能开几个节点(调用方算好传进来,本模块不碰 run.budget 的记账口径)。
+ */
+function needsWiden(run, room) {
+  const r = run || {}
+  const set = lensSetFor(r.goal)
+  if (!set) return null
+  const want = set.length
+  const have = parallelHeads(r.nodes).length
+  if (have >= want) return null
+  const free = Math.max(0, num(room))
+  if (free <= 0) return null
+  const used = lensesUsed(r)
+  const missing = set.filter((l) => !used.has(l.key)).slice(0, Math.min(want - have, free))
+  if (!missing.length) return null
+  return { lenses: missing, want, have, shape: goalShape(r.goal) }
+}
+
+/** 视角节点的产出路径:一个视角一份文档 —— 各写各的文件,写归属天然两两不交 */
+function lensPath(run, lens) {
+  const id = str((run || {}).id).replace(/[^\w-]/g, '') || 'run'
+  return 'docs/视角-' + str(lens.key) + '-' + id + '.md'
+}
+
+/**
+ * 一个视角 → 一个节点 spec。
+ * 【为什么让它落盘而不是只回报】下游的 reduce 有一道 substance 闸,要求汇总真的引用了 ≥2 份上游产出;
+ * 视角节点不落盘的话汇总无从引用,那道闸必然过不去(自己给自己造死锁,和 gatesFor 修过的是同一类错)。
+ */
+function makeLensSpec(run, lens, shape) {
+  const out = lensPath(run, lens)
+  const isAudit = str(shape) === 'audit'
+  return {
+    title: (isAudit ? '查·' : '摸·') + str(lens.name),
+    kind: 'work',
+    lensKey: str(lens.key),
+    deps: [],
+    writeScope: [out],
+    artifacts: [out],
+    contract: [],
+    requireEvidence: false,     // 只读代码 + 写一份文档,没有可跑的构建/测试
+    requireVerdict: false,
+    verifyCmd: '',
+    goal: [
+      '你负责【一个视角】,只看这一个面,看透它。把结论落盘到 ' + out + '。',
+      '',
+      '【总目标】' + str((run || {}).goal),
+      '',
+      '【你这一片的视角:' + str(lens.name) + '】',
+      '  ' + str(lens.ask),
+      '',
+      '【怎么干】',
+      '  · 同一批代码会有别的片同时在看,但【他们找的是别的东西】。你只管你这个面,',
+      '    不要因为"这个地方好像也有问题"就跑去写别人的面 —— 那会两边都写一半。',
+      '  · 从这个视角出发【自己去找入口】:搜关键字、跟调用链、读表结构,不要等别人给你清单。',
+      '  · ' + (isAudit
+        ? '找到问题要能落到"哪个文件哪一段、现在是什么行为、应该是什么行为、什么条件下会出事"。'
+        : '摸清楚要能落到"哪个文件哪一段负责什么、和谁交互、边界在哪"。'),
+      '  · 这个面【确实没什么可说的】也是合格结论 —— 但要写清楚你查了哪些地方才得出这个结论,',
+      '    空手回来和查过之后确认没问题,是两回事。',
+    ].join('\n'),
+  }
 }
 
 /**
@@ -246,4 +413,10 @@ function makeFindingVerifySpec(run, srcNode, f, idx) {
   }
 }
 
-module.exports = { parseFindings, findingsVerified, makeFindingVerifySpec, MAX_FINDINGS, makeAuditSpec, needsAudit, isDocGoal, isWideGoal, producers, hasReduce, needsReduce, makeReduceSpec, reducePath, tooNarrow, DOC_GOAL_RE, WIDE_GOAL_RE }
+module.exports = {
+  parseFindings, findingsVerified, makeFindingVerifySpec, MAX_FINDINGS,
+  makeAuditSpec, needsAudit,
+  goalShape, isDocGoal, isWideGoal,
+  producers, hasReduce, needsReduce, makeReduceSpec, reducePath,
+  tooNarrow, widthTarget, parallelHeads, lensSetFor, lensesUsed, needsWiden, makeLensSpec, lensPath, LENS_SETS,
+}

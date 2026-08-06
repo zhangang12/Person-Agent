@@ -50,7 +50,9 @@ export default {
     await world.cardInit(keep.wc, { title: '保活' })
 
     // ── 起 run ──
-    const r = S.orch.createRun('摸清这个仓库', {})
+    // ★目标刻意是【实现类】(goalShape → impl):本用例测的是全链相位，不是形状。
+    //   survey/audit 型目标会触发「按视角补宽」(㈖ 专测)，那 6 片会把本用例的节点计数与收口全冲掉。
+    const r = S.orch.createRun('重构认证与订单两个模块', {})
     ok('createRun 返回 runId + 面板卡 id', !!(r && r.id && r.cardId), r)
     const run0 = S.orch.get(r.id)
     ok('面板卡进了 wfRegistry(mirrorToOrch / 级联杀 / 卡坞都依赖它)', !!S.wfRegistry.get(String(r.cardId)))
