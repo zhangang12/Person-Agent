@@ -379,6 +379,76 @@ function findingsVerified(run, nodeId) {
   return arr((run || {}).nodes).some((n) => n && str(n.kind) === 'verify' && str(n.sourceNode) === str(nodeId))
 }
 
+// ── 结构化上报(工人调 MCP 工具 report_findings 走这条)────────────────────
+// 【为什么要有这条,正则那条还不够】parseFindings 认的是终答正文里的 <发现> 块 —— 一个【格式约定】。
+// 弱模型漏格式是常态,而漏了之后壳层看到的是"这片没查出问题",与"这片真的没问题"【长得一模一样】:
+// 静默失败,面板上什么都不会说。工具调用不一样 —— 参数不合规当场就能退回让它重填,
+// 而且弱模型对"调一个工具"的遵从度本来就远高于"按格式写一段文本"。
+// 正则那条保留为【降级路径】:工具没调时才用。两条不并存 —— 结构化有货就只认结构化。
+const SEV_HI = /高|high|critical|blocker|严重/i
+const SEV_LO = /低|low|minor|trivial|轻/i
+function sevOf(s) { const t = str(s); return SEV_HI.test(t) ? '高' : SEV_LO.test(t) ? '低' : '中' }
+
+/** 结构化上报进来的发现 → 归一成与 parseFindings 完全相同的形状(下游只认一种形状) */
+function normFindings(list) {
+  const out = []
+  for (const raw of arr(list)) {
+    const f = (raw && typeof raw === 'object') ? raw : { what: raw }
+    const what = str(first(f.what, f.title, f.summary, f.desc, '')).trim()
+    if (what.length < 6) continue                 // "有问题"这种核不动,丢掉(与正则那条同口径)
+    out.push({
+      sev: sevOf(first(f.sev, f.severity, '')),
+      what: what.slice(0, 200),
+      ev: str(first(f.ev, f.evidence, f.anchor, '')).slice(0, 200),
+    })
+    if (out.length >= MAX_FINDINGS) break
+  }
+  return out
+}
+function first(...xs) { for (const x of xs) if (x !== undefined && x !== null && x !== '') return x; return '' }
+
+// 去重键:同一件事换个说法不该被核两遍。归一化压掉空白/标点/常见修饰词,再取前若干字符。
+// 【为什么不做语义去重】那要再烧一次模型调用,而这里的目标只是挡住"两片查到同一处、说法几乎一样"
+// 这种最常见的重复 —— 挡不住的漏网到核实那一层也只是多花一个廉价节点,代价对称。
+const DEDUP_STRIP = /[\s,,。.、;;::""''「」()()【】\[\]!!??~~-]/g
+function findingKey(f) {
+  const t = str((f && (f.what || f)) || '')
+    .replace(/^(疑似|可能|存在|发现|建议|需要|应该)/, '')
+    .replace(DEDUP_STRIP, '')
+    .toLowerCase()
+  return t.slice(0, 40)
+}
+
+/**
+ * 跨片去重:这条说法已经在账上了就不再收(两片查到同一件事 → 只核一次)。
+ * 【两个来源都要看,少看一个就成了两本账】
+ *   · verify 节点上的 findingKey —— 已经派人去核的;
+ *   · 各节点 result.findings —— 已经上报、但还没到收官扇出那一步的。
+ * 真机实测漏的正是后者:上报的瞬间还没有任何 verify 节点,于是同一条报两次都被判成"新的",
+ * 工具回给工人的 accepted 计数是假的(说收下了,实际入账时又被节点内去重吃掉)。
+ */
+function dedupeFindings(run, list, exceptNodeId) {
+  const skip = str(exceptNodeId)
+  const seen = new Set()
+  for (const n of arr((run || {}).nodes)) {
+    if (!n) continue
+    if (str(n.findingKey)) seen.add(str(n.findingKey))
+    // ★收官扇出时要把【源节点自己那批】排除在外 —— 否则会把正要扇出的那些当成"已经在账上",
+    //   一条都派不出去(第一版就是这么写的,真机集成用例当场抓到:上报全收下了,却没派出一个核实员)。
+    //   上报时不传 exceptNodeId,于是同一条报两次会被认出来 —— 两个调用点的差别只在这一个参数。
+    if (skip && str(n.id) === skip) continue
+    for (const f of arr(n.result && n.result.findings)) { const k = findingKey(f); if (k) seen.add(k) }
+  }
+  const out = []
+  for (const f of arr(list)) {
+    const k = findingKey(f)
+    if (!k || seen.has(k)) continue
+    seen.add(k)                                    // 同一批里自己也可能重复(模型换个说法又写一遍)
+    out.push(f)
+  }
+  return out
+}
+
 /** 一条发现 → 一个廉价的 verify 节点 spec */
 function makeFindingVerifySpec(run, srcNode, f, idx) {
   return {
@@ -392,6 +462,7 @@ function makeFindingVerifySpec(run, srcNode, f, idx) {
     requireVerdict: true,
     verifyCmd: '',
     sourceNode: str(srcNode.id),
+    findingKey: findingKey(f),      // 跨片去重靠它:同一件事被两片查到,只核一次
     goal: [
       '你是【核实员】,只核一条,核完就走。不要顺手做别的,也不要改任何文件。',
       '',
@@ -419,4 +490,5 @@ module.exports = {
   goalShape, isDocGoal, isWideGoal,
   producers, hasReduce, needsReduce, makeReduceSpec, reducePath,
   tooNarrow, widthTarget, parallelHeads, lensSetFor, lensesUsed, needsWiden, makeLensSpec, lensPath, LENS_SETS,
+  normFindings, findingKey, dedupeFindings, sevOf,
 }

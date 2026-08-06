@@ -29,6 +29,7 @@ const RUN = require('./run')
 const NODES = require('./nodes')
 const RENDER = require('./render')
 const { makeJournal } = require('./journal')
+const SHAPE = require('./shapes')   // 只用它的发现归一/去重(结构化上报要在进状态机之前就把噪音滤掉)
 
 const SURVEY_MAX_FILES = 4000
 const SURVEY_SKIP = /^(node_modules|\.git|dist|build|out|coverage|\.next|\.venv|__pycache__|target|vendor|\.idea|\.vscode)$/i
@@ -518,6 +519,28 @@ function makeOrch(deps) {
     onPanelCardGone(cardId) {
       const r = api.runOfPanel(cardId)
       if (r) send(r.id, { type: 'PANEL_CARD_GONE' })
+    },
+    /**
+     * 工人调 MCP 工具 report_findings 上报发现(relay → 这里 → 状态机事件)。
+     * nodeRef 形如 "<runId>:<nodeId>" —— 由 composeNodeBrief 写进任务指令的【上报凭据】栏。
+     * 【为什么带 runId 而不是只认 nodeId】节点 id 是 run 内序号(n1/n2…),跨 run 必撞;
+     * 两个工作流同时跑的时候只认 nodeId 会把 A 的发现记到 B 头上 —— 串台这个坑刚修过一次。
+     * 返回计数给工具,让工人知道有几条【没被收下】(太笼统/别的片报过了)—— 静默丢弃就退回了老毛病。
+     */
+    reportFindings(nodeRef, findings) {
+      const ref = str(nodeRef).trim()
+      const i = ref.lastIndexOf(':')
+      if (i <= 0) return { error: 'nodeRef 形如 "<runId>:<nodeId>",请原样抄任务指令里的【上报凭据】' }
+      const runId = ref.slice(0, i), nodeId = ref.slice(i + 1)
+      const run = runs.get(runId)
+      if (!run) return { error: '找不到这条编排(可能已经结束了)' }
+      const node = findNode(run, nodeId)
+      if (!node) return { error: '这条编排里没有节点 ' + nodeId }
+      const raw = arr(findings)
+      const clean = SHAPE.normFindings(raw)                       // 太笼统/核不动的在这里被滤掉
+      const fresh = SHAPE.dedupeFindings(run, clean)              // 别的片报过的不重复收
+      if (fresh.length) send(runId, { type: 'NODE_FINDINGS', nodeId, findings: fresh })
+      return { ok: true, accepted: fresh.length, rejected: Math.max(0, raw.length - clean.length), dupes: Math.max(0, clean.length - fresh.length) }
     },
     // ── 用户动作(IPC)────────────────────────────────────────────────
     approve(runId, edits) { return send(runId, { type: 'USER_APPROVE', edits: edits || null }) },

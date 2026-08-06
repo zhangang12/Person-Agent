@@ -97,6 +97,36 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: 'report_findings',
+    description:
+      '【编排工人节点专用】把你这一片查出的、需要别人复核的具体结论上报给壳层。壳层会【逐条派新眼睛去核】,核过的才进最终交付。\n' +
+      '【什么时候调】你这一片查完、写完文档之后,交回报之前。查到几条报几条;这一片确实没查出需要复核的东西就【不要调】,不用凑数。\n' +
+      '【报什么】能落到"哪个文件哪一段、现在是什么行为、什么条件下会出事"的具体结论。\n' +
+      '  好例子:"订单金额在 src/order/calc.ts:88 用 float 累加,超过 8 位就丢精度"\n' +
+      '  坏例子:"代码质量有待提高"(核不动的东西不要报)\n' +
+      '【只有编排派下来的工人节点能调】你的 nodeRef 写在任务指令的【上报凭据】一栏里,原样抄过来。不是编排节点就别调。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        nodeRef: { type: 'string', description: '任务指令【上报凭据】那一栏给你的字符串,原样抄' },
+        findings: {
+          type: 'array',
+          description: '发现清单,一条一个对象',
+          items: {
+            type: 'object',
+            properties: {
+              severity: { type: 'string', enum: ['高', '中', '低'], description: '严重度' },
+              what: { type: 'string', description: '一句话说清是什么问题(≥6 字,要具体到能被别人核)' },
+              evidence: { type: 'string', description: '证据:文件:行号 / 命令 / 接口。没有就写你是怎么看出来的' },
+            },
+            required: ['what'],
+          },
+        },
+      },
+      required: ['nodeRef', 'findings'],
+    },
+  },
 ]
 
 async function callTool(name, a) {
@@ -144,6 +174,18 @@ async function callTool(name, a) {
     if (!body.entries && !body.text) return '需要 text(要写的事实)或 entries(多条)'
     const r = await relayPost('/orch/memory-add', body)
     return '已写入项目知识库:' + (r.added || 0) + ' 条新增' + (r.dupes ? ',' + r.dupes + ' 条重复跳过' : '') + '(按项目分库存放,下次开卡自动注入)。'
+  }
+  if (name === 'report_findings') {
+    const ref = String(a.nodeRef || '').trim()
+    if (!ref) return '需要 nodeRef —— 它写在你的任务指令【上报凭据】那一栏,原样抄过来。'
+    const list = Array.isArray(a.findings) ? a.findings : []
+    if (!list.length) return '没有可上报的发现(findings 为空)。这一片确实没查出需要复核的东西就不用调这个工具。'
+    const r = await relayPost('/orch/findings', { nodeRef: ref, findings: list })
+    if (r.error) return '上报被拒:' + r.error
+    return '已上报 ' + (r.accepted || 0) + ' 条发现'
+      + (r.rejected ? ',' + r.rejected + ' 条没收(太笼统、核不动 —— 要具体到能落地到文件/行号/条件)' : '')
+      + (r.dupes ? ',' + r.dupes + ' 条别的片已经报过了(不会重复派人核)' : '')
+      + '。壳层会逐条派新眼睛去核,你不用管了,接着交你的回报。'
   }
   throw new Error('未知工具: ' + name)
 }

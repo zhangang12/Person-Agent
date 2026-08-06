@@ -318,6 +318,19 @@ module.exports = function initMail(ctx) {
             try { const r = startOrchRun(goal); if (r && r.error) return reply({ error: r.error }); return reply({ ok: true, id: r && r.cardId, runId: r && r.id }) }
             catch (e) { return reply({ error: e.message }) }
           }
+          // ── 工人节点结构化上报发现:MCP report_findings → 这里 → 状态机 NODE_FINDINGS ──
+          // 【为什么要有这条路,正文里的 <发现> 块还不够】那是个格式约定,弱模型漏格式是常态;
+          // 漏了之后壳层看到的是"这片没查出问题",与"这片真的没问题"长得一模一样 —— 静默失败。
+          // 走工具就能把"没收下几条、为什么"当场回给工人,它还有机会改。
+          if (req.url === '/orch/findings') {
+            if (!S.orch || typeof S.orch.reportFindings !== 'function') return reply({ error: '编排引擎没在跑' })
+            const ref = String(a.nodeRef || '').trim()
+            const list = Array.isArray(a.findings) ? a.findings.slice(0, 40) : []
+            if (!ref) return reply({ error: '缺少 nodeRef' })
+            if (!list.length) return reply({ error: '没有可上报的发现' })
+            try { return reply(S.orch.reportFindings(ref, list)) }
+            catch (e) { return reply({ error: e.message }) }
+          }
           // 工作流成果回取:不再一次性 —— Agent 拿 id 查状态/取成果全文(注册表 + 存档),继续在对话里用
           if (req.url === '/orch/result') {
             const regs = S.wfRegistry ? [...S.wfRegistry.values()] : []

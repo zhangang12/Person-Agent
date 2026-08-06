@@ -223,6 +223,8 @@ function makeNode(spec, ctx) {
     // 这一片是代码按【哪个视角】铺的(shapes.LENS_SETS 的 key)。补宽的去重靠它 ——
     // 丢了的话每次补宽都会把同一批视角再铺一遍(和 sourceNode 同构的坑,那次是重跑重复派校验)。
     lensKey: str(first(s.lensKey, '')),
+    // 这条 verify 在核【哪一句说法】。跨片去重靠它:两片查到同一处、说法几乎一样,只核一次。
+    findingKey: str(first(s.findingKey, '')),
     // goal 不截断(契约 §2):截了就写不下一个现编角色;title 缺了从 goal 截 20 字当 UI 标签
     title: str(first(s.title, '')).trim() || goal.slice(0, 20),
     goal,
@@ -253,7 +255,7 @@ function makeNode(spec, ctx) {
     maxPatches: Math.max(0, num(first(s.maxPatches, 2), 2)),
     cardId: null, wcId: null, sid: null,
     queuedAt: 0, startedAt: 0, lastTurnAt: 0, settledAt: 0,   // 一个时间戳只承担一件事
-    result: { final: '', files: [], rounds: 0, aborted: false, exitReport: [], verdict: '', cmdExit: null, contractMiss: [], unverified: false },
+    result: { final: '', files: [], rounds: 0, aborted: false, exitReport: [], verdict: '', cmdExit: null, contractMiss: [], unverified: false, findings: [] },
     reason: '',
     droppedReason: '',
   }
@@ -408,6 +410,7 @@ function validateNodeSpecs(specs, run, ctx) {
         maxAttempts: r.spec.maxAttempts,
         sourceNode: r.spec.sourceNode,
         lensKey: r.spec.lensKey,
+        findingKey: r.spec.findingKey,
       }, { id: r.id, wave: first(C.wave, R.wave, 1), origin: first(C.origin, 'plan'), at: num(C.at, 0) }))
     } catch (e) {
       errors.push(r.label + ' ' + str(e && e.message ? e.message : e))

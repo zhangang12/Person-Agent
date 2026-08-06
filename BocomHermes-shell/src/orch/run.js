@@ -146,6 +146,7 @@ function applyEvent(run, ev, ctx) {
     case 'WORKER_TURN_ERROR': onTurnError(t); break
     case 'WORKER_CARD_GONE': onCardGone(t); break
     case 'TIMER': onTimer(t); break
+    case 'NODE_FINDINGS': onNodeFindings(t); break
     case 'EXIT_RESULT': onExitResult(t); break
     case 'BUDGET_EXCEEDED': onBudgetExceeded(t); break
     default: break                              // 不认识的事件一律吸收(老存档回放时不炸)
@@ -483,12 +484,42 @@ function shapeReduce(t) {
 // 为什么由代码扇出而不是交给 replan:replan 每次只看得到一段摘要,漏一条不会有人发现;
 // 代码按条扇出,"每条发现都被独立核过"才成为一个可验证的性质,而不是一句承诺。
 // 只在节点【通过退出检查】时扇出:没通过的那片本身还要重做,它报的发现先不算数。
+// ── 结构化发现上报 ────────────────────────────────────────────────────────
+// 工人调 MCP 工具 report_findings → relay → index.js → 本事件。存到节点上,收官时按条扇出。
+// 【为什么不直接在收官时读正文】正文里的 <发现> 块是个【格式约定】,弱模型漏格式是常态,
+// 而漏了之后壳层看到的是"这片没查出问题",与"这片真的没问题"长得一模一样 —— 静默失败。
+// 工具调用则参数不合规当场能退回重填。正文那条保留为降级路径(见 shapeVerifyFindings)。
+function onNodeFindings(t) {
+  const n = findNode(t.r, t.e.nodeId)
+  if (!n) return
+  const fs2 = SHAPE.normFindings(arr(t.e.findings))
+  if (!fs2.length) return
+  // 同一节点多次上报要【累加】而不是覆盖:工人可能查一段报一段(而且重跑时也会再报一遍)。
+  // 累加后按去重键收敛,免得同一条被自己重复上报撑爆条数上限。
+  const merged = arr(n.result.findings).concat(fs2)
+  const seen = new Set()
+  n.result.findings = merged.filter((f) => {
+    const k = SHAPE.findingKey(f)
+    if (!k || seen.has(k)) return false
+    seen.add(k); return true
+  }).slice(0, SHAPE.MAX_FINDINGS)
+  t.changed = true
+}
+
 function shapeVerifyFindings(t, n) {
   const r = t.r
   if (str(n.kind) === 'verify') return false                 // 核实员自己报的发现不再往下派(不然会无限套娃)
   if (SHAPE.findingsVerified(r, n.id)) return false          // 这片的发现已经派过了(重跑不重复派)
-  const fs2 = SHAPE.parseFindings(str(n.result && n.result.final))
-  if (!fs2.length) return false
+  // ★结构化优先:工具报过就【只认工具那份】—— 两条都认等于同一件事两份账本,还会互相重复
+  const structured = arr(n.result && n.result.findings)
+  const raw = structured.length ? structured : SHAPE.parseFindings(str(n.result && n.result.final))
+  if (!raw.length) return false
+  // 跨片去重:两片查到同一处、说法几乎一样 → 只核一次(原来各报各的,同一件事派两个校验)
+  const fs2 = SHAPE.dedupeFindings(r, raw, n.id)   // 排除源节点自己:要扇出的正是它报的那批
+  if (!fs2.length) {
+    t.eff.push({ type: 'notify', level: 'info', text: '「' + str(n.title || n.id) + '」报的 ' + raw.length + ' 条发现别的片已经在核了,不重复派' })
+    return false
+  }
   const room = num(r.budget.maxNodes) - arr(r.nodes).length   // 预算不够就少派几条,不硬挤
   if (room <= 0) { t.eff.push({ type: 'notify', level: 'warn', text: '「' + str(n.title || n.id) + '」报了 ' + fs2.length + ' 条发现,但节点预算已满 —— 这些结论没人复核,收口时请自己看' }); return false }
   const use = fs2.slice(0, Math.min(fs2.length, room))
@@ -541,7 +572,7 @@ function addNodes(t, made, origin, wave) {
     n.brief = str(n.brief)
     n.cardId = n.cardId || null; n.wcId = n.wcId || null; n.sid = n.sid || null
     n.queuedAt = num(n.queuedAt); n.startedAt = num(n.startedAt); n.lastTurnAt = num(n.lastTurnAt); n.settledAt = num(n.settledAt)
-    n.result = Object.assign({ final: '', files: [], rounds: 0, aborted: false, exitReport: [], verdict: '', cmdExit: null, contractMiss: [], unverified: false }, n.result || {})
+    n.result = Object.assign({ final: '', files: [], rounds: 0, aborted: false, exitReport: [], verdict: '', cmdExit: null, contractMiss: [], unverified: false, findings: [] }, n.result || {})
     n.reason = str(n.reason); n.droppedReason = str(n.droppedReason)
     r.nodes.push(n)
     r.budget.spawned += 1

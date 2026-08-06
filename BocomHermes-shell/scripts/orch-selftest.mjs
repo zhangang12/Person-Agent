@@ -1091,6 +1091,92 @@ section('用例6r:★宽度归代码 —— 「拆的分片不够多」的五条
   }
 })
 
+section('用例6s:★发现走工具上报 —— 格式约定的静默失败换成能当场退回的工具调用', () => {
+  const SHAPE = tryReq('../src/orch/shapes.js')
+  need(RUN, 'src/orch/run.js'); need(SHAPE, 'src/orch/shapes.js')
+  // 病灶:原来发现只能从终答正文里的 <发现> 块用正则抠。那是个【格式约定】,弱模型漏格式是常态,
+  // 而漏了之后壳层看到的是"这片没查出问题",与"这片真的没问题"【长得一模一样】——
+  // 面板不会说任何话,没人知道这里丢了东西。这是本轮要修的头号缺口:失败了还看不出来。
+
+  // ── 归一:结构化上报要和正则那条【吐出同一种形状】,否则下游要认两种 ──
+  const f1 = SHAPE.normFindings([
+    { severity: 'high', what: '订单金额用 float 累加会丢精度', evidence: 'src/calc.ts:88' },
+    { severity: '随便写的', what: '库存扣减没有幂等保护', evidence: '' },
+    { what: '短' },                       // 太笼统 → 核不动,丢
+    { what: '' }, null, 'x',              // 脏输入不炸
+  ])
+  ok('★结构化上报归一成与正则那条相同的形状', f1.length === 2 && f1[0].sev === '高' && f1[0].what.length > 6, f1)
+  ok('  认不出的严重度落到"中"(不猜、也不丢整条)', f1[1].sev === '中', f1[1])
+  ok('  太笼统的当场滤掉(核不动的东西派人去核是纯浪费)', f1.every((f) => f.what.length >= 6))
+  ok('  条数封顶与正则那条同口径', SHAPE.normFindings(new Array(50).fill({ what: '这是一条足够长的发现说明' })).length === SHAPE.MAX_FINDINGS)
+
+  // ── 跨片去重:两片查到同一处、说法几乎一样 → 只核一次 ──
+  const k = SHAPE.findingKey({ what: '订单金额用 float 累加会丢精度' })
+  const run0 = { nodes: [{ id: 'v1', kind: 'verify', findingKey: k }] }
+  const left = SHAPE.dedupeFindings(run0, [
+    { what: '订单金额用 float 累加会丢精度!!' },        // 只差标点 → 同一条
+    { what: '库存扣减没有幂等保护' },
+    { what: '库存扣减没有幂等保护。' },                  // 同一批里自己重复
+  ])
+  ok('★别的片已经在核的说法不再派(原来各报各的,同一件事派两个校验)',
+    left.length === 1 && /库存/.test(left[0].what), left.map((f) => f.what))
+  // ★两个调用点的差别只在 exceptNodeId 这一个参数上,写反了会一条都派不出去(真机集成用例当场抓到)
+  const owned = { nodes: [{ id: 'n1', result: { findings: [{ what: '订单金额用 float 累加会丢精度' }] } }] }
+  ok('★收官扇出:排除源节点自己(要扇出的正是它报的那批,不排除就一条也派不出去)',
+    SHAPE.dedupeFindings(owned, [{ what: '订单金额用 float 累加会丢精度' }], 'n1').length === 1)
+  ok('  上报侧:不传 exceptNodeId,同一条报两次算重复',
+    SHAPE.dedupeFindings(owned, [{ what: '订单金额用 float 累加会丢精度' }]).length === 0)
+
+  // ── 事件:上报进节点,重复上报要累加而不是覆盖 ──
+  const mkBase = () => mkRun({ goal: '排查全站表单问题',
+    nodes: [mkNode({ id: 'n1', state: 'running' })] })
+  let out = step(mkBase(), { type: 'NODE_FINDINGS', nodeId: 'n1', findings: [{ what: '订单金额用 float 累加会丢精度', severity: '高' }] }, '6s')
+  ok('★上报的发现存到了节点上', (out.run.nodes[0].result.findings || []).length === 1, out.run.nodes[0].result.findings)
+  out = step(out.run, { type: 'NODE_FINDINGS', nodeId: 'n1', findings: [{ what: '库存扣减没有幂等保护' }] }, '6s')
+  ok('  再报一次是【累加】不是覆盖(工人常常查一段报一段)', out.run.nodes[0].result.findings.length === 2)
+  out = step(out.run, { type: 'NODE_FINDINGS', nodeId: 'n1', findings: [{ what: '订单金额用 float 累加会丢精度' }] }, '6s')
+  ok('  自己重复报的同一条不入账(否则会把条数上限撑爆)', out.run.nodes[0].result.findings.length === 2)
+  const gone = step(mkBase(), { type: 'NODE_FINDINGS', nodeId: '不存在', findings: [{ what: '这条足够长可以入账' }] }, '6s')
+  // ★这里刻意用夹具默认的 node(它的 result 里【没有 findings 这一格】)——
+  //   老存档回放同理:改字段之前落盘的 run.json 都没这一格,读的地方一律要能吃 undefined。
+  ok('  节点不存在 → 安全忽略(relay 是无身份 HTTP,不能因为一个脏 ref 就炸)',
+    (gone.run.nodes[0].result.findings || []).length === 0, gone.run.nodes[0].result.findings)
+
+  // ── 扇出:结构化有货就【只认结构化】,不再解析正文(两条都认 = 同一件事两份账本)──
+  {
+    const settled = mkRun({ goal: '排查全站表单问题', phase: 'executing',
+      nodes: [mkNode({ id: 'n1', kind: 'work', state: 'settled',
+        result: { final: '干完了\n<发现>\nF| 高 | 正文里写的这一条不该被采信 | a.ts:1\n</发现>', files: ['docs/a.md'], rounds: 1, aborted: false, exitReport: [], verdict: '', cmdExit: null, contractMiss: [], unverified: false, findings: [{ sev: '高', what: '工具报上来的这一条才算数', ev: 'b.ts:2' }] }, deps: [] })] })
+    const o = step(settled, { type: 'EXIT_RESULT', nodeId: 'n1', pass: true, report: [{ kind: 'noEmpty', ok: true, detail: '有终答' }], verdict: '', cmdExit: null, contractMiss: [], unverified: false }, '6s')
+    const vs = o.run.nodes.filter((n) => n.kind === 'verify')
+    ok('★工具报过 → 只按工具那份扇出(不再把正文里的也算一遍)',
+      vs.length === 1 && /工具报上来的/.test(String(vs[0].goal || '')), vs.map((n) => n.title))
+    ok('  派出去的核实节点记下 findingKey(跨片去重靠它)', vs[0] && !!vs[0].findingKey, vs[0] && vs[0].findingKey)
+  }
+  {
+    // 降级路径要还在:工具没调通时,正文里的块仍然解析
+    const settled = mkRun({ goal: '排查全站表单问题', phase: 'executing',
+      nodes: [mkNode({ id: 'n1', kind: 'work', state: 'settled',
+        result: { final: '干完了\n<发现>\nF| 高 | 正文里这一条要能兜住 | a.ts:1\n</发现>', files: ['docs/a.md'], rounds: 1, aborted: false, exitReport: [], verdict: '', cmdExit: null, contractMiss: [], unverified: false, findings: [] }, deps: [] })] })
+    const o = step(settled, { type: 'EXIT_RESULT', nodeId: 'n1', pass: true, report: [{ kind: 'noEmpty', ok: true, detail: '有终答' }], verdict: '', cmdExit: null, contractMiss: [], unverified: false }, '6s')
+    ok('  工具没调 → 正文那条降级路径仍然生效(不是二选一删掉一条)',
+      o.run.nodes.filter((n) => n.kind === 'verify').length === 1)
+  }
+
+  // ── 指令里必须给出上报凭据,而且带 runId ──
+  {
+    const RENDER = tryReq('../src/orch/render.js')
+    const brief = RENDER.composeNodeBrief(mkRun({ id: 'R-9', goal: '排查全站表单问题', nodes: [] }),
+      mkNode({ id: 'n7', goal: '查一片', exit: { artifacts: [], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true } }))
+    ok('★指令里给了上报凭据,且带 runId(只给 nodeId 的话两个工作流同时跑会记错人)',
+      /【上报凭据】R-9:n7/.test(brief), (brief.match(/【上报凭据】.{0,30}/) || [])[0])
+    ok('  教它调 report_findings 并说清"被退回意味着什么"',
+      /report_findings/.test(brief) && /退回/.test(brief))
+    ok('  点破正文格式那条的真实风险(格式写错你不会收到任何提示)',
+      /并不会收到任何提示/.test(brief))
+  }
+})
+
 section('用例6g:规划/复规划提示词必须教会"拆宽"与"汇总"(纯文本,没有编译期保护)', () => {
   const RENDER = tryReq('../src/orch/render.js')
   need(RENDER, 'src/orch/render.js')

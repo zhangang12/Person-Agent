@@ -99,7 +99,35 @@ try {
   }
 } catch (e) { console.error('selftest error:', e.message); fail++ }
 
-console.log(`\n小结：${pass} 通过 / ${fail} 失败`)
+// ── 编排 MCP 的工具契约(另起一个进程,与浏览器 MCP 互不影响)──────────────
+// 只验协议层能不能把工具亮出来、必填项对不对 —— 真正的行为在 replay ㉗(走真 relay)。
+// 【为什么值得单独验】report_findings 是把"发现"从格式约定换成工具调用的那一步;
+// 工具名/必填项写错的话,模型调不通只会静默不报,而这正是本轮要消灭的那种失败。
+try {
+  const oc = spawn(process.execPath, [path.join(__dirname, 'orch-mcp.mjs')], { stdio: ['pipe', 'pipe', 'ignore'] })
+  let ob = ''; const ow = new Map(); let oid = 0
+  oc.stdout.setEncoding('utf8')
+  oc.stdout.on('data', (d) => { ob += d; let i; while ((i = ob.indexOf('\n')) !== -1) { const line = ob.slice(0, i).trim(); ob = ob.slice(i + 1); if (!line) continue; let m; try { m = JSON.parse(line) } catch { continue } if (m.id && ow.has(m.id)) { ow.get(m.id)(m); ow.delete(m.id) } } })
+  const oreq = (method, params, timeout = 10000) => { const my = ++oid; return new Promise((res, rej) => { const to = setTimeout(() => { ow.delete(my); rej(new Error('超时 ' + method)) }, timeout); ow.set(my, (m) => { clearTimeout(to); res(m) }); oc.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: my, method, params }) + '\n') }) }
+  await oreq('initialize', { protocolVersion: '2024-11-05', capabilities: {} })
+  const ol = await oreq('tools/list')
+  const on = (ol.result?.tools || []).map((t) => t.name)
+  ok(on.includes('report_findings'), '编排 MCP 亮出 report_findings(发现从格式约定换成工具调用)')
+  const rf = (ol.result?.tools || []).find((t) => t.name === 'report_findings')
+  ok(!!rf && (rf.inputSchema?.required || []).includes('nodeRef'),
+    '  必填 nodeRef(只认 nodeId 的话两个工作流同时跑会把发现记错人)')
+  ok(!!rf && (rf.inputSchema?.required || []).includes('findings'), '  必填 findings')
+  ok(!!rf && rf.inputSchema?.properties?.findings?.items?.required?.includes('what'), '  每条发现必填 what(说不清是什么就核不动)')
+  const odup = on.filter((n, i) => on.indexOf(n) !== i)
+  ok(odup.length === 0, '  编排 MCP 工具名零重复' + (odup.length ? ' —— 重了: ' + odup.join(',') : ''))
+  // 没起壳层时调它必须给出【人能看懂的】失败,而不是抛栈
+  const bad = await oreq('tools/call', { name: 'report_findings', arguments: { findings: [{ what: 'x' }] } })
+  ok(/nodeRef/.test(bad.result?.content?.[0]?.text || ''), '  缺 nodeRef → 明确告诉它去哪儿抄,不是抛栈')
+  try { oc.stdin.end() } catch {}
+  oc.kill()
+} catch (e) { console.error('orch-mcp contract error:', e.message); fail++ }
+
+console.log(`\n小结:${pass} 通过 / ${fail} 失败`)
 try { srv.stdin.end() } catch {}
 srv.kill()
 process.exit(fail ? 1 : 0)
