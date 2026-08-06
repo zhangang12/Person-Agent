@@ -114,12 +114,25 @@ function makeOrch(deps) {
     }
   }
 
+  // 这一片该用哪个模型。核实/检查节点是【一两个回合就完】的活(顺着一条证据走一遍、跑一条命令看结果),
+  // 而在一次排查里它们往往占一半以上的节点数 —— 全用主模型是纯浪费,内网上还直接翻倍墙钟时间。
+  // 【留空即无变化】没配轻活模型的人拿到的还是 run.model,行为与加这个字段之前逐字节相同。
+  // 只给 verify/check:probe 要读代码做判断、reduce 要跨片对齐取舍,那两类降档会真的降质量。
+  function modelFor(run, n) {
+    const k = str(n && n.kind)
+    if (k === 'verify' || k === 'check') {
+      const light = S.settings && S.settings.modelLight
+      if (light && light.modelID) return light
+    }
+    return run.model || null
+  }
+
   // 派发一个节点 = 开一张工人卡(完全复用现有 spawnWorkflow:隐藏卡 / 写归属沙箱 / 权限自动放行 / 镜像回流全不动)
   function doDispatch(run, fx) {
     const n = findNode(run, fx.nodeId); if (!n) return
     const brief = RENDER.composeNodeBrief(run, n) || n.goal
     n.brief = brief
-    const r = spawnWorkflow(brief, run.model || null, {
+    const r = spawnWorkflow(brief, modelFor(run, n), {
       runId: run.id, nodeId: n.id,
       dir: str(run.dir) || undefined,   // ★工作目录跟着这个 run 走:spawnWorkflow 原来无条件读 S.settings.projectDir,
                                         //   两个 run 同时跑就会串台(路径与系统提示词一起串,实测)

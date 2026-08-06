@@ -1694,6 +1694,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       model: S.settings.model || null,   // 全局默认模型(对话坞设)
       modelMain: S.settings.modelMain || null,     // 双模型·干活主模型(会话默认;缺省回 model)
       modelVision: S.settings.modelVision || null, // 双模型·读图模型(带图消息/验证棒整卡;候选按 serve 模型元数据 image:true 过滤)
+      modelLight: S.settings.modelLight || null,   // 轻活模型·编排的核实/检查节点(缺省回主模型)
       encryptionAvailable: email.encryptionAvailable(),   // false → 密码只能明文落盘,设置面板要红字告警
       outboxHoldSeconds: S.settings.outboxHoldSeconds == null ? 15 : S.settings.outboxHoldSeconds,   // 发信延迟窗(软撤回),0=立即发
       imapIdleEnabled: S.settings.imapIdleEnabled !== false,   // IMAP IDLE 实时新邮件提醒,默认开
@@ -2433,6 +2434,9 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     // 双模型(M1):modelMain/modelVision,形状同 model({providerID,modelID,name} 或 null)
     if (patch && 'modelMain' in patch) S.settings.modelMain = (patch.modelMain && patch.modelMain.modelID) ? { providerID: patch.modelMain.providerID, modelID: patch.modelMain.modelID, name: patch.modelMain.name } : null
     if (patch && 'modelVision' in patch) S.settings.modelVision = (patch.modelVision && patch.modelVision.modelID) ? { providerID: patch.modelVision.providerID, modelID: patch.modelVision.modelID, name: patch.modelVision.name } : null
+    // 轻活模型:只给编排的 verify/check 节点用(核实一条证据 / 跑一条命令,一两个回合就完)。
+    // 留空 = 全走主模型,行为与加这个字段之前完全一致 —— 没配第二个模型的人不受任何影响。
+    if (patch && 'modelLight' in patch) S.settings.modelLight = (patch.modelLight && patch.modelLight.modelID) ? { providerID: patch.modelLight.providerID, modelID: patch.modelLight.modelID, name: patch.modelLight.name } : null
     if (patch && 'model' in patch) S.settings.model = (patch.model && patch.model.modelID) ? { providerID: patch.model.providerID, modelID: patch.model.modelID, name: patch.model.name } : null   // 全局默认模型(对话坞设;卡片可覆盖)
     if (patch && patch.imap) {
       S.settings.imap = S.settings.imap || {}

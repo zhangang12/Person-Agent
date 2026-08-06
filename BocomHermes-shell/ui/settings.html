@@ -184,7 +184,9 @@
         <span class="lbl">双模型 <span class="hint" style="font-weight:400">（干活主模型 + 读图模型 · 带图消息与验证棒自动用读图模型）</span></span>
         <div class="row"><span class="hint" style="width:64px;flex:none">主模型</span><select id="modelMain" class="in" style="flex:1"></select></div>
         <div class="row"><span class="hint" style="width:64px;flex:none">读图模型</span><select id="modelVision" class="in" style="flex:1"></select></div>
+        <div class="row"><span class="hint" style="width:64px;flex:none">轻活模型</span><select id="modelLight" class="in" style="flex:1"></select></div>
         <span class="hint">候选来自 serve 已配模型；读图模型按支持图像（image）过滤。留空 = 主模型用全局默认、带图消息临时找图像模型（老行为）。</span>
+        <span class="hint"><b>轻活模型</b>只给编排里的「核实 / 检查」节点用 —— 那种活一两个回合就完（顺着一条证据走一遍、跑一条命令看结果），用主模型是浪费，而这类节点在一次排查里往往占一半以上。留空 = 全都用主模型（不改变现有行为）。</span>
       </div>
 
       <div class="fld">
@@ -296,6 +298,7 @@
       const models = (await window.BocomHermes.listModels()) || []
       fill($('modelMain'), models, cur.modelMain)
       fill($('modelVision'), models, cur.modelVision, (m) => !!m.image)
+      fill($('modelLight'), models, cur.modelLight)
     } catch {}
   })()
 
@@ -465,6 +468,7 @@
     const patch = { editorCmd: editorCmd.value, planMode: !!planMode.checked, knobs: collectKnobs(), permRules: { allow: $('permAllow').value.split('\n'), deny: $('permDeny').value.split('\n') } }
     const pickModel = (id) => { try { return $(id).value ? JSON.parse($(id).value) : null } catch { return null } }
     patch.modelMain = pickModel('modelMain'); patch.modelVision = pickModel('modelVision')   // 双模型(null=未设置)
+    patch.modelLight = pickModel('modelLight')   // 轻活模型:编排的核实/检查节点用(null=未设置,全走主模型)
     if (!cur.serveBinLocked) patch.serveBin = serveBin.value
     patch.ob = {
       host: $('obHost').value.trim(),
