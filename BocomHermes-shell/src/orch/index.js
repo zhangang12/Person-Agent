@@ -194,12 +194,19 @@ function makeOrch(deps) {
   // evalExit 是判零产出的【最后责任点】:判之前回 serve 拉一次会话原文(最后一个 user 之后的全部 assistant 文本,
   // 与 session.js 轮末取终答同口径),拉到就回填进事件 —— 不冤枉慢模型;拉不到(真没产出)照常判。
   async function backfillFinal(run, n) {
-    if (!n.sid || !oc || typeof oc.getMessages !== 'function') return ''
+    // ★这里原来写的是 `if (!n.sid ...)`,而 n.sid 在生产里【恒为 null】——
+    //   唯一能写它的事件是 NODE_DISPATCHED,而它的唯一生产发射点(doDispatch)只带 {nodeId, cardId, wcId},
+    //   没有 sid(派卡那一刻卡还没绑会话)。只有 orch-selftest 手写事件时才会带,所以测试一直是绿的。
+    //   净效果:这道"判零产出前回 serve 拉会话原文"的最后责任点,真机上一次都没跑过 ——
+    //   4243cb5 声称修好的"慢模型晚收官不判零产出",实际从未生效。
+    //   隔壁 silentAlive 早就发现并从 S.sessionByWc 补了,但只补了它自己那一处(见 sidOf 的注释)。
+    const sid = sidOf(n)
+    if (!sid || !oc || typeof oc.getMessages !== 'function') return ''
     try {
-      const si = S.sessionInfo && S.sessionInfo.get(n.sid)
+      const si = S.sessionInfo && S.sessionInfo.get(sid)
       const serve = (si && si.serve) || (run.dir && typeof oc.ensureServe === 'function' ? await oc.ensureServe(run.dir, S.handlers, log) : null)
       if (!serve) return ''
-      const msgs = await oc.getMessages(serve, n.sid)
+      const msgs = await oc.getMessages(serve, sid)
       let lastU = -1; arr(msgs).forEach((m, i) => { if (m && m.role === 'user') lastU = i })
       const t = arr(msgs).slice(lastU + 1).filter((m) => m && m.role === 'assistant' && m.text).map((m) => str(m.text)).join('\n').trim()
       if (t) {
@@ -280,7 +287,7 @@ function makeOrch(deps) {
     if (!cur) return ''
     const n = findNode(cur, nodeId)
     if (!n || n.state !== 'running') return ''
-    const sid = n.sid || (n.wcId != null && S.sessionByWc ? S.sessionByWc.get(n.wcId) : null)
+    const sid = sidOf(n)
     if (n.cardId && !sid) return '卡在启动(会话未绑定)'                    // 慢 serve 冷启动:卡开了会话还没绑上
     try { if (sid && S.turnBusy && S.turnBusy.has(sid)) return '有回合在飞(turnBusy)' } catch {}   // card-send 起手即入册,网关排队/prefill 慢也盖得住
     try { if (n.wcId != null && typeof S.isCardBusy === 'function' && S.isCardBusy(n.wcId)) return '卡片忙(isCardBusy)' } catch {}
@@ -447,6 +454,14 @@ function makeOrch(deps) {
     } catch { return Infinity }
   }
 
+  // 节点的会话 id:n.sid 在生产里恒为 null —— 派卡那一刻卡还没绑会话,而 NODE_DISPATCHED 是在那一刻发的。
+  // 真正知道 sid 的是 S.sessionByWc(wcId → sid),card-init 建完会话才写进去。
+  // 收敛成一份:此前 silentAlive 自己补了、backfillFinal 没补(于是那道闸真机上从没跑过),
+  // 正是"同一件事两份账本、其中一份是空的"这个老毛病。要加第三个用到 sid 的地方,也从这儿取。
+  function sidOf(n) {
+    if (!n) return null
+    return n.sid || (n.wcId != null && S.sessionByWc ? S.sessionByWc.get(n.wcId) : null) || null
+  }
   function findNode(run, id) { return arr(run.nodes).find((n) => n.id === str(id)) || null }
   function regWcId(cardId) {
     try { const reg = S.wfRegistry && S.wfRegistry.get(String(cardId)); return reg ? reg.wcId : null } catch { return null }

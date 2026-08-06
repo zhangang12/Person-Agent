@@ -645,6 +645,75 @@ section('用例6:全局并发余量 capHint(不给就会造出"running 却没有
   ok('全局满:不发 dispatch', !has(full.effects, 'dispatch'), ty(full.effects))
 })
 
+section('用例6o:决策抽 JSON —— 思考段不许抢答(内网 schemaFail 头号来源)', () => {
+  const SCHEMA = tryReq('../src/orch/schema.js')
+  need(SCHEMA, 'src/orch/schema.js')
+  // 病灶:这个网关的模型思考【以 <think> 内联在 text part 里】(opencode.js splitThink 的注释是实测记录),
+  // 而决策链拿到的 raw 走 oc.sendMessage → extractText,那条路不剥 think。
+  // extractJson 从整串第一个 { 开始扫,思考里随手写的草稿对象就把答案抢了 ——
+  // 报出来的错(比如"nodes 是空数组")与模型实际干的事毫无关系,原样回灌它自然改不对。
+  const real = '{"needGrounding":false,"nodes":[{"title":"甲","goal":"g","kind":"work"}],"more":"no","why":"拆一片"}'
+  const got = SCHEMA.extractJson('<think>先想想,也许给个 {"title":"看代码","kind":"probe"} 就够?不对,还是拆。</think>' + real)
+  ok('★思考里的草稿不再抢答', !!got && (got.nodes || []).length === 1 && got.why === '拆一片', got)
+  ok('  未闭合的 think(流式截断)其后一律当思考丢掉',
+    !!(SCHEMA.extractJson(real + '\n<think>然后我再想想 {"x":1}') || {}).nodes)
+  ok('  <reasoning>/<analysis> 同样剥', !!(SCHEMA.extractJson('<reasoning>{"a":1}</reasoning>' + real) || {}).nodes)
+  ok('★答案只写在 think 里也要兜到(剥干净了反而丢答案是更坏的错)',
+    !!(SCHEMA.extractJson('<think>' + real + '</think>') || {}).nodes)
+  ok('  围栏仍然优先(老行为不动)', !!(SCHEMA.extractJson('随便说两句 ```json\n' + real + '\n```') || {}).nodes)
+  ok('  什么都没有仍返回 null(不许编一个空壳出来)', SCHEMA.extractJson('就是一段大白话') === null)
+})
+
+section('用例6p:kind 宽进(认不出的归 work,不再白烧一轮重问)', () => {
+  const SCHEMA = tryReq('../src/orch/schema.js')
+  need(SCHEMA, 'src/orch/schema.js')
+  // schema.js 开头那段注释早就论证过该宽进:"改错一个 kind 的代价是白跑一轮 60~90 秒的重问,
+  // 而 kind 本身不决定顺序(只有 deps 决定),猜错的下游风险很小" —— 代码当时做的却是相反的事。
+  const kindOf = (k) => SCHEMA.coerce('plan', { needGrounding: false, more: 'no', why: 'x',
+    nodes: [{ title: 't', goal: 'g', kind: k }] }).nodes[0].kind
+  const LEGAL = ['work', 'probe', 'verify', 'check', 'reduce']
+  const words = ['analysis', 'review', 'audit', 'refactor', 'implement', 'design', 'doc', 'fix', 'build', 'run', 'merge',
+    '分析', '审查', '重构', '设计', '文档', '排查', '梳理', '实现', '测试', '复核', '汇总整理']
+  const bad = words.filter((w) => LEGAL.indexOf(kindOf(w)) < 0)
+  ok('★22 个常见近义词全部归一(修前 22/22 被判不合法)', bad.length === 0, bad)
+  ok('  语义归对:analysis→probe / refactor→work / merge→reduce / 复核→verify / build→check',
+    kindOf('analysis') === 'probe' && kindOf('refactor') === 'work' && kindOf('merge') === 'reduce'
+    && kindOf('复核') === 'verify' && kindOf('build') === 'check',
+    [kindOf('analysis'), kindOf('refactor'), kindOf('merge'), kindOf('复核'), kindOf('build')])
+  ok('★完全没见过的词也归 work(最保守落点:闸最全,不会漏检查)', kindOf('乱七八糟的词') === 'work')
+  ok('  正规值原样不动', LEGAL.every((k) => kindOf(k) === k))
+})
+
+section('用例6q:plan 判不合法后的重问必须带上错因', () => {
+  const RENDER = tryReq('../src/orch/render.js')
+  need(RENDER, 'src/orch/render.js'); need(RUN, 'src/orch/run.js')
+  // 病灶:plan 判不合法后起的是【全新一次决策】(新会话、无上下文),而 renderPlan 只对 too-narrow
+  // 加硬约束 —— plan-invalid 没有分支,第二次提示词与第一次逐字节相同,模型原样再犯一次,
+  // 两次撞完直接顶到转人工。render.js 自己写着"重问必须带硬约束",这条原则漏在了 plan-invalid 上。
+  const facts = { n: 1, bytes: 1, tops: [], tree: '', readmeHead: '' }
+  const base = mkRun({ goal: '排查订单模块', concurrency: 4, nodes: [] })
+  const first = RENDER.renderPlan(base, facts, 'run-start')
+  const withErr = mkRun({ goal: '排查订单模块', concurrency: 4, nodes: [],
+    budget: { maxNodes: 24, spawned: 0, lastInvalid: ['第 1 个节点的 kind 是「设计」,不在允许范围内'] } })
+  const again = RENDER.renderPlan(withErr, facts, 'plan-invalid')
+  ok('★重问的提示词不再与首问逐字节相同', again !== first, { first: first.length, again: again.length })
+  ok('  带上了校验器的错误原文', /校验器逐条报的错/.test(again) && /不在允许范围内/.test(again))
+  ok('★还顺带教它把思考包起来(思考里的花括号会被当成答案 —— 这是真发生过的误判)',
+    /<think><\/think>/.test(again) || /思考里如果出现花括号/.test(again))
+  ok('  没有错因时不硬塞这一段(空话只会挤占上下文)',
+    RENDER.renderPlan(base, facts, 'plan-invalid').indexOf('校验器逐条报的错') < 0)
+
+  // 状态机侧:校验不过要把错记进 budget,合法之后要清掉
+  const run = mkRun({ goal: '排查', phase: 'planning', nodes: [],
+    pendingDecision: { id: 'd1', point: 'plan', event: 'start', nodeId: '', at: T0 } })
+  const out = step(run, { type: 'DECIDED', decisionId: 'd1', point: 'plan', ok: true, data: {
+    needGrounding: false, more: 'unknown', why: 'x',
+    nodes: [{ title: '', goal: '', kind: 'work' }],   // 标题与目标全空 → 校验必挂
+  } }, '6q')
+  ok('★校验不过时把错记进 budget.lastInvalid(供重问带走)',
+    (out.run.budget.lastInvalid || []).length > 0, out.run.budget.lastInvalid)
+})
+
 section('用例6m:闸门按 kind 强制收敛(不听模型填 —— 它填错就是死锁)', () => {
   need(NODES, 'src/orch/nodes.js')
   // 病灶(内网实测:"排查、勘查的 Agent 都是固定的闸门,没有跟进不同情况设置不同的闸门"):
@@ -675,6 +744,19 @@ section('用例6m:闸门按 kind 强制收敛(不听模型填 —— 它填错�
     ok('★' + k + ' 强制要 VERDICT(它的判据就是这个,不是产出)', n.exit.requireVerdict === true)
     ok('  ' + k + ' 强制不产文件(只读)', n.exit.artifacts.length === 0)
   }
+  // ★收敛必须对称:只把该开的开、不把不该有的关掉,等于只修了一半。
+  //   VERDICT 是核实员这个体裁独有的东西,模型给 work/probe/reduce 开了它,
+  //   它们交一份完全正常的回报也会判「回报缺 VERDICT 字面量」→ 打回重做 → 再交一份正常回报 →
+  //   又一个重跑一万次都过不去的死锁(与 evidence 那条同构)。
+  // ★fixture 必须让模型【真的把 requireVerdict 填成 true】—— 上面那个 mk() 填的是 false,
+  //   拿它断言"收敛后是 false",无论修没修都成立(写完第一版就是这个样子,回退验红纹丝不动)。
+  const mkV = (kind) => NODES.makeNode({ goal: '干活', kind, requireVerdict: true }, { id: 'n1' })
+  for (const k of ['work', 'probe', 'reduce']) {
+    ok('★' + k + ' 强制关掉 requireVerdict(模型填了 true 也要按掉:它交的是产出与回报,不是判决行)',
+      mkV(k).exit.requireVerdict === false, mkV(k).exit)
+  }
+  ok('  verify 反向:模型填 false 也要按成 true(判据就是这个)',
+    NODES.makeNode({ goal: 'g', kind: 'verify', requireVerdict: false }, { id: 'n2' }).exit.requireVerdict === true)
 })
 
 section('用例6n:工人简报必须点破"没人会回答你"', () => {

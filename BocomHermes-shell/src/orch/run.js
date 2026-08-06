@@ -256,6 +256,7 @@ function onPlanDecided(t, dec, data) {
     return
   }
   r.budget.invalidStreak = 0
+  r.budget.lastInvalid = []   // 这一版合法了:上次的错不能再跟着走,否则下一轮重问会拿陈年旧错误导模型
   r.ledger = L.addOpen(r.ledger, toItems(data.open), 'plan', t.at)
   const specs = arr(data.nodes)
   if (!specs.length) {
@@ -284,6 +285,12 @@ function onPlanDecided(t, dec, data) {
   const made = arr(v && v.nodes)
   if (!made.length) {
     r.budget.invalidStreak += 1
+    // ★把校验器报的错留下来,重问时带回去。原来这里起的是一次【全新决策】(新会话、无上下文),
+    //   而 renderPlan 只对 too-narrow 加硬约束 —— plan-invalid 没有分支,于是第二次的提示词与第一次
+    //   【逐字节相同】,模型当然原样再犯一次,两次撞完直接顶到转人工。
+    //   render.js 自己写着"重问必须带硬约束,不然模型多半原样再给一遍",这条原则漏在了 plan-invalid 上。
+    //   错由代码搬运、模型只负责改 —— 这正是"控制流归代码"。
+    r.budget.lastInvalid = arr(v && v.errors).slice(0, 3).map((x) => str(x).slice(0, 200))
     if (r.budget.invalidStreak >= MAX_PLAN_INVALID) toAwaitingUser(t, '规划节点全部校验不过:' + arr(v && v.errors).join(';'), false)
     else startDecision(t, 'plan', 'plan-invalid', '')
     return

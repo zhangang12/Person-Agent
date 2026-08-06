@@ -55,6 +55,12 @@ function gatesFor(kind, g) {
     // 核实/检查是只读的:不产文件,判据是 VERDICT 而不是产出
     out.artifacts = []
     out.requireVerdict = true
+  } else {
+    // ★收敛必须【对称】—— 只把该开的开、不把不该有的关掉,等于只修了一半。
+    //   VERDICT 是"核实员的判决行"这个体裁独有的东西:work/probe/reduce 交的是产出与回报,
+    //   模型给它们开了 requireVerdict,它们交一份完全正常的回报也会判「回报缺 VERDICT 字面量」,
+    //   然后打回重做 —— 又一个重跑一万次都过不去的死锁(与 evidence 那条同构)。
+    out.requireVerdict = false
   }
   return out
 }

@@ -37,6 +37,21 @@ const KIND_ALIAS = {
   task: 'work', coding: 'work', code: 'work', dev: 'work',
   勘察: 'probe', 探查: 'probe', 调研: 'probe', 验证: 'verify', 校验: 'verify',
   检查: 'check', 索引: 'reduce', 汇总: 'reduce', 收口: 'reduce', 开发: 'work', 工作: 'work', 编码: 'work',
+  // 内网实测补充:下面这批常见近义词此前【全部被判不合法】,白烧一轮重问 ——
+  // 而上面那段注释自己论证过应该宽进(改错 kind 的代价 = 一轮重问;kind 不决定顺序,只有 deps 决定,
+  // 猜错的下游风险很小)。代码当时做的却是相反的事。
+  analysis: 'probe', analyze: 'probe', review: 'probe', audit: 'probe', inspect: 'probe', diagnose: 'probe',
+  discovery: 'probe', assess: 'probe',
+  design: 'work', refactor: 'work', implement: 'work', implementation: 'work', write: 'work', writing: 'work',
+  doc: 'work', docs: 'work', documentation: 'work', fix: 'work', feature: 'work', migrate: 'work',
+  build: 'check', run: 'check', lint: 'check', typecheck: 'check', smoke: 'check',
+  merge: 'reduce', consolidate: 'reduce', synthesize: 'reduce', synthesis: 'reduce', report: 'reduce',
+  分析: 'probe', 审查: 'probe', 审计: 'probe', 排查: 'probe', 梳理: 'probe', 勘查: 'probe', 调查: 'probe',
+  摸底: 'probe', 盘点: 'probe',
+  实现: 'work', 编写: 'work', 修复: 'work', 重构: 'work', 设计: 'work', 成文: 'work', 迁移: 'work', 文档: 'work',
+  复核: 'verify', 核实: 'verify', 自检: 'verify', 测试: 'verify',
+  构建: 'check', 冒烟: 'check',
+  汇总整理: 'reduce', 归纳: 'reduce', 蒸馏: 'reduce', 综述: 'reduce', 报告: 'reduce',
 }
 
 // ── 小工具(不引任何模块)────────────────────────────────────────────────────
@@ -170,17 +185,43 @@ function scanObjects(s) {
   return fallback
 }
 
+// 剥掉思考段。★这是内网 schemaFail 的头号来源:
+// 这个网关的模型思考【以 <think> 内联在 text part 里】,不走标准 reasoning part
+// (opencode.js 的 splitThink 注释里写着这是实测形态)。而决策链拿到的 raw 走的是 oc.sendMessage →
+// extractText,那条路【不剥 think】(splitThink 只挂在历史回放的 normalizeMessages 上)。
+// 于是下面 scanObjects 从整串第一个 { 开始扫,思考里随手写的草稿对象会【抢答】——
+// 模型真正给的答案在后面,却轮不到它。报出来的错(比如"nodes 是空数组")与它实际干的事毫无关系,
+// 原样回灌给模型,它自然改不对,于是"重跑 1~2 次然后转人工"。
+// 更隐蔽的一种:思考里回显了提示词模板(带 /* */ 注释,sanitizeJson 会把注释吃掉 → 模板可解析),
+// 那就不是报错而是【静默错答】—— 把模板里的占位文字当成决策理由贴给用户。
+// 与 opencode.js splitThink 同口径;两处各留一份是因为边界表禁止本文件 require 外部模块,改一处必须改另一处。
+function stripThink(s) {
+  let t = str(s)
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<(thinking|reasoning|analysis)>[\s\S]*?<\/\1>/gi, '')
+  const open = t.search(/<think(ing)?>|<reasoning>|<analysis>/i)
+  if (open >= 0) t = t.slice(0, open)   // 未闭合(流式截断/超长被切):其后全是思考,一并丢
+  return t
+}
+
 function extractJson(input) {
   if (input && typeof input === 'object') return isObj(input) ? input : null   // 桩/重放可能直接喂对象
   const s = str(input)
   if (!s) return null
-  // 有 ``` 围栏就先扫围栏里的:围栏外的解释文字里出现 {…} 是常态,先扫围栏能少一次误判
-  const fences = []
-  const re = /```[a-zA-Z]*\s*([\s\S]*?)```/g
-  let m
-  while ((m = re.exec(s))) fences.push(m[1])
-  for (const f of fences) { const v = scanObjects(f); if (v) return v }
-  return scanObjects(s)
+  // 先在【剥掉思考】的正文里找;找不到才回退扫原串 ——
+  // 弱模型偶尔把最终答案就写在 think 里面,不能因为剥得干净反而把唯一的答案丢了。
+  const stripped = stripThink(s)
+  const scan = (txt) => {
+    if (!txt || !txt.trim()) return null
+    // 有 ``` 围栏就先扫围栏里的:围栏外的解释文字里出现 {…} 是常态,先扫围栏能少一次误判
+    const fences = []
+    const re = /```[a-zA-Z]*\s*([\s\S]*?)```/g
+    let m
+    while ((m = re.exec(txt))) fences.push(m[1])
+    for (const f of fences) { const v = scanObjects(f); if (v) return v }
+    return scanObjects(txt)
+  }
+  return scan(stripped) || (stripped.length === s.length ? null : scan(s))
 }
 
 // ── coerce ───────────────────────────────────────────────────────────────
@@ -189,7 +230,13 @@ function toKind(v) {
   if (!k) return 'work'
   if (KINDS.indexOf(k) >= 0) return k
   const a = KIND_ALIAS[k] || KIND_ALIAS[str(v).trim()]
-  return a || k                              // 认不出来的原样留着 → 交给 validate 报错(代码不替它选 kind)
+  // ★认不出来的归到 work,不再原样留着让 validate 报错。
+  //   本文件开头那段注释早就论证过该宽进:"改错一个 kind 的代价是白跑一轮 60~90 秒的重问,
+  //   而 kind 本身不决定顺序(只有 deps 决定),猜错的下游风险很小" —— 代码当时做的却是相反的事,
+  //   实测 22 个常见近义词 22 个被拒。work 是最保守的落点:闸最全,收敛靠 gatesFor 按 kind 再放宽,
+  //   猜成 work 顶多是多几道闸,猜成 probe 才会漏掉该有的检查。
+  //   注意 nodes.js 的 makeNode 还有第二道同款硬闸,那道【保留】作纯防御(coerce 之后不该再出现非法值)。
+  return a || 'work'
 }
 function toMore(v) {
   const s = str(v).trim().toLowerCase()
