@@ -394,7 +394,15 @@ function composeNodeBrief(run, node) {
   }
   const verify = []
   if (ex.requireEvidence) verify.push('必须【真跑】构建/测试(壳层查命令流水:没有执行证据一律按"未验证"对待,读过代码不算验证)。')
-  if (ex.requireVerdict) verify.push('回报第一行必须是字面量 VERDICT: PASS|FAIL|PARTIAL;每项检查带两行 Command run: <实际跑的命令> / Output observed: <关键输出原文,copy-paste 不得转述> —— 没有 Command run 块的 PASS 会被壳层拒收。')
+  // ★判决走工具,不走格式。真机实测:一轮里 6 个核实节点全部栽在「回报缺 VERDICT 字面量」——
+  //   看它们的终答就明白了,模型写到"接下来我来写核实文档:"就收尾了,它压根没意识到最后要留一行特定格式的字。
+  //   这和发现块漏格式是同一个病:把判决当"记得写某种格式的文本"来要求,弱模型就是记不住,
+  //   而漏了之后壳层只能判它没干活 → 重做 → 还是没有 → failed。换工具之后不合规能当场退回重填。
+  if (ex.requireVerdict) verify.push('收尾前【必须调一次 MCP 工具 report_verdict】(nodeRef 用下面的上报凭据)——'
+    + '这是你这一片唯一的交付判据,不调等于没干。verdict 填 PASS/FAIL/PARTIAL;'
+    + '判 PASS 时 didWhat 写你实际做了什么、observed 写你看到的原文输出(说不出这两样的 PASS 壳层不收,会当场退回让你补)。'
+    + '\n    工具实在调不通,才在回答里留一行字面量 VERDICT: PASS|FAIL|PARTIAL 兜底,并附 Command run: / Output observed: 两行 ——'
+    + '但优先用工具:格式写错壳层只会判你"没给判决",然后整片重做。')
   if (ex.verifyCmd) verify.push('壳层收官时会替你跑一次 `' + str(ex.verifyCmd) + '`,退出码即判据 —— 交之前你自己先跑通。')
   const retry = num(n.attempt) > 0 && arr(n.result && n.result.exitReport).length
     ? arr(n.result.exitReport).filter((x) => x && !x.ok).map((x) => '  · ' + str(x.kind) + ': ' + oneLine(x.detail, 160)).join('\n')

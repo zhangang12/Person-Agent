@@ -127,6 +127,26 @@ const TOOLS = [
       required: ['nodeRef', 'findings'],
     },
   },
+  {
+    name: 'report_verdict',
+    description:
+      '【编排核实/检查节点专用】给出你这一片的判决。壳层【只认这个工具】的结果作为收官判据。\n' +
+      '【什么时候调】你核完了、准备收尾的时候,调一次就走。这是你这一片唯一的交付物 —— 不调等于没干。\n' +
+      '【判什么】PASS = 你要核的那条说法【成立】;FAIL = 不成立,或者证据不足以支持它;PARTIAL = 部分成立(范围/严重度和它说的不一样)。\n' +
+      '【判 PASS 要多说两句】didWhat 写你实际做了什么(打开了哪个文件哪一行 / 跑了什么命令 / 调了什么接口),observed 写你看到了什么(原文、输出,别转述)。\n' +
+      '  这两样说不出来的 PASS 是想当然,壳层不收 —— 会当场退回让你补。FAIL / PARTIAL 不要求(找不到证据本来就是判 FAIL 的理由)。\n' +
+      '【你的 nodeRef】写在任务指令的【上报凭据】一栏里,原样抄。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        nodeRef: { type: 'string', description: '任务指令【上报凭据】那一栏给你的字符串,原样抄' },
+        verdict: { type: 'string', enum: ['PASS', 'FAIL', 'PARTIAL'], description: 'PASS=说法成立;FAIL=不成立或证据不足;PARTIAL=部分成立' },
+        didWhat: { type: 'string', description: '你实际做了什么来核它(判 PASS 必填)' },
+        observed: { type: 'string', description: '你看到了什么 —— 原文/输出,别转述(判 PASS 必填)' },
+      },
+      required: ['nodeRef', 'verdict'],
+    },
+  },
 ]
 
 async function callTool(name, a) {
@@ -186,6 +206,13 @@ async function callTool(name, a) {
       + (r.rejected ? ',' + r.rejected + ' 条没收(太笼统、核不动 —— 要具体到能落地到文件/行号/条件)' : '')
       + (r.dupes ? ',' + r.dupes + ' 条别的片已经报过了(不会重复派人核)' : '')
       + '。壳层会逐条派新眼睛去核,你不用管了,接着交你的回报。'
+  }
+  if (name === 'report_verdict') {
+    const ref = String(a.nodeRef || '').trim()
+    if (!ref) return '需要 nodeRef —— 它写在你的任务指令【上报凭据】那一栏,原样抄过来。'
+    const r = await relayPost('/orch/verdict', { nodeRef: ref, verdict: a.verdict, didWhat: a.didWhat, observed: a.observed })
+    if (r.error) return '判决没收下:' + r.error
+    return '判决已记录:' + r.verdict + '。这一片的收官判据就是它,你可以收尾了(回答里再简单说一句结论即可)。'
   }
   throw new Error('未知工具: ' + name)
 }

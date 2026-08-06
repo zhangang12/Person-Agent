@@ -331,6 +331,13 @@ module.exports = function initMail(ctx) {
             try { return reply(S.orch.reportFindings(ref, list)) }
             catch (e) { return reply({ error: e.message }) }
           }
+          // 核实员上报判决:MCP report_verdict → 这里 → 状态机 NODE_VERDICT(与 /orch/findings 同构)
+          if (req.url === '/orch/verdict') {
+            if (!S.orch || typeof S.orch.reportVerdict !== 'function') return reply({ error: '编排引擎没在跑' })
+            if (!String(a.nodeRef || '').trim()) return reply({ error: '缺少 nodeRef' })
+            try { return reply(S.orch.reportVerdict(String(a.nodeRef), a.verdict, a.didWhat, a.observed)) }
+            catch (e) { return reply({ error: e.message }) }
+          }
           // 工作流成果回取:不再一次性 —— Agent 拿 id 查状态/取成果全文(注册表 + 存档),继续在对话里用
           if (req.url === '/orch/result') {
             const regs = S.wfRegistry ? [...S.wfRegistry.values()] : []

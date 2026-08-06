@@ -47,7 +47,10 @@ const NARROW_RE = new RegExp([
   '(修复|解决)一下?.{0,20}(bug|BUG|报错|异常|问题)$',
 ].join('|'))
 const AUDIT_RE = /排查|审查|审计|评估|检查|测试|验证|复核|找出?问题|有什么问题|有没有问题|漏洞|风险点|回归/
-const SURVEY_RE = /探索|调研|摸底|摸清|盘点|梳理|理清|搞清|综述|成文|调查|研究|对比|清单|需求分析|技术方案|现状/
+// ★分析 / 报告 这两个词是重写分类器时【漏掉的】(老的 DOC_GOAL_RE 里本来有)。
+// 真机第二轮的目标原文就是「分析当前这个项目」—— 8 个字,一个关键词都不命中,
+// 掉进长度兜底判成 impl:不铺视角、不补汇总。这次是模型自己给了 reduce 才没露馅。
+const SURVEY_RE = /探索|调研|摸底|摸清|盘点|梳理|理清|搞清|综述|成文|调查|研究|对比|清单|分析|报告|需求分析|技术方案|现状/
 const IMPL_RE = /实现|开发|重构|迁移|迁到|迁往|接入|联调|上线|打包|部署|写一个|做一个|改造|升级到/
 
 // 兜底(什么关键词都没命中)时的最短长度。"就问一句""看下这个"这类一句话请求不该被铺成 6 片 ——
@@ -63,6 +66,10 @@ function goalShape(goal) {
   // 白名单在前、IMPL 在后:「重构后排查一遍」「迁移前先摸清依赖」这类复合目标,
   // 真正的活是排查/摸清,实现只是背景 —— 按后者拆会拆成 0 片。
   if (AUDIT_RE.test(g)) return 'audit'
+  // ★"实现/开发/重构…"【开头】的一律按实现算,即使句子里还有"分析"这类词 ——
+  //   「实现数据分析模块」的主谓是"实现",分析只是名词的一部分;而「重构后梳理一遍」这种
+  //   把实现放在时间状语里的写法,主谓在后面。中文里这条位置规律比关键词本身更可靠。
+  if (IMPL_RE.test(g) && IMPL_RE.test(g.slice(0, 4))) return 'impl'
   if (SURVEY_RE.test(g)) return 'survey'
   if (IMPL_RE.test(g)) return 'impl'
   // ★关键词全没命中才走长度兜底,且兜底站在拆宽这边(见上面的代价不对称)。
@@ -75,12 +82,20 @@ function isDocGoal(goal) { return goalShape(goal) !== 'impl' }
 /** 这个目标是不是"该拆宽"型 */
 function isWideGoal(goal) { return goalShape(goal) !== 'impl' }
 
-/** 会产出文件的节点(reduce 要汇总的就是这些) */
+// 会产出文件的节点(reduce 要汇总的就是这些)。
+// 【为什么不能只看声明的 artifacts】真机实测 2026-08-07:规划器把 4 个勘察片全给成 kind:'probe',
+// 而 gatesFor 对 probe 强制 artifacts=[](勘察的交付就是回报本身,不该硬要求落盘)。
+// 于是这四片【落了盘也不算产出】—— needsReduce 数到 0 个 producer 不补汇总,
+// extendReduceDeps 也接不上它们,那几份文档没有任何人读。
+// 所以判据改成"声明了产出 或 实际写了文件",两者取其一。
+// verify/check 排除掉:它们按设计是只读的,而 doDispatch 会把没写归属的 verify 关进临时目录 ——
+// 那里的临时文件会混进 result.files,认它们当产出就会把一堆 /tmp 路径塞进汇总的 deps。
+const NON_PRODUCER = ['reduce', 'verify', 'check']
 function producers(nodes) {
   return arr(nodes).filter((n) => {
-    if (!n || str(n.kind) === 'reduce') return false
-    const ex = n.exit || {}
-    return arr(ex.artifacts).length > 0
+    if (!n || NON_PRODUCER.indexOf(str(n.kind)) >= 0) return false
+    if (arr((n.exit || {}).artifacts).length > 0) return true
+    return arr(n.result && n.result.files).length > 0
   })
 }
 function hasReduce(nodes) { return arr(nodes).some((n) => n && str(n.kind) === 'reduce') }
@@ -330,9 +345,9 @@ function makeAuditSpec(run, reduceNode) {
       '  · 各片之间有没有互相矛盾却被抹平的地方?找出来。',
       '  ★这一问是你的主要价值。找不到漏洞不是本事,是没找 —— 一份覆盖了几十个文件的汇总不可能没有缺口。',
       '',
-      '【收尾】最后一行必须是 VERDICT: PASS 或 VERDICT: FAIL。',
-      '  两问里只要有【实质性】问题就判 FAIL,并把待补清单写清楚(哪一条、缺什么、去哪儿补)。',
-      '  措辞含糊的 PASS 等同于没验 —— 判 PASS 就要说清楚你实际核了哪 3 条、核的结果是什么。',
+      '【收尾】调一次 MCP 工具 report_verdict 给出判决(PASS / FAIL)。',
+      '  两问里只要有【实质性】问题就判 FAIL,并在回答里把待补清单写清楚(哪一条、缺什么、去哪儿补)。',
+      '  措辞含糊的 PASS 等同于没验 —— 判 PASS 时 didWhat 要说清你实际核了哪 3 条、observed 写核的结果。',
     ].join('\n'),
   }
 }
@@ -504,8 +519,9 @@ function makeFindingVerifySpec(run, srcNode, f, idx, lens) {
       '  ★这一条可能还有另一个人从别的角度在核。你【不要】替他把那个角度也想一遍 ——',
       '    两个人各走各的路才是两票;你顺带把他的活也干了,就退化成一票了。',
       '',
-      '【收尾】最后一行必须是 VERDICT: PASS(这条成立)或 VERDICT: FAIL(不成立/证据不足)。',
-      '  上面一行写清楚:你实际做了什么来核它、看到了什么。没做过就说没做过,不许写成做过的样子。',
+      '【收尾】调一次 MCP 工具 report_verdict 给出判决(PASS=这条成立 / FAIL=不成立或证据不足 / PARTIAL=部分成立)。',
+      '  判 PASS 要同时写清 didWhat(你实际做了什么来核它)与 observed(你看到了什么原文/输出)——',
+      '  没做过就说没做过,不许写成做过的样子。调完工具再简单回一句结论即可。',
     ].join('\n'),
   }
 }

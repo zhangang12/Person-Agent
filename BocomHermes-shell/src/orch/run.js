@@ -147,6 +147,7 @@ function applyEvent(run, ev, ctx) {
     case 'WORKER_CARD_GONE': onCardGone(t); break
     case 'TIMER': onTimer(t); break
     case 'NODE_FINDINGS': onNodeFindings(t); break
+    case 'NODE_VERDICT': onNodeVerdict(t); break
     case 'EXIT_RESULT': onExitResult(t); break
     case 'BUDGET_EXCEEDED': onBudgetExceeded(t); break
     default: break                              // 不认识的事件一律吸收(老存档回放时不炸)
@@ -548,6 +549,18 @@ function onNodeFindings(t) {
   t.changed = true
 }
 
+// 核实员调 MCP 工具 report_verdict 上报判决 → relay → 这里。
+// 判决必须【在收官之前】就落到节点上:evalExit 读的是 n.result,不是当时的消息流。
+function onNodeVerdict(t) {
+  const n = findNode(t.r, t.e.nodeId)
+  if (!n) return
+  const v = str(t.e.verdict).toUpperCase()
+  if (['PASS', 'FAIL', 'PARTIAL'].indexOf(v) < 0) return
+  n.result.verdict = v
+  n.result.verdictSrc = 'tool'
+  t.changed = true
+}
+
 function shapeVerifyFindings(t, n) {
   const r = t.r
   if (str(n.kind) === 'verify') return false                 // 核实员自己报的发现不再往下派(不然会无限套娃)
@@ -621,7 +634,7 @@ function addNodes(t, made, origin, wave) {
     n.brief = str(n.brief)
     n.cardId = n.cardId || null; n.wcId = n.wcId || null; n.sid = n.sid || null
     n.queuedAt = num(n.queuedAt); n.startedAt = num(n.startedAt); n.lastTurnAt = num(n.lastTurnAt); n.settledAt = num(n.settledAt)
-    n.result = Object.assign({ final: '', files: [], rounds: 0, aborted: false, exitReport: [], verdict: '', cmdExit: null, contractMiss: [], unverified: false, findings: [] }, n.result || {})
+    n.result = Object.assign({ final: '', files: [], rounds: 0, aborted: false, exitReport: [], verdict: '', cmdExit: null, contractMiss: [], unverified: false, findings: [], verdictSrc: '' }, n.result || {})
     n.reason = str(n.reason); n.droppedReason = str(n.droppedReason)
     r.nodes.push(n)
     r.budget.spawned += 1

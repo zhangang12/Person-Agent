@@ -118,6 +118,11 @@ try {
     '  必填 nodeRef(只认 nodeId 的话两个工作流同时跑会把发现记错人)')
   ok(!!rf && (rf.inputSchema?.required || []).includes('findings'), '  必填 findings')
   ok(!!rf && rf.inputSchema?.properties?.findings?.items?.required?.includes('what'), '  每条发现必填 what(说不清是什么就核不动)')
+  ok(on.includes('report_verdict'), '编排 MCP 亮出 report_verdict(判决从格式约定换成工具调用)')
+  const rv = (ol.result?.tools || []).find((t) => t.name === 'report_verdict')
+  ok(!!rv && (rv.inputSchema?.required || []).includes('verdict'), '  必填 verdict')
+  ok(!!rv && JSON.stringify(rv.inputSchema?.properties?.verdict?.enum || []) === JSON.stringify(['PASS', 'FAIL', 'PARTIAL']),
+    '  verdict 是枚举(自由文本会让机判又变回猜)')
   const odup = on.filter((n, i) => on.indexOf(n) !== i)
   ok(odup.length === 0, '  编排 MCP 工具名零重复' + (odup.length ? ' —— 重了: ' + odup.join(',') : ''))
   // 没起壳层时调它必须给出【人能看懂的】失败,而不是抛栈

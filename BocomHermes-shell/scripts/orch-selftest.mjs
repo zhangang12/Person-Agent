@@ -1011,6 +1011,13 @@ section('用例6r:★宽度归代码 —— 「拆的分片不够多」的五条
     SHAPE.goalShape('排查订单模块') === 'audit', SHAPE.goalShape('排查订单模块'))
   ok('  「重构后排查一遍」判为 audit(复合目标里真正的活是排查,按 impl 走会拆成 0 片)',
     SHAPE.goalShape('重构后排查一遍') === 'audit', SHAPE.goalShape('重构后排查一遍'))
+  // ★真机第二轮的目标原文。重写分类器时把"分析"这个词漏了(老的 DOC_GOAL_RE 里本来有),
+  //   8 个字一个关键词都不命中 → 掉进长度兜底判成 impl → 不铺视角、不补汇总。
+  //   那一轮是模型自己给了 reduce 才没露馅。
+  ok('★「分析当前这个项目」判为 survey(真机原文 —— 重写分类器时把"分析"漏了)',
+    SHAPE.goalShape('分析当前这个项目') === 'survey', SHAPE.goalShape('分析当前这个项目'))
+  ok('★但「实现数据分析模块」仍是 impl(开头是"实现" → 主谓是建造,分析只是名词的一部分)',
+    SHAPE.goalShape('实现数据分析模块') === 'impl', SHAPE.goalShape('实现数据分析模块'))
 
   // ── ① 宽度不再绑并发旋钮 ───────────────────────────────────────────────
   const wt = (c) => SHAPE.widthTarget({ goal: '排查全站表单问题', concurrency: c })
@@ -1187,6 +1194,98 @@ section('用例6s:★发现走工具上报 —— 格式约定的静默失败换
       /report_findings/.test(brief) && /退回/.test(brief))
     ok('  点破正文格式那条的真实风险(格式写错你不会收到任何提示)',
       /并不会收到任何提示/.test(brief))
+  }
+})
+
+section('用例6v:★真机第二轮三处硬伤(2026-08-07 内网实测)', () => {
+  const SHAPE = tryReq('../src/orch/shapes.js')
+  need(RUN, 'src/orch/run.js'); need(NODES, 'src/orch/nodes.js'); need(SHAPE, 'src/orch/shapes.js')
+
+  // ── ① 汇总依赖了【已被撤掉】的节点 → 在上游之前就跑完了 ──────────────────
+  // 现场:用户打回方案 → 重规划把 n3~n8 全 skipped、另给 n10~n14,
+  //       但汇总节点 n14 的 deps 还照抄旧编号写着 n3,n4,n5,n6。
+  //       这些 id 确实存在(只是 skipped),解析成功;而 readyNodes 把 skipped 当"已终结" ——
+  //       汇总当场就绪、和 4 个勘察片【同时开跑】,5 分钟"跑完"交了一份 447 行报告,
+  //       那时上游一个字都还没产出。这就是"出的文档效果不好"的一条硬成因:汇总只能自己现编。
+  {
+    const dead = mkNode({ id: 'n3', state: 'skipped' })
+    const alive = mkNode({ id: 'n9', state: 'running' })
+    const run = mkRun({ goal: '分析当前这个项目', nodes: [dead, alive] })
+    const v = NODES.validateNodeSpecs(
+      [{ title: '汇总', goal: '把前面的合起来', kind: 'reduce', deps: ['n3'], writeScope: ['docs/z.md'], artifacts: ['docs/z.md'] }],
+      run, { mkId: (p) => p + '99', wave: 1, origin: 'replan', at: T0 })
+    ok('★依赖一个已撤掉的节点 → 判不合法(否则它立刻就绪,在上游之前先跑完)',
+      v.nodes.length === 0 && v.errors.some((e) => /撤掉|取消/.test(e)), { nodes: v.nodes.length, errors: v.errors })
+    ok('  错误话术告诉模型该怎么改(依赖本次新给出的那些)',
+      v.errors.some((e) => /本次新给出/.test(e)), v.errors)
+    const ok2 = NODES.validateNodeSpecs(
+      [{ title: '汇总', goal: 'g', kind: 'reduce', deps: ['n9'], writeScope: ['docs/z.md'], artifacts: ['docs/z.md'] }],
+      run, { mkId: (p) => p + '98', wave: 1, origin: 'replan', at: T0 })
+    ok('  依赖还活着的节点当然照常放行(这条修的是"依赖死节点",不是收紧依赖)', ok2.nodes.length === 1, ok2.errors)
+  }
+
+  // ── ② 勘察片落了盘也不算"产出",汇总接不上它们 ──────────────────────────
+  // gatesFor 对 probe 强制 artifacts=[](勘察的交付就是回报本身,不该硬要求落盘)。
+  // 于是规划器把 4 个勘察片全给成 probe 时,producers 数到 0 —— 不补汇总、也接不上,
+  // 那几份真的写在盘上的文档没有任何人读。
+  {
+    const probeWrote = { id: 'p1', kind: 'probe', state: 'verified', deps: [],
+      exit: { artifacts: [] }, result: { files: ['/proj/docs/a.md'] } }
+    const probeEmpty = { id: 'p2', kind: 'probe', state: 'verified', deps: [], exit: { artifacts: [] }, result: { files: [] } }
+    ok('★probe 实际写了文件 → 算产出(判据从"声明了 artifacts"放宽成"声明了 或 真写了")',
+      SHAPE.producers([probeWrote]).length === 1)
+    ok('  什么都没写的 probe 不算', SHAPE.producers([probeEmpty]).length === 0)
+    // verify 会被关进临时目录,它的 result.files 里是 /tmp 路径 —— 认它当产出会把临时文件塞进汇总
+    const verifyTmp = { id: 'v1', kind: 'verify', state: 'verified', deps: [], exit: { artifacts: [] }, result: { files: ['/tmp/x/note.md'] } }
+    ok('★只读节点(verify/check)一律不算产出(它们写的是临时目录,认了会把 /tmp 塞进汇总的 deps)',
+      SHAPE.producers([verifyTmp]).length === 0)
+    ok('  两个落了盘的勘察片 → 该补汇总了(修前:producers=0,永远不补)',
+      !!SHAPE.needsReduce({ id: 'R1', goal: '分析当前这个项目', nodes: [probeWrote, Object.assign({}, probeWrote, { id: 'p3' })] }))
+  }
+
+  // ── ③ 核实节点全栽在「回报缺 VERDICT 字面量」──────────────────────────
+  // 现场:一轮里 6 个核实节点【全部】判 verdict-fail,逐个重做,重做完还是没有,最后 failed。
+  // 看终答就明白:模型写到"Now let me write the verification document:"就收尾了 ——
+  // 它压根没意识到最后要留一行特定格式的字。与发现块漏格式同一个病。
+  {
+    const mkV = (res) => ({ id: 'v1', kind: 'verify', writeScope: [], contract: [],
+      exit: { artifacts: [], requireEvidence: false, requireVerdict: true, verifyCmd: '', noEmpty: false },
+      result: Object.assign({ final: '', files: [], exitReport: [] }, res) })
+    const probe = { statSync: () => ({ size: 1, isDirectory: () => false }) }
+    const gate = (n) => (NODES.evalExit(n, probe).report.find((x) => x.kind === 'verdict') || {})
+
+    ok('★真机原样的终答(半截话、没有 VERDICT)→ 仍然判不过',
+      gate(mkV({ final: 'Now let me write the verification document:' })).ok === false)
+    ok('★工具上报了判决 → 过(不再要求正文里有那行字)',
+      gate(mkV({ final: '核完了,详见上文', verdict: 'PASS', verdictSrc: 'tool' })).ok === true,
+      gate(mkV({ final: 'x', verdict: 'PASS', verdictSrc: 'tool' })).detail)
+    ok('  判定明写"工具上报"(面板要看得出判据是哪来的)',
+      /工具上报/.test(gate(mkV({ final: 'x', verdict: 'FAIL', verdictSrc: 'tool' })).detail || ''))
+    ok('★正文那条降级路径原样保留(不是二选一删掉一条)',
+      gate(mkV({ final: 'VERDICT: PASS\nCommand run: npm test\nOutput observed: ok' })).ok === true)
+    ok('  没跑就写 PASS 照样拒(闸没被放松)',
+      gate(mkV({ final: 'VERDICT: PASS' })).ok === false)
+    ok('  verdict 字段有值但不是工具来的 → 不认(只有工具那条路能免正文)',
+      gate(mkV({ final: '没有判决行', verdict: 'PASS', verdictSrc: '' })).ok === false)
+
+    // 事件:判决必须在收官【之前】落到节点上 —— evalExit 读的是 n.result,不是当时的消息流
+    const run = mkRun({ nodes: [mkNode({ id: 'n1', kind: 'verify', state: 'running' })] })
+    const o = step(run, { type: 'NODE_VERDICT', nodeId: 'n1', verdict: 'pass' }, '6v')
+    ok('★NODE_VERDICT 落到节点上,且大小写归一', byId(o.run, 'n1').result.verdict === 'PASS'
+      && byId(o.run, 'n1').result.verdictSrc === 'tool', byId(o.run, 'n1').result)
+    const bad = step(run, { type: 'NODE_VERDICT', nodeId: 'n1', verdict: '大概行吧' }, '6v')
+    ok('  非法判决值一律忽略(不写脏值进闸门判据)', !byId(bad.run, 'n1').result.verdict, byId(bad.run, 'n1').result.verdict)
+  }
+
+  // 指令里要教它调工具
+  {
+    const RENDER = tryReq('../src/orch/render.js')
+    const brief = RENDER.composeNodeBrief(mkRun({ id: 'R-9', goal: '排查', nodes: [] }),
+      mkNode({ id: 'n7', kind: 'verify', goal: '核一条', exit: { artifacts: [], requireEvidence: false, requireVerdict: true, verifyCmd: '', noEmpty: true } }))
+    ok('★核实指令改成"调 report_verdict",并说清 PASS 要交代做了什么',
+      /report_verdict/.test(brief) && /didWhat/.test(brief) && /observed/.test(brief),
+      (brief.match(/report_verdict.{0,60}/) || [])[0])
+    ok('  也说清了不调的后果(判你没给判决 → 整片重做)', /整片重做/.test(brief))
   }
 })
 

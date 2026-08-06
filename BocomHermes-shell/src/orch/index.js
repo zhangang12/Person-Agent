@@ -555,6 +555,29 @@ function makeOrch(deps) {
       if (fresh.length) send(runId, { type: 'NODE_FINDINGS', nodeId, findings: fresh })
       return { ok: true, accepted: fresh.length, rejected: Math.max(0, raw.length - clean.length), dupes: Math.max(0, clean.length - fresh.length) }
     },
+    /**
+     * 核实员调 MCP 工具 report_verdict 上报判决。与 reportFindings 同一条链路、同一套 nodeRef。
+     * 【为什么 PASS 要多问两句】原来的规矩是"PASS 必须带 Command run 块",本意是挡住"没跑就写 PASS"。
+     * 换成工具之后这条不能丢,只是从"全文里搜一个字符串"变成"两个必填字段" ——
+     * 说不出自己做了什么、看到了什么,那个 PASS 就是想当然。FAIL/PARTIAL 不设这个门槛:
+     * 判 FAIL 本来就常常是因为"没找到证据",要求它拿出证据才能说没证据是自相矛盾。
+     */
+    reportVerdict(nodeRef, verdict, didWhat, observed) {
+      const ref = str(nodeRef).trim()
+      const i = ref.lastIndexOf(':')
+      if (i <= 0) return { error: 'nodeRef 形如 "<runId>:<nodeId>",请原样抄任务指令里的【上报凭据】' }
+      const run = runs.get(ref.slice(0, i))
+      if (!run) return { error: '找不到这条编排(可能已经结束了)' }
+      const node = findNode(run, ref.slice(i + 1))
+      if (!node) return { error: '这条编排里没有节点 ' + ref.slice(i + 1) }
+      const v = str(verdict).toUpperCase().trim()
+      if (['PASS', 'FAIL', 'PARTIAL'].indexOf(v) < 0) return { error: 'verdict 只能是 PASS / FAIL / PARTIAL' }
+      if (v === 'PASS' && (!str(didWhat).trim() || !str(observed).trim())) {
+        return { error: '判 PASS 必须同时说清 didWhat(你实际做了什么来核它)与 observed(你看到了什么原文/输出)—— 两样都说不出来的 PASS 是想当然,壳层不收' }
+      }
+      send(run.id, { type: 'NODE_VERDICT', nodeId: node.id, verdict: v })
+      return { ok: true, verdict: v }
+    },
     // ── 用户动作(IPC)────────────────────────────────────────────────
     approve(runId, edits) { return send(runId, { type: 'USER_APPROVE', edits: edits || null }) },
     reject(runId, note) { return send(runId, { type: 'USER_REJECT', note: str(note) }) },

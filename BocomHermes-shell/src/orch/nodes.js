@@ -65,6 +65,9 @@ function gatesFor(kind, g) {
   return out
 }
 const ORIGINS = ['plan', 'replan', 'user', 'resume']
+// 依赖这些状态的节点 = 没有依赖:它们不会再产出任何东西,而 readyNodes 又把它们当已终结,
+// 于是依赖方立刻就绪 —— 真机上让汇总节点在全部上游之前先跑完了(见 validateNodeSpecs ② 的注释)。
+const DEAD_DEP = ['skipped', 'cancelled']
 // 未终结 = 还可能往磁盘上写字。写归属两两不交只对这些节点设防:
 // 已 verified/failed/skipped 的节点早写完了,新节点覆盖它的归属是合法的(修补/返工本来就该这么干)。
 const ALIVE = ['pending', 'queued', 'running', 'settled', 'rejected']
@@ -258,7 +261,7 @@ function makeNode(spec, ctx) {
     goneCredit: Math.max(0, num(first(s.goneCredit, 1), 1)),
     cardId: null, wcId: null, sid: null,
     queuedAt: 0, startedAt: 0, lastTurnAt: 0, settledAt: 0,   // 一个时间戳只承担一件事
-    result: { final: '', files: [], rounds: 0, aborted: false, exitReport: [], verdict: '', cmdExit: null, contractMiss: [], unverified: false, findings: [] },
+    result: { final: '', files: [], rounds: 0, aborted: false, exitReport: [], verdict: '', cmdExit: null, contractMiss: [], unverified: false, findings: [], verdictSrc: '' },
     reason: '',
     droppedReason: '',
   }
@@ -340,6 +343,21 @@ function validateNodeSpecs(specs, run, ctx) {
       else if (/^\d+$/.test(key)) { const idx = parseInt(key, 10); if (idx >= 1 && idx <= recs.length) hit = recs[idx - 1].id }
       if (!hit) { r.bad = true; errors.push(r.label + ' 的 deps 里「' + key + '」找不到对应节点 —— 依赖只能写已有节点的 id,或本次给出的节点标题'); continue }
       if (hit === r.id) { r.bad = true; errors.push(r.label + ' 依赖了自己 —— deps 里去掉它'); continue }
+      // ★依赖一个【已被撤掉】的节点 = 没有依赖(真机实测 2026-08-07)
+      // 现场:用户打回方案 → 重规划把 n3~n8 全 skipped、另给了 n10~n14,但汇总节点 n14 的 deps
+      // 还照抄旧编号写着 n3,n4,n5,n6。这些 id 确实存在(只是 skipped),于是解析成功 ——
+      // 而 readyNodes 把 skipped 当"已终结",汇总当场就绪、和 4 个勘察片【同时开跑】,
+      // 5 分钟"跑完"交了一份 447 行报告:那时上游一个字都还没产出。
+      // 这正是"出的文档效果不好"的一条硬成因 —— 汇总的输入根本不存在,它只能靠自己现编。
+      // 拦在校验这一层而不是 readyNodes:skipped 当终结是【有意的】(撤掉的节点不该永久堵死图),
+      // 改那里会让"撤片"重新变成死锁。真正错的是"新节点依赖一个已经不会产出任何东西的节点"。
+      const dead = existing.find((n) => n && str(n.id) === hit && DEAD_DEP.indexOf(str(n.state)) >= 0)
+      if (dead) {
+        r.bad = true
+        errors.push(r.label + ' 依赖了已经被撤掉/取消的节点 ' + hit + '(状态 ' + str(dead.state) + ')—— 它不会再产出任何东西,依赖它等于没有依赖。'
+          + '请改成依赖【本次新给出的】那些节点(写它们的标题或序号),或者去掉这条依赖。')
+        continue
+      }
       if (out.indexOf(hit) < 0) out.push(hit)
     }
     r.deps = out
@@ -592,9 +610,18 @@ function evalExit(node, probe) {
     else add('evidence', true, '本节点没有写归属(不写任何文件),没有可跑的构建/测试 —— 证据闸不适用,跳过', true)
   }
 
-  // ⑤ verdict:要 VERDICT 字面量,且 PASS 必须带 Command run 块
-  const pv = parseVerdict(res.final)
-  if (exit.requireVerdict) add('verdict', !pv.rejectWhy, pv.rejectWhy || ('VERDICT: ' + pv.verdict))
+  // ⑤ verdict:结构化上报优先,正文里的 VERDICT 字面量降级兜底
+  //
+  // 【为什么加这条工具路】真机实测 2026-08-07:一轮里 6 个核实节点【全部】栽在
+  // 「回报缺 VERDICT 字面量」,然后逐个重做、重做完还是没有,最后 failed。
+  // 看它们的终答就明白了 —— 模型写到"Now let me write the verification document:"就收尾了,
+  // 它压根没意识到最后要留一行特定格式的字。这和发现块漏格式是【同一个病】:
+  // 把判决当成"记得写某种格式的文本"来要求,弱模型就是记不住;而漏了之后壳层只能判它没干活。
+  // 换成工具调用,遵从度高得多,而且不合规当场就能退回让它重填(比如 PASS 却说不出做了什么)。
+  // 正文那条一个字不改地留着 —— 它是降级路径,不是被替换掉。
+  const tool = res.verdictSrc === 'tool' && str(res.verdict) ? { verdict: str(res.verdict), rejectWhy: '' } : null
+  const pv = tool || parseVerdict(res.final)
+  if (exit.requireVerdict) add('verdict', !pv.rejectWhy, pv.rejectWhy || ('VERDICT: ' + pv.verdict + (tool ? '(工具上报)' : '')))
 
   // ⑥ verifyCmd:退出码即判据
   let cmdExit = null
