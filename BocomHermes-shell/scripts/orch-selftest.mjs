@@ -809,6 +809,32 @@ section('用例6j:拆窄了打回重问一次(且只一次)', () => {
   ok('  那一批窄节点没留在图上(否则会跟重问的结果并存)', out.run.nodes.length === 0, out.run.nodes.map((n) => n.title))
   ok('  没有进入待批准(还没定稿)', out.run.phase !== 'awaiting-approval', out.run.phase)
 
+  // ★零节点收口也要过宽度这一关(真机第一轮就撞上了:
+  //   模型只要答 nodes:[] + more:'no',走的是"不值得拆"那条 early return —— 排在宽度检查【之前】,
+  //   于是拆宽的强制完全够不到,run 直接 0 节点收口。276 条测试当时一条都没红,说明这条路径没人覆盖。)
+  {
+    const run0 = mk()
+    const out0 = step(run0, { type: 'DECIDED', decisionId: 'd1', point: 'plan', ok: true,
+      data: { needGrounding: false, nodes: [], more: 'no', why: '一个节点就能干完' } }, '6j')
+    ok('★答"不值得拆"也要先被打回问一次(该拆宽的目标上,这通常是判断失误)',
+      has(out0.effects, 'decide') && out0.run.phase !== 'done', { fx: ty(out0.effects), phase: out0.run.phase })
+    ok('  重问同样带 too-narrow', (of(out0.effects, 'decide')[0] || {}).event === 'too-narrow')
+    // 但它坚持就认 —— 有时"不值得拆"是硬事实(实测:目标里的东西根本不在当前工作目录)
+    out0.run.pendingDecision = { id: 'd9', point: 'plan', event: 'too-narrow', nodeId: '', at: T0 }
+    const out1 = step(out0.run, { type: 'DECIDED', decisionId: 'd9', point: 'plan', ok: true,
+      data: { needGrounding: false, nodes: [], more: 'no', why: '目标里的目录不在这个工作区' } }, '6j')
+    ok('★它坚持就认(硬事实不该被代码硬掰:实测遇到过"目录根本不在工作区")', out1.run.phase === 'done', out1.run.phase)
+    ok('  收口理由保留模型给的原话', /不在这个工作区/.test(String(out1.run.result.summary || '')), out1.run.result)
+  }
+  // 非"该拆宽"型目标不打回(实现类任务说不值得拆就是不值得拆)
+  {
+    const runImpl = mkRun({ goal: '把订单服务从 v1 迁到 v2', concurrency: 4, phase: 'planning', nodes: [],
+      pendingDecision: { id: 'd1', point: 'plan', event: 'start', nodeId: '', at: T0 } })
+    const o = step(runImpl, { type: 'DECIDED', decisionId: 'd1', point: 'plan', ok: true,
+      data: { needGrounding: false, nodes: [], more: 'no', why: '一个节点够' } }, '6j')
+    ok('实现类目标答不值得拆 → 直接认,不啰嗦', o.run.phase === 'done', o.run.phase)
+  }
+
   // 第二次还是窄就认了 —— 不跟模型死磕,否则预算烧光还开不了工
   const run2 = out.run
   run2.pendingDecision = { id: 'd2', point: 'plan', event: 'too-narrow', nodeId: '', at: T0 }

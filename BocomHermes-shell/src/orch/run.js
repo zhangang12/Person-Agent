@@ -260,6 +260,16 @@ function onPlanDecided(t, dec, data) {
   const specs = arr(data.nodes)
   if (!specs.length) {
     if (str(data.more) === 'no') {
+      // ★"不值得拆"对【该拆宽的目标】也要打回问一次 —— 这条 early return 排在下面的宽度检查之前,
+      //   于是模型只要说一句"不值得拆",拆宽的强制就完全够不到(真机第一轮就撞上了)。
+      //   探索/排查/成文类目标上,"一个节点就够"通常是判断失误而不是任务真的小;但也可能是真的不该拆
+      //   (比如目标里的东西根本不在当前工作目录 —— 实测遇到过),所以只问一次,它坚持就认。
+      if (SHAPE.isWideGoal(r.goal) && !r.budget.shapeReasked) {
+        r.budget.shapeReasked = 1
+        t.eff.push({ type: 'notify', level: 'info', text: '模型说不值得拆,但这是个该拆宽的目标 —— 再问一次(它坚持就按它的来)' })
+        startDecision(t, 'plan', 'too-narrow', '')
+        return
+      }
       // 模型判定"不值得拆":这是它的合法答案,直接收口(index.js 会顺手派一张普通工作流卡把活干了)
       r.phase = 'done'; r.phaseAt = t.at
       r.result = { summary: str(data.why) || '模型判定这个目标不值得拆成多个节点', deliverables: [], gaps: [] }
