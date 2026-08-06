@@ -128,4 +128,122 @@ function tooNarrow(run, madeNodes) {
   return { cap, made: real.length, parallel: rootless.length }
 }
 
-module.exports = { isDocGoal, isWideGoal, producers, hasReduce, needsReduce, makeReduceSpec, reducePath, tooNarrow, DOC_GOAL_RE, WIDE_GOAL_RE }
+/**
+ * 验收节点(C+D 合一):对汇总产出做【新眼睛】复核。
+ * 为什么合成一个:"这份文档够不够格"和"对照总目标还漏了什么"是同一个审阅者的活,
+ * 拆两片只是多烧一倍 token,而且两份意见还得再有人合。
+ * 为什么必须是【另一片】:让写汇总的自己评自己 = 自己给自己打分,这套编排在验证棒那边早有定论。
+ */
+function makeAuditSpec(run, reduceNode) {
+  const target = arr(reduceNode.exit && reduceNode.exit.artifacts)[0] || reducePath(run)
+  return {
+    title: '验收汇总',
+    kind: 'verify',
+    deps: [str(reduceNode.id)],
+    writeScope: [],            // 只读:验收员不许边验边改(又当裁判又当运动员)
+    artifacts: [],
+    contract: [],
+    requireEvidence: false,
+    requireVerdict: true,      // 回报必须带 VERDICT 行,壳层机判
+    verifyCmd: '',
+    goal: [
+      '你是【验收员】。逐字读完 ' + target + ',对照下面的总目标审它。你不改任何文件,只出结论。',
+      '',
+      '【总目标】' + str((run || {}).goal),
+      '',
+      '【第一问:这份文档够不够格】',
+      '  · 结论有没有证据?挑 3 条最关键的结论,回到它给的出处(文件:行号 / 命令 / 接口)【实际核一遍】——',
+      '    对不上的逐条列出来。核不动也要说明为什么核不动,不许跳过。',
+      '  · 有没有大段空话?"存在一些问题""建议进一步优化"这类删掉不影响任何人做决定的句子,点名列出。',
+      '  · 是不是只把各片摘要拼了一遍?判据:各片之间【有没有交叉印证与取舍】。只有罗列没有比较 = 没做汇总。',
+      '',
+      '【第二问:对照总目标还漏了什么】',
+      '  · 总目标里哪些方面【一个字都没提到】?逐条列出来。',
+      '  · 哪些结论【没有任何人核实过】?列出来。',
+      '  · 各片之间有没有互相矛盾却被抹平的地方?找出来。',
+      '  ★这一问是你的主要价值。找不到漏洞不是本事,是没找 —— 一份覆盖了几十个文件的汇总不可能没有缺口。',
+      '',
+      '【收尾】最后一行必须是 VERDICT: PASS 或 VERDICT: FAIL。',
+      '  两问里只要有【实质性】问题就判 FAIL,并把待补清单写清楚(哪一条、缺什么、去哪儿补)。',
+      '  措辞含糊的 PASS 等同于没验 —— 判 PASS 就要说清楚你实际核了哪 3 条、核的结果是什么。',
+    ].join('\n'),
+  }
+}
+
+/** 该不该给汇总补一个验收(有 reduce、且还没人验它) */
+function needsAudit(run) {
+  const nodes = arr((run || {}).nodes)
+  const red = nodes.find((n) => n && str(n.kind) === 'reduce')
+  if (!red) return null
+  const audited = nodes.some((n) => n && str(n.kind) === 'verify' && arr(n.deps).indexOf(str(red.id)) >= 0)
+  return audited ? null : red
+}
+
+// ── 按发现扇出(CC 的 Verify 那一层)────────────────────────────────────────
+// 工人在回报里给出 <发现> 块,壳层逐条派【新眼睛】去核。
+// 为什么必须是新眼睛:让查出这条的人自己复核,等于问他"你确定吗"—— 他当然确定。
+// 为什么由代码扇出而不是让 replan 去加:replan 每次只看得到一段摘要,漏一条不会有人发现;
+// 代码按条扇出才有"每条都被核过"这个可验证的性质。
+const FIND_RE = /<发现>([\s\S]*?)<\/发现>/
+const MAX_FINDINGS = 8   // 单片上限:再多说明这片本身该拆,不是该派 30 个校验(也防模型凑数烧预算)
+
+/** 从工人终答里解析发现清单。解析不出来就返回空数组 —— 宁可不扇出,不可扇出一堆噪音 */
+function parseFindings(text) {
+  const m = FIND_RE.exec(str(text))
+  if (!m) return []
+  const out = []
+  for (const raw of str(m[1]).split('\n')) {
+    const line = raw.trim()
+    if (!line || !/^F\s*\|/.test(line)) continue
+    const cols = line.replace(/^F\s*\|/, '').split('|').map((x) => x.trim())
+    const sev = cols[0] || ''
+    const what = cols[1] || ''
+    const ev = cols.slice(2).join(' | ').trim()
+    if (!what) continue                       // 没说清是什么问题的,核不动,丢掉
+    if (what.length < 6) continue             // "有问题"这种也丢
+    out.push({ sev: /高|high/i.test(sev) ? '高' : /低|low/i.test(sev) ? '低' : '中', what: what.slice(0, 200), ev: ev.slice(0, 200) })
+    if (out.length >= MAX_FINDINGS) break
+  }
+  return out
+}
+
+/** 这一片的发现有没有已经派过校验(按 sourceNode 记,重跑不重复派) */
+function findingsVerified(run, nodeId) {
+  return arr((run || {}).nodes).some((n) => n && str(n.kind) === 'verify' && str(n.sourceNode) === str(nodeId))
+}
+
+/** 一条发现 → 一个廉价的 verify 节点 spec */
+function makeFindingVerifySpec(run, srcNode, f, idx) {
+  return {
+    title: '核实#' + (idx + 1) + ' ' + str(f.what).slice(0, 12),
+    kind: 'verify',
+    deps: [str(srcNode.id)],
+    writeScope: [],          // 只读:核实的人不许顺手改(又当裁判又当运动员)
+    artifacts: [],
+    contract: [],
+    requireEvidence: false,
+    requireVerdict: true,
+    verifyCmd: '',
+    sourceNode: str(srcNode.id),
+    goal: [
+      '你是【核实员】,只核一条,核完就走。不要顺手做别的,也不要改任何文件。',
+      '',
+      '【要核的这一条】(来自「' + str(srcNode.title || srcNode.id) + '」)',
+      '  严重度:' + str(f.sev),
+      '  说法:' + str(f.what),
+      '  它给的证据:' + (str(f.ev) || '(没给)'),
+      '',
+      '【怎么核】',
+      '  · 顺着它给的证据【自己走一遍】:打开那个文件那一行 / 跑那条命令 / 调那个接口,亲眼看结果。',
+      '  · 证据对不上、或它压根没给证据 → 你自己去找;找不到就判 FAIL,别替它圆。',
+      '  · ★你的默认立场是【这条是错的】。先努力证伪,证伪不掉才算它成立 ——',
+      '    提出这条的人已经说服过自己一次了,你再顺着他想一遍没有任何信息量。',
+      '  · 顺带看一眼:它说的严重度对不对?范围是不是比它说的更大或更小?',
+      '',
+      '【收尾】最后一行必须是 VERDICT: PASS(这条成立)或 VERDICT: FAIL(不成立/证据不足)。',
+      '  上面一行写清楚:你实际做了什么来核它、看到了什么。没做过就说没做过,不许写成做过的样子。',
+    ].join('\n'),
+  }
+}
+
+module.exports = { parseFindings, findingsVerified, makeFindingVerifySpec, MAX_FINDINGS, makeAuditSpec, needsAudit, isDocGoal, isWideGoal, producers, hasReduce, needsReduce, makeReduceSpec, reducePath, tooNarrow, DOC_GOAL_RE, WIDE_GOAL_RE }

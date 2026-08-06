@@ -180,6 +180,9 @@ function makeNode(spec, ctx) {
     wave: num(first(c.wave, s.wave), 1),
     origin,
     kind,
+    // 这条 verify 是在核【哪一片报的发现】。按发现扇出的去重靠它 ——
+    // 丢了的话节点每重跑一次就会把同一批发现再派一遍校验(预算按节点数算,几轮就烧穿)。
+    sourceNode: str(first(s.sourceNode, '')),
     // goal 不截断(契约 §2):截了就写不下一个现编角色;title 缺了从 goal 截 20 字当 UI 标签
     title: str(first(s.title, '')).trim() || goal.slice(0, 20),
     goal,
@@ -359,6 +362,7 @@ function validateNodeSpecs(specs, run, ctx) {
         verifyCmd: first(r.spec.verifyCmd, r.spec.exit && r.spec.exit.verifyCmd, ''),
         noEmpty: first(r.spec.noEmpty, r.spec.exit && r.spec.exit.noEmpty),
         maxAttempts: r.spec.maxAttempts,
+        sourceNode: r.spec.sourceNode,
       }, { id: r.id, wave: first(C.wave, R.wave, 1), origin: first(C.origin, 'plan'), at: num(C.at, 0) }))
     } catch (e) {
       errors.push(r.label + ' ' + str(e && e.message ? e.message : e))
@@ -459,6 +463,28 @@ function evalExit(node, probe) {
     }
     const size = num(st.size, 0)
     add('artifacts', size > 0, a + (size > 0 ? '(' + size + ' 字节)' : ' 是空文件(0 字节)' + wroteHint(a)))
+  }
+
+  // ①b reduce 实质性闸:汇总节点的产出必须【真的引用了被汇总的那些片】。
+  // 只查存在+非空挡不住"汇总"退化成两段话 —— 而这正是最容易发生的:模型没读上游产出,
+  // 照着标题编一篇通顺的空文,artifacts 与 noEmpty 全过。
+  // 判据刻意选"有没有提到上游的产出路径"而不是字数:字数能凑,引用不能 ——
+  // 没读过就写不出那些路径。要求提到 ≥2 个(只提 1 个说明它只看了一片,不算汇总)。
+  // upstreamArtifacts 由调用方(index.js)从 deps 节点上采好塞进 probe,run.js 不读盘。
+  if (str(n.kind) === 'reduce' && strArr(exit.artifacts).length) {
+    const ups = strArr(p.upstreamArtifacts)
+    if (typeof p.readText !== 'function') add('substance', true, '未注入 probe.readText,跳过', true)
+    else if (ups.length < 2) add('substance', true, '上游产出不足 2 个,实质性闸不适用,跳过', true)
+    else {
+      let txt = ''
+      try { txt = str(p.readText(strArr(exit.artifacts)[0])) } catch (e) { txt = '' }
+      const baseOf2 = (x) => str(x).replace(/\\/g, '/').split('/').pop()
+      const cited = ups.filter((u) => txt.includes(u) || (baseOf2(u) && txt.includes(baseOf2(u))))
+      add('substance', cited.length >= 2,
+        cited.length >= 2
+          ? '汇总引用了 ' + cited.length + '/' + ups.length + ' 个上游产出'
+          : '汇总只引用了 ' + cited.length + '/' + ups.length + ' 个上游产出(没读上游就写不出这些路径 —— 大概率是照标题编的空文,请逐个读完再写)')
+    }
   }
 
   // ② noEmpty:零产出 = 网关静默 / 空答耗尽的典型形态,不能叫完成

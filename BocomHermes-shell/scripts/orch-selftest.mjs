@@ -645,6 +645,84 @@ section('用例6:全局并发余量 capHint(不给就会造出"running 却没有
   ok('全局满:不发 dispatch', !has(full.effects, 'dispatch'), ty(full.effects))
 })
 
+section('用例6k:A —— 按发现扇出(CC 的 Verify 那一层)', () => {
+  const SHAPE = tryReq('../src/orch/shapes.js')
+  need(SHAPE, 'src/orch/shapes.js'); need(RUN, 'src/orch/run.js')
+  const blk = (lines) => '做完了\n<发现>\n' + lines.join('\n') + '\n</发现>\n落盘 docs/a.md'
+
+  // ① 解析:核不动的东西必须丢掉,否则扇出的全是噪音
+  const f = SHAPE.parseFindings(blk([
+    'F| 高 | 订单金额未做精度校验,分转元丢精度 | src/order/pay.ts:42',
+    'F|中|重复提交没有幂等键|POST /api/order',
+    'F| 低 | 代码质量',                       // 太短、核不动 → 丢
+    '这行不是发现,是正文',
+  ]))
+  ok('解析出两条(核不动的"代码质量"被丢掉)', f.length === 2, f)
+  ok('  严重度归一到 高/中/低', f[0].sev === '高' && f[1].sev === '中', f.map((x) => x.sev))
+  ok('  证据段保住(核实员要顺着它走一遍)', f[0].ev === 'src/order/pay.ts:42', f[0])
+  ok('没有发现块 → 空数组(不是抛错,也不是硬凑)', SHAPE.parseFindings('就是一段普通回报').length === 0)
+  ok('★条数封顶(防模型凑数烧预算)', SHAPE.parseFindings(blk(
+    Array.from({ length: 20 }, (_, i) => 'F| 高 | 这是第 ' + i + ' 条足够长的发现 | a.ts:' + i))).length === SHAPE.MAX_FINDINGS)
+
+  // ② 扇出:节点通过退出检查时,逐条派新眼睛
+  const src = mkNode({ id: 'n1', kind: 'work', state: 'settled', cardId: 'c1',
+    result: { final: blk(['F| 高 | 订单金额未做精度校验 | pay.ts:42', 'F| 中 | 重复提交没有幂等键 | /api/order']), files: ['docs/a.md'] } })
+  const run = mkRun({ goal: '排查订单模块', nodes: [src] })
+  const out = step(run, { type: 'EXIT_RESULT', nodeId: 'n1', pass: true, report: [] }, '6k')
+  const vs = out.run.nodes.filter((n) => n.kind === 'verify')
+  ok('★两条发现 → 派了两个核实节点', vs.length === 2, out.run.nodes.map((n) => n.kind + '/' + n.origin))
+  ok('  origin=shape(代码派的,面板看得出)', vs.every((n) => n.origin === 'shape'))
+  ok('  只读(核实员不许边核边改)', vs.every((n) => n.writeScope.length === 0))
+  ok('  要 VERDICT(壳层机判,不看它自述)', vs.every((n) => n.exit.requireVerdict === true))
+  ok('  各自挂回源片(deps + sourceNode)', vs.every((n) => n.deps[0] === 'n1' && n.sourceNode === 'n1'))
+  ok('★核实指令要求"默认立场是这条是错的"(顺着想一遍没有信息量)', /默认立场是【这条是错的】/.test(vs[0].goal))
+
+  // ③ 不重复派 + 不套娃
+  const out2 = step(out.run, { type: 'EXIT_RESULT', nodeId: 'n1', pass: true, report: [] }, '6k')
+  ok('★同一片重跑不重复派(靠 sourceNode 去重,否则几轮就把预算烧穿)',
+    out2.run.nodes.filter((n) => n.kind === 'verify').length === 2)
+  const vsrc = mkNode({ id: 'v9', kind: 'verify', state: 'settled', cardId: 'c9',
+    result: { final: blk(['F| 高 | 核实员自己又发现了一条足够长的问题 | x.ts:1']), files: [] } })
+  const run3 = mkRun({ goal: '排查', nodes: [vsrc] })
+  const out3 = step(run3, { type: 'EXIT_RESULT', nodeId: 'v9', pass: true, report: [] }, '6k')
+  ok('★核实员报的发现不再往下派(不然无限套娃)', out3.run.nodes.length === 1, out3.run.nodes.map((n) => n.kind))
+})
+
+section('用例6l:C+D —— 汇总的实质性闸 + 新眼睛验收', () => {
+  const SHAPE = tryReq('../src/orch/shapes.js')
+  need(SHAPE, 'src/orch/shapes.js'); need(NODES, 'src/orch/nodes.js')
+
+  // C:汇总必须【真的引用了】上游产出 —— 没读过就写不出那些路径。字数能凑,引用不能。
+  const red = { id: 'r1', kind: 'reduce', writeScope: [], contract: [],
+    exit: { artifacts: ['docs/汇总.md'], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true },
+    result: { final: '汇总完了', files: ['docs/汇总.md'], exitReport: [] } }
+  const probe = (txt, ups) => ({ statSync: () => ({ size: 4096, isDirectory: () => false }), readText: () => txt, upstreamArtifacts: ups })
+  const ups = ['docs/v1.md', 'docs/v2.md', 'docs/v3.md']
+  const good = NODES.evalExit(red, probe('见 docs/v1.md 与 docs/v2.md 的结论,二者在 X 上矛盾…', ups))
+  ok('引用了 ≥2 个上游 → 过', (good.report.find((x) => x.kind === 'substance') || {}).ok === true)
+  const thin = NODES.evalExit(red, probe('本次调研整体情况良好,建议进一步优化。', ups))
+  const st = thin.report.find((x) => x.kind === 'substance')
+  ok('★通篇不提上游 → 判不过(照标题编的空文,artifacts/noEmpty 都拦不住它)', st && !st.ok, st && st.detail)
+  ok('  只引用 1 个也不算汇总', !(NODES.evalExit(red, probe('见 docs/v1.md', ups)).report.find((x) => x.kind === 'substance') || {}).ok)
+  ok('  上游不足 2 个时跳过(不适用,不是不过)',
+    (NODES.evalExit(red, probe('随便写', ['docs/v1.md'])).report.find((x) => x.kind === 'substance') || {}).skipped === true)
+  ok('  没注入 readText 时跳过(不冤枉)',
+    (NODES.evalExit(red, { statSync: () => ({ size: 10, isDirectory: () => false }), upstreamArtifacts: ups }).report.find((x) => x.kind === 'substance') || {}).skipped === true)
+  ok('★非 reduce 节点不受这条闸约束', !NODES.evalExit(Object.assign({}, red, { kind: 'work' }), probe('随便写', ups)).report.some((x) => x.kind === 'substance'))
+
+  // D:验收节点 —— 两问合一,新眼睛,只读,机判
+  const a = SHAPE.makeAuditSpec({ id: 'R1', goal: '摸清认证模块' }, { id: 'r1', exit: { artifacts: ['docs/汇总.md'] } })
+  ok('验收挂在汇总后面且只读', a.kind === 'verify' && a.deps[0] === 'r1' && a.writeScope.length === 0, a)
+  ok('  要 VERDICT', a.requireVerdict === true)
+  ok('★第一问查文档够不够格(抽 3 条结论实际核证据)', /挑 3 条最关键的结论/.test(a.goal))
+  ok('★第二问对照总目标找缺口(这一问是它的主要价值)', /一个字都没提到/.test(a.goal) && /主要价值/.test(a.goal))
+  ok('  点破"只拼摘要不算汇总"的判据', /有没有交叉印证与取舍/.test(a.goal))
+  ok('  禁含糊 PASS(判过就要说清核了哪 3 条)', /措辞含糊的 PASS/.test(a.goal))
+  ok('有汇总没验收 → 该补', !!SHAPE.needsAudit({ nodes: [{ id: 'r1', kind: 'reduce', deps: [] }] }))
+  ok('  已经有人验了 → 不重复补',
+    !SHAPE.needsAudit({ nodes: [{ id: 'r1', kind: 'reduce', deps: [] }, { id: 'v1', kind: 'verify', deps: ['r1'] }] }))
+})
+
 section('用例6h:形状模板 —— 骨架归代码(纯函数判据)', () => {
   const SHAPE = tryReq('../src/orch/shapes.js')
   need(SHAPE, 'src/orch/shapes.js')
@@ -705,6 +783,13 @@ section('用例6i:形状兜底在状态机里真的生效(补的节点走同一�
   ok('  它自己也有产出闸(汇总不落盘等于没汇总)', red[0] && (red[0].exit.artifacts || []).length === 1)
   ok('  仍然进入待批准(代码补骨架不越过人这一关)', out.run.phase === 'awaiting-approval', out.run.phase)
   ok('  通知里说清是自动补的', of(out.effects, 'notify').some((e) => /自动补一个汇总节点/.test(String(e.text || ''))), ty(out.effects))
+  // D:验收也必须由代码一起补上 —— 汇总自己的闸只查机械项,"够不够格/漏了什么"要另一双眼睛
+  const aud = nodes.filter((n) => n.kind === 'verify' && n.origin === 'shape')
+  ok('★同时补出了验收节点(新眼睛复核汇总)', aud.length === 1, nodes.map((n) => n.kind + '/' + n.origin))
+  ok('  验收挂在汇总后面', aud[0] && aud[0].deps.length === 1 && aud[0].deps[0] === red[0].id, aud[0] && aud[0].deps)
+  ok('  验收是只读的(不许边验边改)', aud[0] && aud[0].writeScope.length === 0)
+  ok('  验收要 VERDICT(壳层机判)', aud[0] && aud[0].exit.requireVerdict === true)
+  ok('  通知里说清验收也是自动补的', of(out.effects, 'notify').some((e) => /自动补一个验收节点/.test(String(e.text || ''))), ty(out.effects))
 })
 
 section('用例6j:拆窄了打回重问一次(且只一次)', () => {

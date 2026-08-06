@@ -1550,8 +1550,10 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
       } catch {}
       try { if (S.wfTurnError && S.wfCardByWc && S.wfCardByWc.has(e.sender.id)) S.wfTurnError(e.sender.id) } catch {}   // 分片回合报错:wfTurnDone 到不了,也要起收官兜底(window.js),否则 serve 中断一次就永远卡 running
       // 错误码人话化(api 错误形如 "POST /session/... -> 429: ..."):先具体码,再超时,最后连接中断(原文案保留)
-      if (/->\s*429\b|rate\s*limit|too many requests/i.test(m))
+      if (/->\s*429\b|rate\s*limit|too many requests/i.test(m)) {
+        try { S.noteRateLimit && S.noteRateLimit() } catch {}   // ★并发自适应:撞到限流就让壳层把有效并发上限降一档(不降只会接着撞)
         throw new Error('内网模型限流（HTTP 429），等 30 秒再重试。')
+      }
       if (/->\s*401\b|unauthorized/i.test(m))
         throw new Error('模型网关鉴权过期（HTTP 401），请联系管理员。')
       if (/ETIMEDOUT|ESOCKETTIMEDOUT|timed?\s*out|->\s*(408|504)\b/i.test(m))

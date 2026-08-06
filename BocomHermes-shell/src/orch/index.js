@@ -228,6 +228,20 @@ function makeOrch(deps) {
       // res.actions / n.actions / p.actions(n) 三条路,原来三条都没供 →
       // requireEvidence:true 的节点【永远过不了闸】,unverified 恒 true(真跑才会暴露)。
       actions: (nn) => { try { return arr((S.wfRegistry && S.wfRegistry.get(String(nn && nn.cardId))) ? S.wfRegistry.get(String(nn.cardId)).actions : []) } catch { return [] } },
+      // reduce 实质性闸的原料:上游各片声明的产出路径 + 读汇总正文。
+      // 判"汇总有没有真读上游"靠的是它有没有引用这些路径 —— 没读过就写不出来。
+      readText: (p2) => { try { return fs.readFileSync(path.resolve(base, p2), 'utf8').slice(0, 200000) } catch { return '' } },
+      upstreamArtifacts: (() => {
+        try {
+          const deps = arr(n.deps).map(String)
+          const out2 = []
+          for (const d of deps) {
+            const dn = arr(run.nodes).find((x) => String(x.id) === d)
+            for (const a2 of arr(dn && dn.exit && dn.exit.artifacts)) if (a2 && out2.indexOf(String(a2)) < 0) out2.push(String(a2))
+          }
+          return out2
+        } catch { return [] }
+      })(),
     }
     let out
     try { out = NODES.evalExit(evalNode, probe) }

@@ -49,7 +49,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     autoCompactMax: 20,           // 交棒次数上限:文档接力下棒数不该卡死(每棒都在推 todo);仅兜底病态循环
     todoNudgeRounds: 3,           // todo 停滞提醒轮数
     knowledgeChurnMax: 300,       // 知识 C4 churn 阈值(行)
-    wfConcurrency: 4,             // 工作流并发上限(超限排队)
+    wfConcurrency: 8,             // 工作流并发上限(超限排队)。撞 429 会自动对半降档、每 2 分钟恢复一档(见 S.noteRateLimit)
     taskPromptMax: 20000,         // 委派指令(task/delegate_task)硬上限(字符,128k 口径):只拦"贴原文"级病态指令,精确拦停该子会话
     ctxLimitMax: 192000,          // 水位上限硬顶(MiniMax M2.5 实测 192k):生效上限=min(serve 上报 limit.context, 此值) —— serve 报 192k 就用满 192k,报更大(公网 256k/1M)按此收口,防阈值线算到真实上限之外
     promptAsync: 0,               // prompt_async 发送通道（1=开）：POST 不再挂起等回合，R4 类在飞断开问题免疫；内网 fork 无该端点自动回落
@@ -367,10 +367,39 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // 工作流并发闸:running 数 ≥ knobs.wfConcurrency 时不直接开卡,进内存队列(S.wfQueue,重启即清);
   // 出队触发点 = ① wfTurnDone 判 done ② 工作流卡关闭(spawnCard closed 回调) ③ wf-delete 删记录。
   S.wfQueue = S.wfQueue || []
-  function wfConcurrency() {   // 并发上限旋钮:非正整数/缺失回退 4
-    const n = Math.floor(+(S.settings.knobs && S.settings.knobs.wfConcurrency))
-    return Number.isFinite(n) && n >= 1 ? n : 4
+  // ── 并发上限 + 429 自适应退避 ────────────────────────────────────────────
+  // 缺省从 4 提到 8:编排按视角扇出之后,4 个位子会被排队堵住(实测"派发单片"修好后的下一个瓶颈)。
+  // ★但提上限【必须】配退避:内网端点一限流,原来只是把 429 翻译成一句人话(session.js),
+  //   既不重试也不降速 —— 并发翻倍等于把 429 的概率一起翻倍。
+  //   退避策略:见到 429 就把有效上限对半砍,每 2 分钟恢复一档,最低不低于 1。
+  //   刻意做成"探上去、撞到就退"而不是"一直保守":慢端点的吞吐本来就只能靠试出来。
+  const RL = { level: 0, at: 0 }        // level=连续降档数;at=最近一次 429 时刻
+  const RL_RECOVER_MS = 2 * 60 * 1000
+  S.noteRateLimit = () => {
+    const now = Date.now()
+    if (now - RL.at < 5000) return      // 一波并发同时撞墙会连报好几条,5s 内只降一档
+    RL.at = now
+    RL.level = Math.min(RL.level + 1, 4)
+    log('[并发] 撞到 429 → 有效上限降到 ' + wfConcurrency() + '(降 ' + RL.level + ' 档,每 ' + (RL_RECOVER_MS / 60000) + ' 分钟恢复一档)')
   }
+  function rlLevel() {
+    if (!RL.level) return 0
+    const back = Math.floor((Date.now() - RL.at) / RL_RECOVER_MS)   // 每过一个恢复窗就还一档
+    return Math.max(0, RL.level - back)
+  }
+  function wfConcurrencyBase() {   // 并发上限旋钮:非正整数/缺失回退 8
+    const n = Math.floor(+(S.settings.knobs && S.settings.knobs.wfConcurrency))
+    return Number.isFinite(n) && n >= 1 ? n : 8
+  }
+  function wfConcurrency() {
+    const lv = rlLevel()
+    if (!lv) return wfConcurrencyBase()
+    return Math.max(1, Math.floor(wfConcurrencyBase() / Math.pow(2, lv)))
+  }
+  S.wfConcurrencyBase = wfConcurrencyBase
+  S.rlLevel = rlLevel
+  // 测试钩子:把"上次撞墙时刻"往前拨,免得回归用例真等 2 分钟(生产代码不调它)
+  S.__rlBackdate = (ms) => { RL.at -= Math.max(0, +ms || 0) }
   // 上下文口径标签:纪律/规程文本注入用(数值口径 = knobs.ctxLimitMax,默认 192k;生效上限另按 min(serve 上报, 该值) 收口)
   function ctxK() {
     const n = Math.floor(+(S.settings.knobs && S.settings.knobs.ctxLimitMax))

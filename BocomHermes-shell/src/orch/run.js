@@ -398,6 +398,48 @@ function shapeReduce(t) {
   if (!made.length) return false
   addNodes(t, made, 'shape', posInt(r.wave, 1))
   t.eff.push({ type: 'notify', level: 'info', text: '已自动补一个汇总节点收尾(' + targets.length + ' 片产出合成一份文档)—— 规划里没有它,散着交等于没交' })
+  shapeAudit(t)
+  return true
+}
+
+// ── 形状兜底:按发现扇出 ──────────────────────────────────────────────────
+// 工人在终答里给了 <发现> 块 → 每条派一个廉价的 verify 节点去核。
+// 为什么由代码扇出而不是交给 replan:replan 每次只看得到一段摘要,漏一条不会有人发现;
+// 代码按条扇出,"每条发现都被独立核过"才成为一个可验证的性质,而不是一句承诺。
+// 只在节点【通过退出检查】时扇出:没通过的那片本身还要重做,它报的发现先不算数。
+function shapeVerifyFindings(t, n) {
+  const r = t.r
+  if (str(n.kind) === 'verify') return false                 // 核实员自己报的发现不再往下派(不然会无限套娃)
+  if (SHAPE.findingsVerified(r, n.id)) return false          // 这片的发现已经派过了(重跑不重复派)
+  const fs2 = SHAPE.parseFindings(str(n.result && n.result.final))
+  if (!fs2.length) return false
+  const room = num(r.budget.maxNodes) - arr(r.nodes).length   // 预算不够就少派几条,不硬挤
+  if (room <= 0) { t.eff.push({ type: 'notify', level: 'warn', text: '「' + str(n.title || n.id) + '」报了 ' + fs2.length + ' 条发现,但节点预算已满 —— 这些结论没人复核,收口时请自己看' }); return false }
+  const use = fs2.slice(0, Math.min(fs2.length, room))
+  const specs = use.map((f, i) => SHAPE.makeFindingVerifySpec(r, n, f, i))
+  const v = N.validateNodeSpecs(specs, r, t.cx)
+  const made = arr(v && v.nodes)
+  if (!made.length) return false
+  r.wave = posInt(r.wave, 1) + 1
+  addNodes(t, made, 'shape', r.wave)
+  if (use.length < fs2.length) t.eff.push({ type: 'notify', level: 'warn', text: '发现 ' + fs2.length + ' 条,预算只够核 ' + use.length + ' 条(其余未复核)' })
+  t.eff.push({ type: 'notify', level: 'info', text: '「' + str(n.title || n.id) + '」报了 ' + use.length + ' 条发现 → 已逐条派新眼睛去核' })
+  return true
+}
+
+// ── 形状兜底:验收(新眼睛复核汇总)──────────────────────────────────────
+// 汇总节点自己的闸只能查"文件在不在、有没有真引用上游"这类机械项;
+// "这份文档够不够格""对照总目标还漏了什么"只有另一双眼睛读完才知道 —— 而让写汇总的自己评自己
+// 等于自己给自己打分(验证棒那边早有定论)。所以由代码强制挂一个只读的验收节点,requireVerdict 机判。
+function shapeAudit(t) {
+  const r = t.r
+  const red = SHAPE.needsAudit(r)
+  if (!red) return false
+  const v = N.validateNodeSpecs([SHAPE.makeAuditSpec(r, red)], r, t.cx)
+  const made = arr(v && v.nodes)
+  if (!made.length) return false
+  addNodes(t, made, 'shape', posInt(r.wave, 1))
+  t.eff.push({ type: 'notify', level: 'info', text: '已自动补一个验收节点(新眼睛复核汇总:证据抽核 + 对照总目标找缺口)' })
   return true
 }
 
@@ -704,6 +746,7 @@ function onExitResult(t) {
     t.eff.push({ type: 'cancelNode', nodeId: n.id, why: '已通过退出检查' })   // 过了才关它的卡,不再烧 token
     r.ledger = L.addFacts(r.ledger, factsOf(n), n.id, t.at)
     r.budget.idleFrontier = 0
+    shapeVerifyFindings(t, n)   // 这一片报了发现 → 逐条派新眼睛去核(CC 的 Verify 那一层)
     // ★每个节点收官都问一次模型 = 反死板核心。复核通过(wasVerified)不重复问:那是重启复核,图没变
     if (!wasVerified) startDecision(t, 'replan', 'node-settled', n.id)
     tick(t, false)
@@ -791,6 +834,7 @@ function reasonOf(res) {
   //   也不消耗 attempt。真正"什么都没产出"才继续叫 zero-output 并判死。
   if (bad.indexOf('noEmpty') >= 0) return 'zero-output'
   if (bad.indexOf('artifacts') >= 0) return 'artifact-missing'
+  if (bad.indexOf('substance') >= 0) return 'thin-summary'   // 汇总没真读上游 —— 活干了但差一截,走补做(原卡上下文还在,读完重写一遍就行)
   return ''
 }
 // 拒因追加进 brief 留痕(重派时 composeNodeBrief 也会从 exitReport 重新渲染一遍,两条路都不丢)
