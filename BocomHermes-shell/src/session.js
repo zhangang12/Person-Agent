@@ -2,7 +2,8 @@
 const { exec } = require('child_process')
 const os = require('os')
 const knowledge = require('./knowledge')
-const writescope = require('./writescope')   // 分片写归属硬闸(编码模式):write/edit 越界拒
+const writescope = require('./writescope')
+const spin = require('./spin')   // 空转探测(think-loop):区分"在长考"与"在原地打转"   // 分片写归属硬闸(编码模式):write/edit 越界拒
 
 // 验证证据机判正则(构建/测试命令长什么样):bash 命令流水命中即算"跑过验证"。
 // ⚠ window.js 同款保持同步(证据闸 hasVerifyEvidence 用同一份)—— 改这里必须同步改那边,两边逐字一致。
@@ -740,6 +741,18 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
       si.partSigs.set(sigKey, sigNow)
       si.lastEventAt = Date.now()
     }
+    // ★空转探测:内容签名(上面那段)问的是"字节变没变",而 think-loop 永远在变字节 ——
+    //   它不静默,它只是不干活。这里另记一本"有没有在【产出】"的账:工具调用/非空正文算产出,
+    //   reasoning 只按段落记指纹用于判自重复。两条同时成立才算打转(见 src/spin.js 的判据说明)。
+    //   按【会话】分别记:子 Agent 的事件路由到父卡的 sessionId,但带 agentId —— 各记各的,不互相续命。
+    try {
+      const spinKey = subagent && agentId ? String(agentId) : '_self'
+      si.spin = si.spin || new Map()
+      if (!si.spin.has(spinKey)) si.spin.set(spinKey, spin.createSpin())
+      si.spin.get(spinKey).note({ kind, text, at: Date.now() })
+      if (si.spin.size > 200) si.spin.clear()   // 防长跑膨胀(清空 = 重新观察,不会误杀)
+    } catch {}
+
     const tag = si.tag || null   // 登记方自定义的任务身份(scope/kind/id…)：随 card-stream 下发,窗口可按并发任务分组
     // 诊断:分别确认子agent的【工具】和【文本/思考】是否路由到父卡片(排查"工具没进 🔍 组")
     if (subagent) {
@@ -991,7 +1004,22 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
               }
             } catch {}
             const upd = (c.time && c.time.updated) || 0
-            if (!upd || Date.now() - upd < SUB_STALL_MS) continue   // 有动静就不判死
+            // ★这道时间前置闸是 think-loop 逃逸的原因:它一直在写消息,updated 永远新鲜,
+            //   于是下面那句 generationStalled(判据本身是对的,tool-part-selftest 明确测过
+            //   "reasoning 有、text 空、无工具 → true")【永远没机会跑】。
+            //   所以另开一路:探测器判它在原地打转(不产出 + 自重复)就绕过这道时间闸,直接去判生成挂死。
+            //   注意这【不是】把判死线调短 —— 长考照旧受 30min 保护,只有"重复同一段"才走这条快路。
+            let spinning = false
+            try {
+              // ★按 rootSid 现取 si —— 这一层是 `for (const {serve,roots} of busy.values())` 里面,
+              //   外层那个 `for (const [sid, si] of S.sessionInfo)` 早就结束了,si 在这儿【不在作用域】。
+              //   第一版直接写了 si.spin,ReferenceError 被下面的 catch 吞掉,spinning 恒 false ——
+              //   看着接上了,其实一次都没生效(自测用例0c 抓到的)。
+              const rsi = S.sessionInfo.get(rootSid)
+              const sp = rsi && rsi.spin && rsi.spin.get(String(c.id))
+              if (sp) spinning = !!sp.verdict(Date.now()).spinning
+            } catch {}
+            if (!spinning && (!upd || Date.now() - upd < SUB_STALL_MS)) continue   // 有动静又没在打转 → 不判死
             let stalled = false
             // P4 降载:判挂只需最后一条消息。先带 {limit:1} 试拉 —— opencode.js/serve 支持 limit 就省掉全量;
             // 不支持(老版本忽略第三参/返回形状不对)回退现状全量,防御写法,两种都对(generationStalled 只看末尾)。
@@ -1002,9 +1030,9 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
               stalled = oc.generationStalled(msgs || [])
             } catch {}
             if (!stalled) continue
-            log('watchdog: 子会话 ' + c.id + ' (' + (c.title || '') + ') 静默 >30min 且生成挂死 → 自动中止(父卡可重派)')
+            log('watchdog: 子会话 ' + c.id + ' (' + (c.title || '') + ') ' + (spinning ? '在原地打转(反复输出同一段思考、零工具零正文)' : '静默 >30min') + ' 且生成挂死 → 自动中止(父卡可重派)')
             try { await oc.abort(serve, c.id) } catch {}
-            try { if (!wc.isDestroyed()) wc.send('card-note', { text: '⚠ 子 Agent「' + String(c.title || c.id).slice(0, 40) + '」写结论时挂死(30 分钟无进展),已自动中止 —— 主 Agent 会重派或带其余结果继续;若反复发生多半是任务过大触发压缩循环,重派请拆小(指令≤2000字、只给路径)', tone: 'muted' }) } catch {}
+            try { if (!wc.isDestroyed()) wc.send('card-note', { text: '⚠ 子 Agent「' + String(c.title || c.id).slice(0, 40) + '」' + (spinning ? '在原地打转(反复输出同一段思考,既不调工具也不出正文),已自动中止' : '写结论时挂死(30 分钟无进展),已自动中止') + ' —— 主 Agent 会重派或带其余结果继续;若反复发生多半是任务过大触发压缩循环,重派请拆小(指令≤2000字、只给路径)', tone: 'muted' }) } catch {}
           }
         }
       }

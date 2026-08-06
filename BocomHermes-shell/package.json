@@ -49,7 +49,8 @@
     "ui:stub": "electron scripts/chat-p2a2-stub.cjs",
     "orch:stub": "electron scripts/orch-shard-stub.cjs",
     "run:stub": "electron scripts/run-panel-stub.cjs",
-    "bragent:test": "node scripts/browser-agent-selftest.mjs"
+    "bragent:test": "node scripts/browser-agent-selftest.mjs",
+    "spin:test": "node scripts/spin-selftest.mjs"
   },
   "dependencies": {
     "mammoth": "^1.8.0",

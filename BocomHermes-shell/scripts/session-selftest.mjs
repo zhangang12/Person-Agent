@@ -135,6 +135,69 @@ console.log('用例0b:契约 —— 浏览器自验必须指向【内嵌浏览�
   ok('★不再教它手搓 __errlog 收集器(装晚了,首屏错误必漏)', !skill.includes('__errlog'))
 }
 
+console.log('用例0c:子 Agent 打转(think-loop)—— 绕过时间前置闸判死;长考照旧不误杀')
+{
+  // 病灶:子 Agent 看门狗的前置闸是 `Date.now() - c.time.updated < 30min → continue`,
+  // 而 think-loop 一直在写消息 → updated 永远新鲜 → 后面那句 generationStalled
+  // (判据本身是对的,tool-part-selftest 明确测过"reasoning 有、text 空、无工具 → true")
+  // 【永远没机会跑】。全仓所有"还活着吗"的判据问的都是字节变没变,而它恰恰永远在变字节。
+  // 修法不是把判死线调短(那会推翻 4243cb5 的"判死不判慢"),而是补一个【维度】:
+  // 不产出 + 自重复 = 在原地打转,这一路绕过时间闸。
+  const CHILD_ROOT = { sid: '' }
+  const mkCase = async (feed) => {
+    const aborted = []
+    // ★intervals 是跨用例共享的:不清就 find 到【第一个 harness】注册的那个看门狗,
+    //   它的 S 里没有本用例喂的数据 —— 第一版就是这么"看着接上了其实没跑"(排查了三轮才发现)。
+    intervals.length = 0
+    const h = makeHarness({ oc: {
+      sendMessage: () => new Promise(() => {}),                 // 回合不收尾,看门狗才会去看
+      listSessions: async () => [{ id: 'ses_child', parentID: CHILD_ROOT.sid, title: '子甲', time: { updated: Date.now() } }],
+      getRawMessages: async () => [{ info: { role: 'user' } }, { info: { role: 'assistant' }, parts: [{ type: 'reasoning', text: '想' }, { type: 'text', text: '' }] }],
+      generationStalled: () => true,                            // 判据本身:未收尾 + 无工具在跑
+      getSessionUsage: () => null,
+      abort: async (serve, sid) => { aborted.push(String(sid)) },
+    } })
+    h.S.settings.projectDir = PROJ
+    h.S.isCardBusy = () => true            // 看门狗只盯"有卡在忙"的 serve(window.js 里由回合态推导)
+    const { ev } = await openCard(h, 4300)
+    h.handlers['card-send'](ev, '干活')
+    await tick(); await tick()
+    const sid = h.S.sessionByWc.get(4300)
+    CHILD_ROOT.sid = sid                   // 子会话认父靠 parentID === 根会话 sid
+    const si = h.S.sessionInfo.get(sid)
+    feed(si)
+    const iv = intervals.find((t) => t.ms === 90000)
+    ok('子 Agent 看门狗已注册(90s)', !!iv)
+    if (iv) { await iv.fn(); await tick(); await tick() }
+    return { aborted, si }
+  }
+
+  // ① 真打转:同一段 reasoning 反复吐,零工具零正文 —— 而 updated 一直新鲜(时间闸拦不住它)
+  const same = '我需要先分析这个模块的依赖关系,搞清楚它到底被谁调用,然后再决定改哪里。'
+  const r1 = await mkCase((si) => {
+    const sp = require('../src/spin.js').createSpin()
+    const t0 = Date.now() - 10 * 60000
+    for (let i = 0; i <= 4; i++) sp.note({ kind: 'reasoning', text: same, at: t0 + i * 60000 })
+    si.spin = new Map([['ses_child', sp]])
+  })
+  ok('★打转的子 Agent 被中止(修前:updated 永远新鲜 → 判据永远轮不到跑)',
+    r1.aborted.includes('ses_child'), r1.aborted)
+
+  // ② 长考:内容一直在推进,同样零工具零正文、updated 同样新鲜 —— 绝不能杀
+  const r2 = await mkCase((si) => {
+    const sp = require('../src/spin.js').createSpin()
+    const t0 = Date.now() - 10 * 60000
+    for (let i = 0; i < 10; i++) sp.note({ kind: 'reasoning', text: '第' + i + '步:检查 src/mod' + i + '.ts 的导出与调用方,确认边界。', at: t0 + i * 60000 })
+    si.spin = new Map([['ses_child', sp]])
+  })
+  ok('★长考的子 Agent 不许误杀(判死不判慢 —— 这条比抓打转更要紧)',
+    !r2.aborted.includes('ses_child'), r2.aborted)
+
+  // ③ 没有探测器数据(老会话/刚起步)→ 退回原来的时间闸,不改变现状
+  const r3 = await mkCase((si) => { si.spin = new Map() })
+  ok('  没有探测数据时退回原行为(时间闸没到 → 不判)', !r3.aborted.includes('ses_child'), r3.aborted)
+}
+
 console.log('用例1:R6 dropPendingQuestion —— 会话没了,它名下未答提问逐个 reject 再删(契约:挂在 S 上)')
 {
   const h = makeHarness()
