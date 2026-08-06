@@ -253,6 +253,9 @@ function makeNode(spec, ctx) {
     // 补做用同一张卡同一个会话(上下文还在,它知道自己刚干了什么),补不动才升级成重做。
     patches: 0,
     maxPatches: Math.max(0, num(first(s.maxPatches, 2), 2)),
+    // 卡凭空消失的免罚额度(上限 1)。第一次算环境噪音不罚 attempt,第二次起照常计费 ——
+    // 永久免罚的话,崩溃循环没有任何东西拦得住无限重派(与 budget.resumeCredit 同一个道理)。
+    goneCredit: Math.max(0, num(first(s.goneCredit, 1), 1)),
     cardId: null, wcId: null, sid: null,
     queuedAt: 0, startedAt: 0, lastTurnAt: 0, settledAt: 0,   // 一个时间戳只承担一件事
     result: { final: '', files: [], rounds: 0, aborted: false, exitReport: [], verdict: '', cmdExit: null, contractMiss: [], unverified: false, findings: [] },

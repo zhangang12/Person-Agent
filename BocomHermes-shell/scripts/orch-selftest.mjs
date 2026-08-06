@@ -1190,6 +1190,62 @@ section('用例6s:★发现走工具上报 —— 格式约定的静默失败换
   }
 })
 
+section('用例6u:★卡凭空消失不算"零产出",也不该罚 attempt(真机实测)', () => {
+  need(RUN, 'src/orch/run.js')
+  // 2026-08-07 真机日志(0.17 秒之内):
+  //   WORKER_CARD_GONE | n6 running→settled(card-gone)
+  //   evalExit n6 → FAIL … zero-output
+  //   EXIT_RESULT     | n6 → running(zero-output), n6 重做#1      ← 罚了 attempt
+  //   PANEL_CARD_GONE | 整个 run 取消                              ← 这才是真相
+  // 卡是被【关应用】带走的,壳层却按"这张卡什么都没干"处理:reason 从 card-gone 被覆写成
+  // zero-output,还扣了一次重做额度。免罚名单里本来只有 lost-on-restart —— 同一条
+  // "不惩罚崩溃"的原则,漏了另一种崩法。attempt 在内网很贵,不该由环境噪音来花。
+  // ★384 条测试当时全绿:这条路径此前零覆盖。
+  const failEv = (id) => ({ type: 'EXIT_RESULT', nodeId: id, pass: false,
+    report: [{ kind: 'noEmpty', ok: false, detail: '既没有终答、也没有文件产出(零产出)' }],
+    verdict: '', cmdExit: null, contractMiss: [], unverified: false })
+  const mkGone = (over) => mkRun({ nodes: [mkNode(Object.assign({ id: 'n1', kind: 'work', state: 'running',
+    attempt: 1, cardId: 'c1', wcId: 7 }, over))] })
+
+  // ① 卡没了 → 落定 → 闸门必然不过(盘上什么都没有)
+  const gone = step(mkGone(), { type: 'WORKER_CARD_GONE', nodeId: 'n1' }, '6u')
+  ok('卡没了 → settled 且 reason=card-gone', (byId(gone.run, 'n1') || {}).reason === 'card-gone', dbg(gone))
+  const after = step(gone.run, failEv('n1'), '6u')
+  const n1 = byId(after.run, 'n1')
+  ok('★reason 保持 card-gone,不被覆写成 zero-output(卡没了是原因,查不到产出是症状)',
+    n1.reason === 'card-gone', n1.reason)
+  ok('★attempt 没被罚(修前:重做#1 —— 环境噪音花掉了一次重做额度)',
+    n1.attempt === 1, { attempt: n1.attempt, credit: n1.goneCredit })
+  ok('  免罚额度用掉一次', n1.goneCredit === 0, n1.goneCredit)
+  ok('  仍然重派(卡真的没了就得重开一张,只是不计费)', n1.state === 'running' || n1.state === 'pending', n1.state)
+
+  // ② 第二次再没:照常计费 —— 否则崩溃循环没有任何东西拦得住无限重派
+  const gone2 = step(after.run, { type: 'WORKER_CARD_GONE', nodeId: 'n1' }, '6u')
+  const after2 = step(gone2.run, failEv('n1'), '6u')
+  ok('★额度用完后照常罚 attempt(永久免罚 = 崩溃循环无限重派)',
+    byId(after2.run, 'n1').attempt > n1.attempt, { before: n1.attempt, after: byId(after2.run, 'n1').attempt })
+
+  // ③ 老存档没有 goneCredit 这一格 —— undefined 必须当 1 而不是 0
+  //    直接 num() 会得到 0,这条免罚对【重启恢复的 run】静默失效(本仓 patches/maxPatches 踩过同款)
+  {
+    const old = mkGone({ goneCredit: undefined })
+    delete old.nodes[0].goneCredit
+    const g = step(old, { type: 'WORKER_CARD_GONE', nodeId: 'n1' }, '6u')
+    const a = step(g.run, failEv('n1'), '6u')
+    ok('★老存档(没有 goneCredit 字段)也免罚一次 —— 否则对重启恢复的 run 静默失效',
+      byId(a.run, 'n1').attempt === 1, { attempt: byId(a.run, 'n1').attempt, credit: byId(a.run, 'n1').goneCredit })
+  }
+
+  // ④ 正常的零产出照罚(闸没被放松)
+  {
+    const normal = mkRun({ nodes: [mkNode({ id: 'n1', kind: 'work', state: 'settled', attempt: 1, cardId: 'c1' })] })
+    const a = step(normal, failEv('n1'), '6u')
+    ok('★真的零产出照样罚(这条修的是误诊,不是放松闸门)',
+      byId(a.run, 'n1').attempt === 2 && byId(a.run, 'n1').reason === 'zero-output',
+      { attempt: byId(a.run, 'n1').attempt, reason: byId(a.run, 'n1').reason })
+  }
+})
+
 section('用例6t:★收口闸 —— 模型说"够了"之前,代码先查它可能没看见的活', () => {
   const SHAPE = tryReq('../src/orch/shapes.js')
   need(RUN, 'src/orch/run.js'); need(SHAPE, 'src/orch/shapes.js')

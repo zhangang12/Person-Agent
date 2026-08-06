@@ -908,10 +908,27 @@ function onExitResult(t) {
     tick(t, false)
     return
   }
-  // 不过:重启复核不过 与 lost-on-restart 都不罚 attempt(不惩罚崩溃)
-  const noPenalty = wasVerified || n.reason === 'lost-on-restart'
+  // 不过:重启复核不过 / lost-on-restart / 卡凭空消失 都不罚 attempt(不惩罚崩溃)
+  //
+  // ★card-gone 这条是真机实测补的(2026-08-07):关应用时 WORKER_CARD_GONE 先到、
+  //   PANEL_CARD_GONE 0.17 秒后才到,中间这一手把三片判成了「零产出 · 重做#1」——
+  //   卡是被关应用带走的,壳层却按"这张卡什么都没干"处理,还扣了一次重做额度。
+  //   免罚名单里本来只有 lost-on-restart:同一条"不惩罚崩溃"的原则,漏了另一种崩法。
+  //   attempt 在内网很贵(一次重做 = 新开卡从零重读),不该由环境噪音来花。
+  //
+  // 【为什么要留一次额度而不是永久免罚】卡反复消失(崩溃循环)时,永久免罚就没有任何东西
+  //   拦得住无限重派 —— 与 resumeCredit 上限 1 是同一个道理。第一次算环境噪音,第二次起照常计费。
+  //   老存档没有 goneCredit 这一格,所以 undefined 要当成 1 而不是 0:
+  //   直接 num() 会得到 0,这条免罚对【重启恢复的 run】静默失效(本仓 patches/maxPatches 踩过同款)。
+  const goneCredit = (n.goneCredit === undefined || n.goneCredit === null) ? 1 : num(n.goneCredit)
+  const freeGone = n.reason === 'card-gone' && goneCredit > 0
+  if (freeGone) n.goneCredit = goneCredit - 1
+  const noPenalty = wasVerified || n.reason === 'lost-on-restart' || freeGone
   const detail = failDetail(n.result)
-  n.reason = reasonOf(n.result) || n.reason || 'zero-output'
+  // ★卡没了的时候,reason 保持 card-gone,不许被闸门结论覆写成 zero-output。
+  //   卡凭空消失是【原因】,查不到产出是【症状】—— 记成症状的话,面板和下一轮提示词都会告诉
+  //   模型"这片什么都没干",而真相是它可能干得好好的,只是卡被带走了。误诊会传染给下一次决策。
+  n.reason = (n.reason === 'card-gone') ? 'card-gone' : (reasonOf(n.result) || n.reason || 'zero-output')
   // ── 先补做,补不动才重做 ────────────────────────────────────────────────
   // 退出闸不过 ≠ 这片白干了。六类闸里只有 noEmpty(零产出)意味着"这张卡根本没干活",
   // 其余五类(缺产出文件 / 缺契约签名 / 没跑构建测试 / 没出 VERDICT / 命令非零)都是【活干了但差一截】——
