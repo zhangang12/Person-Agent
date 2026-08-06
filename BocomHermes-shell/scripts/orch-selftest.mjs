@@ -645,6 +645,52 @@ section('用例6:全局并发余量 capHint(不给就会造出"running 却没有
   ok('全局满:不发 dispatch', !has(full.effects, 'dispatch'), ty(full.effects))
 })
 
+section('用例6m:闸门按 kind 强制收敛(不听模型填 —— 它填错就是死锁)', () => {
+  need(NODES, 'src/orch/nodes.js')
+  // 病灶(内网实测:"排查、勘查的 Agent 都是固定的闸门,没有跟进不同情况设置不同的闸门"):
+  // 六类闸此前完全按模型填的值生效,render.js 只是在提示词里"劝"它别乱开。劝不住就是死锁 ——
+  // probe 被开了 requireEvidence,收官必然判"没有构建/测试证据",打回重做,而它压根没有可跑的东西,
+  // 重跑一万次都是这个结果。这里拿掉的是【物理上不可能满足的要求】,不是放松标准。
+  const mk = (kind) => NODES.makeNode({ goal: '干活', kind,
+    writeScope: ['src/a.ts'], contract: ['createOrder'], artifacts: ['docs/a.md'],
+    requireEvidence: true, requireVerdict: false, verifyCmd: 'npm test' }, { id: 'n1' })
+
+  const w = mk('work')
+  ok('work:模型填什么就是什么(它确实会改代码)',
+    w.exit.requireEvidence === true && w.exit.verifyCmd === 'npm test' && w.contract.length === 1, w.exit)
+
+  for (const k of ['probe', 'verify', 'check', 'reduce']) {
+    const n = mk(k)
+    ok('★' + k + ' 强制关掉 evidence(它没有可跑的构建/测试)', n.exit.requireEvidence === false, n.exit)
+    ok('  ' + k + ' 强制清掉 verifyCmd(拿命令当判据 = 把它当 work 用)', n.exit.verifyCmd === '', n.exit)
+  }
+  for (const k of ['probe', 'verify', 'check']) {
+    ok('★' + k + ' 强制清掉 contract(没有写归属,签名搜无可搜 → 必判契约缺口)', mk(k).contract.length === 0)
+  }
+  ok('  reduce 保留 contract(它确实写文件)', mk('reduce').contract.length === 1)
+  ok('★probe 不强制落盘产出(勘察的交付就是回报本身,上游拿它去拆下一批)', mk('probe').exit.artifacts.length === 0)
+  ok('  但 probe 仍受 noEmpty 约束(一份都没回报确实等于没干)', mk('probe').exit.noEmpty === true)
+  for (const k of ['verify', 'check']) {
+    const n = mk(k)
+    ok('★' + k + ' 强制要 VERDICT(它的判据就是这个,不是产出)', n.exit.requireVerdict === true)
+    ok('  ' + k + ' 强制不产文件(只读)', n.exit.artifacts.length === 0)
+  }
+})
+
+section('用例6n:工人简报必须点破"没人会回答你"', () => {
+  const RENDER = tryReq('../src/orch/render.js')
+  need(RENDER, 'src/orch/render.js')
+  // 病灶(内网实测:"分片 Agent 还会问问题"):question 工具那条闸是通的(session.js 按 shardWc 自动拒答),
+  // 但它【只挡工具】—— 模型完全可以在正文里写"请确认是方案A还是方案B?"然后停下等人,
+  // 没有任何机制拦得住,那一轮就这么空转掉。所以指令里要断掉这个念头,并给出替代动作。
+  const brief = RENDER.composeNodeBrief(mkRun({ nodes: [] }), mkNode({ id: 'n1', goal: '摸清认证模块' }))
+  ok('★点明无人值守 + 没有人会回答', /无人值守/.test(brief) && /没有人会回答你/.test(brief), brief.slice(0, 200))
+  ok('  说清调 question 工具会被当场拒掉(别以为是自己没说清)', /question/.test(brief) && /拒/.test(brief))
+  ok('★给了替代动作:自己决定 + 把假设写进回报(光禁止不给出路,它还是会卡)',
+    /自己按最合理的方式做决定/.test(brief) && /假设/.test(brief))
+  ok('  留了唯一的合法停止条件(非越界不可能完成)', /非越界不可能完成/.test(brief))
+})
+
 section('用例6k:A —— 按发现扇出(CC 的 Verify 那一层)', () => {
   const SHAPE = tryReq('../src/orch/shapes.js')
   need(SHAPE, 'src/orch/shapes.js'); need(RUN, 'src/orch/run.js')

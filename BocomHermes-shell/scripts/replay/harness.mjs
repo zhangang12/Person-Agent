@@ -525,8 +525,18 @@ async function createWorld(opts = {}) {
     wcById: (id) => ACTIVE.wcs.get(id) || null,
     windows: () => FakeBrowserWindow._all.slice(),
     // 分片/工作流:spawn-workflow → spawnWorkflow;正常开卡返回 { id, wcId, wc, reg },排队返回 { queued: true }
-    spawnWorkflow(goal) {
-      const r = handlers['spawn-workflow'](senderOf({ id: 0 }), goal)
+    // model/opts 可选:不传就走 IPC 那条口(与老用例等价);传了就直接打真 spawnWorkflow ——
+    // 编排节点的身份(runId/nodeId/dir/writeScope…)全靠 opts 结构化下发,而 IPC 口只收一个 goal,
+    // 从那儿进等于把 opts 整个丢掉(本 harness 之前就是这样,写出来的用例会"恰好通过")。
+    spawnWorkflow(goal, model, opts) {
+      const r = (model !== undefined || opts !== undefined)
+        ? winApi.spawnWorkflow(goal, model || null, opts || undefined)
+        : handlers['spawn-workflow'](senderOf({ id: 0 }), goal)
+      if (r && r.queued) return { queued: true, position: r.position }
+      if (r && typeof r === 'object' && r.ok && r.id != null) {
+        const reg0 = S.wfRegistry && S.wfRegistry.get(String(r.id))
+        return { id: r.id, wcId: reg0 && reg0.wcId, wc: ACTIVE.wcs.get(reg0 && reg0.wcId) || null, reg: reg0 }
+      }
       if (r && r.queued) return { queued: true, position: r.position }
       const reg = S.wfRegistry && S.wfRegistry.get(String(r))
       const wcId = reg && reg.wcId

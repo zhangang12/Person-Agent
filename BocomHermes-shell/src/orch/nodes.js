@@ -27,6 +27,37 @@
 //     模型判断对了(这活确实要 30 片),代价却由用户承担。截断留下前 N 个,后续 replan 还能继续加。
 
 const KINDS = ['work', 'probe', 'verify', 'check', 'reduce']
+
+// ── 闸门按 kind 收敛(代码强制,不听模型填)──────────────────────────────
+// 病灶(内网实测:"排查、勘查的 Agent 都是固定的闸门,没有跟进不同情况设置不同的闸门"):
+// 六类闸此前【完全按模型填的值】生效,而 render.js 只是在提示词里"劝"它别乱开。劝不住的后果是死锁:
+//   · probe/勘察节点被开了 requireEvidence → 它本来就不该跑构建测试,收官必然判"没有证据",
+//     被打回重做,还告诉工人"你没跑构建/测试"—— 而它压根没有可跑的东西,重跑一万次也是这个结果。
+//   · verify/check/reduce 同理:只读节点开 evidence、汇总节点开 verifyCmd,都是必死的组合。
+// 这里按"这类节点物理上有没有可能满足这道闸"来收敛 —— 不是放松要求,是拿掉【不可能满足的要求】。
+// 收敛放在 makeNode(造节点时)而不是 evalExit(判定时):判定时才拿掉,面板上会一直显示一道
+// 永远不会被检查的闸,用户和模型都会被这个假信息误导;造节点时拿掉,盘上存的就是真实生效的闸。
+function gatesFor(kind, g) {
+  const k = str(kind)
+  const out = Object.assign({}, g)
+  if (k !== 'work') {
+    // 只有 work 会改代码 —— 其余四类都是只读/汇总,没有"构建测试证据"这回事
+    out.requireEvidence = false
+    // verifyCmd 同理:让勘察/核实/汇总节点去跑一条命令当判据,是把它们当 work 用
+    out.verifyCmd = ''
+  }
+  if (k === 'probe') {
+    // 勘察的交付【就是回报本身】(上游拿它去拆下一批),不强制落盘产出。
+    // noEmpty 保留:一份都没回报的勘察确实等于没干。
+    out.artifacts = []
+  }
+  if (k === 'verify' || k === 'check') {
+    // 核实/检查是只读的:不产文件,判据是 VERDICT 而不是产出
+    out.artifacts = []
+    out.requireVerdict = true
+  }
+  return out
+}
 const ORIGINS = ['plan', 'replan', 'user', 'resume']
 // 未终结 = 还可能往磁盘上写字。写归属两两不交只对这些节点设防:
 // 已 verified/failed/skipped 的节点早写完了,新节点覆盖它的归属是合法的(修补/返工本来就该这么干)。
@@ -189,14 +220,18 @@ function makeNode(spec, ctx) {
     brief: str(s.brief),                       // 代码稍后用 composeNodeBrief 填,这里只留位
     deps: strArr(s.deps),
     writeScope: strArr(s.writeScope),
-    contract: strArr(s.contract),
-    exit: {
+    // 契约签名闸只对【会写代码的节点】成立:它的判法是"去写归属文件里搜这些签名",
+    // 而 probe/verify/check 根本没有写归属(verify 的写归属还被 doDispatch 强制成了临时目录),
+    // 搜无可搜 → 必然判"契约缺口" → 打回重做 → 再搜无可搜。同 gatesFor 一个道理:
+    // 拿掉的是【物理上不可能满足的要求】,不是放松标准。
+    contract: (kind === 'work' || kind === 'reduce') ? strArr(s.contract) : [],
+    exit: gatesFor(kind, {
       artifacts: strArr(first(s.artifacts, exitIn.artifacts, [])),
       requireEvidence: first(s.requireEvidence, exitIn.requireEvidence) === true,
       requireVerdict: first(s.requireVerdict, exitIn.requireVerdict) === true,
       verifyCmd: str(first(s.verifyCmd, exitIn.verifyCmd, '')).trim(),
       noEmpty: first(s.noEmpty, exitIn.noEmpty) === false ? false : true,
-    },
+    }),
     state: 'pending',
     attempt: 0,
     // maxAttempts 默认 2 不是 1:闸13(45s 静默即落定)消不掉,一个卡死但仍有心跳的工人会被判 settled、

@@ -120,6 +120,9 @@ function makeOrch(deps) {
     n.brief = brief
     const r = spawnWorkflow(brief, run.model || null, {
       runId: run.id, nodeId: n.id,
+      dir: str(run.dir) || undefined,   // ★工作目录跟着这个 run 走:spawnWorkflow 原来无条件读 S.settings.projectDir,
+                                        //   两个 run 同时跑就会串台(路径与系统提示词一起串,实测)
+      backendDir: str(run.backendDir) || undefined,
       title: n.title,                   // 展示名:卡标题 / reg.goal / 分片 chip 用它,不用整段 brief
       // verify 节点没写归属时【代码强制】只读沙箱:session.js 的写归属硬闸口径是"空 = 不设闸",
       // 模型漏写 writeScope 的验证节点就能改项目文件 —— 这是安全退化,不能指望模型自觉

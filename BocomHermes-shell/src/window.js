@@ -465,7 +465,13 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       log('workflow queued (running ' + wfRunningCount() + '/' + wfConcurrency() + ', position ' + S.wfQueue.length + '): ' + g.slice(0, 60))
       return { queued: true, position: S.wfQueue.length }
     }
-    const dir = S.settings.projectDir || ''
+    // ★工作目录必须跟着【发起方】走,不能读全局当前值。
+    //   run.dir 是 createRun 时的快照(每个 run 各一份),而这里原来无条件读 S.settings.projectDir ——
+    //   同时跑两个工作流、而用户中途切过目录(或两个 run 本来就在不同目录)时,后开的那张卡会拿到
+    //   【另一个 run 的目录】。更糟的是这个 dir 还被烤进 workflowSystemPrompt(dir, …),
+    //   于是路径和提示词【一起串台】(用户实测原话:"两个工作流同时启动会混着用项目路径和提示词")。
+    //   opts.dir 缺席时才回退全局值(独立工作流卡没有 run,那条路径本来就该用当前目录)。
+    const dir = (wo && wo.dir) ? String(wo.dir) : (S.settings.projectDir || '')
     // msg=系统规程+目标(发给 serve);disp=目标(用户气泡只显示目标,规程不露)。返回卡 id,与旧签名兼容。
     // 主控的分片/索引棒 → 隐藏卡:不开窗,会话经 session.js 镜像回流到主控卡主区域(shard 视图);
     // 自动过规划闸 + 权限自动放行(无人值守);进度经 pushShardProgress 聚合进主控卡
@@ -477,10 +483,14 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     // msg 才是喂给模型的完整 brief。编排节点的 brief 开头恒为"【总目标】…",拿它当展示名的话
     // 每张卡都显示同一段前缀,谁是谁完全分不出来(真跑截图实锤)。
     const disp = (isRunNode && wo.title) ? String(wo.title) : g
-    const id = spawnCard('工作流 · ' + disp.slice(0, 20), null, workflowSystemPrompt(dir, S.settings.backendDir || '') + '\n\n【总目标】\n' + g, disp,
+    const bdir = (wo && wo.backendDir) ? String(wo.backendDir) : (S.settings.backendDir || '')   // 副仓同理:也是 run 的快照,不能读全局当前值
+    const id = spawnCard('工作流 · ' + disp.slice(0, 20), null, workflowSystemPrompt(dir, bdir) + '\n\n【总目标】\n' + g, disp,
       // forceModel 两条分支都要传:队列项一直存着它(wfDequeue 出队时原样透传),但独立工作流分支从来没接过 ——
       // 也就是说"forceModel 随队列走"这个契约在独立工作流上一直是空的(旧代码只在分片分支给 model)
       isRunNode ? { wf: true, shard: true, hidden: true, model: forceModel } : { flash: true, wf: true, model: forceModel })
+    // 卡级目录登记:session.js 建会话时按 S.cardDir.get(wcId) 取 dir,不登记就又回到 S.settings.projectDir ——
+    // 上面那行只解决了"系统提示词里写的路径",这行才解决"它实际在哪个目录里干活"。两处都要,少一处仍然串。
+    if (dir) { try { const wcid = S.cardWcById && S.cardWcById.get(String(id)); if (wcid != null) { S.cardDir = S.cardDir || new Map(); S.cardDir.set(wcid, dir) } } catch {} }
     if (isRunNode) {
       try {
         const reg = S.wfRegistry && S.wfRegistry.get(String(id))
