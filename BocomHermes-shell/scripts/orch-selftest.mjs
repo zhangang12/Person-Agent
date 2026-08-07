@@ -60,6 +60,7 @@ const CTX = { mkId }
 const ty = (fx) => (fx || []).map((e) => e && e.type)
 const of = (fx, t) => (fx || []).filter((e) => e && e.type === t)
 const has = (fx, t) => of(fx, t).length > 0
+const num0 = (x) => (Number.isFinite(+x) ? +x : 0)
 const byId = (r, id) => (r.nodes || []).find((n) => n.id === id)
 const byTitle = (r, t) => (r.nodes || []).find((n) => n.title === t)
 const stOf = (r, id) => { const n = byId(r, id); return n ? n.state : '(无此节点)' }
@@ -986,6 +987,15 @@ section('用例6j:拆窄了打回重问一次(且只一次)', () => {
   const out2 = step(run2, { type: 'DECIDED', decisionId: 'd2', point: 'plan', ok: true, data: narrowPlan }, '6j')
   ok('★第二次仍窄就接受(不死磕,免得预算烧光还开不了工)', out2.run.phase === 'awaiting-approval', out2.run.phase)
   ok('  节点确实入图了', out2.run.nodes.length >= 1, out2.run.nodes.length)
+  // ★打回那一批时必须把 spawned 退回去 —— addNodes 已经把它们计进预算,只删节点不退账,
+  //   预算就凭空少一批(真机 2026-08-07:8 个节点全撤、spawned 还是 8,不变式当场报
+  //   "spawned(8)与节点数(0)对不上")。重问几次就能把 maxNodes 烧穿,而那时一个节点都还没派出去。
+  ok('★打回重问要把 spawned 退回去(否则预算花掉了却什么都没换来)',
+    num0(out.run.budget.spawned) === out.run.nodes.length,
+    { spawned: out.run.budget.spawned, nodes: out.run.nodes.length })
+  ok('  不变式不再报警', !(RUN.invariants ? RUN.invariants(out.run) : []).length
+    || !(RUN.invariants(out.run) || []).some((x) => /spawned/.test(String(x))),
+    RUN.invariants ? RUN.invariants(out.run) : 'invariants 未导出')
 })
 
 section('用例6r:★宽度归代码 —— 「拆的分片不够多」的五条独立成因', () => {
@@ -1073,6 +1083,15 @@ section('用例6r:★宽度归代码 —— 「拆的分片不够多」的五条
     const out = step(mkRun({ goal: '分析后端的代码,把所有接口摸一遍', concurrency: 4, phase: 'planning', nodes: [],
       pendingDecision: { id: 'd1', point: 'plan', event: 'start', nodeId: '', at: T0 } }),
     { type: 'DECIDED', decisionId: 'd1', point: 'plan', ok: true, data: allProbe }, '6r')
+    // ★两波图(probe 打头 + work 依赖 probe)是【完全正确的形态】,不许被打回重问。
+    // 真机第二次踩:real 把 probe 滤掉后,剩下的 work 全都有 deps → rootless=0 → 判"0 片能并行"。
+    // tooNarrow 原来只在【整批都是 probe】时让步,两波图够不到那个条件。
+    ok('★probe 打头 + work 依赖它的两波图 → 不判宽度(这是正确形态,不是拆窄)',
+      SHAPE.tooNarrow({ id: 'R1', goal: '整理采购部的相关功能的逻辑', concurrency: 4 },
+        [{ kind: 'probe', deps: [] }, { kind: 'work', deps: ['1'] }, { kind: 'work', deps: ['1'] }]) === null)
+    ok('  没有勘察片时照旧判(这条修的是"勘察被漏看",不是关掉宽度强制)',
+      !!SHAPE.tooNarrow({ id: 'R1', goal: '整理采购部的相关功能的逻辑', concurrency: 4 },
+        [{ kind: 'work', deps: [] }]))
     ok('★全是勘察片的规划 → 代码一个节点都不补(修前:补了 6 个通用视角片,活翻倍)',
       out.run.nodes.every((n) => n.origin === 'plan'), out.run.nodes.map((n) => n.kind + '/' + n.origin))
     ok('  也不该硬塞汇总(勘察还没产出,这时候挂汇总必然挂错 deps)',

@@ -313,9 +313,15 @@ function onPlanDecided(t, dec, data) {
   const narrow = SHAPE.tooNarrow(r, made)
   if (narrow && !r.budget.shapeReasked) {
     r.budget.shapeReasked = 1
+    // ★作废这一批的同时把 spawned 退回去 —— addNodes 已经把它们计进预算了,
+    //   只删节点不退账,预算就凭空少一批(真机 2026-08-07:8 个节点全撤,spawned 还是 8,
+    //   不变式当场报"spawned(8)与节点数(0)对不上")。重问几次就能把 maxNodes 烧穿,
+    //   而那时一个节点都还没派出去 —— 最坏的一种预算泄漏:花掉了却什么都没换来。
+    const before = arr(r.nodes).length
     for (const n of arr(r.nodes)) if (n.origin === 'plan' && n.state === 'pending') n.state = 'dropped'   // 这批作废,重来
     r.nodes = arr(r.nodes).filter((n) => n.state !== 'dropped')
-    t.eff.push({ type: 'notify', level: 'info', text: '只拆出 ' + narrow.parallel + ' 片能并行(并发 ' + narrow.cap + ')—— 让规划器按视角再拆一次' })
+    r.budget.spawned = Math.max(0, num(r.budget.spawned) - (before - arr(r.nodes).length))
+    t.eff.push({ type: 'notify', level: 'info', text: '只拆出 ' + narrow.parallel + ' 片能并行(这个目标有 ' + narrow.cap + ' 个面)—— 让规划器按视角再拆一次' })
     startDecision(t, 'plan', 'too-narrow', '')
     return
   }

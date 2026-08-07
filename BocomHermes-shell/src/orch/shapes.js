@@ -270,6 +270,12 @@ function tooNarrow(run, madeNodes) {
   if (want < 2) return null
   const made = arr(madeNodes)
   if (!made.length) return null
+  // ★批次里只要有勘察片,这一版就【先不判宽度】—— 与 needsWiden 同一条让步。
+  // 真机 2026-08-07 第二次踩:模型给的是"probe 打头 + work 依赖 probe"的两波图(完全正确的形态),
+  // 而 real 把 probe 滤掉之后,剩下的 work 全都有 deps → rootless=0 → 判"0 片能并行"→ 打回重问。
+  // 这条原来只在【整批都是 probe】时让步(real.length===0),两波图够不到那个条件。
+  // 勘察跑完那次 replan 才是判宽度的时机:那时模型已经知道里面长什么样,拆得只会更准。
+  if (made.some((n) => n && str(n.kind) === 'probe')) return null
   const real = made.filter((n) => n && str(n.kind) !== 'probe')
   if (!real.length) return null
   const rootless = real.filter((n) => !arr(n.deps).length)   // 无依赖 = 第一批就能同时跑的
