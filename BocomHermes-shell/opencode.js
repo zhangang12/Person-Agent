@@ -494,8 +494,27 @@ function pickTurnText(list) {
   const la = asst[asst.length - 1]
   const laText = extractText(la)
   const laDone = !!(la?.info?.time?.completed || la?.info?.finish)
-  return { done: laDone && !!laText, text, laDone, laText, toolRunning,
+  // ★回合级错误(网关/供应商拒了这次请求)。原来这里【一个字都不看】——
+  //   真机 2026-08-07:DeepSeek 返 402「Insufficient Balance」,serve 把它挂在 assistant 消息的
+  //   info.error 上,而本函数只数文本与工具,于是轮询看到的是"没文本",最后返回空串;
+  //   空串一路流到编排,被误诊成「nodes 是空数组但 more 不是 no」—— 一句与真相毫无关系的话,
+  //   还照着这句去重问模型、烧完两轮转人工。余额不足这种事,本该第一时间原样告诉人。
+  const err = errOf(la)
+  return { done: laDone && !!laText, text, laDone, laText, toolRunning, err,
     sig: asst.length + ':' + nParts + ':' + text.length + ':' + rLen + ':' + (toolRunning ? 1 : 0) + ':' + tLen }   // 收尾 = 最后一条 assistant 已完成【且带文本】
+}
+
+// 从一条 assistant 消息里取出回合级错误,拼成一句人话。取不到就返回 ''。
+// 只认【结构化的 error 字段】,不去正文里猜:猜错会把模型自己写的"出错了"当成回合失败。
+function errOf(m) {
+  const e = m && (m.info && m.info.error || m.error)
+  if (!e) return ''
+  const d = e.data || {}
+  const msg = String(d.message || e.message || '').trim()
+  const code = d.statusCode || d.status || ''
+  const name = String(e.name || '').trim()
+  const bits = [name, code ? ('HTTP ' + code) : '', msg].filter(Boolean)
+  return bits.length ? bits.join(' · ') : ''
 }
 // maxMs=绝对上限(防永久 hang);idleMs=空转上限(sig 一直不动才算空转)。
 // 口径(2026-08-04 放宽):maxMs 30min→2h、idleMs 10min→30min、工具在跑的空转放宽 25min→60min ——
@@ -531,6 +550,10 @@ async function waitAssistantText(info, sessionId, maxMs = 7200000, idleMs = 1800
     const r = pickTurnText(list)
     prev = r.text || prev
     toolBusy = !!r.toolRunning
+    // ★回合在供应商侧失败(402 余额不足 / 401 鉴权 / 4xx 参数…):有半截文本就返半截(有总比无强),
+    //   一个字都没有就【抛出来】—— 返回空串会让上层完全无法区分"失败了"和"跑完了没话说",
+    //   而这两者的处置完全相反(前者要告诉人并停,后者只是空产出)。
+    if (r.err && !prev) throw new Error('回合失败:' + r.err)
     if (r.done) return r.text                                              // 最后一条已完成且带文本 → 收(最快路径)
     // 稳定即收的判据升级:不再按"这台 serve 有没有完成标记"二选一 ——
     //   · 完成标记打得晚的 serve(实测内网:completed 可能等会话级收尾/标题生成才落),死等它 = 简单问题也 70s(用户实测,终端 10 倍速于卡片);
@@ -1033,6 +1056,13 @@ async function runEventLoop(info, handlers, log) {
           if (!data) continue
           let ev; try { ev = JSON.parse(data) } catch { continue }
           if (!sampleLogged && /part|message/.test(ev && ev.type || '')) { sampleLogged = true; log('SAMPLE event: ' + JSON.stringify(ev).slice(0, 700)) }
+          // ★session.error 的 payload 【每次都打】—— 这是回合失败的唯一现场。
+          // 原来只按"事件类型首次出现"打一行 `event type: session.error`,payload 一个字都不落;
+          // 于是真机上回合报错时,能看到的只有下游的误诊(编排把空回答当成 schemaFail),
+          // 而真正的原因躺在这个 payload 里、被丢掉了。排障最贵的从来不是修,是查不到现场。
+          if ((ev && ev.type || '') === 'session.error') {
+            try { log('session.error: ' + JSON.stringify(ev.properties || ev).slice(0, 900)) } catch { log('session.error(payload 无法序列化)') }
+          }
           if ((ev && ev.type || '').includes('part')) { const pt = ev.properties && ev.properties.part && ev.properties.part.type; if (pt && !seenPartTypes.has(pt)) { seenPartTypes.add(pt); log('part type: ' + pt) } }
           // 诊断:每种事件类型首次出现打一次;带 parentID 的会话事件(子agent映射来源)特别标注,便于确认子agent路由是否可行
           { const et = (ev && ev.type) || ''; if (et && !seenEvTypes.has(et)) { seenEvTypes.add(et); log('event type: ' + et) }

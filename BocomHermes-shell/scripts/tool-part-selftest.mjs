@@ -447,5 +447,29 @@ await (async () => {
   } finally { srv.close() }
 })()
 
+;(() => {
+  console.log('用例:★回合级错误(info.error)必须被看见 —— 真机 402 现场')
+  // 2026-08-07 真机:DeepSeek 返 402「Insufficient Balance」,serve 把它挂在 assistant 消息的
+  // info.error 上。pickTurnText 原来【一个字都不看】,于是轮询看到"没文本" → 返回空串 →
+  // 编排把空串误诊成「nodes 是空数组但 more 不是 no」,照着这句去重问模型,烧完两轮转人工。
+  // 余额不足这种一句话能解决的事,被翻译成一句与真相毫无关系的话 —— 最坏的失败形态不是没修好,
+  // 是报错在撒谎。
+  const errMsg = (data, parts) => ({ info: { role: 'assistant', id: 'm' + Math.abs(data.statusCode || 0),
+    time: { completed: Date.now() }, error: { name: 'APIError', data } }, parts: parts || [] })
+  const r = pickTurnText([uMsg('q'), errMsg({ message: 'Insufficient Balance', statusCode: 402 })])
+  ok('★回合失败时 err 非空(修前:这里什么都看不到)', !!r.err, r.err)
+  ok('  带上供应商原话与状态码(人要能直接看懂该干嘛)',
+    /Insufficient Balance/.test(r.err) && /402/.test(r.err), r.err)
+  ok('  正常回合 err 为空(不许无中生有)',
+    !pickTurnText([uMsg('q'), aMsg([textPart('答完了')], true)]).err)
+  // 只认结构化 error 字段:去正文里猜会把模型自己写的"出错了"当成回合失败
+  ok('★不从正文里猜错误(模型自己写"APIError 402"不算回合失败)',
+    !pickTurnText([uMsg('q'), aMsg([textPart('执行时出错了,APIError 402')], true)]).err)
+  // 有半截文本时文本与错误都要在:上层的规矩是"有总比无强",由它决定返半截还是抛
+  const rp = pickTurnText([uMsg('q'), errMsg({ message: 'timeout', statusCode: 504 }, [textPart('写了一半')])])
+  ok('  带半截文本的失败回合:文本与错误都在', rp.text === '写了一半' && !!rp.err, { text: rp.text, err: rp.err })
+})()
+
+
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

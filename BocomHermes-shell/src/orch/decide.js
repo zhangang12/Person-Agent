@@ -115,6 +115,16 @@ function makeDecider(deps) {
       // final.gaps 得逐条覆盖账本里的 gaps 与"没有验证证据的节点"。不传 ctx 这条校验恒空过,
       // 于是"代码保证信息不丢、动作权归模型"就只剩一句口号(死代码,真跑也看不出来)。
       const vctx = coverageCtx(c)
+      // ★空回答不是"格式不对",是【这一轮压根没答】—— 必须分开报。
+      // 真机 2026-08-07:回合在 serve 侧报了 session.error,sendMessage 把错吞了、返回空串,
+      // 于是编排一路误诊成 schemaFail,报出来的错是「nodes 是空数组但 more 不是 no」——
+      // 一句与真相毫无关系的话。更糟的是它还触发"同会话窄重问":拿一条不存在的格式错去问模型,
+      // 第二轮当然还是空,两轮烧完直接转人工。
+      // 空回答该走 transport 分支:那条分支的降级语义(重试/换路)才是对的。
+      if (!str(raw).trim()) {
+        log('[orch-decide] ' + point + ' 模型没有任何输出(回合多半在 serve 侧失败了,看上一行 session.error)')
+        return { ok: false, invalid: 'transport', errors: ['模型这一轮没有任何输出 —— 回合可能在 serve 侧失败了(网关报错/被中止/模型拒答),不是格式问题'], raw: '' }
+      }
       let obj = SCHEMA.coerce(point, SCHEMA.extractJson(raw, point))
       let v = SCHEMA.validate(point, obj, vctx)
       if (!v.ok) {
@@ -122,6 +132,10 @@ function makeDecider(deps) {
         log('[orch-decide] ' + point + ' 首答不合法,同会话重问一次:' + v.errors.slice(0, 2).join(';'))
         dumpRaw(point, '首答不合法', v.errors, raw)
         raw = await ask(serve, sid, RETRY_ASK.replace('{ERR}', v.errors.join(';')) + TAIL, model, ms)
+        if (!str(raw).trim()) {
+          log('[orch-decide] ' + point + ' 重问也没有任何输出 —— 按 transport 处理,不当格式错')
+          return { ok: false, invalid: 'transport', errors: ['重问后模型仍然没有任何输出 —— 回合可能在 serve 侧失败了'], raw: '' }
+        }
         obj = SCHEMA.coerce(point, SCHEMA.extractJson(raw, point))
         v = SCHEMA.validate(point, obj, vctx)
       }
