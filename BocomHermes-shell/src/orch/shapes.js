@@ -294,6 +294,16 @@ function needsWiden(run, room) {
   const r = run || {}
   const set = lensSetFor(r.goal)
   if (!set) return null
+  // ★还有勘察片在跑/待跑 → 现在不补宽,等它们跑完那次 replan 再判。
+  // 【真机 2026-08-07 抓到的误判】模型给了 6 个 probe(摸底 routers / schemas / 前端调用层 /
+  // 表单 / 校验层 / 共享类型 —— 全是按这个项目实际情况拆的),而 parallelHeads 把 probe 排除在
+  // 宽度之外,于是判成"0 片能并行",代码又补了 6 个【通用视角】片:活翻倍,而且补出来的远不如
+  // 模型自己拆的贴切。更糟的是那 6 个 probe 没有 artifacts,不算 producer,汇总的 deps 里
+  // 一个都没有 —— 模型真正的探索成了孤儿,我的通用副本反倒成了交付物。
+  // tooNarrow 早就有这条让步("勘察片不算宽度,后面还会被再问一次"),needsWiden 漏了同一条,
+  // 两边对同一件事的判法不一致 —— 又是"同一件事两份账本"。
+  if (arr(r.nodes).some((n) => n && str(n.kind) === 'probe'
+    && ['pending', 'queued', 'running'].indexOf(str(n.state || 'pending')) >= 0)) return null
   const want = set.length
   const have = parallelHeads(r.nodes).length
   if (have >= want) return null

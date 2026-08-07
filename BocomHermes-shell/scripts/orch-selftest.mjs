@@ -1050,6 +1050,35 @@ section('用例6r:★宽度归代码 —— 「拆的分片不够多」的五条
       SHAPE.parallelHeads(chain).length === 1, SHAPE.parallelHeads(chain).map((n) => n.id))
   }
 
+  // ── ★勘察在跑时不许补宽(真机 2026-08-07 抓到的误判)────────────────────
+  // 现场:模型给了 6 个 probe(摸底 routers / schemas / 前端调用层 / 表单 / 校验层 / 共享类型 ——
+  // 全是按这个项目实际情况拆的,正是目标里要的"fan-out 子代理分头摸底")。
+  // 而 parallelHeads 把 probe 排除在宽度之外 → 判成"0 片能并行" → 代码又补了 6 个【通用视角】片:
+  // 活翻倍,补出来的还远不如模型自己拆的贴切。更糟的是 probe 没有 artifacts、不算 producer,
+  // 汇总的 deps 里一个 probe 都没有 —— 模型真正的探索成了孤儿,通用副本反倒成了交付物。
+  // tooNarrow 早有这条让步("勘察片不算宽度,后面还会被再问一次"),needsWiden 漏了同一条。
+  {
+    const probe = (id, st) => ({ id, kind: 'probe', state: st || 'pending', deps: [], exit: { artifacts: [] } })
+    const r = { id: 'R1', goal: '分析后端的代码', nodes: [probe('p1'), probe('p2'), probe('p3')] }
+    ok('★勘察片还在跑 → 不补宽(等它们跑完那次 replan 再判)', SHAPE.needsWiden(r, 99) === null,
+      SHAPE.needsWiden(r, 99))
+    ok('  勘察全部跑完 → 恢复补宽(该判的时候要判)',
+      !!SHAPE.needsWiden({ id: 'R1', goal: '分析后端的代码', nodes: [probe('p1', 'verified'), probe('p2', 'verified')] }, 99))
+    ok('  只要还有一个勘察没跑完就不补(半截图上补宽等于跟模型抢方案)',
+      SHAPE.needsWiden({ id: 'R1', goal: '分析后端的代码', nodes: [probe('p1', 'verified'), probe('p2', 'running')] }, 99) === null)
+    // 状态机端到端:全 probe 的规划不该被补出任何 shape 节点
+    const allProbe = { needGrounding: false, more: 'unknown', why: '先摸底',
+      nodes: [1, 2, 3, 4, 5, 6].map((i) => ({ title: '摸底' + i, goal: '摸底 ' + i, kind: 'probe', deps: [],
+        writeScope: [], contract: [], artifacts: [], requireEvidence: false, requireVerdict: false, verifyCmd: '' })) }
+    const out = step(mkRun({ goal: '分析后端的代码,把所有接口摸一遍', concurrency: 4, phase: 'planning', nodes: [],
+      pendingDecision: { id: 'd1', point: 'plan', event: 'start', nodeId: '', at: T0 } }),
+    { type: 'DECIDED', decisionId: 'd1', point: 'plan', ok: true, data: allProbe }, '6r')
+    ok('★全是勘察片的规划 → 代码一个节点都不补(修前:补了 6 个通用视角片,活翻倍)',
+      out.run.nodes.every((n) => n.origin === 'plan'), out.run.nodes.map((n) => n.kind + '/' + n.origin))
+    ok('  也不该硬塞汇总(勘察还没产出,这时候挂汇总必然挂错 deps)',
+      !out.run.nodes.some((n) => n.kind === 'reduce'), out.run.nodes.map((n) => n.kind))
+  }
+
   // ── ④ 状态机端到端:plan 给 2 片 → 代码铺齐 ────────────────────────────
   const twoPlan = { needGrounding: false, more: 'no', why: '两片',
     nodes: [1, 2].map((i) => ({ title: '模块' + i, goal: '查模块 ' + i, kind: 'work', deps: [],
