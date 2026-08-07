@@ -77,7 +77,16 @@ function makeDecider(deps) {
     } catch { /* 排障用的东西不许把主流程带崩 */ }
   }
 
-  async function ask(serve, sid, text, model, ms) {
+  // 输出被截断时的重问话术。★不能沿用"要么给节点要么写 more:no"那一套 ——
+// 它拆得很好,问题只在【话没说完】。要它改的是【怎么把答案塞进一次输出】,不是改判断。
+const TRUNC_ASK = '你上一版的 JSON 【没有写完就被截断了】(输出长度到顶),所以壳层一个字都用不上。'
+  + '这一版请把整个 JSON 控制在 6000 字以内,三条一起用:'
+  + '① 片数先给【最多 8 片】,其余写进 open 并置 more:"unknown" —— 下一轮你还会被问一次,那时再补;'
+  + '② 每片的 goal 压到 200 字以内,只说清【查什么、产出到哪个文件、边界在哪】。'
+  + '探索方法论、读文件的技巧、回报格式这些【一个字都不要写】—— 工人卡自带规程,写了是重复;'
+  + '③ 先把 JSON 写完整、闭合,再考虑内容详略。写不完的宁可少给几片,也不要给半截。'
+
+async function ask(serve, sid, text, model, ms) {
     if (!(ms > 0)) return oc.sendMessage(serve, sid, text, model)   // 默认不限时:慢模型等到底,面板可中止
     let timer = null
     try {
@@ -128,9 +137,15 @@ function makeDecider(deps) {
       let obj = SCHEMA.coerce(point, SCHEMA.extractJson(raw, point))
       let v = SCHEMA.validate(point, obj, vctx)
       if (!v.ok) {
+        // ★输出被截断要单独认出来。真机 2026-08-07:模型给了一份很好的 18 片方案,
+        //   但输出到 16439 字被切断、JSON 没闭合 → 抠不出对象 → 报「nodes 是空数组」。
+        //   拿这句去重问它毫无用处:它拆得很好,只是话没说完,再来一遍还是会超。
+        //   必须换一句话问 —— 让它【分批给 + 把 goal 写短】。
+        const cut = SCHEMA.looksTruncated(raw)
+        if (cut) v = { ok: false, errors: [TRUNC_ASK] }
         // 降级第 2 级:同会话窄重问一次 —— 上下文还在,是最便宜的纠错通道(比重开一段会话准得多)
-        log('[orch-decide] ' + point + ' 首答不合法,同会话重问一次:' + v.errors.slice(0, 2).join(';'))
-        dumpRaw(point, '首答不合法', v.errors, raw)
+        log('[orch-decide] ' + point + (cut ? ' 首答被截断(JSON 没闭合),改问"分批给"' : ' 首答不合法,同会话重问一次:' + v.errors.slice(0, 2).join(';')))
+        dumpRaw(point, cut ? '首答被截断' : '首答不合法', v.errors, raw)
         raw = await ask(serve, sid, RETRY_ASK.replace('{ERR}', v.errors.join(';')) + TAIL, model, ms)
         if (!str(raw).trim()) {
           log('[orch-decide] ' + point + ' 重问也没有任何输出 —— 按 transport 处理,不当格式错')
@@ -140,8 +155,10 @@ function makeDecider(deps) {
         v = SCHEMA.validate(point, obj, vctx)
       }
       if (v.ok) return { ok: true, data: obj, raw: str(raw).slice(0, 4000) }
-      log('[orch-decide] ' + point + ' 重问后仍不合法:' + v.errors.slice(0, 3).join(';'))
-      dumpRaw(point, '重问后仍不合法', v.errors, raw)
+      const cut2 = SCHEMA.looksTruncated(raw)
+      if (cut2) v = { ok: false, errors: ['输出又被截断了(JSON 没闭合)—— ' + TRUNC_ASK] }
+      log('[orch-decide] ' + point + (cut2 ? ' 重问后仍被截断' : ' 重问后仍不合法:' + v.errors.slice(0, 3).join(';')))
+      dumpRaw(point, cut2 ? '重问后仍被截断' : '重问后仍不合法', v.errors, raw)
       return { ok: false, invalid: 'schemaFail', errors: v.errors, raw: str(raw).slice(0, 4000) }
     } catch (e) {
       const why = /timeout/i.test(str(e && e.message)) ? 'timeout' : 'transport'

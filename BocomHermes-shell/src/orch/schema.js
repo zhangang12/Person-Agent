@@ -237,6 +237,22 @@ function stripThink(s) {
   return t
 }
 
+/**
+ * 输出是不是被【截断】了 —— 有 { 开头,却从头到尾没有一个能闭合的对象。
+ * 真机 2026-08-07:模型给了一份很好的 18 片方案,但输出到 16439 字被截断,JSON 没闭合;
+ * extractJson 抠不出东西 → coerce 出 nodes:[] → 报「nodes 是空数组但 more 不是 no」。
+ * 又是一句与真相毫无关系的话:它拆得很好,只是话没说完。而重问话术还在教它"要么给节点要么写 more:no",
+ * 它照做也没用 —— 再来一遍还是会超。必须认出这一种,并告诉它【分批给 / 把 goal 写短】。
+ */
+function looksTruncated(input) {
+  const s = stripThink(str(input))
+  const i = s.indexOf('{')
+  if (i < 0) return false
+  let j = i
+  while (j >= 0) { if (balancedSpan(s, j)) return false; j = s.indexOf('{', j + 1) }
+  return true
+}
+
 function extractJson(input, point) {
   if (input && typeof input === 'object') return isObj(input) ? input : null   // 桩/重放可能直接喂对象
   const s = str(input)
@@ -508,7 +524,7 @@ function validate(point, obj, ctx) {
   return { ok: false, errors: ['未知的决策点「' + str(point) + '」:只有 plan 与 replan 两个'] }
 }
 
-module.exports = { extractJson, coerce, validate, KINDS }
+module.exports = { looksTruncated, extractJson, coerce, validate, KINDS }
 
 // ── 最小验证(独立可跑)──────────────────────────────────────────────────────
 // 整段贴进 node REPL,或存成文件后 node 它;全绿打印 schema ok。

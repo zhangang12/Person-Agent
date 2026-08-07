@@ -1296,6 +1296,33 @@ section('用例6s:★发现走工具上报 —— 格式约定的静默失败换
   }
 })
 
+section('用例6y:★输出被截断 ≠ 格式不对(2026-08-07 真机第三次)', () => {
+  const SCHEMA = tryReq('../src/orch/schema.js')
+  const RENDER = tryReq('../src/orch/render.js')
+  need(SCHEMA, 'src/orch/schema.js'); need(RENDER, 'src/orch/render.js')
+  // 现场:模型给了一份很好的【18 片】方案,每片 goal 写了近千字探索方法论,总长 16439 字 ——
+  // 输出到顶被截断,JSON 没闭合。extractJson 抠不出对象 → coerce 出 nodes:[] →
+  // 报「nodes 是空数组但 more 不是 no」。又一句与真相毫无关系的话:它拆得很好,只是话没说完。
+  // 而重问还在教它"要么给节点要么写 more:no",它照做也没用 —— 再来一遍还是会超。
+  const cut = '{"needGrounding": false, "nodes": [{"title": "01 核心", "goal": "你负责探索并成文'
+  ok('★认出"有 { 开头却没有一个能闭合的对象" = 被截断', SCHEMA.looksTruncated(cut) === true)
+  ok('  完整 JSON 不误判', SCHEMA.looksTruncated('{"nodes": [], "more": "no"}') === false)
+  ok('  压根没有 JSON 的也不误判(那是"没按格式答",另一回事)',
+    SCHEMA.looksTruncated('我觉得这个不用拆') === false)
+  ok('  思考段里的半截花括号不算(先剥 think 再判)',
+    SCHEMA.looksTruncated('<think>先写个 {草稿</think>{"nodes": [], "more": "no"}') === false)
+
+  // 提示词要从源头挡住:原来写的是"本次不限批量",等于鼓励它一次全给完
+  const plan = RENDER.renderPlan(mkRun({ goal: '整理仓库的相关功能的逻辑', nodes: [] }), {})
+  ok('★提示词给了输出长度硬约束(原来只说"不限批量")', /输出长度/.test(plan) && /6000 字/.test(plan),
+    (plan.match(/【输出长度.{0,40}/) || [])[0])
+  ok('  明说一次最多 8 片、其余走 more:"unknown"(下一轮还会被问,不会丢)',
+    /最多给 8 片/.test(plan) && /more:"unknown"/.test(plan))
+  ok('★点破"探索方法论一个字都不要写"(工人卡自带规程,正是这些重复把输出撑爆的)',
+    /一个字都不要写/.test(plan) && /工人卡自带一整套规程/.test(plan))
+  ok('  并说清半截 JSON 的后果(那一轮完全白跑)', /不要给半截 JSON/.test(plan))
+})
+
 section('用例6x:★收口那一层 —— 44 个文件没人收、汇总只占 8%(2026-08-07 真机)', () => {
   const SHAPE = tryReq('../src/orch/shapes.js')
   need(RUN, 'src/orch/run.js'); need(NODES, 'src/orch/nodes.js'); need(SHAPE, 'src/orch/shapes.js')
