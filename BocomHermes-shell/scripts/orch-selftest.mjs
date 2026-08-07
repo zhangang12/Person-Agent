@@ -740,7 +740,13 @@ section('用例6m:闸门按 kind 强制收敛(不听模型填 —— 它填错�
     ok('★' + k + ' 强制清掉 contract(没有写归属,签名搜无可搜 → 必判契约缺口)', mk(k).contract.length === 0)
   }
   ok('  reduce 保留 contract(它确实写文件)', mk('reduce').contract.length === 1)
-  ok('★probe 不强制落盘产出(勘察的交付就是回报本身,上游拿它去拆下一批)', mk('probe').exit.artifacts.length === 0)
+  // ★2026-08-07 真机改:原来这里无条件清空 probe 的 artifacts,"不强制落盘"被写成了"不许声明"。
+  //   后果连锁三处:producers 数不到它 → 汇总的 deps 里没有勘察片,那几份文档没人读;
+  //   substance 闸算出"上游产出不足 2 个"→【整道闸跳过】;没 artifacts 又没 writeScope →
+  //   写归属不设防 → 勘察片往项目 docs/ 下散了 36 个草稿文件(用户实测 44 个文件里 82% 是草稿)。
+  ok('★probe 声明了产出就认(它自己的承诺;原来被无条件抹掉)', mk('probe').exit.artifacts.length === 1)
+  ok('  没声明就还是不强制(语义是"不强制",不是"不许")',
+    NODES.makeNode({ goal: '摸一遍', kind: 'probe' }, { id: 'p9' }).exit.artifacts.length === 0)
   ok('  但 probe 仍受 noEmpty 约束(一份都没回报确实等于没干)', mk('probe').exit.noEmpty === true)
   for (const k of ['verify', 'check']) {
     const n = mk(k)
@@ -1290,6 +1296,127 @@ section('用例6s:★发现走工具上报 —— 格式约定的静默失败换
   }
 })
 
+section('用例6x:★收口那一层 —— 44 个文件没人收、汇总只占 8%(2026-08-07 真机)', () => {
+  const SHAPE = tryReq('../src/orch/shapes.js')
+  need(RUN, 'src/orch/run.js'); need(NODES, 'src/orch/nodes.js'); need(SHAPE, 'src/orch/shapes.js')
+  // 用户原话:"40个文件,就没有一个agent进行整理归档的吗?最重要的文档为什么才817行?"
+  // 实测:项目 docs/ 下 44 个文件 653KB,36 个是工人草稿(_group1 / _part_b / _s1-ordering…),
+  // 最终文档 51KB = 全部的 8%,而且它自己还散成 4 个(顶层那份 817 行只是目录)。
+  // 一条都不怪模型 —— 这一层代码从来没管过。
+
+  // ── ① 没给写归属的会写文件的节点 → 兜一个自己的草稿目录 ──────────────────
+  {
+    const run = { id: 'R3', dir: '/proj', budget: { maxNodes: 24, spawned: 0 }, nodes: [] }
+    let i = 0
+    const v = NODES.validateNodeSpecs([
+      { title: '摸底A', goal: '摸', kind: 'probe', artifacts: ['docs/a.md'] },
+      { title: '摸底B', goal: '摸', kind: 'probe' },
+      { title: '核实', goal: '核', kind: 'verify' },
+    ], run, { mkId: () => 'n' + (++i), wave: 1, origin: 'plan', at: T0 })
+    const [a, b, c] = v.nodes
+    ok('★勘察没给写归属 → 兜一个【自己的】草稿目录(修前:空归属=闸不设防,36 个草稿散进项目)',
+      b.writeScope.length === 1 && /^docs\/_orch\/R3\//.test(b.writeScope[0]), b.writeScope)
+    ok('  声明了产出的,产出路径照旧可写(那是它的正式交付)',
+      a.writeScope.indexOf('docs/a.md') >= 0 && a.writeScope.some((x) => /_orch/.test(x)), a.writeScope)
+    ok('★probe 声明的 artifacts 不再被抹掉(抹掉会连锁三处:汇总读不到/实质闸跳过/归属不设防)',
+      a.exit.artifacts.length === 1, a.exit.artifacts)
+    ok('  草稿目录按 runId/nodeId 分 → 天然两两不交(不会互相挡)', !v.errors.length, v.errors)
+    ok('  只读节点不给草稿目录(它们被关进临时目录)', c.writeScope.length === 0)
+  }
+
+  // ── ②③④ 汇总的三道新闸 ────────────────────────────────────────────────
+  {
+    const ups = ['docs/a.md', 'docs/b.md', 'docs/c.md', 'docs/d.md', 'docs/e.md', 'docs/f.md']
+    const red = (files) => ({ id: 'r1', kind: 'reduce', writeScope: [], contract: [],
+      exit: { artifacts: ['docs/汇总.md'], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true },
+      result: { final: '完', files: files, exitReport: [] } })
+    const pb = (txt, outSize) => ({ statSync: (x) => ({ size: String(x).indexOf('汇总') >= 0 ? outSize : 30000, isDirectory: () => false }),
+      readText: () => txt, upstreamArtifacts: ups })
+    const gate = (n, p2, k) => (NODES.evalExit(n, p2).report.find((x) => x.kind === k) || {})
+    const cite4 = '见 a.md b.md c.md d.md'
+
+    ok('★覆盖面判据从"至少 2 个"改成"至少一半"(6 片只引 2 片,另外 4 片等于白跑)',
+      gate(red(['/p/docs/汇总.md']), pb('见 docs/a.md 与 docs/b.md', 60000), 'substance').ok === false)
+    ok('  引够一半就过', gate(red(['/p/docs/汇总.md']), pb(cite4, 60000), 'substance').ok === true)
+
+    ok('★分量下限:上游 176KB 只交 20KB → 判不过(那是个目录,不是文档)',
+      gate(red(['/p/docs/汇总.md']), pb(cite4, 20000), 'weight').ok === false)
+    ok('  分量够就过', gate(red(['/p/docs/汇总.md']), pb(cite4, 60000), 'weight').ok === true)
+    ok('  拿不到大小时跳过(不冤枉)',
+      (NODES.evalExit(red(['/p/docs/汇总.md']), { readText: () => cite4, upstreamArtifacts: ups }).report
+        .find((x) => x.kind === 'weight') || {}).skipped === true)
+
+    ok('★独占契约:汇总另外散出 3 个文件 → 判不过(真机就是顶层 817 行 + 三个分册)',
+      gate(red(['/p/docs/汇总.md', '/p/docs/_n20_a.md', '/p/docs/_n20_b.md', '/p/docs/_n20_c.md']), pb(cite4, 60000), 'single').ok === false)
+    ok('  就交一份 → 过', gate(red(['/p/docs/汇总.md']), pb(cite4, 60000), 'single').ok === true)
+    ok('  非 reduce 节点不受独占约束(工人本来就可能写多个文件)',
+      !NODES.evalExit(Object.assign({}, red(['/p/docs/汇总.md', '/p/docs/x.md']), { kind: 'work' }), pb(cite4, 60000))
+        .report.some((x) => x.kind === 'single'))
+  }
+
+  // ── ⑤ 收尾归档片:代码强制,收口前必须先收拾桌面 ────────────────────────
+  {
+    const redN = mkNode({ id: 'r1', kind: 'reduce', state: 'verified',
+      exit: { artifacts: ['docs/全景.md'], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true },
+      result: { final: '完', files: ['/p/docs/全景.md'], exitReport: [], findings: [] } })
+    const w = (id, fs) => mkNode({ id, kind: 'work', state: 'verified',
+      exit: { artifacts: [], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true },
+      result: { final: '完', files: fs, exitReport: [], findings: [] } })
+    // 夹具铺满宽度:真实的 run 能产出汇总,说明前面必然已经有足够多的片 ——
+    // 不铺满的话补宽会先触发,归档就轮不到,测的就不是这一步了。
+    const filler = [3, 4, 5, 6].map((i) => w('f' + i, ['/p/docs/_f' + i + '.md']))
+    const base = mkRun({ goal: '分析采购部的相关功能', phase: 'executing',
+      nodes: [redN, w('n1', ['/p/docs/_a.md', '/p/docs/_b.md']), w('n2', ['/p/docs/_c.md', '/p/docs/全景.md'])].concat(filler),
+      pendingDecision: { id: 'd9', point: 'replan', event: 'frontier', nodeId: '', at: T0 } })
+    const out = step(base, decided(base, { point: 'replan', ok: true, data: {
+      needGrounding: false, done: true, addNodes: [], dropNodes: [], facts: [], open: [], why: '够了',
+      final: { summary: '完事', deliverables: ['docs/全景.md'], gaps: [] } } }), '6x')
+    const arc = out.run.nodes.find((n) => n.title === SHAPE.ARCHIVE_TITLE)
+    ok('★桌面没收拾就想收口 → 驳回,并补一个收尾归档片(用户第一句问的就是这个)',
+      out.run.phase !== 'done' && !!arc, { phase: out.run.phase, nodes: out.run.nodes.map((n) => n.title) })
+    ok('  归档片挂在汇总后面(它是最后一步)', arc && arc.deps.indexOf('r1') >= 0, arc && arc.deps)
+    ok('  指令明写"一律 move,不许 rm"(中间产物是证据,人可能回头看)',
+      arc && /一律是 move,不是 rm/.test(arc.goal))
+    ok('  也明写不许碰最终交付与 docs 以外的东西', arc && /改动最终交付/.test(arc.goal) && /以外的任何东西/.test(arc.goal), arc && (arc.goal.match(/绝对不许[\s\S]{0,160}/) || [])[0])
+    ok('  只有两三个散件时不值得专门开一片',
+      SHAPE.needsArchive({ id: 'R1', nodes: [redN, w('n1', ['/p/docs/_a.md'])] }) === null)
+    ok('  已经归档过就不再补(不会越补越多)',
+      SHAPE.needsArchive({ id: 'R1', nodes: [redN, w('n1', ['/p/docs/_a.md', '/p/docs/_b.md', '/p/docs/_c.md']),
+        { id: 'z', kind: 'work', title: SHAPE.ARCHIVE_TITLE, state: 'pending', deps: [], exit: {}, result: {} }] }) === null)
+  }
+
+  // ── ⑥ 收口闸按【条】判发现覆盖,不是按【片】────────────────────────────
+  {
+    const f = (w2) => ({ sev: '中', what: w2, ev: 'a.ts:1' })
+    const src = mkNode({ id: 'n14', kind: 'work', state: 'verified',
+      exit: { artifacts: ['docs/x.md'], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true },
+      result: { final: '完', files: ['/p/docs/x.md'], exitReport: [],
+        findings: [f('第一条足够长的发现说明'), f('第二条足够长的发现说明'), f('第三条足够长的发现说明')] } })
+    // 只有第一条派了核实员(真机:预算截断导致 4 条只核了 1 条)
+    const v1 = mkNode({ id: 'v1', kind: 'verify', state: 'verified', sourceNode: 'n14',
+      findingKey: SHAPE.findingKey(f('第一条足够长的发现说明')) })
+    // ★夹具必须让【前三道闸都无话可说】,否则这条断言会为了错误的理由通过 ——
+    //   宽度不够会先驳回、缺汇总会先驳回、有草稿会先驳回,那时测的根本不是"按条判发现覆盖"。
+    //   (验红时正是这么露馅的:把按条判改回按片判,这条依然"通过"—— 因为是 shapeReduce 在驳回。)
+    const pad = [1, 2, 3, 4, 5].map((i) => mkNode({ id: 'p' + i, kind: 'work', state: 'verified',
+      exit: { artifacts: ['docs/p' + i + '.md'], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true },
+      result: { final: '完', files: ['/p/docs/p' + i + '.md'], exitReport: [], findings: [] } }))
+    const redOk = mkNode({ id: 'r9', kind: 'reduce', state: 'verified',
+      deps: ['n14', 'p1', 'p2', 'p3', 'p4', 'p5'],
+      exit: { artifacts: ['docs/汇总.md'], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true },
+      result: { final: '完', files: ['/p/docs/汇总.md'], exitReport: [], findings: [] } })
+    const base = mkRun({ goal: '排查采购模块', phase: 'executing', nodes: [src, v1, redOk].concat(pad),
+      pendingDecision: { id: 'd9', point: 'replan', event: 'frontier', nodeId: '', at: T0 } })
+    const out = step(base, decided(base, { point: 'replan', ok: true, data: {
+      needGrounding: false, done: true, addNodes: [], dropNodes: [], facts: [], open: [], why: '够了',
+      final: { summary: '完事', deliverables: [], gaps: [] } } }), '6x')
+    ok('★3 条发现只核了 1 条 → 驳回收口(修前:按片判,有一个核实员挂着就算"已覆盖")',
+      out.run.phase !== 'done', out.run.phase)
+    ok('  并把没核的那两条真的派出去', out.run.nodes.filter((n) => n.kind === 'verify').length > 1,
+      out.run.nodes.map((n) => n.kind + '/' + (n.findingKey || '-')))
+  }
+})
+
 section('用例6w:★plan 连撞两次 schemaFail 直接转人工(2026-08-07 真机)', () => {
   const SCHEMA = tryReq('../src/orch/schema.js')
   const SHAPE = tryReq('../src/orch/shapes.js')
@@ -1342,7 +1469,12 @@ section('用例6w:★plan 连撞两次 schemaFail 直接转人工(2026-08-07 真
     const probes = out.run.nodes.filter((n) => n.kind === 'probe')
     ok('★代码替它开了一个勘察节点(修前:连撞两次直接转人工,一个节点都没派)',
       probes.length === 1, out.run.nodes.map((n) => n.kind + '/' + n.origin))
-    ok('  勘察是只读的(不改任何文件)', probes[0] && probes[0].writeScope.length === 0)
+    // 代码兜底会给它一个【自己的草稿目录】(docs/_orch/<run>/<node>)——
+    // 不是"完全只读",而是"只能写自己那一格":归属闸空着等于不设防,真机上 6 个勘察片
+    // 就是这么往项目 docs/ 根下散了 36 个草稿的。
+    ok('  勘察只能写自己那一格草稿目录(不是不设防)',
+      probes[0] && probes[0].writeScope.length === 1 && /^docs\/_orch\//.test(probes[0].writeScope[0]),
+      probes[0] && probes[0].writeScope)
     ok('  把模型自己列的疑点原样交给勘察员(那正是这一轮该摸清的东西)',
       probes[0] && /前端用什么框架不清楚/.test(probes[0].goal), probes[0] && probes[0].goal.slice(0, 120))
     ok('  仍然要过人审(代码补骨架不越过人这一关)', out.run.phase === 'awaiting-approval', out.run.phase)

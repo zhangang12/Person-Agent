@@ -46,11 +46,15 @@ function gatesFor(kind, g) {
     // verifyCmd 同理:让勘察/核实/汇总节点去跑一条命令当判据,是把它们当 work 用
     out.verifyCmd = ''
   }
-  if (k === 'probe') {
-    // 勘察的交付【就是回报本身】(上游拿它去拆下一批),不强制落盘产出。
-    // noEmpty 保留:一份都没回报的勘察确实等于没干。
-    out.artifacts = []
-  }
+  // ★probe 【不再】抹掉它自己声明的产出(2026-08-07 真机改)。
+  // 原来这里无条件清空,理由是"勘察的交付就是回报本身,不强制落盘"。但"不强制"被写成了"不许" ——
+  // 模型明明声明了要落 docs/api-endpoints.md,声明被抹掉之后连锁三处坏事:
+  //   · 没有 artifacts → producers 数不到它 → 汇总的 deps 里没有勘察片,那几份文档没人读;
+  //   · 没有 artifacts → substance 闸算出"上游产出不足 2 个" → 【整道闸跳过】,
+  //     那道闸恰恰是专门拦"汇总只是拼摘要"的;
+  //   · 没有 artifacts 又没有 writeScope → 写归属闸不设防 → 勘察片往项目里散了 36 个草稿文件。
+  // 现在:声明了就认(它自己的承诺,照常查);没声明就还是不强制 —— 语义回到"不强制",而不是"不许"。
+  
   if (k === 'verify' || k === 'check') {
     // 核实/检查是只读的:不产文件,判据是 VERDICT 而不是产出
     out.artifacts = []
@@ -68,6 +72,9 @@ const ORIGINS = ['plan', 'replan', 'user', 'resume']
 // 依赖这些状态的节点 = 没有依赖:它们不会再产出任何东西,而 readyNodes 又把它们当已终结,
 // 于是依赖方立刻就绪 —— 真机上让汇总节点在全部上游之前先跑完了(见 validateNodeSpecs ② 的注释)。
 const DEAD_DEP = ['skipped', 'cancelled']
+// 没给写归属的节点,代码兜底给它一个自己的草稿目录(按 runId/nodeId 分,天然两两不交)。
+// 收尾归档节点会把这里整个收进 _raw/ —— 草稿不该留在项目根上碍眼。
+const SCRATCH_ROOT = 'docs/_orch'
 // 未终结 = 还可能往磁盘上写字。写归属两两不交只对这些节点设防:
 // 已 verified/failed/skipped 的节点早写完了,新节点覆盖它的归属是合法的(修补/返工本来就该这么干)。
 const ALIVE = ['pending', 'queued', 'running', 'settled', 'rejected']
@@ -315,6 +322,18 @@ function validateNodeSpecs(specs, run, ctx) {
     if (!str(s.goal).trim()) { r.bad = true; errors.push(r.label + ' 缺 goal —— 每个节点都要有完整的指令正文(不限长度)') }
     const kind = str(first(s.kind, 'work')).trim() || 'work'
     if (KINDS.indexOf(kind) < 0) { r.bad = true; errors.push(r.label + ' 的 kind 是「' + kind + '」,只能填 ' + KINDS.join(' / ') + ' 之一') }
+    // ★会写文件的节点没给写归属 → 代码兜一个【它自己的草稿目录】,而不是让归属闸整个不设防。
+    // 真机 2026-08-07:6 个勘察片全没有 writeScope(空 = 不设闸),于是它们自作主张把活拆成
+    // _group1_core_flow.md / _part_b_receiving_payment.md / _s1-ordering.md … 36 个草稿,
+    // 全散在项目 docs/ 根下,没有任何人收拾 —— 44 个产出文件里 82% 是这种。
+    // 指令里那句"不要改动项目文件"是纯提示词,劝不住。
+    // 目录按 runId/nodeId 分,天然两两不交;它声明的 artifacts 照旧可写(那是它的正式交付)。
+    // verify/check 不给:它们是只读的,doDispatch 会把它们关进临时目录。
+    if (!strArr(s.writeScope).length && (kind === 'work' || kind === 'probe' || kind === 'reduce')) {
+      const arts = strArr(first(s.artifacts, s.exit && s.exit.artifacts, []))
+      const runTag = str(R.id).replace(/[^\w-]/g, '') || 'run'
+      s.writeScope = arts.concat([SCRATCH_ROOT + '/' + runTag + '/' + r.id])
+    }
     for (const p of strArr(s.writeScope)) {
       const rr = scopeRel(R.dir, p)
       if (rr.err) { r.bad = true; errors.push(r.label + ' 的写归属「' + str(p) + '」' + rr.err); continue }
@@ -442,7 +461,7 @@ function validateNodeSpecs(specs, run, ctx) {
 
 // ── evalExit ─────────────────────────────────────────────────────────────
 // 按 node.exit 逐条查,任一不过 → pass=false。所有 IO 走注入的 probe。
-// report 每项 { kind, ok, detail }(kind: artifacts|noEmpty|contract|evidence|verdict|cmd);
+// report 每项 { kind, ok, detail }(kind: artifacts|noEmpty|substance|weight|single|contract|evidence|verdict|cmd);
 // 查不了的项(没注入 probe.exec / 命令过不了安全过滤 / 环境性失败)标 skipped:true 且 ok:true ——
 // ★ 查不了 ≠ 没通过:把"壳层自己没能力查"算成节点失败,等于按环境噪音惩罚工人,重跑一次还是同样结果。
 function collectTexts(scope, probe) {
@@ -549,11 +568,53 @@ function evalExit(node, probe) {
       try { txt = str(p.readText(strArr(exit.artifacts)[0])) } catch (e) { txt = '' }
       const baseOf2 = (x) => str(x).replace(/\\/g, '/').split('/').pop()
       const cited = ups.filter((u) => txt.includes(u) || (baseOf2(u) && txt.includes(baseOf2(u))))
-      add('substance', cited.length >= 2,
-        cited.length >= 2
+      // ★覆盖面判据从"至少 2 个"改成"至少一半" —— 上游 6 片只引用 2 片,剩下 4 片等于白跑,
+      //   而旧口径给它盖了个"通过"的章。绝对阈值在片数变多之后必然失真。
+      const need = Math.max(2, Math.ceil(ups.length / 2))
+      add('substance', cited.length >= need,
+        cited.length >= need
           ? '汇总引用了 ' + cited.length + '/' + ups.length + ' 个上游产出'
-          : '汇总只引用了 ' + cited.length + '/' + ups.length + ' 个上游产出(没读上游就写不出这些路径 —— 大概率是照标题编的空文,请逐个读完再写)')
+          : '汇总只引用了 ' + cited.length + '/' + ups.length + ' 个上游产出(至少要 ' + need + ' 个)——'
+            + '没读上游就写不出这些路径。没被引用的那几片等于白跑,请逐个读完再写')
+
+      // ★分量下限:上游一堆、汇总薄薄一层 = 它只写了个目录。
+      // 真机 2026-08-07:6 片上游 171KB,汇总交了 52KB —— 而且其中真正的正文还被它另外散成了
+      // 三个文件,顶层那份 817 行只是目录。判据取【上游总量的 25%】,并夹在 8KB~150KB 之间:
+      // 下限防"一页提纲",上限防"上游几 MB 时逼它写不完"。查不到大小就跳过,不冤枉。
+      if (typeof p.statSync !== 'function') add('weight', true, '未注入 probe.statSync,跳过', true)
+      else {
+        let upBytes = 0, known = 0
+        for (const u of ups) { try { const st = p.statSync(u); if (st && st.size >= 0) { upBytes += st.size; known++ } } catch (e) { /* 读不到就不算 */ } }
+        let outBytes = 0
+        try { const st = p.statSync(strArr(exit.artifacts)[0]); outBytes = (st && st.size) || 0 } catch (e) { outBytes = 0 }
+        if (known < 2 || !outBytes) add('weight', true, '上游/产出大小拿不全,分量闸跳过', true)
+        else {
+          const want = Math.min(150 * 1024, Math.max(8 * 1024, Math.round(upBytes * 0.25)))
+          add('weight', outBytes >= want,
+            outBytes >= want
+              ? '汇总 ' + Math.round(outBytes / 1024) + 'KB(上游 ' + Math.round(upBytes / 1024) + 'KB,下限 ' + Math.round(want / 1024) + 'KB)'
+              : '汇总只有 ' + Math.round(outBytes / 1024) + 'KB,而上游有 ' + Math.round(upBytes / 1024) + 'KB —— 至少要 '
+                + Math.round(want / 1024) + 'KB。这个比例说明你多半只写了个目录,把正文补进这一份文件里')
+        }
+      }
     }
+  }
+
+  // ⑥ single:汇总必须【合成一份】,不许自己再散成一堆
+  // 真机 2026-08-07:汇总节点交了 4 个文件 —— 顶层那份 817 行只是目录,正文散在
+  // _n20_frontend_biz.md / _n20_api_models.md / _n20_tests_integration.md 里。
+  // 而 artifacts 闸只查"声明的那个在不在、空不空",从不查它有没有额外散出去一堆 ——
+  // 于是"把前面各片的产出【合成一份】最终文档"这个契约,代码一个字都没强制过。
+  if (str(n.kind) === 'reduce' && strArr(exit.artifacts).length) {
+    const want2 = strArr(exit.artifacts).map((x) => normSlash(x))
+    const isDeclared = (f) => { const g = normSlash(f); return want2.some((a) => g === a || g.endsWith('/' + a)) }
+    const extra = strArr(res.files).filter((f) => !isDeclared(f))
+    add('single', extra.length === 0,
+      extra.length === 0
+        ? '汇总就是一份(' + want2.join(', ') + ')'
+        : '汇总另外散出了 ' + extra.length + ' 个文件:' + extra.slice(0, 4).map((x) => normSlash(x).split('/').pop()).join('、')
+          + ' —— 要交的是【一份】完整文档,不是一个目录加几个分册。把它们的正文合并进 '
+          + want2[0] + ',然后删掉这些散件')
   }
 
   // ② noEmpty:零产出 = 网关静默 / 空答耗尽的典型形态,不能叫完成

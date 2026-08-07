@@ -311,7 +311,13 @@ function needsWiden(run, room) {
   if (arr(r.nodes).some((n) => n && str(n.kind) === 'probe'
     && ['pending', 'queued', 'running'].indexOf(str(n.state || 'pending')) >= 0)) return null
   const want = set.length
-  const have = parallelHeads(r.nodes).length
+  // ★"覆盖面"数的是【这一路总共铺了几片】,不是【此刻有几片在跑】。
+  // parallelHeads 只认 pending/queued/running —— 等所有片都跑完,它恒为 0,
+  // 于是收口闸每次都判"一片都没有",在最后一刻硬塞 6 个通用视角片(真机测试当场撞到)。
+  // 判据换成"非只读、且没被撤掉的片"共有几个:撤掉的不算(它没干活),核实片不算(那是另一层)。
+  const have = arr(r.nodes).filter((n) => n
+    && ['verify', 'check'].indexOf(str(n.kind)) < 0
+    && ['skipped', 'cancelled'].indexOf(str(n.state || 'pending')) < 0).length
   if (have >= want) return null
   const free = Math.max(0, num(room))
   if (free <= 0) return null
@@ -416,6 +422,83 @@ function needsAudit(run) {
   if (!red) return null
   const audited = nodes.some((n) => n && str(n.kind) === 'verify' && arr(n.deps).indexOf(str(red.id)) >= 0)
   return audited ? null : red
+}
+
+// ── 收尾归档(CC 那种"跑完桌面是干净的")──────────────────────────────────
+// 【为什么必须有这一步】真机 2026-08-07:一次编排在项目 docs/ 下留了 44 个文件、653 KB,
+// 其中 36 个是工人的草稿(_group1_core_flow.md / _part_b_receiving_payment.md / _s1-ordering.md…),
+// 最终文档只占全部的 8%。用户第一句话就是"40个文件,就没有一个 agent 进行整理归档的吗?"
+// —— 问得对:整个编排就【没有收尾这一层】。
+// CC 那种"跑完桌面是干净的"不是模型自觉,是脚本里有这一步。所以由代码强制加一片。
+const ARCHIVE_TITLE = '收尾归档'
+
+/** 图里有没有归档片 */
+function hasArchive(nodes) { return arr(nodes).some((n) => n && str(n.title) === ARCHIVE_TITLE) }
+
+/**
+ * 该不该补收尾归档。条件:有汇总且已产出 / 还没归档过 / 确实有草稿要收。
+ * 返回 { reduceNode, keep:[最终文档], scratch:[要收的文件] },没必要就 null。
+ */
+function needsArchive(run) {
+  const r = run || {}
+  const nodes = arr(r.nodes)
+  if (hasArchive(nodes)) return null
+  const red = nodes.find((n) => n && str(n.kind) === 'reduce' && str(n.state) === 'verified')
+  if (!red) return null
+  const keep = arr(red.exit && red.exit.artifacts).map(str).filter(Boolean)
+  if (!keep.length) return null
+  // 要收的 = 所有节点实际写过、但不在"最终文档"清单里的文件
+  const keepSet = new Set(keep.map((x) => str(x).replace(/\\/g, '/')))
+  const isKeep = (f) => { const g = str(f).replace(/\\/g, '/'); return [...keepSet].some((a) => g === a || g.endsWith('/' + a)) }
+  const scratch = []
+  for (const n of nodes) for (const f of arr(n.result && n.result.files)) {
+    if (!isKeep(f) && scratch.indexOf(str(f)) < 0) scratch.push(str(f))
+  }
+  if (scratch.length < 3) return null      // 两三个散件不值得专门开一片去收
+  return { reduceNode: red, keep, scratch }
+}
+
+/** 归档片的 spec。它是最后一片,只干"收拾桌面"这一件事 */
+function makeArchiveSpec(run, info) {
+  const id = str((run || {}).id).replace(/[^\w-]/g, '') || 'run'
+  const keep = arr(info.keep)
+  const scratch = arr(info.scratch)
+  const raw = 'docs/_raw-' + id
+  return {
+    title: ARCHIVE_TITLE,
+    kind: 'work',
+    deps: [str(info.reduceNode.id)],
+    writeScope: ['docs'],        // 它要搬动 docs 下的东西;此时别的片都已终结,不会撞归属
+    artifacts: [],               // 交付是"目录变干净了",不是新写一个文件
+    contract: [],
+    requireEvidence: false,
+    requireVerdict: false,
+    verifyCmd: '',
+    goal: [
+      '你是【收尾归档员】。这一轮编排在项目里留下了一堆中间文件,你的活是把桌面收拾干净。不要写新的分析内容。',
+      '',
+      '【最终交付 —— 留在原地,一个字都不要改】',
+      keep.map((x) => '  · ' + x).join('\n'),
+      '',
+      '【要收走的中间文件】共 ' + scratch.length + ' 个:',
+      scratch.slice(0, 40).map((x) => '  · ' + x).join('\n'),
+      scratch.length > 40 ? '  · …以及其余 ' + (scratch.length - 40) + ' 个' : '',
+      '',
+      '【怎么做】',
+      '  ① 建目录 ' + raw + '/,把上面【要收走的】全部 move 进去(用 mv,不要 cp —— 原地不能留副本)。',
+      '  ② 在 ' + raw + '/INDEX.md 写一份索引:每个文件一行,写清它是哪一片产出的、里面是什么。',
+      '     人日后要回头查细节时,靠这份索引找得到。',
+      '  ③ 收完检查一遍:项目 docs/ 顶层现在应该【只剩最终交付 + 原本就有的老文件】,',
+      '     不该再有 _group / _part / _s1 / _n20 这类一看就是草稿的东西。',
+      '',
+      '【绝对不许】',
+      '  · 删除任何文件 —— 一律是 move,不是 rm。中间产物是证据,人可能要回头看。',
+      '  · 改动最终交付的内容。',
+      '  · 碰 docs/ 以外的任何东西。',
+      '',
+      '【回报】一句话:收了几个文件、收到哪儿、顶层还剩什么。',
+    ].join('\n'),
+  }
 }
 
 // ── 按发现扇出(CC 的 Verify 那一层)────────────────────────────────────────
@@ -588,7 +671,7 @@ module.exports = {
   makeAuditSpec, needsAudit,
   goalShape, isDocGoal, isWideGoal,
   producers, hasReduce, needsReduce, makeReduceSpec, reducePath,
-  makeGroundingSpec,
+  makeGroundingSpec, needsArchive, makeArchiveSpec, hasArchive, ARCHIVE_TITLE,
   tooNarrow, widthTarget, parallelHeads, lensSetFor, lensesUsed, needsWiden, makeLensSpec, lensPath, LENS_SETS,
   normFindings, findingKey, dedupeFindings, sevOf, verifyLensesFor, VERIFY_LENSES,
 }

@@ -472,20 +472,51 @@ const MAX_DONE_BLOCK = 2
 function dryGate(t) {
   const r = t.r
   if (num(r.budget.doneBlocked) >= MAX_DONE_BLOCK) return ''      // 让步:拦够两次就放行
-  // ① 上报了但没人核的发现
+  // ① 上报了但没人核的发现。
+  // ★按【条】判,不是按【片】判(真机 2026-08-07):findingsVerified 只问"这一片有没有派过核实员",
+  //   而 n14 报了 4 条、只核了 1 条(预算被截断),它挂着 n38/n39 → 判成"已覆盖" → 放行收口,
+  //   final.gaps 报 0 条缺口。又是"覆盖 vs 存在"的混淆 —— 与那条撒谎的通知是同一个思维错误。
+  const covered = new Set(arr(r.nodes).map((n) => str(n && n.findingKey)).filter(Boolean))
   const naked = []
   for (const n of arr(r.nodes)) {
     if (!n || str(n.kind) === 'verify') continue
-    if (!arr(n.result && n.result.findings).length) continue
-    if (SHAPE.findingsVerified(r, n.id)) continue
+    const fs3 = arr(n.result && n.result.findings)
+    if (!fs3.length) continue
+    if (fs3.every((f) => covered.has(SHAPE.findingKey(f)))) continue   // 每一条都有人核了才算过
     naked.push(n)
   }
-  for (const n of naked) if (shapeVerifyFindings(t, n)) return '有片报了发现却还没人核实过'
+  for (const n of naked) if (shapeVerifyFindings(t, n)) return '有发现还没人核实过(按条查,不是按片查)'
   // ② 视角没铺满(shapeWiden 自己判预算与去重,补不动就返回 false)
   if (shapeWiden(t)) return '覆盖面还没铺满(这类目标该看的面还有没看的)'
   // ③ 有产出片没进汇总
   if (shapeReduce(t) || extendReduceDeps(t)) return '还有产出没进汇总(汇总读不到它们,那几片等于白跑)'
+  // ④ 桌面还没收拾:一堆中间文件散在项目里,没人归档
+  if (shapeArchive(t)) return '还有一堆中间文件散在项目里(先收进归档目录,只留最终交付)'
   return ''
+}
+
+// ── 形状兜底:收尾归档 ──────────────────────────────────────────────────────
+// 真机 2026-08-07:一次编排在项目 docs/ 下留了 44 个文件、653KB,其中 36 个是工人的草稿,
+// 最终文档只占 8%。用户第一句话是"40个文件,就没有一个 agent 进行整理归档的吗?"——
+// 问得对:整个编排【没有收尾这一层】。CC 那种"跑完桌面是干净的"不是模型自觉,是脚本里有这一步。
+function shapeArchive(t) {
+  const r = t.r
+  const info = SHAPE.needsArchive(r)
+  if (!info) return false
+  if (budgetRoom(r) <= 0) {
+    t.eff.push({ type: 'notify', level: 'warn', text: '项目里散着 ' + info.scratch.length + ' 个中间文件没人收,但节点预算已满 —— 收口后请自己清理' })
+    return false
+  }
+  const v = N.validateNodeSpecs([SHAPE.makeArchiveSpec(r, info)], r, t.cx)
+  const made = arr(v && v.nodes)
+  if (!made.length) {
+    t.eff.push({ type: 'notify', level: 'warn', text: '想补一个收尾归档片,但没通过校验:' + arr(v && v.errors).slice(0, 2).join(';') })
+    return false
+  }
+  r.wave = posInt(r.wave, 1) + 1
+  addNodes(t, made, 'shape', r.wave)
+  t.eff.push({ type: 'notify', level: 'info', text: '已自动补一个收尾归档片:把 ' + info.scratch.length + ' 个中间文件收进归档目录,顶层只留最终交付' })
+  return true
 }
 
 // ── 形状兜底:按视角补宽 ────────────────────────────────────────────────────
@@ -594,7 +625,11 @@ function onNodeVerdict(t) {
 function shapeVerifyFindings(t, n) {
   const r = t.r
   if (str(n.kind) === 'verify') return false                 // 核实员自己报的发现不再往下派(不然会无限套娃)
-  if (SHAPE.findingsVerified(r, n.id)) return false          // 这片的发现已经派过了(重跑不重复派)
+  // ★这里原来有一句 `if (findingsVerified(r, n.id)) return false`(按【片】去重:这片派过就不再派)。
+  //   它把"补派没核到的那几条"也一起挡死了 —— 真机 2026-08-07:n14 报 4 条、只核了 1 条(预算截断),
+  //   而这片"派过了",于是剩下 3 条永远补不上,收口闸查出来也补不动。
+  //   真正的去重是【按条】的(dedupeFindings 按 findingKey),它天然满足"重跑不重复派",
+  //   而且比按片精确。两套去重并存时,粗的那套会把细的那套架空。
   // ★结构化优先:工具报过就【只认工具那份】—— 两条都认等于同一件事两份账本,还会互相重复
   const structured = arr(n.result && n.result.findings)
   const raw = structured.length ? structured : SHAPE.parseFindings(str(n.result && n.result.final))

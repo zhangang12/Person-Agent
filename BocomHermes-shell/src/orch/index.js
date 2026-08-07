@@ -261,7 +261,12 @@ function makeOrch(deps) {
           const out2 = []
           for (const d of deps) {
             const dn = arr(run.nodes).find((x) => String(x.id) === d)
+            // ★声明的产出 + 【实际写了的文件】都算上游。只认声明的话,勘察片(artifacts 常为空)
+            //   的产出全都数不到 → substance/weight 两道闸判"上游不足 2 个"直接跳过,
+            //   而它们恰恰是专门拦"汇总只是拼摘要"的(真机 2026-08-07:整道闸跳过,全靠模型自觉)。
+            //   与 shapes.producers 是同一个洞,那边修了、这边漏了。
             for (const a2 of arr(dn && dn.exit && dn.exit.artifacts)) if (a2 && out2.indexOf(String(a2)) < 0) out2.push(String(a2))
+            for (const f2 of arr(dn && dn.result && dn.result.files)) if (f2 && out2.indexOf(String(f2)) < 0) out2.push(String(f2))
           }
           return out2
         } catch { return [] }
