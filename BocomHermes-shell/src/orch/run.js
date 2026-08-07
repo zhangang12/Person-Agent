@@ -260,7 +260,15 @@ function onPlanDecided(t, dec, data) {
   r.budget.invalidStreak = 0
   r.budget.lastInvalid = []   // 这一版合法了:上次的错不能再跟着走,否则下一轮重问会拿陈年旧错误导模型
   r.ledger = L.addOpen(r.ledger, toItems(data.open), 'plan', t.at)
-  const specs = arr(data.nodes)
+  let specs = arr(data.nodes)
+  // ★"我得先看代码才能拆" = 一个【完整的判断】,不是半截答案 —— 代码替它开一个勘察节点。
+  //   真机实测 2026-08-07:模型连着两轮只置 needGrounding:true、不写节点,直接顶到转人工。
+  //   "要不要先勘察"归模型,"把这个判断写成一个 probe 节点"归代码 —— 后者是机械转换,
+  //   压给模型就是让它替代码做格式化,而弱模型恰恰在格式化上最不可靠(与发现/判决同一个道理)。
+  if (!specs.length && data.needGrounding === true) {
+    specs = [SHAPE.makeGroundingSpec(r, arr(data.open))]
+    t.eff.push({ type: 'notify', level: 'info', text: '规划器说"得先看代码才能拆" —— 已替它开一个勘察节点,跑完会再问一次怎么拆' })
+  }
   if (!specs.length) {
     if (str(data.more) === 'no') {
       // ★"不值得拆"对【该拆宽的目标】也要打回问一次 —— 这条 early return 排在下面的宽度检查之前,

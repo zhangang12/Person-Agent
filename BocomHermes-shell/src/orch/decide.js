@@ -63,6 +63,20 @@ function makeDecider(deps) {
       : RENDER.renderReplan(ctx.run, { event: ctx.event, nodeId: ctx.nodeId })
   }
 
+  // 判不合法时把【模型原文】落进日志。
+  // ★这是本轮排障最卡的一处:decide 只把 raw 塞进返回值,没人写出来 ——
+  //   于是真机报 schemaFail 时,能看到的只有"nodes 是空数组"这类【对解析结果的描述】,
+  //   而本文件开头早就写明:思考段里的草稿对象会抢答,报出来的错常常与模型实际干的事毫无关系。
+  //   查不到原文 = 每一次 schemaFail 都只能靠猜。原文按行截断落日志,不落盘(存档里已有 decisions 留痕)。
+  function dumpRaw(point, why, errors, raw) {
+    try {
+      const t = str(raw).replace(/\r/g, '')
+      const head = t.slice(0, 1200)
+      const tail = t.length > 2000 ? '\n…(中间省略 ' + (t.length - 2000) + ' 字)…\n' + t.slice(-800) : ''
+      log('[orch-decide] ' + point + ' ' + why + ' —— 模型原文(' + t.length + ' 字):\n' + head + tail)
+    } catch { /* 排障用的东西不许把主流程带崩 */ }
+  }
+
   async function ask(serve, sid, text, model, ms) {
     if (!(ms > 0)) return oc.sendMessage(serve, sid, text, model)   // 默认不限时:慢模型等到底,面板可中止
     let timer = null
@@ -101,17 +115,19 @@ function makeDecider(deps) {
       // final.gaps 得逐条覆盖账本里的 gaps 与"没有验证证据的节点"。不传 ctx 这条校验恒空过,
       // 于是"代码保证信息不丢、动作权归模型"就只剩一句口号(死代码,真跑也看不出来)。
       const vctx = coverageCtx(c)
-      let obj = SCHEMA.coerce(point, SCHEMA.extractJson(raw))
+      let obj = SCHEMA.coerce(point, SCHEMA.extractJson(raw, point))
       let v = SCHEMA.validate(point, obj, vctx)
       if (!v.ok) {
         // 降级第 2 级:同会话窄重问一次 —— 上下文还在,是最便宜的纠错通道(比重开一段会话准得多)
         log('[orch-decide] ' + point + ' 首答不合法,同会话重问一次:' + v.errors.slice(0, 2).join(';'))
+        dumpRaw(point, '首答不合法', v.errors, raw)
         raw = await ask(serve, sid, RETRY_ASK.replace('{ERR}', v.errors.join(';')) + TAIL, model, ms)
-        obj = SCHEMA.coerce(point, SCHEMA.extractJson(raw))
+        obj = SCHEMA.coerce(point, SCHEMA.extractJson(raw, point))
         v = SCHEMA.validate(point, obj, vctx)
       }
       if (v.ok) return { ok: true, data: obj, raw: str(raw).slice(0, 4000) }
       log('[orch-decide] ' + point + ' 重问后仍不合法:' + v.errors.slice(0, 3).join(';'))
+      dumpRaw(point, '重问后仍不合法', v.errors, raw)
       return { ok: false, invalid: 'schemaFail', errors: v.errors, raw: str(raw).slice(0, 4000) }
     } catch (e) {
       const why = /timeout/i.test(str(e && e.message)) ? 'timeout' : 'transport'

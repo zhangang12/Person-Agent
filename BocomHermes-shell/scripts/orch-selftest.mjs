@@ -1197,6 +1197,74 @@ section('用例6s:★发现走工具上报 —— 格式约定的静默失败换
   }
 })
 
+section('用例6w:★plan 连撞两次 schemaFail 直接转人工(2026-08-07 真机)', () => {
+  const SCHEMA = tryReq('../src/orch/schema.js')
+  const SHAPE = tryReq('../src/orch/shapes.js')
+  need(SCHEMA, 'src/orch/schema.js'); need(RUN, 'src/orch/run.js'); need(SHAPE, 'src/orch/shapes.js')
+  // 现场:目标「【探索成文】…分析当前项目」,plan 连撞两次不合法,一个节点都没派就转人工。
+  // 两次报的都是同一句:「nodes 是空数组但 more 不是 "no"」。
+
+  // ── ① 正文里的【草稿对象】抢答 ────────────────────────────────────────
+  // 剥 think 剥不掉这种:模型在正文里先写个初步结构,再给最终答案。
+  // 原来是"第一个能解析的对象胜出" → 草稿赢 → 报出来的错说的是草稿,
+  // 与它最后真正给的答案毫无关系。原样回灌给模型,它当然改不对。
+  {
+    const raw = [
+      '我先给一个初步结构看看:',
+      '{"needGrounding": true, "nodes": [], "more": "unknown"}',
+      '想了想,这个项目可以按模块拆。最终答案:',
+      '{"needGrounding": false, "more": "no", "open": [], "why": "按模块拆",',
+      ' "nodes": [{"title":"甲","goal":"查甲","kind":"work"},{"title":"乙","goal":"查乙","kind":"work"}]}',
+    ].join('\n')
+    const first = SCHEMA.extractJson(raw)                 // 不带 point = 老口径
+    ok('  老口径(不带 point)确实被草稿抢答', Array.isArray(first.nodes) && first.nodes.length === 0, first)
+    const best = SCHEMA.extractJson(raw, 'plan')
+    ok('★带上决策点之后按【形状吻合度】挑,真答案胜出',
+      !!best && Array.isArray(best.nodes) && best.nodes.length === 2, best && Object.keys(best))
+    // 同分时靠后的赢:最终答案通常在最后
+    const two = '{"nodes":[{"title":"旧","goal":"g"}],"more":"no","open":[],"needGrounding":false}\n改一下:\n{"nodes":[{"title":"新","goal":"g"}],"more":"no","open":[],"needGrounding":false}'
+    ok('  两个形状一样好 → 取靠后的那个(改口之后的才算数)',
+      SCHEMA.extractJson(two, 'plan').nodes[0].title === '新')
+    // replan 也一样
+    const rp = '草稿:{"addNodes":[],"done":false}\n最终:{"addNodes":[{"title":"补一片","goal":"g"}],"dropNodes":[],"done":false,"facts":[],"open":[],"more":"unknown","why":"补一片"}'
+    ok('  replan 同理', SCHEMA.extractJson(rp, 'replan').addNodes.length === 1)
+    // 不带 point 的老调用方行为不变(改动不许波及别处)
+    ok('  不带 point 的老调用方口径不变', SCHEMA.extractJson('{"a":1}{"b":2}').a === 1)
+  }
+
+  // ── ② needGrounding:true 是【完整判断】,不是半截答案 ────────────────────
+  // 原来连它一起拒,而重问话术还是"请给一个 probe 节点" —— 模型下一轮照旧只置标志位。
+  // "要不要先勘察"归模型;"把这个判断写成一个 probe 节点"是机械转换,归代码。
+  {
+    const g = { needGrounding: true, nodes: [], more: 'unknown', open: ['前端用什么框架不清楚'], why: '看不清' }
+    ok('★needGrounding:true + 空 nodes → 判合法(它不是没想好,是想清楚了"得先看")',
+      SCHEMA.validate('plan', SCHEMA.coerce('plan', g), {}).ok === true,
+      SCHEMA.validate('plan', SCHEMA.coerce('plan', g), {}).errors)
+    ok('  needGrounding:false + 空 nodes + more!=no → 照旧判不合法(闸没被放松)',
+      SCHEMA.validate('plan', SCHEMA.coerce('plan', Object.assign({}, g, { needGrounding: false })), {}).ok === false)
+
+    const run = mkRun({ goal: '分析当前项目', phase: 'planning', nodes: [],
+      pendingDecision: { id: 'd1', point: 'plan', event: 'start', nodeId: '', at: T0 } })
+    const out = step(run, { type: 'DECIDED', decisionId: 'd1', point: 'plan', ok: true, data: g }, '6w')
+    const probes = out.run.nodes.filter((n) => n.kind === 'probe')
+    ok('★代码替它开了一个勘察节点(修前:连撞两次直接转人工,一个节点都没派)',
+      probes.length === 1, out.run.nodes.map((n) => n.kind + '/' + n.origin))
+    ok('  勘察是只读的(不改任何文件)', probes[0] && probes[0].writeScope.length === 0)
+    ok('  把模型自己列的疑点原样交给勘察员(那正是这一轮该摸清的东西)',
+      probes[0] && /前端用什么框架不清楚/.test(probes[0].goal), probes[0] && probes[0].goal.slice(0, 120))
+    ok('  仍然要过人审(代码补骨架不越过人这一关)', out.run.phase === 'awaiting-approval', out.run.phase)
+    ok('  面板上说清是壳层替它开的', of(out.effects, 'notify').some((e) => /替它开一个勘察节点/.test(String(e.text || ''))), ty(out.effects))
+  }
+
+  // 提示词也要改口径,否则模型照旧以为自己得写节点
+  {
+    const RENDER = tryReq('../src/orch/render.js')
+    const plan = RENDER.renderPlan(mkRun({ goal: '分析当前项目', nodes: [] }), {})
+    ok('★提示词明说"只要置标志、nodes 留空就行"(原来要求它自己写成 probe 节点)',
+      /只要置这个标志、nodes 留空就行/.test(plan), (plan.match(/needGrounding=true.{0,60}/) || [])[0])
+  }
+})
+
 section('用例6v:★真机第二轮三处硬伤(2026-08-07 内网实测)', () => {
   const SHAPE = tryReq('../src/orch/shapes.js')
   need(RUN, 'src/orch/run.js'); need(NODES, 'src/orch/nodes.js'); need(SHAPE, 'src/orch/shapes.js')

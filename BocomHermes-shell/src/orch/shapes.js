@@ -191,6 +191,47 @@ const LENS_SETS = {
   ],
 }
 
+/**
+ * 模型答"我得先看代码才能拆"(needGrounding:true 且一个节点都没给)→ 代码替它开一个勘察节点。
+ * 【为什么由代码造】"要不要先勘察"是判断,归模型;"把这个判断写成一个 kind:'probe' 的节点"是格式化,
+ * 归代码。原来两件事都压给模型,弱模型就只置那个标志位、不写节点,于是连撞两次直接转人工
+ * (真机实测 2026-08-07,两次报的都是"nodes 是空数组但 more 不是 no")。
+ * open 是模型自己列的"说不清的点" —— 正好就是这一轮该去摸清楚的东西,原样交给勘察员。
+ */
+function makeGroundingSpec(run, open) {
+  const r = run || {}
+  const items = arr(open).map((o) => str(o && o.text ? o.text : o)).filter(Boolean).slice(0, 12)
+  return {
+    title: '先摸一遍',
+    kind: 'probe',
+    deps: [],
+    writeScope: [],            // 只读:勘察不改任何文件
+    artifacts: [],             // probe 的交付就是回报本身(gatesFor 也会强制清空)
+    contract: [],
+    requireEvidence: false,
+    requireVerdict: false,
+    verifyCmd: '',
+    goal: [
+      '你是【勘察员】。规划器说"看不清里面长什么样,拆不下去",所以先由你去摸一遍。你不改任何文件。',
+      '',
+      '【总目标】' + str(r.goal),
+      '',
+      items.length
+        ? '【规划器说不清的点 —— 这些就是你要摸清楚的】\n' + items.map((x) => '  · ' + x).join('\n')
+        : '【没有具体列出疑点,那就按下面的顺序自己摸】',
+      '',
+      '【摸什么 —— 目的是让下一轮能把活拆开,不是把活干完】',
+      '  · 这个目标涉及哪些【具体的模块/目录/文件】?各自大概多大、干什么的?',
+      '  · 它们之间怎么划界?哪些能各干各的、哪些必须串着来?',
+      '  · 有没有哪块明显比别处复杂或者危险,值得单独拎出来一片?',
+      '  ★不要动手实现、不要写结论性文档。你交的是【一张能照着拆活的地图】。',
+      '',
+      '【回报】一句话总览 + 按"模块/目录 → 它负责什么 → 建议单独拆成一片还是并进别处"逐条列出来。',
+      '  拿不准的照实说不确定 —— 下一轮规划会看着你这份回报重新拆,写错比写"不确定"更糟。',
+    ].join('\n'),
+  }
+}
+
 /** 这个目标该铺哪套视角(impl 型不铺:实现类拆宽靠按对象,硬造视角是噪音) */
 function lensSetFor(goal) { return LENS_SETS[goalShape(goal)] || null }
 
@@ -531,6 +572,7 @@ module.exports = {
   makeAuditSpec, needsAudit,
   goalShape, isDocGoal, isWideGoal,
   producers, hasReduce, needsReduce, makeReduceSpec, reducePath,
+  makeGroundingSpec,
   tooNarrow, widthTarget, parallelHeads, lensSetFor, lensesUsed, needsWiden, makeLensSpec, lensPath, LENS_SETS,
   normFindings, findingKey, dedupeFindings, sevOf, verifyLensesFor, VERIFY_LENSES,
 }

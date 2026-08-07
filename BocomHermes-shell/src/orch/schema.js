@@ -169,20 +169,53 @@ function tryParse(cut) {
   return null
 }
 
-function scanObjects(s) {
-  // 逐个候选试:第一个能【闭合且解析得动】的对象胜出。
-  // 空对象 {} 不算数(正文里"什么都不用改就返回 {}"这种话术会先命中),留到最后兜底。
-  let fallback = null
+function scanObjects(s, point) {
+  // 逐个候选试。★选谁不能只看"第一个能解析的" ——
+  // 弱模型常常先写一个草稿对象再给最终答案(「我先给个初步结构:{…} 然后…最终:{…}」),
+  // 剥 think 也剥不掉这种【正文里的草稿】。第一个胜出 = 草稿抢答,
+  // 于是报出来的错(比如"nodes 是空数组")说的是草稿,与它最后真正给的答案毫无关系,
+  // 原样回灌给模型它自然改不对 —— 真机上这就是"重跑 1~2 次然后转人工"的形态。
+  // 【怎么选】给了 point 就按【与该决策点期望形状的吻合度】打分,取最高;同分取【靠后】的
+  // (最终答案通常在最后)。没给 point 时保持老口径(第一个胜出),免得改动波及旧调用方。
+  const cands = []
   let i = s.indexOf('{')
   while (i >= 0) {
     const span = balancedSpan(s, i)
     if (!span) break                       // 后面再没有能闭合的了
     const v = tryParse(s.slice(span[0], span[1]))
-    if (v && Object.keys(v).length) return v
-    if (v && !fallback) fallback = v
+    if (v) cands.push(v)
     i = s.indexOf('{', span[0] + 1)        // 换下一个 { 再试(含嵌套):外层不合法时内层可能就是答案
   }
-  return fallback
+  if (!cands.length) return null
+  if (!point) {
+    // 空对象 {} 不算数(正文里"什么都不用改就返回 {}"这种话术会先命中),留到最后兜底
+    for (const v of cands) if (Object.keys(v).length) return v
+    return cands[0]
+  }
+  let best = null, bestScore = -1
+  for (const v of cands) {
+    const sc = shapeScore(point, v)
+    if (sc >= bestScore) { bestScore = sc; best = v }   // >= 让同分时靠后的赢
+  }
+  return best
+}
+
+// 与决策点期望形状的吻合度。只数【顶层键】,不看内容对不对 ——
+// 这一步的职责是"从一堆候选里认出哪个是答案",不是"判它合不合法"(那是 validate 的活)。
+const SHAPE_KEYS = {
+  plan: ['nodes', 'more', 'open', 'needGrounding', 'why'],
+  replan: ['addNodes', 'dropNodes', 'done', 'facts', 'open', 'more', 'why', 'needGrounding', 'askUser', 'final'],
+}
+function shapeScore(point, v) {
+  const want = SHAPE_KEYS[str(point)] || []
+  if (!want.length || !isObj(v)) return 0
+  let n = 0
+  for (const k of want) if (Object.prototype.hasOwnProperty.call(v, k)) n += 1
+  // 有内容的答案优先于形状对但全空的草稿:草稿最爱写 {"nodes":[],"more":"unknown"},
+  // 键都在、分一样高,靠这一分把真答案顶上去
+  const list = point === 'plan' ? v.nodes : v.addNodes
+  if (Array.isArray(list) && list.length) n += 2
+  return n
 }
 
 // 剥掉思考段。★这是内网 schemaFail 的头号来源:
@@ -204,7 +237,7 @@ function stripThink(s) {
   return t
 }
 
-function extractJson(input) {
+function extractJson(input, point) {
   if (input && typeof input === 'object') return isObj(input) ? input : null   // 桩/重放可能直接喂对象
   const s = str(input)
   if (!s) return null
@@ -218,8 +251,8 @@ function extractJson(input) {
     const re = /```[a-zA-Z]*\s*([\s\S]*?)```/g
     let m
     while ((m = re.exec(txt))) fences.push(m[1])
-    for (const f of fences) { const v = scanObjects(f); if (v) return v }
-    return scanObjects(txt)
+    for (const f of fences) { const v = scanObjects(f, point); if (v) return v }
+    return scanObjects(txt, point)
   }
   return scan(stripped) || (stripped.length === s.length ? null : scan(s))
 }
@@ -420,9 +453,13 @@ function validate(point, obj, ctx) {
     if (!Array.isArray(obj.nodes)) errors.push('nodes 必须是数组;只有一个节点也要放进数组里')
     else {
       checkNodeList(obj.nodes, 'nodes', errors)
-      // ★ 空数组不是"待定":代码不替它宣布收口,也不接受"我还没想好"这种半截答案
-      if (!obj.nodes.length && str(obj.more) !== 'no') {
-        errors.push('nodes 是空数组但 more 不是 "no" —— 要么给出至少一个节点;要么确实判断不值得拆,那就同时写 more:"no";如果只是还没看清代码,请给一个 kind:"probe" 的勘察节点,或把不确定的点写进 open')
+      // ★ 空数组不是"待定":代码不替它宣布收口,也不接受"我还没想好"这种半截答案。
+      // 【但 needGrounding:true 例外】那不是半截答案,那是一个【完整的判断】:"我得先看代码才能拆"。
+      // 原来这里连它一起拒,而重问话术还是"请给一个 probe 节点" —— 模型下一轮照旧只置那个标志位
+      // (真机实测:连撞两次、直接转人工,两次报的都是这条)。把"我需要先勘察"翻译成一个 probe 节点
+      // 是【机械转换】,正是代码该干的活;要求模型自己写成节点,等于让它替代码做格式化。
+      if (!obj.nodes.length && str(obj.more) !== 'no' && obj.needGrounding !== true) {
+        errors.push('nodes 是空数组但 more 不是 "no" —— 要么给出至少一个节点;要么确实判断不值得拆,那就同时写 more:"no";如果只是还没看清代码,请写 needGrounding:true(壳层会替你开一个勘察节点),或把不确定的点写进 open')
       }
     }
     if (['no', 'unknown'].indexOf(str(obj.more)) < 0) errors.push('more 只能是 "no"(没有后续了)或 "unknown"(我还会有后续,别急着收口)')
