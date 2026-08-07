@@ -448,6 +448,14 @@ function mergeGraph(t, data) {
 // 探索/调研/成文类目标,只要有 ≥2 片各自产文件而全图没有 reduce,就由代码补一个 ——
 // 否则交付是 N 篇互不知道对方存在的散装文档(实测症状)。模型自己给了 reduce 就不补。
 // 造出来的是 spec,照样走 N.validateNodeSpecs 同一条校验,不绕过不变量。
+// 还能开几个节点。★必须与 nodes.js validateNodeSpecs 用【同一本账】——
+// 那边是 maxNodes - budget.spawned,而形状兜底原来各自写成 maxNodes - nodes.length。
+// 两本账的后果(真机 2026-08-07 抓到):shapeVerifyFindings 按自己那本算出 room=10、
+// 打算给 4 条发现各派核实员,validateNodeSpecs 按真账 room=2 静默截断到 2 个,
+// 而通知照旧说「报了 4 条发现 → 已【逐条】派新眼睛去核」—— 3 条发现一个人都没派,没有任何提示。
+// (spawned 与 nodes.length 会分叉:打回重问撤掉的那批、被丢弃的规格,都只减节点不减 spawned。)
+function budgetRoom(r) { return Math.max(0, num(r.budget.maxNodes) - num(r.budget.spawned)) }
+
 // ── 收口闸:说"够了"之前,代码先查三件它可能没看见的事 ──────────────────────
 // 【为什么需要】CC 那种彻底靠的是 loop-until-dry:连续几轮没有新东西才停。这套原来没有 ——
 // 模型一句 done:true 就收口,而弱模型在"还要不要继续"上和"要不要多拆"一样,永远倾向于早收。
@@ -493,7 +501,7 @@ function dryGate(t) {
 function shapeWiden(t) {
   const r = t.r
   // 给汇总 + 验收留 2 个位:补宽把预算占满,收尾就没位置了 —— 那等于用宽度换掉了交付
-  const room = num(r.budget.maxNodes) - arr(r.nodes).length - 2
+  const room = budgetRoom(r) - 2   // 留 2 个位给汇总 + 验收:补宽把预算占满,收尾就没位置了
   const w = SHAPE.needsWiden(r, room)
   if (!w) return false
   const specs = arr(w.lenses).map((l) => SHAPE.makeLensSpec(r, l, w.shape))
@@ -597,7 +605,7 @@ function shapeVerifyFindings(t, n) {
     t.eff.push({ type: 'notify', level: 'info', text: '「' + str(n.title || n.id) + '」报的 ' + raw.length + ' 条发现别的片已经在核了,不重复派' })
     return false
   }
-  const room = num(r.budget.maxNodes) - arr(r.nodes).length   // 预算不够就少派几条,不硬挤
+  const room = budgetRoom(r)   // 预算不够就少派几条,不硬挤(口径与 validateNodeSpecs 同源)
   if (room <= 0) { t.eff.push({ type: 'notify', level: 'warn', text: '「' + str(n.title || n.id) + '」报了 ' + fs2.length + ' 条发现,但节点预算已满 —— 这些结论没人复核,收口时请自己看' }); return false }
   const use = fs2.slice(0, Math.min(fs2.length, room))
   // 高严重度的一条派两个核实员,各走【互不重叠】的路子(证伪 / 可复现)——
@@ -613,8 +621,18 @@ function shapeVerifyFindings(t, n) {
   if (!made.length) return false
   r.wave = posInt(r.wave, 1) + 1
   addNodes(t, made, 'shape', r.wave)
-  if (use.length < fs2.length) t.eff.push({ type: 'notify', level: 'warn', text: '发现 ' + fs2.length + ' 条,预算只够核 ' + use.length + ' 条(其余未复核)' })
-  t.eff.push({ type: 'notify', level: 'info', text: '「' + str(n.title || n.id) + '」报了 ' + use.length + ' 条发现 → 已逐条派新眼睛去核' })
+  // ★按【真的入图了几个】说话,不按【打算派几个】。made 可能比 specs 少:
+  //   validateNodeSpecs 会按真预算截断(truncated),也会丢掉校验不过的规格。
+  //   原来这里报的是 use.length(意图),于是"3 条发现一个人都没派"被说成"已逐条派新眼睛去核"。
+  const covered = new Set(made.map((x) => str(x.findingKey)).filter(Boolean)).size
+  const missed = use.length - covered
+  if (missed > 0 || use.length < fs2.length) {
+    t.eff.push({ type: 'notify', level: 'warn',
+      text: '「' + str(n.title || n.id) + '」报了 ' + fs2.length + ' 条发现,只核得动 ' + covered + ' 条'
+        + '(预算 ' + num(r.budget.spawned) + '/' + num(r.budget.maxNodes) + ' 已满)—— 其余 ' + (fs2.length - covered)
+        + ' 条【没有人复核过】,收口时请自己看,或者在面板上加预算。' })
+  }
+  if (covered > 0) t.eff.push({ type: 'notify', level: 'info', text: '「' + str(n.title || n.id) + '」' + covered + ' 条发现 → 已逐条派新眼睛去核' })
   return true
 }
 

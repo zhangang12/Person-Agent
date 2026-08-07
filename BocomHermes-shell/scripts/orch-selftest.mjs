@@ -819,6 +819,34 @@ section('用例6k:A —— 按发现扇出(CC 的 Verify 那一层)', () => {
   ok('  并且明说"别替另一个人把他那个角度也想一遍"(否则两票退化成一票)',
     vs.some((n) => /退化成一票/.test(n.goal)))
 
+  // ── ★预算口径必须与 validateNodeSpecs 同源,通知必须按【真的派出去了几个】说话 ──────
+  // 真机 2026-08-07:n14 报了 4 条发现,shapeVerifyFindings 按自己那本账(maxNodes - nodes.length)
+  // 算出 room=10、打算逐条派;而 validateNodeSpecs 按真账(maxNodes - budget.spawned)room=2,
+  // 静默截断到 2 个 —— 结果只有【第 1 条】拿到核实员(高严重度占了两票),另外 3 条一个人都没派。
+  // 而通知照旧说「报了 4 条发现 → 已【逐条】派新眼睛去核」:静默丢弃 + 通知撒谎,一次凑齐。
+  {
+    const four = ['F| 高 | 第一条足够长的发现说明文字 | a.ts:1', 'F| 中 | 第二条足够长的发现说明文字 | b.ts:2',
+      'F| 中 | 第三条足够长的发现说明文字 | c.ts:3', 'F| 中 | 第四条足够长的发现说明文字 | d.ts:4']
+    const src2 = mkNode({ id: 'm1', kind: 'work', state: 'settled', cardId: 'c1',
+      result: { final: blk(four), files: ['docs/a.md'] } })
+    // spawned 与节点数刻意分叉(真机就是这样:打回重问撤掉的那批只减节点、不减 spawned)
+    const tight = mkRun({ goal: '排查订单模块', nodes: [src2],
+      budget: { maxNodes: 24, spawned: 22, maxDecides: 48, spentDecides: 0, maxWallMs: 6 * 3600e3, startedAt: T0, invalidStreak: 0, resumeCredit: 1 } })
+    const o = step(tight, { type: 'EXIT_RESULT', nodeId: 'm1', pass: true, report: [] }, '6k')
+    const vs2 = o.run.nodes.filter((x) => x.kind === 'verify')
+    const info = of(o.effects, 'notify').filter((e) => e.level === 'info').map((e) => String(e.text || '')).join(' ')
+    const warn = of(o.effects, 'notify').filter((e) => e.level === 'warn').map((e) => String(e.text || '')).join(' ')
+    ok('★预算紧时确实少派了(这是对的,预算是硬的)', vs2.length < 4, vs2.map((x) => x.title))
+    ok('★通知按【真的派出去了几个】说话,不再说"已逐条派"',
+      !/报了 4 条发现/.test(info), info || '(无 info 通知)')
+    ok('★没核到的条数如实报出来(静默丢弃是这一整天在修的那类病)',
+      /没有人复核过/.test(warn) && /加预算/.test(warn), warn || '(没有 warn 通知 —— 这正是修前的行为)')
+    ok('  预算宽裕时照常逐条派(这条修的是口径,不是把扇出关小)',
+      step(mkRun({ goal: '排查订单模块', nodes: [mkNode({ id: 'm2', kind: 'work', state: 'settled', cardId: 'c2',
+        result: { final: blk(four), files: ['docs/a.md'] } })] }),
+      { type: 'EXIT_RESULT', nodeId: 'm2', pass: true, report: [] }, '6k').run.nodes.filter((x) => x.kind === 'verify').length >= 4)
+  }
+
   // ③ 不重复派 + 不套娃
   const out2 = step(out.run, { type: 'EXIT_RESULT', nodeId: 'n1', pass: true, report: [] }, '6k')
   ok('★同一片重跑不重复派(靠 sourceNode 去重,否则几轮就把预算烧穿)',
