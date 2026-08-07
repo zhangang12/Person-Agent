@@ -156,9 +156,17 @@ function applyEvent(run, ev, ctx) {
   r.seq += 1
   r.updatedAt = t.at
   t.eff.push({ type: 'persist' }, { type: 'ui' })
-  // 不变式自检:只报警不改状态、不抛 —— 状态机自己坏了要看得见,但不能因此把用户的 run 弄死
+  // 不变式自检:只报警不改状态、不抛 —— 状态机自己坏了要看得见,但不能因此把用户的 run 弄死。
+  // ★只在【违反内容变了】时报一次。真机 2026-08-07:一个持续性的账目不一致
+  //   (spawned 与节点数对不上)会在【每一个事件】上重报,几分钟刷了几十条,
+  //   把面板上真正该看的通知(补了哪几片、哪道闸没过)全埋掉了 ——
+  //   自检的价值在于"发生时看得见",不在于"一直喊"。喊到没人看,等于没报。
   const bad = invariants(r)
-  if (bad.length) t.eff.push({ type: 'notify', level: 'warn', text: '编排不变式违反:' + bad.join(';') })
+  const sig = bad.join(';')
+  if (sig !== str(r.lastInvariantSig || '')) {
+    r.lastInvariantSig = sig
+    if (bad.length) t.eff.push({ type: 'notify', level: 'warn', text: '编排不变式违反:' + sig })
+  }
   return { run: r, effects: t.eff }
 }
 

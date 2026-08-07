@@ -993,6 +993,23 @@ section('用例6j:拆窄了打回重问一次(且只一次)', () => {
   ok('★打回重问要把 spawned 退回去(否则预算花掉了却什么都没换来)',
     num0(out.run.budget.spawned) === out.run.nodes.length,
     { spawned: out.run.budget.spawned, nodes: out.run.nodes.length })
+  // ★持续性的不一致只该报一次。真机 2026-08-07:一条账目不一致在【每个事件】上重报,
+  //   几分钟刷了几十条,把面板上真正该看的通知(补了哪几片、哪道闸没过)全埋掉 ——
+  //   自检的价值在于"发生时看得见",不在于"一直喊";喊到没人看,等于没报。
+  {
+    const broken = mkRun({ nodes: [mkNode({ id: 'n1', state: 'running' })],
+      budget: { maxNodes: 24, spawned: 9, maxDecides: 48, spentDecides: 0, maxWallMs: 6 * 3600e3, startedAt: T0, invalidStreak: 0, resumeCredit: 1 } })
+    const a = step(broken, { type: 'WORKER_TURN_START', nodeId: 'n1' }, 'INV')
+    ok('★账目不一致 → 第一次报警', of(a.effects, 'notify').some((e) => /不变式违反/.test(String(e.text || ''))), ty(a.effects))
+    const b = step(a.run, { type: 'WORKER_TURN_START', nodeId: 'n1' }, 'INV')
+    ok('★同一条不一致不再重报(否则真正该看的通知会被埋掉)',
+      !of(b.effects, 'notify').some((e) => /不变式违反/.test(String(e.text || ''))), ty(b.effects))
+    const c = step(b.run, { type: 'WORKER_CARD_GONE', nodeId: 'n1' }, 'INV')
+    ok('  违反内容变了才重报(不是一次性静音)',
+      JSON.stringify(c.run.lastInvariantSig) !== JSON.stringify(b.run.lastInvariantSig)
+        || !of(c.effects, 'notify').some((e) => /不变式违反/.test(String(e.text || ''))),
+      { before: b.run.lastInvariantSig, after: c.run.lastInvariantSig })
+  }
   ok('  不变式不再报警', !(RUN.invariants ? RUN.invariants(out.run) : []).length
     || !(RUN.invariants(out.run) || []).some((x) => /spawned/.test(String(x))),
     RUN.invariants ? RUN.invariants(out.run) : 'invariants 未导出')
