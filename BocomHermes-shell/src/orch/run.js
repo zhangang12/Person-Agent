@@ -1096,6 +1096,13 @@ function reasonOf(res) {
   if (bad.indexOf('noEmpty') >= 0) return 'zero-output'
   if (bad.indexOf('artifacts') >= 0) return 'artifact-missing'
   if (bad.indexOf('substance') >= 0) return 'thin-summary'   // 汇总没真读上游 —— 活干了但差一截,走补做(原卡上下文还在,读完重写一遍就行)
+  // 新增的两道汇总闸同样是"活干了但差一截":
+  //   single —— 正文都写出来了,只是散成了几个文件,合并一下就好;
+  //   weight —— 内容不够厚,接着往同一份里补。
+  // 两者都不属 HARD_FAIL,所以走【补做】:原卡原会话,上下文还在,不烧 attempt。
+  // 判成重做的话要新开卡从零重读 6 份上游文档,又贵又可能把已经写对的部分改坏。
+  if (bad.indexOf('single') >= 0) return 'split-output'
+  if (bad.indexOf('weight') >= 0) return 'thin-summary'
   return ''
 }
 // 拒因追加进 brief 留痕(重派时 composeNodeBrief 也会从 exitReport 重新渲染一遍,两条路都不丢)

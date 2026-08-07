@@ -1349,9 +1349,35 @@ section('用例6x:★收口那一层 —— 44 个文件没人收、汇总只占
     ok('★独占契约:汇总另外散出 3 个文件 → 判不过(真机就是顶层 817 行 + 三个分册)',
       gate(red(['/p/docs/汇总.md', '/p/docs/_n20_a.md', '/p/docs/_n20_b.md', '/p/docs/_n20_c.md']), pb(cite4, 60000), 'single').ok === false)
     ok('  就交一份 → 过', gate(red(['/p/docs/汇总.md']), pb(cite4, 60000), 'single').ok === true)
+    // ★闸门与话术必须同源:机器要按这三条判,就得先告诉模型会被这么判,
+    //   否则它是在不知情的情况下被打回 —— 这是本仓反复强调的"两份账本"的另一种形态。
+    const rspec = SHAPE.makeReduceSpec({ id: 'R1', goal: '分析采购' },
+      [{ id: 'a', title: '甲', exit: { artifacts: ['docs/a.md'] } }, { id: 'b', title: '乙', exit: { artifacts: ['docs/b.md'] } }])
+    ok('★汇总指令里写明了这三条硬约束(闸门与话术同源)',
+      /只交这一份/.test(rspec.goal) && /至少引用一半上游/.test(rspec.goal) && /分量要配得上上游/.test(rspec.goal),
+      (rspec.goal.match(/三条硬约束[\s\S]{0,60}/) || [])[0])
+    ok('  点名"一个索引 + 三个分册"这个具体的偷懒形态(真机就是这么交的)',
+      /一个索引 \+ 三个分册/.test(rspec.goal))
     ok('  非 reduce 节点不受独占约束(工人本来就可能写多个文件)',
       !NODES.evalExit(Object.assign({}, red(['/p/docs/汇总.md', '/p/docs/x.md']), { kind: 'work' }), pb(cite4, 60000))
         .report.some((x) => x.kind === 'single'))
+  }
+
+  // ── 新闸不过要走【补做】而不是整片重做 ────────────────────────────────────
+  // 正文都写出来了、只是散成几个文件(single),或者不够厚(weight)—— 都是"活干了但差一截"。
+  // 判成重做要新开卡从零重读 6 份上游文档,又贵又可能把已经写对的部分改坏。
+  {
+    const mkRed = (kinds) => mkNode({ id: 'r1', kind: 'reduce', state: 'settled', cardId: 'c1', attempt: 1,
+      exit: { artifacts: ['docs/汇总.md'], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true },
+      result: { final: '写完了', files: ['/p/docs/汇总.md'], exitReport: [], findings: [] } })
+    for (const k of ['single', 'weight']) {
+      const run = mkRun({ goal: '分析采购', nodes: [mkRed()] })
+      const o = step(run, { type: 'EXIT_RESULT', nodeId: 'r1', pass: false,
+        report: [{ kind: k, ok: false, detail: '差一截' }], verdict: '', cmdExit: null, contractMiss: [], unverified: false }, '6x')
+      const n = byId(o.run, 'r1')
+      ok('★' + k + ' 不过 → 走补做(原卡原会话),不烧 attempt',
+        n.patches === 1 && n.attempt === 1, { patches: n.patches, attempt: n.attempt, reason: n.reason })
+    }
   }
 
   // ── ⑤ 收尾归档片:代码强制,收口前必须先收拾桌面 ────────────────────────
