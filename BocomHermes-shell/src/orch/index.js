@@ -524,14 +524,7 @@ function makeOrch(deps) {
       const alias = 'RUN-' + Math.random().toString(36).slice(2, 6)
       const run = RUN.createRun({
         goal: str(goal), dir, backendDir: (S.settings && S.settings.backendDir) || '',
-        // ★兜到全局默认模型 —— 原来是 `o.model || null`,而 /orch/run-orch 从不传 model,
-        //   于是整条编排(决策 + 所有工人卡)都【不指定模型】,全靠 serve 自己挑。
-        //   serve 挑的是【这个项目上次用过的那个】(存在 opencode.db 里,应用建会话时带了 ?directory=)——
-        //   真机 2026-08-08:设置页里明明写着 DeepSeek V4 Pro,实际跑的却是 opencode/deepseek-v4-flash-free,
-        //   而那个模型当时正返回空消息(0 token、无报错、永不收官),plan 挂了 12 分钟没有任何事件。
-        //   证据:同一段 5301 字提示词,裸 HTTP 不带 directory → 拿到 pro,30 秒返回 3110 字。
-        //   "设置里选的模型不生效"本身就是缺陷,不该让用户去猜是哪个模型在跑。
-        model: o.model || (S.settings && S.settings.model) || null, alias,
+        model: o.model || null, alias,
         concurrency: (S.settings && S.settings.knobs && S.settings.knobs.wfConcurrency) || 4,
       }, { at: Date.now(), mkId })
       // 面板卡:msg 传 null —— 它有会话但【永不发消息】(编排不是"跟一个 Agent 聊天")
