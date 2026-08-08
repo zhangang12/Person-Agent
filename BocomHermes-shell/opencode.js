@@ -75,6 +75,13 @@ function markStopped(sid) {
 function consumeAbortFlag(sid) { const had = stoppedSids.has(sid); if (had) stoppedSids.delete(sid); return had }
 // C5 模型 4xx 黑名单：被 serve zod 拒过的 modelID 按 base 记录,后续发送直接跳过模型指定;notified 控制只告知上层一次
 const modelBlacklist = new Map()   // base -> Map<modelID, { at, notified }>
+// 静默丢弃盯防的起判时间(见 sendMessage 里 dropWatch 那段的实测依据):
+// 90s 压过合法慢首字(实测最慢的正常收官 36.4s),而真故障能持续 25 分钟以上。
+// 可调只为【自测】:否则一条断言要真等 90 秒。生产路径没有任何地方改它。
+let DROP_WATCH_MS = 90000
+function setDropWatchMs(ms) { const n = +ms; if (Number.isFinite(n) && n >= 100) DROP_WATCH_MS = n }
+// 盯防的拉取间隔跟着阈值缩放:自测把阈值调到几百毫秒时,5s 一拍会永远等不到第二拍
+const dropPollMs = () => Math.max(200, Math.min(5000, Math.round(DROP_WATCH_MS / 6)))
 function noteModelBlacklist(base, modelID) {
   if (!base || !modelID) return
   if (modelBlacklist.size > 200) modelBlacklist.clear()
@@ -664,10 +671,52 @@ async function sendMessage(info, sessionId, text, model, files, onNote, opts = {
     const abortWatch = new Promise((res) => {
       abortIv = setInterval(() => { if (abortedSince(sessionId, tSend)) { clearInterval(abortIv); abortIv = null; res('__aborted__') } }, 400)
     })
+    // ★★【第三个赛跑者:请求被静默丢弃】(真机 2026-08-08,查实用了一整天)
+    // 现场:核实片用的 opencode/mimo-v2.5-free 连 39 条全部"冻住"—— 面板上看是在思考,实则
+    // 25 分钟一个字节都没有。隔离实验(并发 1/4/12 × 两个模型)钉死了它:
+    //   deepseek/deepseek-v4-flash 并发 12 → 12/12 全在 2~3s 返回;mimo 并发 1 → 17 条一条不成。
+    //   不是负载、不是并发、不是提示词 —— 是那个模型的接入侧不出字(额度/凭据,归用户账户侧)。
+    // 而 serve 那边【1 秒内】就能看到证据:assistant 消息已建,tokens 全 0、parts 空、error 空、
+    // time.completed 永不出现(原始报文实测)。droppedOf() 认得这个指纹 —— 但它只在
+    // waitAssistantText 里被调用,而那个函数在【POST 返回之后】才跑。POST 永远不返回,
+    // 于是这份 1 秒可见的证据一辈子没人去看:检测代码写对了,却挂在一个够不到的地方。
+    // 这就是今天第七次同一个形态,也是最贵的一次(整天)。
+    // 【为什么阈值这么大】要压过合法的慢首字:实测同一台 serve 上 ling-3.0-tiny-free 收官 36.4s、
+    //   deepseek-v4-pro 5.1s、内网慢端点首字曾要 12s。90s 远在其上,而真故障能持续 25 分钟以上 ——
+    //   两边都留足余量。只要出现【任何】part 或【任何】非零 token 就立刻停止盯防,不误伤。
+    let dropIv = null
+    const dropWatch = new Promise((res) => {
+      const t0 = Date.now()
+      dropIv = setInterval(async () => {
+        if (Date.now() - t0 < DROP_WATCH_MS) return
+        try {
+          const raw = await api(info.base, 'GET', `/session/${sessionId}/message`, undefined, 8000)
+          const list = Array.isArray(raw) ? raw : (raw && raw.data) || []
+          const asst = list.filter((m) => ((m && (m.info || m)) || {}).role === 'assistant')
+          const why = droppedOf(asst[asst.length - 1])
+          if (why) { clearInterval(dropIv); dropIv = null; res({ __dropped__: why }) }
+        } catch { /* 拉不到就下一拍再看:盯防本身绝不能把正常回合搞崩 */ }
+      }, dropPollMs())
+    })
     // race 落定(含抛错)后无条件摘哨兵:POST 先完成时不清 = 每条消息泄一个 400ms 定时器(审查实测泄漏)。
     let direct
-    try { direct = await Promise.race([api(info.base, 'POST', `/session/${sessionId}/message`, body), abortWatch]) }
-    finally { if (abortIv) { clearInterval(abortIv); abortIv = null } }
+    try { direct = await Promise.race([api(info.base, 'POST', `/session/${sessionId}/message`, body), abortWatch, dropWatch]) }
+    finally {
+      if (abortIv) { clearInterval(abortIv); abortIv = null }
+      if (dropIv) { clearInterval(dropIv); dropIv = null }
+    }
+    if (direct && direct.__dropped__) {
+      // ★不许在原会话重发 —— serve 对中止过的会话一律返回空消息,重发永远是空(今天早上踩过,
+      //   那次连锁是:误杀 → abort → 补做注进死会话 → 空 → 判零产出 → 重派 → 又注进同一个死会话)。
+      //   这里只做三件事:掐掉那个永不返回的回合、把模型记进账、把真因原样抛上去,
+      //   让既有的重派机制去开一张【新卡新会话】。
+      try { await abort(info, sessionId) } catch { /* 已经没了就算了 */ }
+      if (withModel) {
+        noteModelBlacklist(info.base, model.modelID)   // 同一本账(4xx 那条也记这里):后续发送直接跳过这个模型指定
+        if (onNote) { try { onNote('模型 ' + (model.name || model.modelID) + ' 收下请求后不出字(' + Math.round(DROP_WATCH_MS / 1000) + 's 内 0 token、无产出、无报错)—— 多半是这个模型的额度或凭据问题,不是网络。后续发送已改用默认模型') } catch {} }
+      }
+      throw new Error('回合失败:' + direct.__dropped__)
+    }
     if (direct === '__aborted__') {
       markStopped(sessionId)   // 一次性"已手动停止"标记(契约①,上层给回合标)
       // 宽限自适应(停止慢的两大根:原固定 sleep(2800) + 无超时 GET):每 ~600ms 拉一次,文本连稳两拍/两拍皆空 →
@@ -1412,6 +1461,6 @@ function anyHealthyServe() {
 
 module.exports = { ensureServe, createSession, deleteSession, sendMessage, listModels, listAgents, checkMcp, abort, replyPermission, replyQuestion, rejectQuestion, sessionExists, listSessions, getMessages, getRawMessages, getSessionChildren, getSessionTodo, listPendingQuestions, generationStalled, pollTurnParts, getSessionUsage, getStreamState, consumeAbortFlag, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, anyHealthyServe, AUTO_ALLOW,
   __test: { dispatch, waitAssistantText, extractText, pickTurnText, abortedSince, abortedSids, normalizeMessages, stripInjected, splitThink,
-    normDirKey, sameDir, inflight, noteChild, noteModelBlacklist, modelBlacklist, refreshSessionTree, runEventLoop, turnTextCache, stoppedSids, lastUserMatches, noteUsage,
+    normDirKey, sameDir, inflight, noteChild, noteModelBlacklist, modelBlacklist, setDropWatchMs, refreshSessionTree, runEventLoop, turnTextCache, stoppedSids, lastUserMatches, noteUsage,
     maps: { pool, baseToEntry, childToParent, childTitle, classifiedSessions, sidBase },
     setSpawnHook: (fn) => { spawnServeHook = fn } } }
