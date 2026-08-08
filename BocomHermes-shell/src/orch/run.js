@@ -363,6 +363,7 @@ function onPlanDecided(t, dec, data) {
   }
   shapeWiden(t)                       // 宽度:重问过一次还是窄 → 代码按视角铺齐(必须在 shapeReduce 之前:补出来的片也要进汇总)
   shapeReduce(t)                      // 汇总收尾:模型没给就代码补
+  shapeAudit(t)                       // ★验收必须【独立】挂 —— 见 shapeAudit 注释:原来只挂在"代码补了汇总"那条分支上
   r.phase = 'awaiting-approval'; r.phaseAt = t.at
 }
 
@@ -448,10 +449,11 @@ function onReplanDecided(t, dec, data) {
   //   而 probe 跑完那次 replan 恰恰是最该拆宽的时刻(现在才真正知道里面长什么样),实测常常缩回 1~2 片。
   const widened = shapeWiden(t)
   const reduced = shapeReduce(t)      // 顺序:先补宽再挂汇总,汇总的 deps 才吃得到补出来的片
+  const audited = shapeAudit(t)       // ★再挂验收(要先有汇总才挂得上)
   const linked = extendReduceDeps(t)  // 汇总早就挂上了、后来又多出产出片 → 把新的接进它的 deps
   // ★反空转:frontier 问了一圈图还是没动 —— 计数,连着 N 次就转人工(出口是人,不是代码宣布 done)
   //   代码补宽/挂汇总也算"图动了":这一轮确实多出了活,不该记进空转账
-  const moved = changedGraph || widened || reduced || linked
+  const moved = changedGraph || widened || reduced || audited || linked
   if (dec.event === 'frontier' && !moved) r.budget.idleFrontier += 1
   else if (moved) r.budget.idleFrontier = 0
   tick(t, false)   // 内部 tick 只派发,不发起 frontier 决策 —— 否则"空 replan → 立刻再问"会自我循环烧预算
@@ -549,6 +551,8 @@ function dryGate(t) {
   if (shapeWiden(t)) return '覆盖面还没铺满(这类目标该看的面还有没看的)'
   // ③ 有产出片没进汇总
   if (shapeReduce(t) || extendReduceDeps(t)) return '还有产出没进汇总(汇总读不到它们,那几片等于白跑)'
+  // ③b 汇总没人复核:这道闸原来【压根不在收口闸里】,而"写汇总的自己评自己"是最不该放过去的一种
+  if (shapeAudit(t)) return '汇总还没人复核(让写它的自己评自己等于没评)'
   // ④ 桌面还没收拾:一堆中间文件散在项目里,没人归档
   if (shapeArchive(t)) return '还有一堆中间文件散在项目里(先收进归档目录,只留最终交付)'
   return ''
@@ -638,7 +642,8 @@ function shapeReduce(t) {
   if (!made.length) return false
   addNodes(t, made, 'shape', posInt(r.wave, 1))
   t.eff.push({ type: 'notify', level: 'info', text: '已自动补一个汇总节点收尾(' + targets.length + ' 片产出合成一份文档)—— 规划里没有它,散着交等于没交' })
-  shapeAudit(t)
+  // ★验收【不】在这里挂 —— 挂在这里就等于"只有代码补了汇总才有人复核"(见 shapeAudit 注释)。
+  //   现在由三个调用点各自独立调 shapeAudit;needsAudit 本身幂等,重复调不会多挂。
   return true
 }
 
@@ -734,6 +739,14 @@ function shapeVerifyFindings(t, n) {
 // 汇总节点自己的闸只能查"文件在不在、有没有真引用上游"这类机械项;
 // "这份文档够不够格""对照总目标还漏了什么"只有另一双眼睛读完才知道 —— 而让写汇总的自己评自己
 // 等于自己给自己打分(验证棒那边早有定论)。所以由代码强制挂一个只读的验收节点,requireVerdict 机判。
+//
+// ★★【2026-08-08 真机:它原来只挂在"代码补了汇总"那条分支上】
+// 现场:模型自己给了 n10(reduce) → needsReduce 返回 null → shapeReduce 第一行就早退 →
+// 嵌在它成功分支里的 shapeAudit 永远走不到 → 8 片方案里【一个 verify 都没有】,
+// 汇总写完没有任何人复核。而 needsAudit 写的是独立判据("有 reduce 且没人 verify 它"),
+// 本意显然是不管汇总谁给的都要挂 —— 判据对、注释对,就是被挂在了一个够不到的地方。
+// 收口闸 dryGate 里也漏了这一道(它只查了铺宽/汇总/归档),于是两处该拦的都拦不住。
+// 这是同一形态的第七次:检查在、注释也对,但它的前置条件在真机上不成立。
 function shapeAudit(t) {
   const r = t.r
   const red = SHAPE.needsAudit(r)

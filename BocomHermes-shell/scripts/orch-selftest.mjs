@@ -1297,6 +1297,47 @@ section('用例6s:★发现走工具上报 —— 格式约定的静默失败换
   }
 })
 
+section('用例7b:★模型自己给了汇总 → 验收片就永远不存在(2026-08-08 真机)', () => {
+  need(RUN, 'src/orch/run.js')
+  // 现场:plan 给了 7 片 work + 1 片 reduce,全图【一个 verify 都没有】,面板一条兜底提示都没打 ——
+  // 汇总写完没有任何人复核,而这正是"最重要的文档才 817 行"那次的同一个成因。
+  // 病灶:shapeAudit 被嵌在 shapeReduce 的成功分支里,而模型自己给了 reduce 时
+  // needsReduce 返回 null、shapeReduce 第一行就早退 → 那句 shapeAudit(t) 永远走不到。
+  // needsAudit 本身写的是独立判据("有 reduce 且没人 verify 它"),判据对、注释对,挂错了地方。
+  const specs = ['销售', '采购', '制造', '仓库', '财务', '平台', '前端']
+    .map((s, i) => ({ kind: 'work', title: s + '域逻辑', goal: '摸' + s, deps: [], writeScope: ['docs/w' + i + '.md'], contract: [] }))
+    .concat([{ kind: 'reduce', title: '汇总成文', goal: '合成一份', deps: ['销售域逻辑', '采购域逻辑'], writeScope: ['docs/全景.md'], contract: [] }])
+  const base = mkRun({ goal: '分析仓库的逻辑', phase: 'planning', nodes: [],
+    pendingDecision: { id: 'd1', point: 'plan', event: 'start', nodeId: '', at: T0 } })
+  const o = step(base, { type: 'DECIDED', decisionId: 'd1', point: 'plan', ok: true,
+    data: { needGrounding: false, more: 'no', why: '按域拆', nodes: specs } }, '7b')
+  const red = o.run.nodes.find((n) => n.kind === 'reduce')
+  const aud = o.run.nodes.filter((n) => n.kind === 'verify' && arr0(n.deps).indexOf(red && red.id) >= 0)
+  ok('★模型自己给了汇总,验收照样要挂上(修前:全图 0 个 verify)', aud.length === 1,
+    o.run.nodes.map((n) => n.kind + ':' + n.title.slice(0, 6)).join(' | '))
+  ok('  验收是只读的、机判 VERDICT(不是再写一份文档)',
+    aud[0] && aud[0].exit.requireVerdict === true && arr0(aud[0].exit.artifacts).length === 0,
+    aud[0] && aud[0].exit)
+  ok('  只挂一个 —— needsAudit 幂等,三个调用点重复调不许多挂',
+    o.run.nodes.filter((n) => n.kind === 'verify').length === 1)
+  // 收口闸也要有这一道:原来它只查了铺宽/汇总/归档,"汇总没人复核"压根不在闸上
+  const noAudit = mkRun({ goal: '分析仓库的逻辑', phase: 'executing',
+    nodes: [mkNode({ id: 'r1', kind: 'reduce', state: 'verified', title: '汇总成文',
+      exit: { artifacts: ['docs/全景.md'], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true },
+      result: { final: '完', files: ['/proj/docs/全景.md'], exitReport: [], findings: [] } })]
+      .concat([1, 2, 3, 4, 5, 6].map((i) => mkNode({ id: 'w' + i, kind: 'work', state: 'verified',
+        result: { final: '完', files: ['/proj/docs/w' + i + '.md'], exitReport: [], findings: [] } }))),
+    pendingDecision: { id: 'd2', point: 'replan', event: 'frontier', nodeId: '', at: T0 } })
+  const o2 = step(noAudit, decided(noAudit, { data: { done: true, addNodes: [], dropNodes: [], facts: [], open: [],
+    why: '够了', final: { summary: '完事', deliverables: ['docs/全景.md'], gaps: [] } } }), '7b')
+  ok('★收口闸拦"汇总没人复核" —— 当场补上验收再驳回(修前:这道闸压根不在闸上)',
+    o2.run.phase !== 'done' && o2.run.nodes.some((n) => n.kind === 'verify'),
+    { phase: o2.run.phase, nodes: o2.run.nodes.map((n) => n.kind).join(',') })
+  ok('  驳回话术说清是哪一道(不是笼统一句"还没干完")',
+    /没人复核/.test(String(o2.run.lastError || '') + of(o2.effects, 'notify').map((e) => e.text).join(' ')),
+    of(o2.effects, 'notify').map((e) => e.text))
+})
+
 section('用例7a:★打回重建 —— 别把残骸当方案端给人批准(2026-08-08 真机,用户当场看出来)', () => {
   need(RUN, 'src/orch/run.js')
   // 现场:用户打回 10 片方案 → 模型整版重建,撤掉 n3~n12、另给「新勘察 + 七域 + 五个横切」共 14 片,
@@ -1508,8 +1549,14 @@ section('用例6x:★收口那一层 —— 44 个文件没人收、汇总只占
     // 夹具铺满宽度:真实的 run 能产出汇总,说明前面必然已经有足够多的片 ——
     // 不铺满的话补宽会先触发,归档就轮不到,测的就不是这一步了。
     const filler = [3, 4, 5, 6].map((i) => w('f' + i, ['/p/docs/_f' + i + '.md']))
+    // ★同理:汇总必须已经有人验收,否则收口闸先被【验收】那道拦住(它排在归档之前 ——
+    //   "结论没人复核"比"桌面乱"重要,而 MAX_DONE_BLOCK 只有 2 次,不能让归档抢在前面)。
+    //   修完 shapeAudit 之后真机的图本来就带着它,夹具缺它才是不真实的。
+    const audit = mkNode({ id: 'a1', kind: 'verify', state: 'verified', deps: ['r1'], title: '验收汇总',
+      exit: { artifacts: [], requireEvidence: false, requireVerdict: true, verifyCmd: '', noEmpty: true },
+      result: { final: '看过', files: [], exitReport: [], findings: [], verdict: 'PASS', verdictSrc: 'tool' } })
     const base = mkRun({ goal: '分析采购部的相关功能', phase: 'executing',
-      nodes: [redN, w('n1', ['/p/docs/_a.md', '/p/docs/_b.md']), w('n2', ['/p/docs/_c.md', '/p/docs/全景.md'])].concat(filler),
+      nodes: [redN, audit, w('n1', ['/p/docs/_a.md', '/p/docs/_b.md']), w('n2', ['/p/docs/_c.md', '/p/docs/全景.md'])].concat(filler),
       pendingDecision: { id: 'd9', point: 'replan', event: 'frontier', nodeId: '', at: T0 } })
     const out = step(base, decided(base, { point: 'replan', ok: true, data: {
       needGrounding: false, done: true, addNodes: [], dropNodes: [], facts: [], open: [], why: '够了',
