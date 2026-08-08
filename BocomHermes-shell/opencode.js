@@ -44,6 +44,12 @@ let sampleLogged = false
 const seenPartTypes = new Set()   // 每种 part 类型打印一次（确认 reasoning/text 等）
 const seenEvTypes = new Set()     // 每种事件类型打印一次（诊断子agent映射来源等）
 const loggedChildren = new Set()  // 每个子会话映射只打一次日志
+// ★模块级日志句柄。本文件里 log 一直是【函数参数】(ensureServe(dir, handlers, log) 那条链才拿得到),
+// 于是 createSession / sendMessage 这些没有 log 的地方压根没法留痕 —— 而它们恰恰是排障最需要看的两处。
+// 2026-08-08 我在这两处加日志时直接写了 log(...),真机上当场炸成 `log is not defined`,
+// plan 决策 110 毫秒就转人工(比它要修的问题更难看)。ensureServe 每次都会被调到,借它把句柄存下来。
+let modLog = null
+function oclog(msg) { try { if (modLog) modLog(msg) } catch { /* 排障用的东西不许把主流程带崩 */ } }
 const partKind = new Map()        // partID -> 'reasoning'|'text'：从 message.part.updated 学到，供 message.part.delta 路由
 const childToParent = new Map()   // 子会话ID -> 父会话ID：task 子agent 会创建带 parentID 的子会话,据此把子agent事件路由回父卡片
 const childTitle = new Map()      // 子会话ID -> 标题(如 "Explore codebase (@explore subagent)"),给卡片显示子agent名
@@ -285,6 +291,7 @@ async function detectPerm(base) {
 // tryShare = false:跨项目隔离场景(如 backendDir)必须自起独立 serve,因为现有 serve 的 cwd 未必匹配。
 // R1 并发去重外壳:同目录同共享模式的并发调用共享同一 Promise(同步登记,finally 清除),实际工作在 ensureServeInner。
 async function ensureServe(dir, handlers, log = console.log, opts = {}) {
+  if (log) modLog = log          // ★借这条必经之路把日志句柄存给 createSession / sendMessage 用(见 modLog 的注释)
   const ikey = ((opts && opts.tryShare === false) ? 'I|' : 'S|') + normDirKey(dir)
   const pending = inflight.get(ikey)
   if (pending) return pending
@@ -391,7 +398,12 @@ async function createSession(info, title, dir, agent) {
   const q = dir ? ('?directory=' + encodeURIComponent(String(dir).replace(/\\/g, '/'))) : ''
   // agent(可选):会话级 Agent(build/plan/OMO 的 sisyphus 等,POST /session schema 认 agent 字段);
   // 只在显式给出时带 —— 老 serve 不认该字段时少一个被拒的面
-  const sid = sidOf(await api(info.base, 'POST', '/session' + q, agent ? { title: title || '对话', agent: String(agent) } : { title: title || '对话' }))
+  const sessBody = agent ? { title: title || '对话', agent: String(agent) } : { title: title || '对话' }
+  // ★排障留痕(2026-08-08):真机上"应用建的会话拿到 flash-free 且挂死、curl 建的拿到 pro 且正常",
+  //   而两边的 body 按代码读【应该一样】。读代码读不出差别时,就把真正发出去的东西打出来 ——
+  //   这一整天最有效的几步都是这么来的(dumpRaw / session.error payload)。
+  oclog('[oc] createSession ' + JSON.stringify(sessBody) + ' q=' + (q || '(无)'))
+  const sid = sidOf(await api(info.base, 'POST', '/session' + q, sessBody))
   if (sid) {
     info.sids = info.sids || new Set()   // 活跃会话登记:R5 断线重连后补摘 tokens 用(粗粒度防涨)
     if (info.sids.size > 500) info.sids.clear()
@@ -624,6 +636,8 @@ async function sendMessage(info, sessionId, text, model, files, onNote, opts = {
     if (opts && opts.onModelFallback) { try { opts.onModelFallback('模型 ' + (model.name || model.modelID) + ' 曾被本机 serve 拒绝(4xx 参数校验),本条起改用默认模型发送') } catch {} }
   }
   const withModel = !!(model && model.providerID && model.modelID) && !blEnt
+  oclog('[oc] send sid=' + String(sessionId).slice(0, 18) + ' 指定模型=' + (withModel ? (model.providerID + '/' + model.modelID) : '(不指定,由 serve 挑)')
+    + ' agent=' + ((opts && opts.agent) || '(不带)') + ' parts=' + parts.length + ' 首段=' + String((parts[0] && parts[0].text) || '').length + '字')
   if (withModel) {                                          // 按请求指定模型(各版本字段名兼容,多塞几个,认哪个用哪个)
     body.model = { providerID: model.providerID, modelID: model.modelID }
     body.providerID = model.providerID; body.modelID = model.modelID
