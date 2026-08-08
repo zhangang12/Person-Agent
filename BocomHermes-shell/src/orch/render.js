@@ -316,10 +316,21 @@ function renderEvent(r, e, n) {
     'frontier': '没有在跑的节点了,前沿空了',
     'user-note': '用户插话了',
     'user-reject': '用户打回了方案',
+    'addnodes-lost': '你上一版的新节点大部分没通过校验',
     'user-answer': '用户回答了你的问题',
     'restart': '壳层重启后续接',
   }[kind] || kind
   const lines = ['【本次事件】' + head + '(' + kind + ')']
+  // ★重问必须带硬约束(本文件自己写过这条原则),而它原来只接在 renderPlan 的 plan-invalid 上 ——
+  // 打回后重建那一版被校验丢掉大半时,重问的提示词与上一次逐字相同,模型当然原样再犯一次。
+  const b = (r && r.budget) || {}
+  if (kind === 'addnodes-lost' && arr(b.lastInvalid).length) {
+    lines.push('  ★你上一版给的节点【大部分被壳层的校验丢掉了】,图上几乎没剩下可跑的片 —— 这是重问。')
+    lines.push('  校验器逐条报的错:')
+    lines.push(indent(bullets(arr(b.lastInvalid), 3)))
+    lines.push('  请只针对这些点改,其余照旧。特别注意:如果你在 dropNodes 里撤掉了某片,')
+    lines.push('  新片的 deps 就【不能再写那片的旧 id】—— 写你本次新给出的那些片的标题或序号。')
+  }
   if (!n) {
     if (kind === 'frontier') lines.push('  没有节点在跑、也没有可派的节点了。是收口、还是继续加节点,由你判断 —— 壳层不会替你决定。')
     return block(lines)

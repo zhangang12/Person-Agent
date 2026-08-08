@@ -72,9 +72,33 @@ const ORIGINS = ['plan', 'replan', 'user', 'resume']
 // 依赖这些状态的节点 = 没有依赖:它们不会再产出任何东西,而 readyNodes 又把它们当已终结,
 // 于是依赖方立刻就绪 —— 真机上让汇总节点在全部上游之前先跑完了(见 validateNodeSpecs ② 的注释)。
 const DEAD_DEP = ['skipped', 'cancelled']
+// 标题归一化:整版重建时靠它认"撤掉的那片在本批里重建成了哪一片"。
+// 只做空白/标点/大小写的归一 —— 不做模糊匹配:认错了会把依赖接到不相干的片上,比拒掉更坏。
+function titleKey(s) { return str(s).toLowerCase().replace(/[\s　·:：,，、。.\-—_()（）「」【】]/g, '') }
 // 没给写归属的节点,代码兜底给它一个自己的草稿目录(按 runId/nodeId 分,天然两两不交)。
 // 收尾归档节点会把这里整个收进 _raw/ —— 草稿不该留在项目根上碍眼。
 const SCRATCH_ROOT = 'docs/_orch'
+// ★"还放得下几片"要扣掉【撤掉但从没派出去】的那些片(真机 2026-08-08)。
+// spawned 记的是"造过多少个节点对象"(不变式 spawned === nodes.length),它不能减;
+// 但一个 pending 时就被撤掉的片没有卡、没有会话、没烧一个 token —— 让它继续占额度,
+// 后果是"整版重建"这个动作【负担不起自己】:用户打回 10 片 → 模型重建 14 片 → room 早被那 10 片吃光,
+// 后半截静默截断。所以退款退在算式里,不退在计数器上。
+// ★这个函数是 room 的【唯一】定义处:validateNodeSpecs 与 run.js 的 budgetRoom 都必须调它 ——
+//   那两处算式一旦各写一份就会分叉,而分叉的代价已经在 f2379a7 付过一次(发现 4 条只核了 1 条)。
+function freedNodes(nodes) {
+  let n = 0
+  for (const x of arr(nodes)) {
+    if (!isObj(x) || DEAD_DEP.indexOf(str(x.state)) < 0) continue
+    if (str(x.cardId) || str(x.sid) || num(x.attempt, 0) > 0) continue   // 派出去过 = 真花过钱,不退
+    n += 1
+  }
+  return n
+}
+function roomFor(run) {
+  const R = isObj(run) ? run : {}
+  const b = isObj(R.budget) ? R.budget : {}
+  return Math.max(0, num(b.maxNodes, 24) - (num(b.spawned, arr(R.nodes).length) - freedNodes(R.nodes)))
+}
 // 未终结 = 还可能往磁盘上写字。写归属两两不交只对这些节点设防:
 // 已 verified/failed/skipped 的节点早写完了,新节点覆盖它的归属是合法的(修补/返工本来就该这么干)。
 const ALIVE = ['pending', 'queued', 'running', 'settled', 'rejected']
@@ -283,13 +307,12 @@ function makeNode(spec, ctx) {
 //   truncated 只表示"超预算被截断",【不进 errors】—— 它不是模型的错,不该触发重问。
 function validateNodeSpecs(specs, run, ctx) {
   const errors = []
+  const remapped = []   // 依赖被改接的记录(整版重建),上层要照原样说出来 —— 代码替模型改了图,不许悄悄改
   const R = isObj(run) ? run : {}
   const C = isObj(ctx) ? ctx : {}
   const budget = isObj(R.budget) ? R.budget : {}
   const existing = arr(R.nodes)
-  const maxNodes = num(budget.maxNodes, 24)
-  const spawned = num(budget.spawned, existing.length)
-  const room = Math.max(0, maxNodes - spawned)
+  const room = roomFor(R)   // ★与 run.js budgetRoom 同一个算式(见 roomFor 的注释:两处分叉过一次)
   const list = Array.isArray(specs) ? specs : (isObj(specs) ? [specs] : [])
 
   // ★ 超预算 = 截断,不是判不合法
@@ -372,6 +395,21 @@ function validateNodeSpecs(specs, run, ctx) {
       // 改那里会让"撤片"重新变成死锁。真正错的是"新节点依赖一个已经不会产出任何东西的节点"。
       const dead = existing.find((n) => n && str(n.id) === hit && DEAD_DEP.indexOf(str(n.state)) >= 0)
       if (dead) {
+        // ★★【整版重建要改接,不是拒掉】(真机 2026-08-08,用户实测:11 片的方案只剩 1 片可跑)
+        // 上面那段注释把病灶说对了,但处置选错了 —— 拒掉的代价没算过:
+        // 用户打回方案 → 模型撤掉全部 10 片、同时给出重建的 14 片(新勘察 + 七域 + 五个横切),
+        // 每片的 deps 都写着旧勘察 n3(它刚在【同一次决策】里撤掉的那个)。逐条拒的结果是
+        // 13 片全灭,只剩唯一没有依赖的那片新勘察 —— 面板还显示「方案已出(11 个节点),看一眼没问题就开跑」。
+        // 模型没做错:它撤了 n3 又重建了一个同名的 probe,那条依赖指的就是【重建后的那个】,
+        // 只是它写了旧 id。这是一次纯机械的改接,而"把模型的话翻译成图"本来就是代码的活
+        // (与 needGrounding→probe、发现→核实片同一个道理:判断归模型,格式化归代码)。
+        // 同名认定用 titleKey 严格归一,不做模糊匹配;认不到同名的才退回拒掉(那时确实是悬空依赖)。
+        const reborn = recs.find((x) => x !== r && !x.bad && titleKey(x.spec && x.spec.title) && titleKey(x.spec && x.spec.title) === titleKey(dead.title))
+        if (reborn) {
+          if (out.indexOf(reborn.id) < 0) out.push(reborn.id)
+          remapped.push(r.label + ' 的依赖 ' + hit + '(已撤掉的「' + str(dead.title).slice(0, 20) + '」)已改接到本批重建的同名片 ' + reborn.id)
+          continue
+        }
         r.bad = true
         errors.push(r.label + ' 依赖了已经被撤掉/取消的节点 ' + hit + '(状态 ' + str(dead.state) + ')—— 它不会再产出任何东西,依赖它等于没有依赖。'
           + '请改成依赖【本次新给出的】那些节点(写它们的标题或序号),或者去掉这条依赖。')
@@ -456,7 +494,7 @@ function validateNodeSpecs(specs, run, ctx) {
       errors.push(r.label + ' ' + str(e && e.message ? e.message : e))
     }
   }
-  return { nodes, errors, truncated }
+  return { nodes, errors, truncated, remapped, proposed: list.length }
 }
 
 // ── evalExit ─────────────────────────────────────────────────────────────
@@ -714,6 +752,8 @@ function evalExit(node, probe) {
 module.exports = {
   makeNode,
   validateNodeSpecs,
+  roomFor,        // ★run.js 的 budgetRoom 必须调它,不许自己再写一份算式
+  freedNodes,
   evalExit,
   hasVerifyEvidence,
   checkContract,

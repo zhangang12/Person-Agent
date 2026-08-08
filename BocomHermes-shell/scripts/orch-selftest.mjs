@@ -1297,6 +1297,64 @@ section('用例6s:★发现走工具上报 —— 格式约定的静默失败换
   }
 })
 
+section('用例7a:★打回重建 —— 别把残骸当方案端给人批准(2026-08-08 真机,用户当场看出来)', () => {
+  need(RUN, 'src/orch/run.js')
+  // 现场:用户打回 10 片方案 → 模型整版重建,撤掉 n3~n12、另给「新勘察 + 七域 + 五个横切」共 14 片,
+  // 每片 deps 都写着 n3(它刚在同一次决策里撤掉的那个旧勘察)。三个洞叠在一起:
+  //   ① 死依赖检查逐条【拒】—— 13 片全灭,只剩唯一没有依赖的那片新勘察;
+  //   ② 撤掉的 10 片不退预算 —— "重建"这个动作负担不起自己,后半截还被静默截断;
+  //   ③ 判据是"有没有加进来东西"而不是"盘上还是不是一版方案" —— 1 片也算,于是
+  //      面板显示「方案已出(11 个节点)—— 看一眼,没问题就开跑」,其实是 10 跳过 + 1 待办。
+  // 模型没做错:它撤了 n3 又重建了一个同名 probe,那条依赖指的就是重建后的那个,只是写了旧 id。
+  const old = ['全貌盘点与索引', '销售域业务逻辑', '采购域业务逻辑', '制造执行域业务逻辑', '仓库物流域业务逻辑', '财务域业务逻辑']
+    .map((title, i) => mkNode({ id: 'n' + (i + 3), title, kind: i === 0 ? 'probe' : 'work', state: 'pending', writeScope: ['src/d' + i] }))
+  // 重建版:同名新勘察 + 五个域片,域片的 deps 全写旧勘察 id「n3」(真机就是这么给的)
+  const rebuilt = [{ kind: 'probe', title: '全貌盘点与索引', goal: '重新摸一遍全貌', deps: [], writeScope: ['docs/idx.md'], contract: [] }]
+    .concat(['销售域业务逻辑', '采购域业务逻辑', '制造执行域业务逻辑', '仓库物流域业务逻辑', '财务域业务逻辑']
+      .map((title, i) => ({ kind: 'work', title, goal: '摸' + title, deps: ['n3'], writeScope: ['docs/w' + i + '.md'], contract: [] })))
+  // ★两个场景各拿一份独立深拷贝:validateNodeSpecs 会【原地补 writeScope】,复用同一批 spec 对象
+  //   会让第二个场景吃到第一个场景的残留(我第一版就是这么写的,第二个场景静默走了另一条分支)
+  const clone = (x) => JSON.parse(JSON.stringify(x))
+  const rejected = () => mkRun({
+    goal: '分析仓库的所有业务逻辑', phase: 'planning', nodes: clone(old),
+    budget: { maxNodes: 12, spawned: 6, maxDecides: 48, spentDecides: 0, maxWallMs: 6 * 3600e3, startedAt: T0, invalidStreak: 0, resumeCredit: 1 },
+    pendingDecision: { id: 'd9', point: 'replan', event: 'user-reject', nodeId: '', at: T0 },
+  })
+  const r0 = rejected()
+  const o = step(r0, decided(r0, { data: { addNodes: clone(rebuilt), dropNodes: old.map((n) => n.id), done: false, facts: [], open: [], why: '整版重建' } }), '7a')
+  const live = o.run.nodes.filter((n) => n.state === 'pending')
+  const probe = live.find((n) => n.kind === 'probe')
+
+  ok('★依赖改接到本批重建的同名片 —— 六片全活(修前:13 片被拒到只剩 1 片)',
+    live.length === 6 && !!probe, live.map((n) => n.id + ':' + n.title.slice(0, 6) + ':' + n.deps.join(',')).join(' | '))
+  ok('  改接的目标是【新勘察】,不是那个已撤掉的 n3',
+    live.filter((n) => n.kind === 'work').every((n) => n.deps.length === 1 && n.deps[0] === probe.id && n.deps[0] !== 'n3'),
+    live.filter((n) => n.kind === 'work').map((n) => n.deps.join(',')).join(' | '))
+  ok('  代码替模型改了图就得说出来(静默改接 = 面板上的方案与模型意图不符)',
+    of(o.effects, 'notify').some((e) => /改接/.test(String(e.text))), of(o.effects, 'notify').map((e) => e.text))
+  // 退款退在【算式】里不退在计数器上:spawned 仍是"造过多少个对象"(不变式靠它),额度由 roomFor 扣
+  ok('★撤掉从没派出去的片要退额度 —— 否则"重建"负担不起自己(maxNodes 12,旧 6 片吃满一半)',
+    !of(o.effects, 'notify').some((e) => /超出预算/.test(String(e.text))) && NODES.roomFor(o.run) === 6,
+    { room: NODES.roomFor(o.run), spawned: o.run.budget.spawned, warn: of(o.effects, 'notify').map((e) => e.text).join(' ').slice(0, 80) })
+  ok('  不许为了退款去动 spawned —— 不变式 spawned === 节点数 靠它(第一版就是这么打翻的)',
+    o.run.budget.spawned === arr0(o.run.nodes).length, { spawned: o.run.budget.spawned, nodes: arr0(o.run.nodes).length })
+  ok('  这一版是完整方案 → 照旧回人审闸', o.run.phase === 'awaiting-approval', o.run.phase)
+
+  // ── 真丢过半的那一版:必须重问,不许端给人批准 ──
+  // 依赖写一个压根不存在的 id(没有同名片可改接)→ 逐条拒是对的,但拒完不该说"方案已出"
+  const bad = rebuilt.map((s, i) => i === 0 ? s : Object.assign({}, s, { deps: ['n-压根不存在的片'] }))
+  const r1 = rejected()
+  const o1 = step(r1, decided(r1, { data: { addNodes: bad, dropNodes: old.map((n) => n.id), done: false, facts: [], open: [], why: '重建' } }), '7a')
+  ok('★丢过半 → 不是"方案已出",而是带着校验器原话重问(修前:1 片也算方案,直接等人批准)',
+    o1.run.phase !== 'awaiting-approval' && of(o1.effects, 'decide').some((e) => e.event === 'addnodes-lost'),
+    { phase: o1.run.phase, decide: of(o1.effects, 'decide').map((e) => e.event) })
+  ok('  重问要带着硬约束(错由代码搬运,模型只负责改)', arr0(o1.run.budget.lastInvalid).length > 0, o1.run.budget.lastInvalid)
+  const r2 = rejected(); r2.budget.lostStreak = 1
+  const o2 = step(r2, decided(r2, { data: { addNodes: clone(bad), dropNodes: old.map((n) => n.id), done: false, facts: [], open: [], why: '再来' } }), '7a')
+  ok('  连着不行才转人工 —— 出口是人,代码不替它编一版方案', o2.run.phase === 'awaiting-user',
+    { phase: o2.run.phase, lastError: String(o2.run.lastError || '').slice(0, 90) })
+})
+
 section('用例6z:★决策失败要说真因,不能只说"连续 N 次不合法"(2026-08-08 真机)', () => {
   need(RUN, 'src/orch/run.js')
   // 现场:决策器明确报了 transport + "模型没有回话",而面板上只有

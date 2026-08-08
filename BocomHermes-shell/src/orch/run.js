@@ -381,8 +381,28 @@ function onReplanDecided(t, dec, data) {
   if (arr(data.resolvedOpen).length) r.ledger = L.resolveOpen(r.ledger, arr(data.resolvedOpen).map(str))   // 模型明说某条已解决(可选字段)
   // USER_REJECT 之后的重规划:方案改了要重新过人审闸,不许直接开跑
   if (r.phase === 'planning') {
-    const added = mergeGraph(t, data)
-    if (added || r.nodes.some((n) => !isTerminalNode(n.state))) { r.phase = 'awaiting-approval'; r.phaseAt = t.at }
+    const mg = mergeGraph(t, data)
+    // ★★【别把残骸当方案端给人批准】(真机 2026-08-08,用户当场看出来:"这个拆的有问题")
+    // 原判据是 `added || 还有非终结节点` —— 问的是"有没有加进来东西",不是"盘上还是不是一版方案"。
+    // 现场:模型提了 14 片,校验丢掉 13 片、只剩唯一没有依赖的那片勘察 → added=true → 直接
+    // awaiting-approval,面板写着「方案已出(11 个节点)—— 看一眼,没问题就开跑」,其实是 10 跳过 + 1 待办。
+    // 这是本轮第六次撞见同一个形态:检查在、注释也对,但判据太松,永远不会响。
+    // 丢过半就带着【校验器的原话】重问一次(render 的 addnodes-lost 分支会把错摆给它),
+    // 重问也不行才转人工 —— 出口始终是人,代码不替它编一版方案。
+    const lost = num(mg.proposed) - num(mg.kept)
+    if (num(mg.proposed) >= 2 && lost * 2 >= num(mg.proposed)) {
+      r.budget.lastInvalid = arr(mg.errors).slice(0, 3).map((x) => str(x).slice(0, 200))
+      // ★必须用【自己的】计数器,不能借 invalidStreak:本函数开头刚把它清零了(这一版格式是合法的,
+      //   只是拆出来的图不可用)—— 借用的后果是计数永远从 0 起,重问无限循环。自测当场抓到。
+      r.budget.lostStreak = num(r.budget.lostStreak) + 1
+      const say = '重建的 ' + mg.proposed + ' 片里有 ' + lost + ' 片没通过校验,剩下的不成一版方案'
+      if (r.budget.lostStreak >= MAX_PLAN_INVALID) { toAwaitingUser(t, say + ' —— 需要你指一条路:' + arr(mg.errors).slice(0, 2).join(';'), false); return }
+      t.eff.push({ type: 'notify', level: 'warn', text: say + ' —— 已带着校验器的原话重问一次' })
+      startDecision(t, 'replan', 'addnodes-lost', '')
+      return
+    }
+    r.budget.lostStreak = 0   // 这一版拿得出手:清零,否则陈年旧账会让下一次重建一进门就转人工
+    if (mg.changed || r.nodes.some((n) => !isTerminalNode(n.state))) { r.phase = 'awaiting-approval'; r.phaseAt = t.at }
     else toAwaitingUser(t, '重规划没有给出任何可执行节点 —— 需要你指一条路', false)
     return
   }
@@ -423,7 +443,7 @@ function onReplanDecided(t, dec, data) {
     t.eff.push({ type: 'notify', level: 'info', text: '编排收口:' + firstLine(r.result.summary, 60) }, { type: 'archive' })
     return
   }
-  const changedGraph = mergeGraph(t, data)
+  const changedGraph = mergeGraph(t, data).changed
   // ★宽度在 replan 也要判。原来两个调用点都在 onPlanDecided —— 第一波之后就再没人管过宽度,
   //   而 probe 跑完那次 replan 恰恰是最该拆宽的时刻(现在才真正知道里面长什么样),实测常常缩回 1~2 片。
   const widened = shapeWiden(t)
@@ -449,12 +469,18 @@ function mergeGraph(t, data) {
     if (!n || (n.state !== 'pending' && n.state !== 'queued')) continue
     n.state = 'skipped'
     n.droppedReason = ((d && typeof d === 'object') ? str(d.why) : '') || '被重规划撤掉'
+    // ★撤掉一个【从没派出去】的片,不该继续占着预算额度 —— 见 budgetRoom:退款走
+    //   "还放得下几片"那个算式(N.freedNodes),不动 spawned。
+    //   spawned 的语义是【造过多少个节点对象】(不变式 spawned === nodes.length 就是这么写的),
+    //   直接减它会当场把不变式打翻 —— 我第一版就是这么写的,自测立刻报"spawned(1)与节点数(5)对不上"。
     changedGraph = true; t.changed = true
   }
   const specs = arr(data.addNodes)
+  let proposed = 0, kept = 0, lostErrs = []
   if (specs.length) {
     const v = N.validateNodeSpecs(specs, r, t.cx)
     const made = arr(v && v.nodes)
+    proposed = num(v && v.proposed, specs.length); kept = made.length; lostErrs = arr(v && v.errors)
     if (made.length) {
       // 波次:图长了一轮(反死板的可观测指标)。posInt 兜底不是洁癖 —— 老版本落盘的 run.json 没有 wave 字段,
       // 直接 `+= 1` 会得到 NaN,序列化成 null,面板上"第几波"整列变空,而这正是验收小批 replan 的那个数
@@ -465,10 +491,12 @@ function mergeGraph(t, data) {
       //   补宽(shapeWiden)必须先跑完,汇总才能把补出来的视角片一并纳入 deps;
       //   顺序反了的话汇总的 deps 里没有它们,那几片写的文档就【没人读】,等于白跑。
     }
-    if (v && v.truncated) t.eff.push({ type: 'notify', level: 'warn', text: '新增节点超出预算,已截断' })
-    if (v && arr(v.errors).length) t.eff.push({ type: 'notify', level: 'warn', text: '部分新增节点被校验丢弃:' + arr(v.errors).slice(0, 3).join(';') })
+    if (v && v.truncated) t.eff.push({ type: 'notify', level: 'warn', text: '新增节点超出预算,已截断(' + specs.length + ' 片 → 只放得下 ' + budgetRoom(r) + ' 片)' })
+    if (v && arr(v.errors).length) t.eff.push({ type: 'notify', level: 'warn', text: '部分新增节点被校验丢弃(' + proposed + ' 片里留下 ' + kept + ' 片):' + arr(v.errors).slice(0, 3).join(';') })
+    // 代码替模型改了图,就必须说出来 —— 静默改接和静默丢弃一样,都会让面板上的方案与模型的意图不符
+    if (v && arr(v.remapped).length) t.eff.push({ type: 'notify', level: 'info', text: '整版重建:' + arr(v.remapped).length + ' 条依赖原本指着已撤掉的旧片,已改接到本批重建的同名片' })
   }
-  return changedGraph
+  return { changed: changedGraph, proposed, kept, errors: lostErrs }
 }
 
 // 节点入图:nodes.js 已经校验过字段,这里只补状态机自己的那几格(不覆盖它已给的值)
@@ -482,7 +510,10 @@ function mergeGraph(t, data) {
 // 打算给 4 条发现各派核实员,validateNodeSpecs 按真账 room=2 静默截断到 2 个,
 // 而通知照旧说「报了 4 条发现 → 已【逐条】派新眼睛去核」—— 3 条发现一个人都没派,没有任何提示。
 // (spawned 与 nodes.length 会分叉:打回重问撤掉的那批、被丢弃的规格,都只减节点不减 spawned。)
-function budgetRoom(r) { return Math.max(0, num(r.budget.maxNodes) - num(r.budget.spawned)) }
+// ★算式本体搬到 nodes.js 的 roomFor —— 这里只转发。
+//   原来这一行是"maxNodes - spawned"的第二份拷贝,而 2026-08-08 要给"撤掉但从没派出去的片"退额度,
+//   两份拷贝就意味着要改两处、漏一处就又是一次分叉(f2379a7 那次的代价:发现 4 条只核了 1 条)。
+function budgetRoom(r) { return N.roomFor(r) }
 
 // ── 收口闸:说"够了"之前,代码先查三件它可能没看见的事 ──────────────────────
 // 【为什么需要】CC 那种彻底靠的是 loop-until-dry:连续几轮没有新东西才停。这套原来没有 ——
