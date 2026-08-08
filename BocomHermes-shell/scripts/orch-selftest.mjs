@@ -1681,6 +1681,32 @@ section('用例6u:★卡凭空消失不算"零产出",也不该罚 attempt(真�
       byId(a.run, 'n1').attempt === 1, { attempt: byId(a.run, 'n1').attempt, credit: byId(a.run, 'n1').goneCredit })
   }
 
+  // ── ★stalled/aborted 同样不许被闸门结论覆写(2026-08-08 真机)────────────────
+  // 现场:节点被挂死计时判 stalled(卡已被 cancelNode 杀掉),紧接着 reason 被 artifacts 闸
+  // 覆写成 artifact-missing;而它不属 HARD_FAIL,于是补做分支的 !HARD_FAIL.has(n.reason)
+  // 判的是那个假 reason → 放行 → 往【一张刚被杀掉的卡】里注入补做指令(白烧一次补做),
+  // 0.001 秒后 WORKER_CARD_GONE 到达,又重派一次。日志里同一节点连着两次 evalExit + 两次 EXIT_RESULT。
+  {
+    const artFail = (id) => ({ type: 'EXIT_RESULT', nodeId: id, pass: false,
+      report: [{ kind: 'artifacts', ok: false, detail: 'docs/a.md 不存在' }],
+      verdict: '', cmdExit: null, contractMiss: [], unverified: false })
+    for (const why of ['stalled', 'aborted']) {
+      const n0 = mkNode({ id: 'n1', kind: 'work', state: 'settled', attempt: 1, cardId: 'c1', reason: why,
+        exit: { artifacts: ['docs/a.md'], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: false } })
+      const o = step(mkRun({ nodes: [n0] }), artFail('n1'), '6u')
+      const n = byId(o.run, 'n1')
+      ok('★' + why + ' 不被 artifacts 闸覆写成 artifact-missing', n.reason === why, n.reason)
+      ok('  → 不走补做(卡已经被杀了,注进去也没人看)', num0(n.patches) === 0, { patches: n.patches, state: n.state })
+    }
+    // 反面:正常落定的节点,artifacts 不过照旧走补做(这条修的是覆写,不是关掉补做)
+    const okN = mkNode({ id: 'n2', kind: 'work', state: 'settled', attempt: 1, cardId: 'c2', reason: '',
+      exit: { artifacts: ['docs/a.md'], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: false } })
+    const o2 = step(mkRun({ nodes: [okN] }), artFail('n2'), '6u')
+    ok('  正常落定 + 缺产出 → 照旧走补做(没关掉补做)',
+      byId(o2.run, 'n2').patches === 1 && byId(o2.run, 'n2').reason === 'artifact-missing',
+      { patches: byId(o2.run, 'n2').patches, reason: byId(o2.run, 'n2').reason })
+  }
+
   // ④ 正常的零产出照罚(闸没被放松)
   {
     const normal = mkRun({ nodes: [mkNode({ id: 'n1', kind: 'work', state: 'settled', attempt: 1, cardId: 'c1' })] })

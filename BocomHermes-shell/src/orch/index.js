@@ -105,7 +105,7 @@ function makeOrch(deps) {
       case 'decide': return doDecide(run, fx)
       case 'evalExit': return doEvalExit(run, fx)
       case 'armTimer': return doArm(run, fx)
-      case 'clearTimer': return doClear(fx)
+      case 'clearTimer': return doClearTimer(fx)
       case 'persist': return journal.save(run)
       case 'ui': return pushUi(run)
       case 'notify': return doNotify(run, fx)
@@ -321,6 +321,17 @@ function makeOrch(deps) {
     return ''
   }
 
+  // 挂死计时也要过活探针,但【续命次数有上限】。
+  // ★真机 2026-08-08:7 片工人里有 4 片在第 15 分钟【整】被挂死计时杀掉 ——
+  //   它们正处在同一个长回合里(内网读大仓,一个回合内几十次工具调用,turnBusy 明确说有回合在飞),
+  //   而挂死计时的判据是"15 分钟内没有新的【回合边界】"。长回合根本不产生新回合边界,
+  //   于是"慢"被判成了"死":4 片带着 998/923/170/98 字的半成品被杀,再重派、再从零读一遍。
+  //   活探针早就写好了(silentAlive:turnBusy / 卡片忙 / 内容签名在动),却只挂在【静默计时】上 ——
+  //   又是"同一件事只做了一半"。
+  // 【为什么不干脆调大 STALL_MS】调大只是把误杀推后,真挂死的也一起等更久。
+  //   有上限的续命才两头都对:活着就接着跑,真僵死最多 4 轮(约 1 小时)就收。
+  const MAX_STALL_EXT = 3
+  const stallExt = new Map()   // timer key → 已续命次数
   function doArm(run, fx) {
     doClear(fx)
     const key = str(fx.key)
@@ -329,16 +340,34 @@ function makeOrch(deps) {
     const armedAt = Date.now()
     timers.set(key, setTimeout(() => {
       timers.delete(key)
-      if (kind === 'silent') {
-        const alive = silentAlive(run.id, fx.nodeId, armedAt)
-        if (alive) {
-          log('[orch] ' + run.id + ' ' + str(fx.nodeId) + ' 静默到点但工人仍活(' + alive + '),续命 ' + Math.round(ms / 1000) + 's')
-          doArm(run, fx)      // 续命:同口径重挂一轮(armedAt 随之刷新);doArm 只用 run.id,闭包里是旧 run 对象无碍
+      const alive = silentAlive(run.id, fx.nodeId, armedAt)
+      if (alive && kind === 'silent') {
+        log('[orch] ' + run.id + ' ' + str(fx.nodeId) + ' 静默到点但工人仍活(' + alive + '),续命 ' + Math.round(ms / 1000) + 's')
+        doArm(run, fx)      // 续命:同口径重挂一轮(armedAt 随之刷新);doArm 只用 run.id,闭包里是旧 run 对象无碍
+        return
+      }
+      if (alive && kind === 'stall') {
+        const used = num(stallExt.get(key))
+        if (used < MAX_STALL_EXT) {
+          stallExt.set(key, used + 1)
+          log('[orch] ' + run.id + ' ' + str(fx.nodeId) + ' 挂死计时到点但工人仍活(' + alive + '),续命 '
+            + Math.round(ms / 60000) + 'min(第 ' + (used + 1) + '/' + MAX_STALL_EXT + ' 次)')
+          doArm(run, fx)
           return
         }
+        log('[orch] ' + run.id + ' ' + str(fx.nodeId) + ' 挂死计时续命已用满 ' + MAX_STALL_EXT + ' 次,按挂死处理(' + alive + ')')
       }
+      stallExt.delete(key)
       send(run.id, { type: 'TIMER', nodeId: fx.nodeId, key, kind })
     }, ms))
+  }
+  // ★续命账只在【状态机显式清计时】时归零,不能在 doArm 内部的重挂里归零 ——
+  //   doArm 开头就调 doClear,如果那里也清账,每次续命都把自己的计数抹了 = 无限续命,
+  //   上限形同虚设(自测当场抓到:续命 5 次之后节点还在 running)。
+  //   effect 'clearTimer' 走这个;doArm 内部重挂走 doClear。
+  function doClearTimer(fx) {
+    stallExt.delete(str(fx.key))
+    return doClear(fx)
   }
   function doClear(fx) {
     const key = str(fx.key)

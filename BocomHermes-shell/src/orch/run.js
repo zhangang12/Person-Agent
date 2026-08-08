@@ -1016,7 +1016,15 @@ function onExitResult(t) {
   // ★卡没了的时候,reason 保持 card-gone,不许被闸门结论覆写成 zero-output。
   //   卡凭空消失是【原因】,查不到产出是【症状】—— 记成症状的话,面板和下一轮提示词都会告诉
   //   模型"这片什么都没干",而真相是它可能干得好好的,只是卡被带走了。误诊会传染给下一次决策。
-  n.reason = (n.reason === 'card-gone') ? 'card-gone' : (reasonOf(n.result) || n.reason || 'zero-output')
+  // ★HARD_FAIL 类的落定原因【一律不许被闸门结论覆写】。
+  //   原来只护住了 card-gone,漏了 stalled / aborted / lost-on-restart —— 而漏掉的后果很实:
+  //   真机 2026-08-08:节点被挂死计时判 stalled(卡已被 cancelNode 杀掉),
+  //   紧接着 reason 被 artifacts 闸覆写成 artifact-missing,而 artifact-missing 不属 HARD_FAIL,
+  //   于是补做分支的 `!HARD_FAIL.has(n.reason)` 判的是那个假 reason → 放行 →
+  //   往【一张刚被杀掉的卡】里注入补做指令(白烧一次补做),0.001 秒后 WORKER_CARD_GONE 到达,
+  //   再走一遍 evalExit 又重派一次。整条日志里同一个节点连着两次 evalExit + 两次 EXIT_RESULT。
+  //   落定原因是【怎么停下来的】,闸门结论是【停下来之后盘上有什么】—— 后者不该改写前者。
+  n.reason = HARD_FAIL.has(n.reason) ? n.reason : (reasonOf(n.result) || n.reason || 'zero-output')
   // ── 先补做,补不动才重做 ────────────────────────────────────────────────
   // 退出闸不过 ≠ 这片白干了。六类闸里只有 noEmpty(零产出)意味着"这张卡根本没干活",
   // 其余五类(缺产出文件 / 缺契约签名 / 没跑构建测试 / 没出 VERDICT / 命令非零)都是【活干了但差一截】——
