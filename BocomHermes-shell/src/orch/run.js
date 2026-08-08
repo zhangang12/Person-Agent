@@ -1089,6 +1089,14 @@ function failDetail(res) {
 // 机器可读的失败原因(给渲染/面板用,不给模型当结论)
 function reasonOf(res) {
   const bad = arr(res.exitReport).filter((x) => x && !x.ok).map((x) => str(x.kind))
+  // ★noEmpty 必须【第一个】判 —— 它是唯一"这张卡根本没干活"的信号,其余全是"活干了但差一截"。
+  //   原来它排在倒数第三,后果是【零产出这个判定基本永远到不了】:一张什么都没产出的卡,
+  //   每一道闸都会不过(没产出、没 VERDICT、没契约签名…),而 reasonOf 返回的是先命中的那个。
+  //   真机 2026-08-08:n21 的 rounds=0、final 空 —— 卡一个回合都没跑过,
+  //   却被判成 verdict-fail(不属 HARD_FAIL)→ 走补做 → 往一张什么都没干的卡里补"你少写了 VERDICT",
+  //   而它需要的是【真的跑一遍】。补做分支自己的注释早就写明白了:
+  //   "六类闸里只有 noEmpty 意味着这张卡根本没干活" —— 判定顺序却和这句话相反。
+  if (bad.indexOf('noEmpty') >= 0) return 'zero-output'
   if (bad.indexOf('contract') >= 0) return 'contract-miss'
   if (bad.indexOf('evidence') >= 0) return 'no-evidence'
   if (bad.indexOf('verdict') >= 0) return 'verdict-fail'
@@ -1101,7 +1109,6 @@ function reasonOf(res) {
   //   (实测表现:内网工作流"每轮都有文档产出,却总报 artifacts,要重跑 1~2 次")。
   //   拆开后 artifact-missing 不属 HARD_FAIL → 走补做:原卡原会话,上下文还在,通常一个回合就把文件挪对,
   //   也不消耗 attempt。真正"什么都没产出"才继续叫 zero-output 并判死。
-  if (bad.indexOf('noEmpty') >= 0) return 'zero-output'
   if (bad.indexOf('artifacts') >= 0) return 'artifact-missing'
   if (bad.indexOf('substance') >= 0) return 'thin-summary'   // 汇总没真读上游 —— 活干了但差一截,走补做(原卡上下文还在,读完重写一遍就行)
   // 新增的两道汇总闸同样是"活干了但差一截":

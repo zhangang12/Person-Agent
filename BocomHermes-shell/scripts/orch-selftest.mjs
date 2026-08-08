@@ -1707,6 +1707,34 @@ section('用例6u:★卡凭空消失不算"零产出",也不该罚 attempt(真�
       { patches: byId(o2.run, 'n2').patches, reason: byId(o2.run, 'n2').reason })
   }
 
+  // ── ★零产出必须压过其余闸(2026-08-08 真机)────────────────────────────────
+  // n21 的 rounds=0、final 空 —— 卡一个回合都没跑过,却被判成 verdict-fail(不属 HARD_FAIL)
+  // → 走补做 → 往一张什么都没干的卡里补"你少写了 VERDICT",而它需要的是【真的跑一遍】。
+  // 根子在 reasonOf 的判定顺序:noEmpty 原来排在倒数第三。一张什么都没产出的卡【每道闸都不过】
+  // (没产出、没 VERDICT、没契约…),于是永远先命中别的 —— 零产出这个判定基本到不了。
+  // 补做分支自己的注释写着"六类闸里只有 noEmpty 意味着这张卡根本没干活",顺序却和它相反。
+  {
+    const dead = mkNode({ id: 'nz', kind: 'verify', state: 'settled', attempt: 1, cardId: 'cz',
+      exit: { artifacts: [], requireEvidence: false, requireVerdict: true, verifyCmd: '', noEmpty: true },
+      result: { final: '', files: [], rounds: 0, exitReport: [], findings: [] } })
+    const o = step(mkRun({ nodes: [dead] }), { type: 'EXIT_RESULT', nodeId: 'nz', pass: false,
+      report: [{ kind: 'noEmpty', ok: false, detail: '零产出' }, { kind: 'verdict', ok: false, detail: '缺 VERDICT' }],
+      verdict: '', cmdExit: null, contractMiss: [], unverified: false }, '6u')
+    const n = byId(o.run, 'nz')
+    ok('★零产出 + 缺 VERDICT 同时不过 → 判 zero-output(不是 verdict-fail)', n.reason === 'zero-output', n.reason)
+    ok('  → 不走补做(卡什么都没干,补"你少写了 VERDICT"没有意义,它需要真的跑一遍)',
+      num0(n.patches) === 0, { patches: n.patches, attempt: n.attempt })
+    // 反面:真的只差 VERDICT(有终答)照旧判 verdict-fail 并走补做
+    const half = mkNode({ id: 'nh', kind: 'verify', state: 'settled', attempt: 1, cardId: 'ch',
+      exit: { artifacts: [], requireEvidence: false, requireVerdict: true, verifyCmd: '', noEmpty: true },
+      result: { final: '我核完了,结论是这条成立', files: [], rounds: 2, exitReport: [], findings: [] } })
+    const o2 = step(mkRun({ nodes: [half] }), { type: 'EXIT_RESULT', nodeId: 'nh', pass: false,
+      report: [{ kind: 'verdict', ok: false, detail: '缺 VERDICT' }],
+      verdict: '', cmdExit: null, contractMiss: [], unverified: false }, '6u')
+    ok('  有终答、只差判决 → 照旧 verdict-fail(这条修的是顺序,不是把 verdict 闸关掉)',
+      byId(o2.run, 'nh').reason === 'verdict-fail', byId(o2.run, 'nh').reason)
+  }
+
   // ④ 正常的零产出照罚(闸没被放松)
   {
     const normal = mkRun({ nodes: [mkNode({ id: 'n1', kind: 'work', state: 'settled', attempt: 1, cardId: 'c1' })] })
