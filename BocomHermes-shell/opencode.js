@@ -713,7 +713,9 @@ async function sendMessage(info, sessionId, text, model, files, onNote, opts = {
       try { await abort(info, sessionId) } catch { /* 已经没了就算了 */ }
       if (withModel) {
         noteModelBlacklist(info.base, model.modelID)   // 同一本账(4xx 那条也记这里):后续发送直接跳过这个模型指定
-        if (onNote) { try { onNote('模型 ' + (model.name || model.modelID) + ' 收下请求后不出字(' + Math.round(DROP_WATCH_MS / 1000) + 's 内 0 token、无产出、无报错)—— 多半是这个模型的额度或凭据问题,不是网络。后续发送已改用默认模型') } catch {} }
+        if (onNote) { try { onNote('模型 ' + (model.name || model.modelID) + ' 收下请求后不出字(' + Math.round(DROP_WATCH_MS / 1000) + 's 内 0 token、无产出、无报错)。'
+          + '实测最常见的真因是【这个模型的额度/限流】—— 上游 1~2 秒就回了 Rate limit,但 serve 收到 stream error 之后不发任何会话事件、不结束回合,所以这边只看得到"一直在思考"。'
+          + '要确认就 grep 一下 serve 自己的日志:~/.local/share/opencode/log/opencode.log 里搜 "stream error"。后续发送已改用默认模型') } catch {} }
       }
       throw new Error('回合失败:' + direct.__dropped__)
     }
