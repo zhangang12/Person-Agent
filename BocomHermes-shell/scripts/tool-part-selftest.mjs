@@ -471,5 +471,36 @@ await (async () => {
 })()
 
 
+;(() => {
+  console.log('用例:★"模型静默拒收"的指纹 —— 既不报错也不产出(2026-08-08 真机)')
+  // 现场:工人卡 4 个回合【全部】是这个形态 —— parts 空、无 error、tokens 全 0、time 只有 created。
+  // 0 token 意味着这次请求【压根没被模型处理】(没计费、没输入),不是"处理了但没话说"。
+  // 壳层按"零产出"重派,新卡又是同一形态 → 死循环。而重派一万次也没用:原因在请求本身
+  // (模型不支持这么长的输入 / 免费档拒收 / 模型不可用),不在工人身上。
+  // 判据必须【三条同时】成立:parts 空 + 无 error + tokens 全 0 + 有 created 无 completed。
+  // 少一条就会把"正在飞的回合"误杀 —— 它同样没有 completed、也同样没有 parts。
+  const zeroTok = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+  const drop = { info: { role: 'assistant', id: 'd1', modelID: 'deepseek-v4-flash-free',
+    time: { created: 1 }, tokens: zeroTok }, parts: [] }
+  const r = pickTurnText([uMsg('q'), drop])
+  ok('★认出静默拒收', /没有处理这次请求/.test(r.err || ''), r.err)
+  ok('  带上 modelID(换模型是唯一解,得让人知道换哪个)', /deepseek-v4-flash-free/.test(r.err || ''))
+  ok('  明说重派不会有不同结果(否则壳层会一直重派)', /重派不会有不同结果/.test(r.err || ''))
+
+  // ★三条边,少一条就误杀
+  ok('★在飞的回合不误杀(它也没 completed、也没 parts,但 token 非 0)',
+    !pickTurnText([uMsg('q'), { info: { role: 'assistant', id: 'd2', time: { created: 1 },
+      tokens: { input: 120, output: 5, cache: {} } }, parts: [] }]).err)
+  ok('★收官了但空的不归这里("跑完没话说"是另一回事)',
+    !pickTurnText([uMsg('q'), { info: { role: 'assistant', id: 'd3', time: { created: 1, completed: 2 },
+      tokens: zeroTok }, parts: [] }]).err)
+  ok('  有明确 error 的让 errOf 报(别抢它的话)',
+    /Insufficient/.test(pickTurnText([uMsg('q'), { info: { role: 'assistant', id: 'd4', time: { created: 1 },
+      tokens: zeroTok, error: { name: 'APIError', data: { message: 'Insufficient Balance', statusCode: 402 } } }, parts: [] }]).err || ''))
+  ok('  有内容就不算拒收', !pickTurnText([uMsg('q'), { info: { role: 'assistant', id: 'd5', time: { created: 1 },
+    tokens: zeroTok }, parts: [textPart('写了点东西')] }]).err)
+})()
+
+
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

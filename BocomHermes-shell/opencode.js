@@ -499,9 +499,32 @@ function pickTurnText(list) {
   //   info.error 上,而本函数只数文本与工具,于是轮询看到的是"没文本",最后返回空串;
   //   空串一路流到编排,被误诊成「nodes 是空数组但 more 不是 no」—— 一句与真相毫无关系的话,
   //   还照着这句去重问模型、烧完两轮转人工。余额不足这种事,本该第一时间原样告诉人。
-  const err = errOf(la)
+  const err = errOf(la) || droppedOf(la)
   return { done: laDone && !!laText, text, laDone, laText, toolRunning, err,
     sig: asst.length + ':' + nParts + ':' + text.length + ':' + rLen + ':' + (toolRunning ? 1 : 0) + ':' + tLen }   // 收尾 = 最后一条 assistant 已完成【且带文本】
+}
+
+// ★"模型静默拒收"的指纹 —— 真机 2026-08-08 实测出来的一种失败,它既不报错也不产出:
+//   assistant 消息 parts 为空、没有 error、【tokens.input 与 output 都是 0】、time 里只有 created 没有 completed。
+//   0 token 意味着这次请求【压根没被模型处理】(没计费、没输入),而不是"处理了但没话说"。
+//   现场:工人卡 4 个回合全是这个形态,壳层按"零产出"重派,新卡又是同一个形态 —— 死循环。
+//   而重派一万次也没用:原因在请求本身(模型不支持这么长的输入 / 免费档拒收 / 模型不可用),
+//   不在工人身上。判据必须【三条同时】成立才算,否则会把"正在飞的回合"(也没有 completed、也没 parts)误杀。
+function droppedOf(m) {
+  const inf = m && (m.info || m)
+  if (!inf || inf.role !== 'assistant') return ''
+  const parts = (m && (m.parts || (m.data && m.data.parts))) || []
+  if (parts.length) return ''
+  if (inf.error) return ''                                   // 有明确错误的走 errOf,别抢它的
+  const t = inf.tokens || {}
+  const cache = t.cache || {}
+  const zero = Number(t.input || 0) === 0 && Number(t.output || 0) === 0
+    && Number(t.reasoning || 0) === 0 && Number(cache.read || 0) === 0 && Number(cache.write || 0) === 0
+  if (!zero) return ''
+  if (!(inf.time && inf.time.created)) return ''             // 连 created 都没有的不是一条落定的消息
+  if (inf.time && inf.time.completed) return ''              // 收官了却空 = 另一回事("跑完没话说"),不归这里
+  return '模型没有处理这次请求(0 token、无产出、无报错;modelID=' + String(inf.modelID || '?') + ')'
+    + ' —— 常见原因:输入超出该模型上限、免费档拒收、或这个模型当前不可用。换个模型或把输入压短再试,重派不会有不同结果'
 }
 
 // 从一条 assistant 消息里取出回合级错误,拼成一句人话。取不到就返回 ''。
