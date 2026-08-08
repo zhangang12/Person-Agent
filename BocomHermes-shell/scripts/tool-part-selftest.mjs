@@ -472,7 +472,7 @@ await (async () => {
 
 
 ;(() => {
-  console.log('用例:★"模型静默拒收"的指纹 —— 既不报错也不产出(2026-08-08 真机)')
+  console.log('用例:★"请求没被处理"的指纹 —— 既不报错也不产出(2026-08-08 真机)')
   // 现场:工人卡 4 个回合【全部】是这个形态 —— parts 空、无 error、tokens 全 0、time 只有 created。
   // 0 token 意味着这次请求【压根没被模型处理】(没计费、没输入),不是"处理了但没话说"。
   // 壳层按"零产出"重派,新卡又是同一形态 → 死循环。而重派一万次也没用:原因在请求本身
@@ -483,9 +483,15 @@ await (async () => {
   const drop = { info: { role: 'assistant', id: 'd1', modelID: 'deepseek-v4-flash-free',
     time: { created: 1 }, tokens: zeroTok }, parts: [] }
   const r = pickTurnText([uMsg('q'), drop])
-  ok('★认出静默拒收', /没有处理这次请求/.test(r.err || ''), r.err)
-  ok('  带上 modelID(换模型是唯一解,得让人知道换哪个)', /deepseek-v4-flash-free/.test(r.err || ''))
-  ok('  明说重派不会有不同结果(否则壳层会一直重派)', /重派不会有不同结果/.test(r.err || ''))
+  ok('★认出"请求没被处理"', /没有被处理/.test(r.err || ''), r.err)
+  ok('  带上 modelID(排障要知道是哪个模型的会话)', /deepseek-v4-flash-free/.test(r.err || ''))
+  // ★措辞必须指向【真正的原因】。第一版写的是"换个模型或把输入压短",那是错的 ——
+  //   实证:同一份内容原样发进新会话立刻正常返回。是会话被 abort 过,不是模型不行。
+  //   报错指错方向比不报错更贵:它会让人去调模型、调长度,而真正的修法是新开会话。
+  ok('★指向"会话被中止过",不是"换个模型"(第一版指错了方向)',
+    /会话已经被中止过/.test(r.err || '') && /必须新开会话/.test(r.err || ''), r.err)
+  ok('  不再建议"换模型/压短输入"(那是错的修法)',
+    !/换个模型/.test(r.err || '') && !/输入压短/.test(r.err || ''), r.err)
 
   // ★三条边,少一条就误杀
   ok('★在飞的回合不误杀(它也没 completed、也没 parts,但 token 非 0)',

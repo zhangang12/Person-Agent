@@ -504,12 +504,18 @@ function pickTurnText(list) {
     sig: asst.length + ':' + nParts + ':' + text.length + ':' + rLen + ':' + (toolRunning ? 1 : 0) + ':' + tLen }   // 收尾 = 最后一条 assistant 已完成【且带文本】
 }
 
-// ★"模型静默拒收"的指纹 —— 真机 2026-08-08 实测出来的一种失败,它既不报错也不产出:
+// ★"请求没被处理"的指纹 —— 真机 2026-08-08 实测出来的一种失败,它既不报错也不产出:
 //   assistant 消息 parts 为空、没有 error、【tokens.input 与 output 都是 0】、time 里只有 created 没有 completed。
 //   0 token 意味着这次请求【压根没被模型处理】(没计费、没输入),而不是"处理了但没话说"。
 //   现场:工人卡 4 个回合全是这个形态,壳层按"零产出"重派,新卡又是同一个形态 —— 死循环。
-//   而重派一万次也没用:原因在请求本身(模型不支持这么长的输入 / 免费档拒收 / 模型不可用),
-//   不在工人身上。判据必须【三条同时】成立才算,否则会把"正在飞的回合"(也没有 completed、也没 parts)误杀。
+//   ★根因查清了(第一版注释把它归给"模型不行",是错的):这个会话【被 abort 过】。
+//   实证:把那条失败消息的原文(98 字)原样发进一个【新会话】,立刻正常返回(in 1437 / out 73 / 有 reasoning 有 text)。
+//   同一份内容、同一个模型,换会话就好 —— 所以不是模型、不是长度、不是内容,是会话死了。
+//   serve 对中止过的会话一律返回空消息:往里再发一遍永远是同一个结果,必须新开会话。
+//   (这一整轮的连锁:挂死计时误杀 → cancelNode 里 abort 了会话 → reason 被闸门结论覆写成
+//    artifact-missing → 不属 HARD_FAIL → 补做分支放行 → 把补做指令注进那个已经死掉的会话 → 空 →
+//    判零产出 → 重派 → 又注进同一个死会话。前两环已在 1151902 修掉。)
+//   判据必须【四条同时】成立才算,否则会把"正在飞的回合"(也没有 completed、也没 parts)误杀。
 function droppedOf(m) {
   const inf = m && (m.info || m)
   if (!inf || inf.role !== 'assistant') return ''
@@ -523,8 +529,9 @@ function droppedOf(m) {
   if (!zero) return ''
   if (!(inf.time && inf.time.created)) return ''             // 连 created 都没有的不是一条落定的消息
   if (inf.time && inf.time.completed) return ''              // 收官了却空 = 另一回事("跑完没话说"),不归这里
-  return '模型没有处理这次请求(0 token、无产出、无报错;modelID=' + String(inf.modelID || '?') + ')'
-    + ' —— 常见原因:输入超出该模型上限、免费档拒收、或这个模型当前不可用。换个模型或把输入压短再试,重派不会有不同结果'
+  return '这次请求没有被处理(0 token、无产出、无报错;modelID=' + String(inf.modelID || '?') + ')'
+    + ' —— 最常见的原因是【这个会话已经被中止过】:serve 对中止过的会话一律返回空消息。'
+    + '往同一个会话里再发一遍不会有不同结果,必须新开会话。'
 }
 
 // 从一条 assistant 消息里取出回合级错误,拼成一句人话。取不到就返回 ''。
