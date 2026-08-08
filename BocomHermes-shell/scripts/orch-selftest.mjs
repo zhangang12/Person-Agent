@@ -61,6 +61,7 @@ const ty = (fx) => (fx || []).map((e) => e && e.type)
 const of = (fx, t) => (fx || []).filter((e) => e && e.type === t)
 const has = (fx, t) => of(fx, t).length > 0
 const num0 = (x) => (Number.isFinite(+x) ? +x : 0)
+const arr0 = (x) => (Array.isArray(x) ? x : [])
 const byId = (r, id) => (r.nodes || []).find((n) => n.id === id)
 const byTitle = (r, t) => (r.nodes || []).find((n) => n.title === t)
 const stOf = (r, id) => { const n = byId(r, id); return n ? n.state : '(无此节点)' }
@@ -1294,6 +1295,37 @@ section('用例6s:★发现走工具上报 —— 格式约定的静默失败换
     ok('  点破正文格式那条的真实风险(格式写错你不会收到任何提示)',
       /并不会收到任何提示/.test(brief))
   }
+})
+
+section('用例6z:★决策失败要说真因,不能只说"连续 N 次不合法"(2026-08-08 真机)', () => {
+  need(RUN, 'src/orch/run.js')
+  // 现场:决策器明确报了 transport + "模型没有回话",而面板上只有
+  // 「规划决策连续 2 次不合法,请三选一:按单工作流直接干 / 重试 / 我自己填节点」。
+  // 用户照这句话完全无从下手 —— 而真因("压根没答上来")在系统里躺着,只是没人端出来。
+  // 我自己也是靠翻日志 + 拉 serve 会话才查出来的,前后猜错三次。
+  // 【为什么必须分两类】处置完全不同:transport 要换模型/看网关;schemaFail 才是格式/拆法的问题。
+  const fail = (invalid, errors) => {
+    const base = mkRun({ goal: '分析仓库的所有逻辑', phase: 'planning', nodes: [],
+      budget: { maxNodes: 24, spawned: 0, maxDecides: 48, spentDecides: 0, maxWallMs: 6 * 3600e3, startedAt: T0, invalidStreak: 1, resumeCredit: 1 },
+      pendingDecision: { id: 'd1', point: 'plan', event: 'start', nodeId: '', at: T0 } })
+    return step(base, { type: 'DECIDED', decisionId: 'd1', point: 'plan', ok: false, invalid, errors }, '6z')
+  }
+  const noteOf = (o) => String((o.run.lastError || '') + ' ' + of(o.effects, 'notify').map((e) => e.text).join(' '))
+
+  const t1 = fail('transport', ['模型这一轮没有任何输出 —— 回合可能在 serve 侧失败了'])
+  ok('★transport 不再说"不合法" —— 说清是【压根没答上来】', /没能拿到回复/.test(noteOf(t1)) && !/次不合法/.test(noteOf(t1)), noteOf(t1).slice(0, 160))
+  ok('  给出可执行的下一步(换模型 / 看日志那一行)', /换一个模型/.test(noteOf(t1)) && /\[oc\] send/.test(noteOf(t1)))
+  ok('★真因原文带上去了(原来 errors 直接被丢掉)', /没有任何输出/.test(noteOf(t1)), noteOf(t1).slice(-140))
+
+  const t2 = fail('timeout', ['超时 sendMessage'])
+  ok('  timeout 单独一类(慢模型可以再等一次,不是格式问题)', /决策超时/.test(noteOf(t2)), noteOf(t2).slice(0, 120))
+
+  const t3 = fail('schemaFail', ['nodes 必须是数组'])
+  ok('★schemaFail 才用"三选一"那套话术(答了但格式不对)',
+    /次不合法/.test(noteOf(t3)) && /三选一/.test(noteOf(t3)), noteOf(t3).slice(0, 140))
+  ok('  它的真因也带上', /nodes 必须是数组/.test(noteOf(t3)))
+  ok('  留痕里存了 errors(面板/存档要看得到)',
+    arr0((t3.run.decisions.slice(-1)[0] || {}).errors).length === 1, (t3.run.decisions.slice(-1)[0] || {}).errors)
 })
 
 section('用例6y:★输出被截断 ≠ 格式不对(2026-08-07 真机第三次)', () => {

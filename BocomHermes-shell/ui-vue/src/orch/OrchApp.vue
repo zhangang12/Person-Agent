@@ -39,19 +39,31 @@ async function pickProj() {   // 项目路径切换(全局默认仓;发起的工
 //    主控卡与分片派发链整条同待(window.js spawnWorkflow 继承) ──
 const modelItems = ref<{ key: string; label: string; checked?: boolean }[]>([])
 const modelKey = ref(localStorage.getItem('orch.modelKey') || '')
+// 清单拉到过没有(拉不到时不许对"钉的模型不可用"下结论 —— 那会把正常情况说成异常)
+const modelListed = ref(false)
+// 钉的模型不在当前可用清单里 —— 必须显式说出来。
+// ★真机 2026-08-08:这里钉着 deepseek-v4-flash-free(localStorage 里一次选择就永久生效),
+//   而那个模型当时返回空消息 —— 整条编排(决策 + 全部工人卡)都用它,plan 挂 5 分钟没有任何事件。
+//   面板上只显示模型名,不说它可不可用;用户完全看不出"钉着一个不工作的模型"。
+//   我自己也是靠埋点打出 [oc] send 指定模型=… 才定位到的,之前猜错三次。
+const modelStale = computed(() => !!modelKey.value && modelListed.value
+  && !modelItems.value.some((m) => m.key === modelKey.value))
 const modelLabel = computed(() => {
   if (!modelKey.value) return '默认模型'
   const hit = modelItems.value.find((m) => m.key === modelKey.value)
-  return (hit && hit.label) || String(modelKey.value.split('/').pop() || modelKey.value)
+  const base = (hit && hit.label) || String(modelKey.value.split('/').pop() || modelKey.value)
+  return modelStale.value ? (base + ' ⚠不在可用清单') : base
 })
 async function loadModels() {   // 借在跑的健康 serve 列模型(主进程不为此白起引擎);打开菜单时刷新
   try {
     const r = await BH()?.listModels?.()
     const arr = Array.isArray(r) ? r : ((r && r.models) || [])
     modelItems.value = [
-      { key: '', label: '默认模型', checked: !modelKey.value },
+      { key: '', label: '默认模型(跟随引擎配置)', checked: !modelKey.value },
       ...arr.map((m: any) => ({ key: m.providerID + '/' + m.modelID, label: m.name || (m.providerID + '/' + m.modelID), checked: (m.providerID + '/' + m.modelID) === modelKey.value })),
     ]
+    // 只有真拿到过候选才敢说"钉的那个不在清单里";拉不到时保持沉默(serve 没起来是常态)
+    if (arr.length) modelListed.value = true
   } catch { /* 静默 */ }
 }
 function onModelSelect(key: string) {
@@ -163,7 +175,12 @@ onMounted(async () => {
   try { projName.value = (await BH()?.getProject?.()) || '' } catch { /* 静默 */ }
   loadSkills(); loadWfTpls(); loadModels()
   loadWf()
-  timer = setInterval(loadWf, 3000)
+  // ★清单要接着补拉:面板打开时 serve 往往还没起(listModels 拿不到候选),
+  //   那时 modelListed 还是 false,"钉的模型不可用"这个警告就永远不会出现 ——
+  //   而它恰恰是最该在开跑【之前】看到的东西(真机上钉着一个返回空消息的模型,挂了 5 分钟才发现)。
+  //   跟着已有的 3s 轮询搭车,每 10 拍(30s)补一次,拿到就不再拉。
+  let mTick = 0
+  timer = setInterval(() => { loadWf(); if (!modelListed.value && ++mTick % 10 === 0) loadModels() }, 3000)
 })
 onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 
@@ -212,7 +229,9 @@ async function op(w: any, act: string) {
       <span class="sp"></span>
       <span class="proj pick" :title="'工作目录:' + (projName || '未选目录') + '(点击切换 —— 动态工作流对它说话)'" @click="pickProj">📁 {{ projName || '未选目录' }}</span>
       <KMenu :items="modelItems" placement="bottom-end" @select="onModelSelect" @update:open="(v) => v && loadModels()">
-        <span class="proj pick" :title="'发起用模型:' + modelLabel + '(点击切换 —— 主控卡与分片派发链整条都用它;默认模型 = 引擎当前配置)'">{{ modelLabel }}</span>
+        <span class="proj pick" :class="{ stale: modelStale }" :title="(modelStale
+          ? '⚠ 这个模型不在引擎当前可用清单里 —— 编排大概率一起不来(决策拿不到回复)。点这里选「默认模型」清掉它。\n'
+          : '') + '发起用模型:' + modelLabel + '(点击切换 —— 决策链与全部工人卡整条都用它;默认模型 = 引擎当前配置)\n这个选择记在本机,选一次会一直生效'">{{ modelLabel }}</span>
       </KMenu>
       <button class="mini danger" :class="{ arm: stopArm }" :title="stopArm ? '再点一次确认:中止所有运行中的工作流并清空排队' : '全部停止(中止 running + 清排队)'" @click="stopAll">{{ stopArm ? '确认停止?' : '■ 全部停止' }}</button>
       <button class="mini" title="刷新" @click="loadWf">↻</button>

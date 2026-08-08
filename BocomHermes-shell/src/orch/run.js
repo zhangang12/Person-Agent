@@ -199,6 +199,29 @@ function drainReplan(t) {
   r.pendingReplan = null
   startDecision(t, 'replan', q.event || 'frontier', q.nodeId || '')
 }
+// 决策失败时给用户看的那句话。★必须把【真因】摆出来,而不是一句"连续 N 次不合法"。
+// 真机 2026-08-08:决策器明确报了 transport + "模型没有回话 / 输出被截断 / 余额不足",
+// 而面板上只有"规划决策连续 2 次不合法,请三选一" —— 用户照着这句话完全无从下手,
+// 我自己也是靠翻日志 + 拉 serve 会话才查出真因的。信息在系统里,只是没有人把它端出来。
+// 【为什么要区分两类】处置完全不同:
+//   transport(连不上 / 没回话 / 被中止)→ 换模型、看网关、重试有意义;
+//   schemaFail(答了但格式不对)     → 才是"拆法/格式"的问题,三选一那套话术才对得上。
+function decideFailWhy(r, dec, what) {
+  const why = arr(dec && dec.errors).filter(Boolean).join(';')
+  const tail = why ? ('\n真因:' + firstLine(why, 260)) : ''
+  if (str(dec && dec.invalid) === 'transport') {
+    return what + '决策没能拿到回复(连了 ' + num(r.budget.invalidStreak) + ' 次)——'
+      + '这不是"拆法不对",是【压根没答上来】:多半是模型没回话、被中止、或网关/额度的问题。'
+      + '先在卡片标题栏换一个模型再重试;换完还是这样就把日志里 [oc] send 那一行发出来。' + tail
+  }
+  if (str(dec && dec.invalid) === 'timeout') {
+    return what + '决策超时(连了 ' + num(r.budget.invalidStreak) + ' 次)—— 模型一直没收官。'
+      + '内网慢模型可以再等一次;反复超时就换个模型。' + tail
+  }
+  return what + '决策连续 ' + num(r.budget.invalidStreak) + ' 次不合法(答了,但格式/内容过不了校验),'
+    + '请三选一:按单工作流直接干 / 重试 / 我自己填节点' + tail
+}
+
 function budgetBreach(r, at) {
   const b = r.budget
   if (b.spentDecides >= b.maxDecides) return '决策次数 ' + b.spentDecides + '/' + b.maxDecides
@@ -246,6 +269,11 @@ function onDecided(t) {
   const dec = {
     id: pd.id, at: t.at, point: pd.point, event: pd.event, nodeId: pd.nodeId,
     ok: !!e.ok, invalid: str(e.invalid), why: str(data.why), raw: '',
+    // ★把决策器报的【真因】留在留痕里。原来只留 invalid('transport'/'schemaFail'),
+    //   errors 直接丢掉 —— 于是面板上永远只有一句"决策连续 2 次不合法",
+    //   而真因("模型没有回话"/"输出被截断"/"余额不足")一个字都看不到。
+    //   真机 2026-08-08:decide 明确报了 transport + 原文,面板还是那句不合法,查了半天。
+    errors: arr(e.errors).map((x) => firstLine(x, 300)).slice(0, 3),
   }
   r.decisions.push(dec)
   if (r.decisions.length > MAX_DECISIONS_KEPT) r.decisions.splice(0, r.decisions.length - MAX_DECISIONS_KEPT)
@@ -261,7 +289,7 @@ function onPlanDecided(t, dec, data) {
   if (!dec.ok) {
     r.budget.invalidStreak += 1
     // 三选一转人工,【绝不静默兜底成默认拆法】—— 拆法是模型的判断,代码没有资格代劳
-    if (r.budget.invalidStreak >= MAX_PLAN_INVALID) toAwaitingUser(t, '规划决策连续 ' + r.budget.invalidStreak + ' 次不合法,请三选一:按单工作流直接干 / 重试 / 我自己填节点', false)
+    if (r.budget.invalidStreak >= MAX_PLAN_INVALID) toAwaitingUser(t, decideFailWhy(r, dec, '规划'), false)
     else startDecision(t, 'plan', 'plan-invalid', '')
     return
   }
@@ -342,7 +370,7 @@ function onReplanDecided(t, dec, data) {
   const r = t.r
   if (!dec.ok) {
     r.budget.invalidStreak += 1
-    if (r.budget.invalidStreak >= MAX_INVALID_STREAK) { toAwaitingUser(t, '模型连续 ' + r.budget.invalidStreak + ' 次没能给出可用决策,请你指一条路', true); return }
+    if (r.budget.invalidStreak >= MAX_INVALID_STREAK) { toAwaitingUser(t, decideFailWhy(r, dec, '重规划'), true); return }
     tick(t, false)   // 降级梯第 3 级:确定性兜底 = 不改图、继续跑。不凭空造节点,也不卡住
     return
   }

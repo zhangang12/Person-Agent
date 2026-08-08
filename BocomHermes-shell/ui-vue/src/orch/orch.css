@@ -109,3 +109,8 @@ html[data-embed="1"], html[data-embed="1"] body { background: var(--bg-primary);
 .gate .gt { font: var(--c1-em); color: var(--orange); }
 .gate .gd { font: var(--c1); color: var(--label-2); margin: 4px 0 8px; line-height: 1.5; }
 .gate .gbtn { font: var(--c1-em); color: var(--brand-text); background: var(--brand); border: none; border-radius: var(--r-sm); padding: 5px 14px; cursor: pointer; }
+
+/* 钉住的发起模型不在引擎当前可用清单里 —— 这一格必须显眼。
+   真机 2026-08-08:面板钉着一个返回空消息的模型(localStorage 里一次选择永久生效),
+   整条编排都用它,plan 挂了 5 分钟没有任何事件,而界面上只是安静地显示着模型名。 */
+.proj.stale { color: #b45309; border-color: #f59e0b; background: rgba(245, 158, 11, .10) }
