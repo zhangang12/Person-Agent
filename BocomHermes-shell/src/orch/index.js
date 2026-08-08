@@ -301,15 +301,29 @@ function makeOrch(deps) {
     const k = num(S.settings && S.settings.knobs && S.settings.knobs.orchSilentSec)
     return Math.max(1000, k > 0 ? k * 1000 : (Number(fxMs) || 45000))
   }
-  function silentAlive(runId, nodeId, armedAt) {
+  // strict=true(挂死计时用):【只认内容真的动过】,不认"回合开着"。
+  // ★真机 2026-08-08:12 个核实会话在 serve 自己的 session.updated 里 25~28 分钟零变化 —— 冻住了,
+  //   而 turnBusy 还一路报"有回合在飞",于是每片都被续命到 3/3、拖满 60 分钟才收,收完还各重做一次,
+  //   重做又立刻撞同一面墙(attempt 2 上限,两轮就永久失败)。这是个正反馈:越判越慢、越慢越判。
+  //   病根在【信号选错】:turnBusy 是"card-send 起手入册、回合结束才移除",回合永不结束它就永远是 true,
+  //   它压根分不清"在干活"和"冻住了";而它排在第一个、命中就返回,内容签名那条永远走不到。
+  //   非严格(静默计时,秒级)保持原样:那时"网关还在排队"是良性解释,盖住它是对的;
+  //   静默 15 分钟之后同一句话就不再是良性解释了 —— 同一个探针,两个时间尺度该有两种严格度。
+  // 【为什么这样不会打翻案例㉚】㉚ 是"长回合里几十次工具调用"被 15 分钟砍掉。lastEventAt 由 onText
+  //   在【part 内容签名变化】时刷新(session.js:742),工具出入参变长必然改签名 —— 那种片照旧续命。
+  //   而回合起手就打过点(session.js:1364),不存在"从来没有值"被误杀。
+  function silentAlive(runId, nodeId, armedAt, strict) {
     const cur = runs.get(str(runId))
     if (!cur) return ''
     const n = findNode(cur, nodeId)
     if (!n || n.state !== 'running') return ''
     const sid = sidOf(n)
-    if (n.cardId && !sid) return '卡在启动(会话未绑定)'                    // 慢 serve 冷启动:卡开了会话还没绑上
-    try { if (sid && S.turnBusy && S.turnBusy.has(sid)) return '有回合在飞(turnBusy)' } catch {}   // card-send 起手即入册,网关排队/prefill 慢也盖得住
-    try { if (n.wcId != null && typeof S.isCardBusy === 'function' && S.isCardBusy(n.wcId)) return '卡片忙(isCardBusy)' } catch {}
+    // 严格档下这三条一律不算"活":卡了 15 分钟还没绑上会话 / 回合开着但不出字 / 卡片标着忙但内容不动
+    if (!strict) {
+      if (n.cardId && !sid) return '卡在启动(会话未绑定)'                  // 慢 serve 冷启动:卡开了会话还没绑上
+      try { if (sid && S.turnBusy && S.turnBusy.has(sid)) return '有回合在飞(turnBusy)' } catch {}   // card-send 起手即入册,网关排队/prefill 慢也盖得住
+      try { if (n.wcId != null && typeof S.isCardBusy === 'function' && S.isCardBusy(n.wcId)) return '卡片忙(isCardBusy)' } catch {}
+    }
     try {
       const si = sid && S.sessionInfo && S.sessionInfo.get(sid)
       const last = si && num(si.lastEventAt)
@@ -340,7 +354,7 @@ function makeOrch(deps) {
     const armedAt = Date.now()
     timers.set(key, setTimeout(() => {
       timers.delete(key)
-      const alive = silentAlive(run.id, fx.nodeId, armedAt)
+      const alive = silentAlive(run.id, fx.nodeId, armedAt, kind === 'stall')   // ★挂死档走严格:只认内容动过
       if (alive && kind === 'silent') {
         log('[orch] ' + run.id + ' ' + str(fx.nodeId) + ' 静默到点但工人仍活(' + alive + '),续命 ' + Math.round(ms / 1000) + 's')
         doArm(run, fx)      // 续命:同口径重挂一轮(armedAt 随之刷新);doArm 只用 run.id,闭包里是旧 run 对象无碍
@@ -356,6 +370,13 @@ function makeOrch(deps) {
           return
         }
         log('[orch] ' + run.id + ' ' + str(fx.nodeId) + ' 挂死计时续命已用满 ' + MAX_STALL_EXT + ' 次,按挂死处理(' + alive + ')')
+      } else if (kind === 'stall') {
+        // 严格档没过 = 15 分钟内内容一个字节都没动。把"回合到底开着没"一并打出来:
+        // 开着却不出字 = 冻住(真机 2026-08-08 的 12 片核实);没开着 = 回合早结束了,本来就该收。
+        let busy = false
+        try { const s = sidOf(findNode(runs.get(str(run.id)) || {}, fx.nodeId) || {}); busy = !!(s && S.turnBusy && S.turnBusy.has(s)) } catch {}
+        log('[orch] ' + run.id + ' ' + str(fx.nodeId) + ' 挂死计时到点,内容 ' + Math.round(ms / 60000)
+          + 'min 没动过 → 判挂死' + (busy ? '(回合还开着但不出字 = 冻住,不是慢)' : '(回合也已结束)'))
       }
       stallExt.delete(key)
       send(run.id, { type: 'TIMER', nodeId: fx.nodeId, key, kind })

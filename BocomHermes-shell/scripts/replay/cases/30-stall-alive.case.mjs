@@ -43,22 +43,44 @@ export default {
     const nodeNow = () => S.orch.get(r.id).nodes[0]
     const fireStall = () => world.fireTimer((t) => t.ms === STALL && t.type === 'timeout')
 
-    // ── ① 工人明确"有回合在飞" → 挂死到点也不许杀 ──
+    // ── ① 长回合【内容一直在动】→ 挂死到点也不许杀 ──
+    // ★2026-08-08 第二次改:第一版只往 turnBusy 里塞了个 sid 就当"活着",而㉚ 描述的现场是
+    //   "内网读大仓,一个回合内几十次工具调用" —— 那种片 lastEventAt 是【一直在动】的。
+    //   只模拟 turnBusy 等于测了一个和㉚ 无关的场景,还正好把"冻住"一并放过(见下面 ②)。
     const sid = S.sessionByWc && S.sessionByWc.get(reg.wcId)
     ok('拿到工人会话 id(活探针要靠它)', !!sid, sid)
     S.turnBusy = S.turnBusy || new Set()
-    S.turnBusy.add(sid)                       // 模拟:一个长回合正在飞(真机就是这个状态)
+    S.turnBusy.add(sid)                       // 回合在飞
+    const si = S.sessionInfo && S.sessionInfo.get(sid)
+    ok('拿到会话册(内容签名要写在这)', !!si)
+    // 内容签名往前推:真实判据是"挂计时之后还在写"(last > armedAt + 2000),而本用例 60ms 就跑完,
+    // 等不出真的 2 秒 —— 用未来时间戳代表"这一轮之后内容又动过",语义等价。
+    const moving = () => { if (si) si.lastEventAt = Date.now() + 5000 }
+    moving()
 
     ok('(诊断)挂死计时确实注册了', fireStall() === 1)
     await new Promise((res) => setTimeout(res, 60))
     // ★判据看 reason/attempt,不看 state ——被判挂死之后节点会【重派回 running】,
     //   只盯 state 的话杀与没杀长得一模一样(第一版断言就是这么写错的)。
-    ok('★挂死到点但有回合在飞 → 不判挂死(修前:第 15 分钟整被杀,半成品全丢)',
+    ok('★挂死到点但内容还在动 → 不判挂死(修前:第 15 分钟整被杀,半成品全丢)',
       nodeNow().reason !== 'stalled' && num(nodeNow().attempt) <= 1,
       { reason: nodeNow().reason, attempt: nodeNow().attempt })
 
-    // ── ② 续命有上限:用满之后照旧判挂死(真僵死不能永远等) ──
-    for (let i = 0; i < 5; i++) { fireStall(); await new Promise((res) => setTimeout(res, 50)) }
+    // ── ②★回合开着但内容【一个字节都不动】= 冻住,不许当活着(2026-08-08 真机:12 片核实) ──
+    // 现场:12 个核实会话在 serve 自己的 session.updated 里 25~28 分钟零变化,而 turnBusy 一路报
+    // "有回合在飞" → 每片被续命到 3/3、拖满 60 分钟才收,收完各重做一次,重做又立刻撞同一面墙。
+    // 病根是信号选错:turnBusy 起手入册、回合结束才移除,回合永不结束它就永远 true —— 它分不清
+    // "在干活"和"冻住了"。挂死档必须只认内容真的动过(静默档秒级,盖住网关排队仍是对的)。
+    if (si) si.lastEventAt = Date.now() - 60000   // 冻住:内容停在挂计时【之前】
+    fireStall()
+    await new Promise((res) => setTimeout(res, 60))
+    ok('★★回合开着但内容不动 → 当场判挂死,不许续命到 60 分钟',
+      nodeNow().reason === 'stalled' || num(nodeNow().attempt) > 1,
+      { reason: nodeNow().reason, attempt: nodeNow().attempt })
+    moving()                                   // 复原:下面 ③ 还要测"活着时续命有上限"
+
+    // ── ③ 续命有上限:活着也不能永远等(用满之后照旧判挂死) ──
+    for (let i = 0; i < 5; i++) { moving(); fireStall(); await new Promise((res) => setTimeout(res, 50)) }
     ok('★续命用满 → 照旧判挂死(调大 STALL_MS 只是把误杀推后,有上限才两头都对)',
       nodeNow().reason === 'stalled' || num(nodeNow().attempt) > 1,
       { reason: nodeNow().reason, attempt: nodeNow().attempt, state: nodeNow().state })
