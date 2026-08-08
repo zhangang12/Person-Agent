@@ -7,6 +7,7 @@
 import { computed, ref } from 'vue'
 import { s, runApprove, runReject, runNote, runAbort, runResume, runRetryNode, shardJump } from './store'
 import type { RunNodeView } from './store'
+import { gateChipText, gateChipTip } from './lib/gatechip'
 
 const note = ref('')
 const showDecisions = ref(false)
@@ -93,7 +94,10 @@ function submitNote() {
         <span v-if="KIND_TEXT[n.kind]" class="rn-kind">{{ KIND_TEXT[n.kind] }}</span>
         <span v-if="n.patches" class="rn-tag patch" :title="'退出检查差一截,已在原卡补做 ' + n.patches + ' 次(没有重开卡)'">补{{ n.patches }}</span>
         <span v-if="n.attempt" class="rn-tag redo" :title="'补不动,整片重做过 ' + n.attempt + ' 次'">重{{ n.attempt }}</span>
-        <span v-if="n.exitReport.length" class="rn-tag bad" :title="n.exitReport.map((x) => x.kind + ':' + x.detail).join('\n')">{{ n.exitReport.map((x) => x.kind).join('/') }}</span>
+        <!-- ★只列【没过】的闸,且过了的不许染红 —— 见 lib/gatechip.ts:
+             原来这里不按 ok 过滤、样式又恒为 bad,于是「artifacts ✗ + noEmpty ✓」被显示成
+             一个红 chip「artifacts/noEmpty」,看上去两道全崩。真机上用户第一反应就是"怎么这么多报错"。 -->
+        <span v-if="gateChipText(n.exitReport)" class="rn-tag bad" :title="gateChipTip(n.exitReport)">{{ gateChipText(n.exitReport) }}</span>
         <!-- 撤掉/失败必须【当场说明白为什么】,不能只塞 tooltip:
              一排灰掉的 ⊘ 看上去跟"坏了没跑"一模一样,而它其实是"你自己让重拆时撤的"(实测用户第一反应是"分片没出来")。 -->
         <span v-if="n.state === 'skipped' && n.droppedReason" class="rn-why">— {{ n.droppedReason }}</span>
