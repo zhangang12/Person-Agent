@@ -1394,6 +1394,27 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     S.sentPrompt.set(sessionId, msg); S.streamBuf.delete(sessionId)   // 存【实际发出的全文】(含注入前缀):回显过滤比对的是 serve 收到的东西 —— 只存原文的话,带前缀的回显漏网,整坨背景提示词会打进对话流
     touchHistory(sessionId)
     let model = si.model || S.settings.modelMain || S.settings.model || null   // 双模型(M1):会话默认走主模型(缺省回全局 model)
+    // ★排障埋点(2026-08-09):真机上编排的核实卡实际跑在 serve 默认模型上,而不是 run 指定的那个
+    //   (勘察卡 139 次 stream 全是 deepseek-v4-flash,核实卡 50 次全是 deepseek-v4-pro,serve 日志实证)。
+    //   读代码读不出这个差别 —— 派发链上每一处看着都把模型传下去了。这一整天所有真答案都来自
+    //   "把真正发出去的东西打出来"(dumpRaw / session.error payload / [oc] send),不是来自读代码。
+    //   ★modelByWc 要区分【未设置】和【显式 null】:card-set-model 选「默认模型」时存的是 null 而不是删 key,
+    //     而 replayModel 判的是 `mw !== undefined` —— null 会盖掉 reg.model。这两个状态必须在日志里分得开,
+    //     否则就是拿着一个分不清的量去猜(我已经为此猜错过一次)。
+    //   只在值得看的时候打:解析成空(那就是 [oc] send 里 "(不指定)" 的来源),或编排节点卡没走 si.model。
+    try {
+      const _reg = S.wfCardByWc && S.wfCardByWc.get(e.sender.id)
+      const msrc = si.model ? 'si.model' : (S.settings.modelMain ? 'settings.modelMain' : (S.settings.model ? 'settings.model' : '(三处全空)'))
+      if (!model || (_reg && _reg.runId && msrc !== 'si.model')) {
+        const mwHas = !!(S.modelByWc && S.modelByWc.has(e.sender.id))
+        log('[model-src] sid=' + String(sessionId).slice(0, 18) + ' 取自=' + msrc
+          + ' 结果=' + (model ? (model.providerID + '/' + model.modelID) : '(空 → 由 serve 挑)')
+          + ' | si.model=' + JSON.stringify(si.model || null)
+          + ' modelByWc=' + (mwHas ? JSON.stringify(S.modelByWc.get(e.sender.id) || null) + '(已设置)' : '(未设置)')
+          + ' reg.model=' + JSON.stringify((_reg && _reg.model) || null)
+          + ' reg.runId=' + ((_reg && _reg.runId) || '-') + ' reg.nodeId=' + ((_reg && _reg.nodeId) || '-'))
+      }
+    } catch { /* 埋点绝不许把主流程搞崩 —— 今天已经因为一句裸 log() 让 plan 110ms 转人工过一次 */ }
     const fileArr = Array.isArray(files) ? files : []
     const hasImage = fileArr.some((f) => f && /^image\//.test(f.mime || ''))
     if (hasImage) {

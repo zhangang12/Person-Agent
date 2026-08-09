@@ -136,7 +136,13 @@ function makeOrch(deps) {
     const n = findNode(run, fx.nodeId); if (!n) return
     const brief = RENDER.composeNodeBrief(run, n) || n.goal
     n.brief = brief
-    const r = spawnWorkflow(brief, modelFor(run), {
+    // ★排障埋点(2026-08-09):派发这一刻我们【打算】用哪个模型 —— 与 session.js 的 [model-src]
+    //   合起来就能定位模型是在"派发→建卡→建会话→发送"这四跳里的哪一跳丢的。
+    //   真机现象:同一个 run 里勘察卡跑 deepseek-v4-flash、核实卡跑 serve 默认的 deepseek-v4-pro,
+    //   而 modelFor(run) 已经恒返回 run.model,产生不出按 kind 的差别 —— 差别在这行之后的某一跳。
+    const _m = modelFor(run)
+    log('[orch] ' + n.id + '(' + n.kind + ') 派发,打算用模型=' + (_m ? (_m.providerID + '/' + _m.modelID) : '(不指定 → 跟全局默认)'))
+    const r = spawnWorkflow(brief, _m, {
       runId: run.id, nodeId: n.id,
       dir: str(run.dir) || undefined,   // ★工作目录跟着这个 run 走:spawnWorkflow 原来无条件读 S.settings.projectDir,
                                         //   两个 run 同时跑就会串台(路径与系统提示词一起串,实测)
