@@ -6,6 +6,32 @@
 const knowledge = require('./knowledge')
 module.exports = function initMail(ctx) {
   const { S, app, path, fs, shell, ipcMain, log, oc, Notification, email, attachments, mailCache, emailSummarySeen, db, initOutbox, openOutbox, createMailCenter, openMailView, spawnCard, spawnWorkflow, startOrchRun, maybeSuggestMeeting, skillList, skillRun, skillRunBatch, skillPageRead, skillPageAct, skillTakeoverDone } = ctx
+  // ── 编排在跑时不许从 relay 开新卡 ──────────────────────────────────────
+  // 【为什么这道闸只能落在这里】真机 2026-08-09:汇总片的子 Agent 一句
+  //   "This merge task is hitting tool JSON parsing limits. Let me delegate it to a sub-agent"
+  // 就调了 MCP 的 run_workflow,凭空开出一张可见工作流卡,然后自己卡在那儿等人点「开始执行」;
+  // 汇总片一直轮询 workflow_result → 落定失败 → 烧掉 attempt → 连锁到整轮崩。
+  // 而 session.js 里那道"工人节点不许自己开新卡"的权限闸【一次都没执行】:
+  //   serve 对子 Agent 的 MCP 调用不问权限,有身份的那一层压根不在调用路径上。
+  // 【为什么不给 MCP 加身份(更干净的方案)】实测排除:一台 serve 只起【一份】orch-mcp 进程
+  //   (ps 实数 = 1),配置是 opencode.jsonc 一份文件、启动时读一次,没有"每张卡一份 MCP 配置";
+  //   而工具参数由模型自己填,也塞不进只有真调用方才知道的凭据。这一层永远不知道调用方是谁。
+  // 【所以退到唯一还有信息的地方】relay 不知道"谁"在调,但壳层知道"此刻有没有编排在跑"。
+  //   编排跑着的时候,要开新工作流的正常路径是【面板】,不是 relay —— 人不受影响,工人被挡住。
+  // 误伤面只有一种:编排跑着时你让主对话去开工作流。回执把正路写清楚,而不是干拒。
+  function orchBusyWhy() {
+    try {
+      const live = (S.orch && typeof S.orch.list === 'function' ? S.orch.list() : [])
+        .filter((r) => r && ['planning', 'awaiting-approval', 'executing', 'awaiting-user'].indexOf(String(r.phase)) >= 0)
+      if (!live.length) return ''
+      const one = live[0]
+      return '当前有编排在跑(' + live.length + ' 个,如 ' + String(one.alias || one.id) + ':'
+        + String(one.goal || '').slice(0, 24) + '…),这条通道已关闭 —— 编排的工人节点不许自己开新卡。'
+        + '要拆活儿请用 task 子 Agent(它有独立上下文、归你自己管);要改计划请让用户在编排面板【插话】。'
+        + '(用户本人要另开工作流:在面板上开,不走这条路。)'
+    } catch { return '' }
+  }
+
   // 解析"有效的" SMTP 配置:sameAsImap=true 时用户名/密码从 IMAP 取(host/port/secure 仍从 SMTP 取)
   function effectiveSmtp(S) {
     const sm = S.settings.smtp || {}
@@ -289,6 +315,8 @@ module.exports = function initMail(ctx) {
           if (req.url === '/orch/run') {
             const goal = String(a.goal || '').trim()
             if (!goal) return reply({ error: '缺少 goal' })
+            const busy = orchBusyWhy()
+            if (busy) return reply({ error: busy })
             // 结构化派发(window.js S.dispatchShard):parentTag 参数优先(校验真实存在+方案已批,机械注入 tag,
             // 模型不再手写 [orch:TAG] 进文本——写错串台的病灶从根拔掉);缺席回退 goal 文本解析(兼容旧调用)。
             // 内含:规划闸(未批拒派)+ 同 tag 去重闸(相同目标在跑/排队拒派回执原因)。
@@ -315,6 +343,8 @@ module.exports = function initMail(ctx) {
             const ptm = goal.match(/[\[【]\s*orch\s*[:：]\s*([A-Za-z0-9-]+)\s*[\]】]/)
             if (ptm && S.orchByTag && S.orchByTag.has(ptm[1]))
               return reply({ error: '不许在编排里再开一层编排 —— 活儿太大的正确做法:① 让用户在编排面板【插话】要求把这块拆得更细;② 或在本节点内部用 task 子 Agent 再细分。层级只到"编排 → 工人节点 → task 子 Agent"。' })
+            const busy2 = orchBusyWhy()
+            if (busy2) return reply({ error: busy2 })
             try { const r = startOrchRun(goal); if (r && r.error) return reply({ error: r.error }); return reply({ ok: true, id: r && r.cardId, runId: r && r.id }) }
             catch (e) { return reply({ error: e.message }) }
           }

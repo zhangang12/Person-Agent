@@ -109,6 +109,7 @@ function makeOrch(deps) {
       case 'persist': return journal.save(run)
       case 'ui': return pushUi(run)
       case 'notify': return doNotify(run, fx)
+      case 'keepArtifacts': return doKeepArtifacts(run, fx)
       case 'archive': return doArchive(run)
       default: return undefined
     }
@@ -420,6 +421,36 @@ function makeOrch(deps) {
     log('[orch:' + str(fx.level) + '] ' + str(fx.text))
     const wc = panelWc(run)
     if (wc) { try { wc.send('card-note', { text: str(fx.text), tone: 'muted' }) } catch { /* 面板没了就只留日志 */ } }
+  }
+
+  // ── 重做之前留一份上一版产出 ────────────────────────────────────────────
+  // 【为什么必须有】重做是"新开卡从零重写",它默认假设新的不会比旧的差。真机 2026-08-09 打碎了这个假设:
+  // docs/仓库收货逻辑.md 141817 字节(引用 13/13 上游、weight 过得宽裕)→ 重做覆盖成 29907 字节
+  // → 反栽 thin-summary → 永久失败。那 138KB 最后是从 serve 快照仓里按精确字节数捞 blob 才找回来的,
+  // 项目 git 里从没提交过它 —— 也就是说系统里【没有任何东西】保护上一版。
+  // 【只备份,不自动回退】"哪版更好"需要判断,而尺寸大不等于更好(可能是把上游原文整段贴了进去)。
+  // 代码只负责【不丢】+ 把两版字节数摆出来;判断留给人和模型。
+  // 落点用草稿目录(docs/_orch/<run>/<node>/before-redo-N/):归档片会把整个 _orch 收进 _raw/,
+  // 所以它既不碍眼、也不会被当成交付。
+  function doKeepArtifacts(run, fx) {
+    const dir = str(run.dir); if (!dir) return
+    const runTag = str(run.id).replace(/[^\w-]/g, '') || 'run'
+    const base = path.join(dir, 'docs', '_orch', runTag, str(fx.nodeId), 'before-redo-' + num(fx.attempt, 1))
+    let kept = 0, bytes = 0, first = ''
+    for (const f of arr(fx.files).slice(0, 20)) {
+      try {
+        const src = path.isAbsolute(str(f)) ? str(f) : path.join(dir, str(f))
+        const st = fs.statSync(src); if (!st.isFile()) continue
+        fs.mkdirSync(base, { recursive: true })
+        const dst = path.join(base, path.basename(src))
+        fs.copyFileSync(src, dst)
+        kept += 1; bytes += st.size; if (!first) first = dst
+      } catch { /* 单个文件拷不动不该拦住重做 */ }
+    }
+    if (!kept) return
+    log('[orch] ' + str(fx.nodeId) + ' 重做前留存 ' + kept + ' 个产出(' + bytes + ' 字节)→ ' + base)
+    doNotify(run, { level: 'info', text: '「' + str(fx.nodeId) + '」重做前已把上一版产出留一份(' + kept + ' 个文件 / '
+      + bytes + ' 字节)在 ' + path.relative(dir, base) + ' —— 新版本要是反而更差,旧的还在,别再从快照里捞' })
   }
 
   // 存档:复用现有 wfArchive(卡坞/历史面板都读它)。它有 `if (!reg.final) return` 早退,所以必须先写 final

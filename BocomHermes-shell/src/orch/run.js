@@ -1150,6 +1150,17 @@ function onExitResult(t) {
     return
   }
   if (noPenalty || n.attempt < n.maxAttempts) {
+    // ★★【重做之前先把上一版产出留一份】(真机 2026-08-09,差一点永久丢失)
+    // 重做 = 新开卡从零重写,它默认假设"新的不会比旧的差"。真机把这个假设打得很惨:
+    //   docs/仓库收货逻辑.md  141817 字节(引用 13/13 上游、weight 过得很宽裕)
+    //   → 重做覆盖成 29907 字节 → 反栽 thin-summary → 永久失败。
+    // 那份 138KB 最后是从 serve 的快照仓里【按精确字节数捞 blob】才找回来的 ——
+    // 项目 git 里从没提交过它。也就是说:系统里【没有任何东西】保护上一版。
+    // 【为什么只备份、不自动回退】"哪一版更好"需要判断,而今天的教训就是别在这种地方加聪明:
+    //   尺寸大不等于更好(可能是它把上游原文整段贴进去了)。所以代码只负责【不丢】,
+    //   把两版都摆出来、把字节数说清楚,该由谁判就由谁判。
+    const keep = arr(n.result && n.result.files).map(str).filter(Boolean)
+    if (keep.length) t.eff.push({ type: 'keepArtifacts', nodeId: n.id, attempt: num(n.attempt) + (noPenalty ? 0 : 1), files: keep, why: str(detail).slice(0, 120) })
     if (!noPenalty) n.attempt += 1
     // rejected → pending 在同一个事件里走完(rejected 是过渡态,不留在盘上)
     n.state = 'pending'

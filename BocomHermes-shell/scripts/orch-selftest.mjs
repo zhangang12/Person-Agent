@@ -1322,6 +1322,7 @@ section('用例7c:★软闸不许升级成重做 —— 一道"桌面要整洁"�
     goal: '分析仓库收货的所有逻辑', phase: 'executing',
     nodes: [mkNode({ id: 'n9', kind: 'reduce', title: '汇总蒸馏收货全景', state: 'settled', patches, maxPatches: 2,
       attempt: 0, maxAttempts: 2, cardId: '7', wcId: 7,
+      result: { final: '上一版写完了', files: ['/p/docs/仓库收货逻辑.md'], rounds: 1, exitReport: [], findings: [] },
       exit: { artifacts: ['docs/仓库收货逻辑.md'], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true } })],
     pendingDecision: null,
   })
@@ -1354,6 +1355,26 @@ section('用例7c:★软闸不许升级成重做 —— 一道"桌面要整洁"�
   ok('  照旧关卡省 token(与正常通过同口径)', of(b.effects, 'cancelNode').some((e) => e.nodeId === 'n9'))
   ok('  照旧问一次 replan(少这一步就是"过了但图不动")',
     of(b.effects, 'decide').some((e) => e.point === 'replan'), of(b.effects, 'decide').map((e) => e.point + ':' + e.event))
+
+  // ④★重做之前必须先把上一版产出留一份(2026-08-09:141817 字节被重做覆盖成 29907,
+  //   最后是从 serve 快照仓按精确字节数捞 blob 才找回来的 —— 系统里原本没有任何东西保护上一版)
+  const r0 = mk(2)
+  const d = step(r0, { type: 'EXIT_RESULT', nodeId: 'n9', pass: false, final: '写完了', files: ['/p/docs/仓库收货逻辑.md'],
+    report: [{ kind: 'weight', ok: false, detail: '汇总 29KB(下限 77KB)' }] }, '7c')
+  const kp = of(d.effects, 'keepArtifacts')
+  ok('★★重做前发出"留存上一版产出"的效果(修前:直接覆盖,好版本永久丢失)',
+    kp.length === 1 && kp[0].nodeId === 'n9' && arr0(kp[0].files).includes('/p/docs/仓库收货逻辑.md'), kp)
+  ok('  带上是第几次重做(两版要能分得开,不能互相覆盖)', num0(kp[0] && kp[0].attempt) >= 1, kp[0] && kp[0].attempt)
+  ok('  留存排在重做【之前】(顺序反了就等于没留)',
+    d.effects.findIndex((e) => e.type === 'keepArtifacts') < d.effects.findIndex((e) => e.type === 'dispatch' || e.type === 'persist'),
+    d.effects.map((e) => e.type).join(','))
+  ok('  没有产出文件时不发这个效果(不造空目录)', (() => {
+    const r = mk(2)
+    r.nodes[0].result.files = []            // 这一片什么都没产出
+    const o = step(r, { type: 'EXIT_RESULT', nodeId: 'n9', pass: false, final: '啥也没写',
+      report: [{ kind: 'weight', ok: false, detail: '太薄' }] }, '7c')
+    return of(o.effects, 'keepArtifacts').length === 0
+  })())
 
   // ③ 硬闸混在一起时不许被软闸带过去:weight 不过就是交付不合格,该重做
   const r1 = mk(2)
