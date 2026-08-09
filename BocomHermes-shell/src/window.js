@@ -216,6 +216,11 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (sid) query.sid = sid
     if (msg) query.msg = msg
     if (disp) query.disp = disp
+    // ★验证片身份要下到渲染端:绕圈看门狗按"又在读同一批文件"判死,而【核实/验收就是以重读为职责】——
+    // 它必须能豁免自己。真机 2026-08-09:验收片读完汇总文档,再回到文档引用的出处逐条核对
+    // (brief 原文:"回到它给的出处…实际核一遍"),看门狗数够次数就把它当绕圈掐了,判决因此永远发不出来。
+    // 走 query 而不是另开 IPC:与 shard=1 同一条既有通路,渲染端一处读取,不新增状态同步面。
+    if (opts && opts.verify) query.verify = '1'
     if (opts && opts.shard) {
       query.shard = '1'   // 分片卡(多层派发):渲染端据此自动过规划闸(拆分方案用户在主控卡已批,分片不再二次等人)
       S.shardWc = S.shardWc || new Set(); S.shardWc.add(wcId)   // 无人值守权限自动放行(session.js onPermission);关卡清理
@@ -487,7 +492,8 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const id = spawnCard('工作流 · ' + disp.slice(0, 20), null, workflowSystemPrompt(dir, bdir) + '\n\n【总目标】\n' + g, disp,
       // forceModel 两条分支都要传:队列项一直存着它(wfDequeue 出队时原样透传),但独立工作流分支从来没接过 ——
       // 也就是说"forceModel 随队列走"这个契约在独立工作流上一直是空的(旧代码只在分片分支给 model)
-      isRunNode ? { wf: true, shard: true, hidden: true, model: forceModel } : { flash: true, wf: true, model: forceModel })
+      // verify 一路带到 spawnCard:渲染端的绕圈看门狗要靠它豁免自己(核实/验收以重读文件为职责)
+      isRunNode ? { wf: true, shard: true, hidden: true, model: forceModel, verify: !!(wo && wo.isVerify) } : { flash: true, wf: true, model: forceModel })
     // 卡级目录登记:session.js 建会话时按 S.cardDir.get(wcId) 取 dir,不登记就又回到 S.settings.projectDir ——
     // 上面那行只解决了"系统提示词里写的路径",这行才解决"它实际在哪个目录里干活"。两处都要,少一处仍然串。
     if (dir) { try { const wcid = S.cardWcById && S.cardWcById.get(String(id)); if (wcid != null) { S.cardDir = S.cardDir || new Map(); S.cardDir.set(wcid, dir) } } catch {} }

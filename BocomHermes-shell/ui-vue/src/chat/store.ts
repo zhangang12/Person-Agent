@@ -33,6 +33,7 @@ import {
 import type { TodoModel, ToolState } from './lib/tool'
 import { ctxFallbackFor, ctxCap, ctxPctVal } from './lib/ctxchip'
 import { isHighRisk, quizCanSend, quizSummary } from './lib/perm'
+import { wdSkip } from './lib/watchdog'   // 绕圈看门狗的豁免判据(验证片以重读文件为职责)
 import type { PermDecision, QuizQuestion } from './lib/perm'
 
 // ── Feed 条目模型 ─────────────────────────────────────────────────────────
@@ -210,6 +211,8 @@ export const s = reactive({
   wfMode: false,
   orchMode: false,
   shardMode: false,
+  /** 验证片(编排的 verify/check 节点):以【重读同一批文件】为职责 —— 绕圈看门狗必须放它过(见 wdEscalate) */
+  verifyMode: false,
   /** 规划闸:true=方案已批(wf-plan-approved 已报主进程);planAsk=待批提示条可见;planAutoLeft=倒计时秒(0=无) */
   planApproved: false,
   planAsk: false,
@@ -968,7 +971,7 @@ export async function turn(text: string, files?: any[] | null): Promise<boolean>
 /** 中断本轮(Esc / 发送钮变停止钮) */
 export function abort(): void {
   s.aborting = true   // 状态行:「正在停止…(等引擎收尾)」
-  try { BH()?.cardAbort?.() } catch { /* 静默 */ }
+  try { BH()?.cardAbort?.('user:手动停止') } catch { /* 静默 */ }
 }
 
 /** 重试本轮(同一条消息原样重发) */
@@ -1279,7 +1282,17 @@ function wdFinalizeRound(): void {
   wdCurFiles = new Set()
 }
 function wdCheck(): void {
-  if (!s.wfMode) return
+  // ★★核实/验收片整类豁免(真机 2026-08-09,查了很久)。
+  // 本看门狗的判据是"又在读同一批文件" —— 而验证片【以重读同一批文件为职责】:
+  // 验收片的指令原文就是"逐字读完汇总文档 … 挑 3 条最关键的结论,回到它给的出处实际核一遍",
+  // 核第 1/2/3 条时必然反复读同一批源文件。于是这只狗恰好咬住了唯一一个不该咬的节点:
+  //   现场 —— 验收片跑到第 9 步、刚说完"现在我有完整的证据链",被判绕圈自动中止;
+  //   而它的判决(report_verdict)是最后一步,于是 verdict 闸永远不过 → 整片重做 → 再被咬一次。
+  // 【为什么整段豁免而不只豁免自动中止】一级提醒的话术是"请立即停止重复读取",
+  // 对验证片是【错的指导】—— 照做就等于不核实了。给错指令比不给更坏。
+  // 【为什么不改成更聪明的判据】"重读是为了核对"和"重读是因为卡住"在文件集合上无法区分,
+  // 只能靠身份区分:节点 kind 是代码定的,不是模型说的,这是可靠的信号(判断归代码那一侧)。
+  if (wdSkip(s)) return
   // busy/compacting/交棒闸:轮末链上另外三个注入点(maybeDelegateNudge/maybeContinueNudge/maybeWfProduceNag)首行都有这道闸,
   // 只有这里漏了 —— 而本函数在链首,是四个里唯一能在【压缩摘要轮】收尾时开跑的。doCompact() 内部靠 turn() 发摘要,
   // 那一轮的 finally 照样走整条链:三个兄弟按 compacting 躲开,它不躲,于是往摘要轮里套嵌套回合(兄弟注释原话:实测死循环)。
@@ -1313,7 +1326,7 @@ function wdCheck(): void {
     if (++wdEscLoops >= M) {
       if (s.shardMode) {   // 分片无人值守:横幅没人点,"判死权给人"=永远不死 → 自动中止本轮
         addNote('看门狗：绕圈提醒后仍未纠偏，分片无人值守 → 自动中止本轮（壳层按 aborted 判 interrupted 收官）')
-        try { BH()?.cardAbort?.() } catch { /* 静默 */ }
+        try { BH()?.cardAbort?.('watchdog:绕圈(连续重读同一批文件且无进展)') } catch { /* 静默 */ }
         wdWarned = false; wdEscLoops = 0; wdWarnSet = null
       } else {
         s.wdBanner = true   // 第二级:醒目横幅+【中止本轮/知道了】(判死权给人;ChatApp 渲染)
@@ -1707,6 +1720,7 @@ async function bootSession(retry: boolean): Promise<void> {
   s.wfMode = p.get('wf') === '1' || p.get('wf') === 'true'
   s.orchMode = !!p.get('orch')
   s.shardMode = p.get('shard') === '1'
+  s.verifyMode = p.get('verify') === '1'   // 编排的核实/验收片:绕圈看门狗豁免(重读文件正是它的活)
   s.runId = p.get('run') || ''
   try { purgeStaleDrafts(localStorage) } catch { /* 静默 */ }
 

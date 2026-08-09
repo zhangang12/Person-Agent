@@ -109,7 +109,9 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   subStatus: (ids) => ipcRenderer.invoke('sub-status', ids),
   compactLogAppend: (p) => ipcRenderer.invoke('compact-log-append', p),
   compactLogLast: (sid) => ipcRenderer.invoke('compact-log-last', sid),   // 本卡会话真实 token 用量(serve 实测;无数据返回 null,前端回落字符估算)
-  cardAbort: () => ipcRenderer.send('card-abort'),
+  // reason:谁掐的这一轮(user / watchdog:绕圈 / …)。★必须带 —— 见 session.js 的 card-abort 处理器:
+  // 一个能悄悄杀掉回合的机制不留痕,排障时只能靠排除法猜(2026-08-09 为此查了很久)
+  cardAbort: (reason) => ipcRenderer.send('card-abort', reason),
   onStream: (cb) => ipcRenderer.on('card-stream', (_e, p) => cb(p)),
   onServeHealth: (cb) => ipcRenderer.on('serve-health', (_e, p) => cb(p)),
   onServeProbe: (cb) => ipcRenderer.on('serve-probe', (_e, p) => cb(p)),

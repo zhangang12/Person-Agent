@@ -1682,8 +1682,17 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     return { ok: true, agent: n || null }
   })
 
-  ipcMain.on('card-abort', (e) => {
+  ipcMain.on('card-abort', (e, reason) => {
     const sessionId = S.sessionByWc.get(e.sender.id); const si = sessionId && S.sessionInfo.get(sessionId)
+    // ★★留痕(2026-08-09,查了很久才定位):这条 IPC 能把一个正在干活的回合当场掐掉,而它原来【一个字都不记】。
+    // 现场:编排的验收片跑到第 9 步被中止,serve 侧只留一条 message=cancel + MessageAbortedError,
+    // 壳层日志里什么都没有 —— 我把壳层所有 abort 路径(ctx-hang / editloop / ctx-gate / 压缩 / stop-all)
+    // 逐个查完全是 0,因为真凶在【渲染端】的绕圈看门狗,它只发这条不打日志的 IPC。
+    // 排除法猜出来的东西不算证据。任何能杀活的路径都必须自报姓名。
+    const _reg = S.wfCardByWc && S.wfCardByWc.get(e.sender.id)
+    log('[card-abort] 中止本轮 sid=' + String(sessionId || '(无会话)').slice(0, 18)
+      + ' 原因=' + (String(reason || '').trim() || '(未标注 —— 调用方应传 reason)')
+      + (_reg ? (' | 卡=' + (_reg.runId ? ('编排 ' + _reg.runId + '/' + (_reg.nodeId || '?')) : 'wf') + (_reg.isVerify ? '(验证片)' : '')) : ''))
     if (si) oc.abort(si.serve, sessionId)
   })
 
