@@ -588,6 +588,11 @@ function makeOrch(deps) {
         goal: str(goal), dir, backendDir: (S.settings && S.settings.backendDir) || '',
         model: o.model || null, alias,
         concurrency: (S.settings && S.settings.knobs && S.settings.knobs.wfConcurrency) || 4,
+        // ★节点预算要从旋钮进来(真机 2026-08-09:它原来只有 run.js 里一个硬编码 24,
+        //   没有任何调用方传过它 —— 于是"把 maxNodes 调大"这句建议根本没有落点,用户两轮都撞在同一个数上)。
+        //   与并发是【两个不同的旋钮】:并发 = 同时跑几张卡;节点预算 = 这一轮总共能造几个节点。
+        //   面板状态栏显示的那个 x/40 是并发,不是这个 —— 两者曾被误读成同一个数。
+        budget: { maxNodes: (S.settings && S.settings.knobs && S.settings.knobs.orchMaxNodes) || 0 },
       }, { at: Date.now(), mkId })
       // 面板卡:msg 传 null —— 它有会话但【永不发消息】(编排不是"跟一个 Agent 聊天")
       const cardId = spawnCard('编排 · ' + str(goal).slice(0, 20), null, null, str(goal),

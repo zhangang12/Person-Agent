@@ -1306,6 +1306,38 @@ section('用例6s:★发现走工具上报 —— 格式约定的静默失败换
   }
 })
 
+section('用例7d:★节点预算没有任何入口能改,而它是两轮失败的共同终点(2026-08-09 真机)', () => {
+  need(RUN, 'src/orch/run.js')
+  // 现场:用户看着状态栏「编排 0/40」说"我本来就是 40"—— 那个 40 是【并发上限】(env.d.ts:44
+  // 写着"编排并发真值:{running,max}"),而真正卡死两轮的是另一个数:maxNodes。
+  // 查下来 maxNodes 全仓只有 run.js 一处 posInt(b.maxNodes, 24) 硬编码,
+  // 【没有设置项、没有面板旋钮、没有任何调用方传过它】—— 于是我两次建议"把 maxNodes 调到 40"
+  // 都是办不到的话。而截断警告只说"超出预算已截断",不说预算是多少、更不说去哪儿改。
+  // 一次真实编排:6~8 片 work × 每片 2~4 条发现各派核实 + 汇总 + 验收 + 归档,轻松过 30 → 24 必然撞。
+  const r1 = RUN.createRun({ goal: '分析仓库的所有逻辑', dir: '/p' }, { at: T0, mkId })
+  ok('★缺省节点预算 40(原来 24 —— 实测两轮分别用到 25 与 25+,每次都撞)', r1.budget.maxNodes === 40, r1.budget.maxNodes)
+  ok('  决策次数跟着抬(硬约束 maxDecides ≥ 2×maxNodes,给少了等于把反死板掐死)',
+    r1.budget.maxDecides >= 80, r1.budget.maxDecides)
+
+  const r2 = RUN.createRun({ goal: '分析仓库的所有逻辑', dir: '/p', budget: { maxNodes: 12 } }, { at: T0, mkId })
+  ok('★调用方传得进来(旋钮 orchMaxNodes → index.js → 这里),不再是死数', r2.budget.maxNodes === 12, r2.budget.maxNodes)
+  const r3 = RUN.createRun({ goal: '分析', dir: '/p', budget: { maxNodes: 0 } }, { at: T0, mkId })
+  ok('  传 0/脏值回缺省(旋钮没配也不许把预算清零)', r3.budget.maxNodes === 40, r3.budget.maxNodes)
+
+  // 截断话术要说清:预算多少、用了多少、去哪儿改、以及"这不是并发"
+  const base = mkRun({ goal: '分析仓库的所有逻辑', phase: 'executing',
+    nodes: [mkNode({ id: 'n1', kind: 'work', state: 'verified' })],
+    budget: { maxNodes: 1, spawned: 1, maxDecides: 48, spentDecides: 0, maxWallMs: 6 * 3600e3, startedAt: T0, invalidStreak: 0, resumeCredit: 1 },
+    pendingDecision: { id: 'd1', point: 'replan', event: 'frontier', nodeId: '', at: T0 } })
+  const o = step(base, decided(base, { data: { addNodes: [
+    { kind: 'work', title: '再来一片', goal: '干', deps: [], writeScope: ['src/z'], contract: [] },
+  ], dropNodes: [], done: false, facts: [], open: [], why: '加片' } }), '7d')
+  const warn = of(o.effects, 'notify').map((e) => String(e.text)).join(' | ')
+  ok('★截断警告说清预算是多少、用了多少(原来只说"超出预算已截断")', /节点预算 1 已用 1/.test(warn), warn.slice(0, 160))
+  ok('★说清去哪儿改(说不出落点的建议等于没有建议)', /orchMaxNodes/.test(warn) && /设置/.test(warn), warn.slice(0, 200))
+  ok('★点明它不是并发上限(用户就是把状态栏那个 40 当成了这个数)', /不是.*并发/.test(warn), warn.slice(0, 200))
+})
+
 section('用例7c:★软闸不许升级成重做 —— 一道"桌面要整洁"的闸毁了 138KB 交付(2026-08-09 真机)', () => {
   need(RUN, 'src/orch/run.js')
   // 现场(数字都是真机原值):汇总片交出 docs/仓库收货逻辑.md 141817 字节,

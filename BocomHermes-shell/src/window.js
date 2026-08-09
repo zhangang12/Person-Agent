@@ -50,6 +50,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     todoNudgeRounds: 3,           // todo 停滞提醒轮数
     knowledgeChurnMax: 300,       // 知识 C4 churn 阈值(行)
     wfConcurrency: 8,             // 工作流并发上限(超限排队)。撞 429 会自动对半降档、每 2 分钟恢复一档(见 S.noteRateLimit)
+    orchMaxNodes: 40,             // ★编排的【节点预算】:一次编排总共能造几个节点。与 wfConcurrency 是两个不同的旋钮
+                                  //   (并发=同时跑几张卡;这个=总量)。原来只有 run.js 一处硬编码 24、没有任何入口能改,
+                                  //   而真实编排(6~8 片 work × 每片几条发现各派核实 + 汇总 + 验收 + 归档)轻松过 30 —— 必然撞。
     taskPromptMax: 20000,         // 委派指令(task/delegate_task)硬上限(字符,128k 口径):只拦"贴原文"级病态指令,精确拦停该子会话
     ctxLimitMax: 192000,          // 水位上限硬顶(MiniMax M2.5 实测 192k):生效上限=min(serve 上报 limit.context, 此值) —— serve 报 192k 就用满 192k,报更大(公网 256k/1M)按此收口,防阈值线算到真实上限之外
     promptAsync: 0,               // prompt_async 发送通道（1=开）：POST 不再挂起等回合，R4 类在飞断开问题免疫；内网 fork 无该端点自动回落

@@ -87,7 +87,13 @@ function createRun(spec, ctx) {
   const cx = ctx || {}
   const at = num(cx.at)
   const b = s.budget || {}
-  const maxNodes = posInt(b.maxNodes, 24)
+  // ★默认 24 → 40(真机 2026-08-09,两轮都撞在这个数上)。
+  // 一次真实编排要的节点数:6~8 片 work × 每片 2~4 条发现各派一个核实 + 汇总 + 验收 + 收尾归档,
+  // 轻松过 30 —— 24 是【必然】撞的。实测两轮分别用到 25 与 25+,撞上之后连验收和归档都补不进来。
+  // 更要紧的是:这个数原来【只有这一处硬编码,没有任何设置项、面板旋钮或调用方传参】,
+  // 而截断警告只说"超出预算已截断"、不说预算是多少、更不说去哪儿改 —— 用户压根没有地方能调。
+  // 现在它跟 wfConcurrency 一样是个可见旋钮(orchMaxNodes),这里的 40 只是缺省。
+  const maxNodes = posInt(b.maxNodes, 40)
   // ★硬约束 maxDecides >= 2*maxNodes:每个节点收官都要 replan,给少了等于把"反死板"掐死
   const maxDecides = Math.max(posInt(b.maxDecides, 48), 2 * maxNodes)
   return {
@@ -342,7 +348,7 @@ function onPlanDecided(t, dec, data) {
     return
   }
   addNodes(t, made, 'plan', 1)
-  if (v && v.truncated) t.eff.push({ type: 'notify', level: 'warn', text: '节点数超出预算,已截断到 ' + r.budget.maxNodes + ' 个' })
+  if (v && v.truncated) t.eff.push({ type: 'notify', level: 'warn', text: '节点数超出预算,已截断到 ' + r.budget.maxNodes + ' 个 —— 这是【节点预算】(设置 → 旋钮 → 编排节点预算 orchMaxNodes,当前 ' + r.budget.maxNodes + '),不是并发上限' })
   if (v && arr(v.errors).length) t.eff.push({ type: 'notify', level: 'warn', text: '部分节点被校验丢弃:' + arr(v.errors).slice(0, 3).join(';') })
   // ★拆窄了就重问一次(只一次)。判据看的是【能并行的片数】而不是总片数 —— 串成一条链的 5 个节点,
   //   并发位照样空着。重问不消耗 attempt,只花一次 decide 预算;第二次还是窄就认了,不跟模型死磕。
@@ -493,7 +499,7 @@ function mergeGraph(t, data) {
       //   补宽(shapeWiden)必须先跑完,汇总才能把补出来的视角片一并纳入 deps;
       //   顺序反了的话汇总的 deps 里没有它们,那几片写的文档就【没人读】,等于白跑。
     }
-    if (v && v.truncated) t.eff.push({ type: 'notify', level: 'warn', text: '新增节点超出预算,已截断(' + specs.length + ' 片 → 只放得下 ' + budgetRoom(r) + ' 片)' })
+    if (v && v.truncated) t.eff.push({ type: 'notify', level: 'warn', text: '新增节点超出预算,已截断(' + specs.length + ' 片 → 只放得下 ' + budgetRoom(r) + ' 片);节点预算 ' + r.budget.maxNodes + ' 已用 ' + r.budget.spawned + ' —— 要加请改设置 → 旋钮 → 编排节点预算(orchMaxNodes),它不是面板上那个并发数' })
     if (v && arr(v.errors).length) t.eff.push({ type: 'notify', level: 'warn', text: '部分新增节点被校验丢弃(' + proposed + ' 片里留下 ' + kept + ' 片):' + arr(v.errors).slice(0, 3).join(';') })
     // 代码替模型改了图,就必须说出来 —— 静默改接和静默丢弃一样,都会让面板上的方案与模型的意图不符
     if (v && arr(v.remapped).length) t.eff.push({ type: 'notify', level: 'info', text: '整版重建:' + arr(v.remapped).length + ' 条依赖原本指着已撤掉的旧片,已改接到本批重建的同名片' })
