@@ -118,21 +118,25 @@ function makeOrch(deps) {
   // 而在一次排查里它们往往占一半以上的节点数 —— 全用主模型是纯浪费,内网上还直接翻倍墙钟时间。
   // 【留空即无变化】没配轻活模型的人拿到的还是 run.model,行为与加这个字段之前逐字节相同。
   // 只给 verify/check:probe 要读代码做判断、reduce 要跨片对齐取舍,那两类降档会真的降质量。
-  function modelFor(run, n) {
-    const k = str(n && n.kind)
-    if (k === 'verify' || k === 'check') {
-      const light = S.settings && S.settings.modelLight
-      if (light && light.modelID) return light
-    }
-    return run.model || null
-  }
+  // ★★【一件事情,一个模型干】—— 2026-08-08 用户拍板,取消模型分档。
+  // 原来这里给 verify/check 换成 S.settings.modelLight(提交 28572fc「轻活模型分档」),
+  // 出发点是省钱:核实片"一两个回合就完",却常占一半以上的节点数。
+  // 【为什么推翻】两条,后一条是真机付出代价才看清的:
+  //   ① 上下文连续性:同一件事被两个模型分着干,后半段读前半段的产出,口径/结论粒度都对不齐。
+  //   ② 替身死了没人知道(真机 2026-08-08):modelLight = opencode/mimo-v2.5-free 被上游限流,
+  //      16 片核实全军覆没,而面板 chip 上写的一直是用户选的 DeepSeek V4 Flash——
+  //      那个模型 26 条请求一次没失败。用户看到的是"闸门大面积爆红",真相是
+  //      【一个他从没选过的模型】在替他干活并且死了。省钱的代价是把故障藏进了一个不可见的维度。
+  // 现在:整个 run 从头到尾一个模型,run.model 为 null 就跟全局默认走(也仍然是同一个)。
+  // ★不要再按 kind 分档 —— 要省钱请换整个 run 的模型,别让一次编排里出现两个模型。
+  function modelFor(run) { return run.model || null }
 
   // 派发一个节点 = 开一张工人卡(完全复用现有 spawnWorkflow:隐藏卡 / 写归属沙箱 / 权限自动放行 / 镜像回流全不动)
   function doDispatch(run, fx) {
     const n = findNode(run, fx.nodeId); if (!n) return
     const brief = RENDER.composeNodeBrief(run, n) || n.goal
     n.brief = brief
-    const r = spawnWorkflow(brief, modelFor(run, n), {
+    const r = spawnWorkflow(brief, modelFor(run), {
       runId: run.id, nodeId: n.id,
       dir: str(run.dir) || undefined,   // ★工作目录跟着这个 run 走:spawnWorkflow 原来无条件读 S.settings.projectDir,
                                         //   两个 run 同时跑就会串台(路径与系统提示词一起串,实测)
