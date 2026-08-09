@@ -1405,7 +1405,12 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     try {
       const _reg = S.wfCardByWc && S.wfCardByWc.get(e.sender.id)
       const msrc = si.model ? 'si.model' : (S.settings.modelMain ? 'settings.modelMain' : (S.settings.model ? 'settings.model' : '(三处全空)'))
-      if (!model || (_reg && _reg.runId && msrc !== 'si.model')) {
+      // ★★条件放开(2026-08-09 第二次改):原来只在"解析成空 或 编排卡没走 si.model"时打 ——
+      // 而真机现象是核实卡实发 "(不指定)" 却【一条埋点都没有】,于是"模型有值但被拉黑"和
+      // "这条送根本不走 card-send"这两种处境被我的埋点混成一个,分不开(我据此推错了一轮)。
+      // 我一整天在诊断的正是这个毛病:把证据本身挂在一个判据后面,而判据恰好把真相排除掉了。
+      // 编排节点卡数量少(一次几片到几十片),无条件打;普通对话仍只在异常时打,不加噪音。
+      if (!model || (_reg && _reg.runId)) {
         const mwHas = !!(S.modelByWc && S.modelByWc.has(e.sender.id))
         log('[model-src] sid=' + String(sessionId).slice(0, 18) + ' 取自=' + msrc
           + ' 结果=' + (model ? (model.providerID + '/' + model.modelID) : '(空 → 由 serve 挑)')

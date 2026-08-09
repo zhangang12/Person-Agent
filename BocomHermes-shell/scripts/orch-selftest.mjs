@@ -1306,6 +1306,67 @@ section('用例6s:★发现走工具上报 —— 格式约定的静默失败换
   }
 })
 
+section('用例7c:★软闸不许升级成重做 —— 一道"桌面要整洁"的闸毁了 138KB 交付(2026-08-09 真机)', () => {
+  need(RUN, 'src/orch/run.js')
+  // 现场(数字都是真机原值):汇总片交出 docs/仓库收货逻辑.md 141817 字节,
+  //   substance「引用了 13/13 个上游产出」✓、weight「138KB(上游 308KB,下限 77KB)」✓
+  //   —— 两道"够不够格"的闸都过得很宽裕,是这套编排至今最好的一份交付。
+  // 唯一不过的是 single(汇总只许一份文件):它另外散出 4 个 _补做_组X_正文.md,
+  //   而那几个文件恰恰是【补做过程自己为绕开工具长度限制而分组写的中间件】。
+  // 补做用满 2 次 → 升级重做 → 141817 字节被覆盖成 29907 字节 → 反过来栽在 thin-summary →
+  //   attempt 2/2 永久失败 → 依赖它的验收片被撤 → 重规划拆两片分组融合 → 又各自栽同一道闸 →
+  //   额度耗尽转人工。那份 138KB 最后是从 serve 的快照仓里捞回来的。
+  // 【错在力度不在有无】散文件本来就有专人收(收尾归档片)。用重做办归档能办的事 =
+  //   拿最贵的手段解决最便宜的问题。
+  const mk = (patches) => mkRun({
+    goal: '分析仓库收货的所有逻辑', phase: 'executing',
+    nodes: [mkNode({ id: 'n9', kind: 'reduce', title: '汇总蒸馏收货全景', state: 'settled', patches, maxPatches: 2,
+      attempt: 0, maxAttempts: 2, cardId: '7', wcId: 7,
+      exit: { artifacts: ['docs/仓库收货逻辑.md'], requireEvidence: false, requireVerdict: false, verifyCmd: '', noEmpty: true } })],
+    pendingDecision: null,
+  })
+  const settle = (patches) => {
+    const r0 = mk(patches)
+    return step(r0, { type: 'EXIT_RESULT', nodeId: 'n9', pass: false, final: '写完了', files: ['/p/docs/仓库收货逻辑.md'],
+      report: [
+        { kind: 'artifacts', ok: true, detail: 'docs/仓库收货逻辑.md(141817 字节)' },
+        { kind: 'substance', ok: true, detail: '汇总引用了 13/13 个上游产出' },
+        { kind: 'weight', ok: true, detail: '汇总 138KB(上游 308KB,下限 77KB)' },
+        { kind: 'single', ok: false, detail: '汇总另外散出了 4 个文件:_补做_组C_n12-n17正文.md 等' },
+      ] }, '7c')
+  }
+  const n9 = (o) => o.run.nodes.find((x) => x.id === 'n9')
+
+  // ① 还有补做额度:照旧补做(让它把多余文件 move 走)—— 软闸不是"不管",是"只用便宜手段"
+  const a = settle(0)
+  ok('软闸不过 + 还有补做额度 → 走补做,不动 attempt', n9(a).patches === 1 && num0(n9(a).attempt) === 0,
+    { patches: n9(a).patches, attempt: n9(a).attempt, state: n9(a).state })
+
+  // ②★补做用满:必须【放行】,绝不重做 —— 这一条就是那 138KB 的命
+  const b = settle(2)
+  ok('★★补做用满的软闸 → 放行,绝不重做(修前:重做把 141817 字节覆盖成 29907)',
+    n9(b).state === 'verified' && num0(n9(b).attempt) === 0,
+    { state: n9(b).state, attempt: n9(b).attempt, reason: n9(b).reason })
+  ok('  放行后落定原因清空(它不是"带病通过",交付本身是合格的)', !n9(b).reason, n9(b).reason)
+  ok('  说清为什么放行 + 散文件交给归档(静默放行会让人以为闸失灵)',
+    of(b.effects, 'notify').some((e) => /桌面没收干净/.test(String(e.text)) && /归档/.test(String(e.text))),
+    of(b.effects, 'notify').map((e) => e.text))
+  ok('  照旧关卡省 token(与正常通过同口径)', of(b.effects, 'cancelNode').some((e) => e.nodeId === 'n9'))
+  ok('  照旧问一次 replan(少这一步就是"过了但图不动")',
+    of(b.effects, 'decide').some((e) => e.point === 'replan'), of(b.effects, 'decide').map((e) => e.point + ':' + e.event))
+
+  // ③ 硬闸混在一起时不许被软闸带过去:weight 不过就是交付不合格,该重做
+  const r1 = mk(2)
+  const c = step(r1, { type: 'EXIT_RESULT', nodeId: 'n9', pass: false, final: '写完了', files: ['/p/docs/x.md'],
+    exitReport: [
+      { kind: 'weight', ok: false, detail: '汇总 29KB(上游 308KB,下限 77KB)' },
+      { kind: 'single', ok: false, detail: '另外散出 4 个文件' },
+    ] }, '7c')
+  ok('★硬闸(weight)混在里面 → 照旧重做,软闸豁免不许扩散',
+    n9(c).state !== 'verified' && num0(n9(c).attempt) === 1,
+    { state: n9(c).state, attempt: n9(c).attempt, reason: n9(c).reason })
+})
+
 section('用例7b:★模型自己给了汇总 → 验收片就永远不存在(2026-08-08 真机)', () => {
   need(RUN, 'src/orch/run.js')
   // 现场:plan 给了 7 片 work + 1 片 reduce,全图【一个 verify 都没有】,面板一条兜底提示都没打 ——

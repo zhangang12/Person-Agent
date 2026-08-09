@@ -1107,6 +1107,36 @@ function onExitResult(t) {
   // 直接比较就是 undefined < undefined = false —— 补做分支会静默失效,悄悄退回「一律重做」的老行为
   const missing = patchableMissing(n)
   const patches = num(n.patches), maxPatches = posInt(n.maxPatches, 2)
+  // ★★【软闸不许升级成重做】(真机 2026-08-09,代价具体到字节)
+  // 现场:汇总片交出 docs/仓库收货逻辑.md 141817 字节,substance 引用 13/13 个上游、weight 138KB
+  // (下限 77KB)—— 两道"够不够格"的闸都过得很宽裕,是这套编排至今最好的一份交付。
+  // 唯一不过的是 single(汇总只许一份文件):它另外散出 4 个 _补做_组X_正文.md —— 而那几个文件
+  // 恰恰是【补做过程自己为绕开工具长度限制而分组写的中间件】。
+  // 补做用满 2 次后升级重做,重做把 141817 字节覆盖成 29907 字节,反过来栽在 thin-summary,
+  // attempt 2/2 → 永久失败 → 依赖它的验收片被撤 → 重规划拆成两片分组融合 → 又各自栽同一道闸 →
+  // 额度耗尽转人工。一道"桌面要整洁"的闸,连锁毁掉了整轮交付(那份 138KB 是从 serve 快照里捞回来的)。
+  // 【判据错在力度,不在有无】single 说的是"交付合格但桌面乱",而散文件本来就有专人收 ——
+  // 收尾归档片(shapeArchive)就是干这个的。用重做去办归档能办的事,是拿最贵的手段解决最便宜的问题。
+  // 所以:软闸可以用【补做】拦(让它把多余文件 move 走),补不动就【放行】,绝不重做、绝不判失败。
+  const bad = arr(n.result && n.result.exitReport).filter((x) => x && !x.ok).map((x) => str(x.kind))
+  const onlySoft = bad.length > 0 && bad.every((k) => SOFT_GATE.has(k))
+  if (onlySoft && (patches >= maxPatches || !n.cardId || HARD_FAIL.has(n.reason))) {
+    t.eff.push({ type: 'notify', level: 'info', text: '「' + str(n.title || n.id) + '」交付本身合格(' + bad.join('、')
+      + ' 只是桌面没收干净),补做已用满 —— 放行,散出的文件交给收尾归档片收' })
+    // 与 e.pass 那支同口径落定(那支是内联的,这里照抄同样几步,别少任何一步:
+    // cancelNode 关卡省 token、addFacts 让下游读得到、shapeVerifyFindings 按条派核实、
+    // 最后必须问一次 replan —— 少一步就是"过了但图不动/发现没人核"那类静默坑)
+    n.state = 'verified'
+    if (!n.settledAt) n.settledAt = t.at
+    n.reason = ''
+    t.eff.push({ type: 'cancelNode', nodeId: n.id, why: '交付合格(只差桌面整洁,交给归档)' })
+    r.ledger = L.addFacts(r.ledger, factsOf(n), n.id, t.at)
+    r.budget.idleFrontier = 0
+    shapeVerifyFindings(t, n)
+    startDecision(t, 'replan', 'node-settled', n.id)
+    tick(t, false)
+    return
+  }
   if (missing.length && patches < maxPatches && n.cardId && !HARD_FAIL.has(n.reason) && n.kind !== 'verify') {
     // kind==='verify' 不补:验证节点的规程自己写着"验证恒由新分片执行(新眼睛防锚定)"——
     // 让同一根棒把自己的报告补圆,等于让它给自己打分。
@@ -1143,6 +1173,13 @@ function factsOf(n) {
 // ── 补做判据 ────────────────────────────────────────────────────────────
 // 这些 reason 表示"这张卡根本没在干活",没有可续的上下文,只能重开:
 const HARD_FAIL = new Set(['zero-output', 'aborted', 'stalled', 'card-gone', 'lost-on-restart'])
+// ── 软闸:交付【合格】,只是桌面乱 ────────────────────────────────────────
+// 这类闸可以用补做拦(让它把多余文件 move 走),但【绝不许升级成重做或失败】——
+// 散文件本来就有专人收(shapeArchive 的收尾归档片)。用重做去办归档能办的事,
+// 是拿最贵的手段解决最便宜的问题,而 2026-08-09 真机证明代价可以是整轮交付:
+// 一份 141817 字节、引用 13/13 上游、weight 过得很宽裕的汇总,因为多散了 4 个中间件文件
+// 被判 single 不过 → 补做用满 → 重做 → 29907 字节 → 反栽 thin-summary → 永久失败 → 全轮崩。
+const SOFT_GATE = new Set(['single'])
 // 可补的失败项 = 除 noEmpty 外的退出闸(缺产出 / 缺契约签名 / 没跑验证 / 没出 VERDICT / 命令非零)。
 // noEmpty 不过 = 零产出,补无可补。
 function patchableMissing(n) {
