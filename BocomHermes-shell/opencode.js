@@ -642,8 +642,16 @@ async function sendMessage(info, sessionId, text, model, files, onNote, opts = {
     blEnt.notified = true
     if (opts && opts.onModelFallback) { try { opts.onModelFallback('模型 ' + (model.name || model.modelID) + ' 曾被本机 serve 拒绝(4xx 参数校验),本条起改用默认模型发送') } catch {} }
   }
+  // ★★拉黑命中要【无条件】留痕(2026-08-09):上面那句告知走 opts.onModelFallback,调用方不传就静默 ——
+  // 于是"这个模型被拉黑了"这件事在日志里完全不存在,而它会让后续每一条都悄悄不带模型。
+  // 我为此卡了很久:日志里只有一句 "(不指定,由 serve 挑)",而它同时是【模型为空】和【模型被拉黑】
+  // 两种完全不同处境的输出 —— 拿一个分不清的量去查,只能猜。证据通道不许是可选的。
+  if (blEnt) oclog('[oc] 模型被拉黑,本条不带模型指定:' + model.providerID + '/' + model.modelID
+    + '(记于 ' + new Date(num(blEnt.at) || 0).toISOString().slice(11, 19) + ',base=' + info.base + ')')
   const withModel = !!(model && model.providerID && model.modelID) && !blEnt
-  oclog('[oc] send sid=' + String(sessionId).slice(0, 18) + ' 指定模型=' + (withModel ? (model.providerID + '/' + model.modelID) : '(不指定,由 serve 挑)')
+  // ★把"为什么没带模型"写清楚:空 / 被拉黑,是两条完全不同的排查路
+  const noModelWhy = blEnt ? '(不指定:该模型已被拉黑)' : (model ? '(不指定:模型字段不全)' : '(不指定:上游没给模型,由 serve 挑)')
+  oclog('[oc] send sid=' + String(sessionId).slice(0, 18) + ' 指定模型=' + (withModel ? (model.providerID + '/' + model.modelID) : noModelWhy)
     + ' agent=' + ((opts && opts.agent) || '(不带)') + ' parts=' + parts.length + ' 首段=' + String((parts[0] && parts[0].text) || '').length + '字')
   if (withModel) {                                          // 按请求指定模型(各版本字段名兼容,多塞几个,认哪个用哪个)
     body.model = { providerID: model.providerID, modelID: model.modelID }
