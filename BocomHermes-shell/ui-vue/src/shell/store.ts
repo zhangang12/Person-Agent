@@ -43,6 +43,9 @@ interface ChatDetail { wcId: number | null; ready: boolean; pending: string; wv:
 
 export const store = reactive({
   view: 'chat' as ViewName,
+  /** 同屏分栏:对话旁边并排显示内嵌浏览器时,【对话】占的像素宽;0 = 关(浏览器与对话互斥,老行为)。
+   *  存 localStorage,开着的时候切回对话视图不再隐藏浏览器 —— 一边聊一边看它点页面就是这个功能的全部意义。*/
+  splitW: 0,
   visited: [] as ViewName[],          // 已创建过 webview 的视图(保活)
   chats: [] as ChatEntry[],
   activeKey: '',
@@ -84,8 +87,17 @@ function removeEntry(key: string) {
 export function showView(view: string) {
   if (view === 'browser') {
     // 内嵌浏览器:工作台 = shell 主窗口的嵌入式子窗(覆盖内容区),不再独立出窗
+    try { BH()?.browserSplit?.({ chatW: 0, sideW: sideWNow() }) } catch (e) { /* 静默 */ }   // 全屏看浏览器:不给对话留宽
     try { BH()?.browserEmbed?.(true) } catch (e) { /* 静默 */ }
     store.view = 'browser' as ViewName
+    return
+  }
+  // ★分栏开着 + 回到对话视图 → 浏览器【不隐藏】,让出左边那块继续显对话(同屏)。
+  //   其余视图(编排/邮件/设置…)照旧隐藏:那些页面本来就要占满内容区,并排没有意义。
+  if (store.splitW > 0 && view === 'chat') {
+    try { BH()?.browserSplit?.({ chatW: store.splitW, sideW: sideWNow() }) } catch (e) { /* 静默 */ }
+    try { BH()?.browserEmbed?.(true) } catch (e) { /* 静默 */ }
+    store.view = 'chat' as ViewName
     return
   }
   try { BH()?.browserEmbed?.(false) } catch (e) { /* 静默 */ }   // 切走即隐藏(工作台保活,回来原样)
@@ -94,6 +106,40 @@ export function showView(view: string) {
   if (v !== 'chat' && !store.visited.includes(v)) store.visited.push(v)
 }
 export function viewSrc(v: ViewName) { return VIEW_SRC[v] || '' }
+
+// ── 同屏分栏 ────────────────────────────────────────────────────────────────
+// 【为什么值得做】浏览器与对话原来是主窗口里互斥的两个视图:看浏览器就看不见对话。
+// 而"让 Agent 去页面上验一遍"这件事,价值恰恰在于【过程和结论在同一块屏幕上】——
+// 你能看着它点,它的结论就在旁边;分屏切换等于把证据和判断拆开看。
+const SPLIT_KEY = 'bh.splitW'
+export function sideWNow(): number {
+  const n = +(localStorage.getItem('bh.sbw') || 228)
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : 228
+}
+/** 报给主进程:对话占多宽、侧栏真实多宽(主进程原来把侧栏写死 228,拖过就错位)。 */
+export function pushSplit(): void {
+  try { BH()?.browserSplit?.({ chatW: store.splitW, sideW: sideWNow() }) } catch { /* 静默 */ }
+}
+/** 开/关同屏分栏。开:默认对话占内容区一半;关:浏览器隐回去,对话铺满。 */
+export function toggleSplit(on?: boolean): void {
+  const want = on == null ? store.splitW <= 0 : !!on
+  if (want) {
+    const saved = +(localStorage.getItem(SPLIT_KEY) || 0)
+    const half = Math.round((window.innerWidth - sideWNow()) / 2)
+    store.splitW = Math.max(360, saved > 0 ? saved : half)
+  } else {
+    store.splitW = 0
+  }
+  try { localStorage.setItem(SPLIT_KEY, String(store.splitW)) } catch { /* 静默 */ }
+  if (store.splitW > 0) { pushSplit(); try { BH()?.browserEmbed?.(true) } catch { /* 静默 */ } }
+  else { try { BH()?.browserSplit?.({ chatW: 0, sideW: sideWNow() }) } catch { /* 静默 */ } ; try { BH()?.browserEmbed?.(false) } catch { /* 静默 */ } }
+}
+/** 拖分隔条:只改宽度并即时报上去(落定时才写 localStorage,拖动过程不写)。 */
+export function setSplitW(w: number, persist = false): void {
+  store.splitW = Math.max(360, Math.round(w || 0))
+  pushSplit()
+  if (persist) { try { localStorage.setItem(SPLIT_KEY, String(store.splitW)) } catch { /* 静默 */ } }
+}
 
 // 视图 webview 元素引用(ShellApp ref 回调登记,备用)
 export const viewWv: Record<string, any> = {}

@@ -67,6 +67,19 @@ app.whenReady().then(() => {
   S.logFile = logFile = path.join(app.getPath('userData'), 'BocomHermes.log')
   try { logBytes = fs.existsSync(logFile) ? fs.statSync(logFile).size : 0; if (logBytes > 3 * 1024 * 1024) { fs.writeFileSync(logFile, ''); logBytes = 0 } } catch {}
   log('=== BocomHermes ' + app.getVersion() + ' start (' + (app.isPackaged ? 'packaged' : 'dev') + ') userData=' + app.getPath('userData') + ' ===')
+  // ★★"上次是不是正常退出" —— 排"应用自己关了"最关键的一位,而且只能在下一次启动时拿到。
+  // 启动写标记、will-quit 删标记;下次启动标记还在 = 上次被杀/崩了,不是用户点的退出。
+  // 【为什么写在这里而不是模块顶层】logFile 是在本回调里才赋值的(上面第 4 行),
+  //   而模块顶层代码跑在 whenReady 之前 —— 第一版就写在顶层,log() 只进了 console、日志文件里一个字都没有。
+  //   埋点本身没错,放在了它够不到的地方:这正是今天反复修的那个形态,写埋点的人自己也会踩。
+  try {
+    if (fs.existsSync(ALIVE_MARK)) {
+      let prev = ''
+      try { prev = fs.readFileSync(ALIVE_MARK, 'utf8').slice(0, 300) } catch {}
+      log('[crash] ★上次【没有正常退出】(运行标记还在):' + prev + ' —— 崩溃/被杀,不是用户点的退出')
+    }
+    fs.writeFileSync(ALIVE_MARK, '起于 ' + new Date().toISOString() + ' pid=' + process.pid)
+  } catch {}
 
   // ── 内网三件套 ─────────────────────────────────────────────────────────────
   // 1) HTTPS 自签名证书:内网信贷系统常见,直接放行(开发工具 + 内网定位)。
@@ -252,14 +265,6 @@ app.on('before-quit', () => { try { log('[quit] before-quit(isQuitting=' + !!app
 // 做法:启动写一个运行中标记,正常退出(will-quit)删掉。下次启动时标记还在 = 上次是被杀/崩掉的,
 // 不是用户点的退出。没有这一位,日志里"最后一行普通日志 + 下一行是新的启动"和正常退出长得一模一样,
 // 只能靠猜(内网那边我不在场,更只能靠它)。标记里带上时间与内存,好对上系统日志。
+// ★检查/落标记必须在 logFile 赋值【之后】做 —— 见 checkAliveMark 的注释(第一版就栽在这)。
 const ALIVE_MARK = path.join(app.getPath('userData'), '.running')
-try {
-  if (fs.existsSync(ALIVE_MARK)) {
-    let prev = ''
-    try { prev = fs.readFileSync(ALIVE_MARK, 'utf8').slice(0, 300) } catch {}
-    log('[crash] ★上次【没有正常退出】(运行标记还在):' + prev + ' —— 崩溃/被杀,不是用户点的退出')
-  }
-} catch {}
-const markAlive = () => { try { fs.writeFileSync(ALIVE_MARK, '起于 ' + new Date().toISOString() + ' pid=' + process.pid) } catch {} }
-markAlive()
 app.on('will-quit', () => { try { fs.unlinkSync(ALIVE_MARK) } catch {} })   // 正常退出才删 —— 被杀就留着,下次启动自报

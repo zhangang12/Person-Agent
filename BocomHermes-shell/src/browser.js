@@ -41,19 +41,18 @@ module.exports = function initBrowser(ctx) {
   //   一边聊一边看它点页面,验证的过程和结论在同一块屏幕上。
   //   只加一个减数,不动其余布局:标签栏/控制台/设备模拟/拖动分离那些几何全部按 rg 算,自动跟着缩。
   const num = (v, d) => { const n = +v; return Number.isFinite(n) ? n : d }
-  const SPLIT_MIN = 360        // 两边各自的最小可用宽度:再窄对话就没法读了,浏览器也没法看
-  function splitChatW(cw) {
-    const want = Math.round(num(S.browser.chatW, 0))
-    if (want <= 0) return 0
-    const avail = Math.max(0, cw - 228)
-    if (avail < SPLIT_MIN * 2) return 0        // 窗口太窄 → 自动退回互斥(硬挤只会两边都不能用)
-    return Math.min(Math.max(want, SPLIT_MIN), avail - SPLIT_MIN)
-  }
+  // 几何抽在 src/browser-split.js(纯函数,无 Electron 依赖):本文件是 initBrowser(ctx) 工厂,
+  // 要 Electron 才装载得起来,埋在里面的边界条件就没法单测。见 npm run split:test。
+  const { splitChatW: calcChatW, SIDE_DEFAULT } = require('./browser-split')
+  // 侧栏宽度是【可拖的】,而这里原来写死 228 —— 拖过侧栏之后浏览器视图就整体错位(既有 bug,顺带修)。
+  // 渲染端拖完会把真值报上来;没报过就回落 228(老默认)。
+  const sideW = () => Math.round(num(S.browser.sideW, SIDE_DEFAULT))
+  const splitChatW = (cw) => calcChatW(cw, S.browser.chatW, sideW())
   function layoutRegion() {
     if (S.browser.shellHost && S.mainWin && !S.mainWin.isDestroyed()) {
       const [cw, ch] = S.mainWin.getContentSize()
-      const chatW = splitChatW(cw)
-      return { x: 228 + chatW, y: 38, w: Math.max(0, cw - 228 - chatW), h: Math.max(0, ch - 38 - 28) }
+      const sw = sideW(), chatW = splitChatW(cw)
+      return { x: sw + chatW, y: 38, w: Math.max(0, cw - sw - chatW), h: Math.max(0, ch - 38 - 28) }
     }
     const w = S.browser.win
     if (w && !w.isDestroyed()) { const [cw, ch] = w.getContentSize(); return { x: 0, y: 0, w: cw, h: ch } }

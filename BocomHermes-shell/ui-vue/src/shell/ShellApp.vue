@@ -12,7 +12,7 @@ import TitleBar from './TitleBar.vue'
 import SideBar from './SideBar.vue'
 import StatusBar from './StatusBar.vue'
 import QuickInput from './QuickInput.vue'
-import { store, PRELOAD_URL, bindWv, spawnChat, closeChat, wireShell, viewSrc, viewWv } from './store'
+import { store, PRELOAD_URL, bindWv, spawnChat, closeChat, wireShell, viewSrc, viewWv, toggleSplit, setSplitW, pushSplit, sideWNow } from './store'
 
 onMounted(() => { wireShell() })
 
@@ -37,6 +37,26 @@ function sbDragStart(e: MouseEvent) {
   window.addEventListener('mousemove', move); window.addEventListener('mouseup', up)
 }
 
+// ── 同屏分栏:对话在左、内嵌浏览器在右 ──────────────────────────────────────
+// 拖拽实现照抄侧栏那套(spDragging 期间盖透明罩)—— webview 会吃掉经过它的鼠标事件,不罩住就断线。
+const spDragging = ref(false)
+function spDragStart(e: MouseEvent) {
+  const x0 = e.clientX, w0 = store.splitW
+  spDragging.value = true
+  const move = (ev: MouseEvent) => {
+    const max = window.innerWidth - sideWNow() - 360   // 右边至少给浏览器留 360,再窄没法看
+    setSplitW(Math.min(Math.max(360, w0 + ev.clientX - x0), Math.max(360, max)))
+  }
+  const up = () => {
+    window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up)
+    spDragging.value = false
+    setSplitW(store.splitW, true)     // 落定才写 localStorage,拖动过程不写
+  }
+  window.addEventListener('mousemove', move); window.addEventListener('mouseup', up)
+}
+// 窗口大小变了要重报:主进程按内容区现算几何,不重报就会留下一条错位的边
+onMounted(() => { window.addEventListener('resize', () => { if (store.splitW > 0) pushSplit() }) })
+
 function onConfirmClose() {
   const key = store.confirmCloseKey
   store.confirmCloseKey = ''
@@ -59,7 +79,12 @@ function onConfirmClose() {
       <main id="main">
         <!-- 对话视图:每会话一个 webview 保活(切走仅隐藏);右栏 = W1 上下文面板(可收起) -->
         <section class="view" :class="{ on: store.view === 'chat' }">
-          <div class="chatcol">
+          <!-- 同屏分栏:开着时对话只占左边 splitW,右边那块留给内嵌浏览器(原生视图,由主进程贴上来) -->
+          <div class="chatcol" :style="store.splitW > 0 ? { flex: '0 0 ' + store.splitW + 'px', maxWidth: store.splitW + 'px' } : null">
+            <!-- 开关:并排看浏览器。放在 shell 这一层 —— 对话本体是 webview,塞不进去 -->
+            <button class="splitbtn" :class="{ on: store.splitW > 0 }"
+              :title="store.splitW > 0 ? '关掉并排浏览器(对话铺满)' : '在对话旁边打开内嵌浏览器(一边聊一边看它点页面)'"
+              @click="toggleSplit()">{{ store.splitW > 0 ? '⇤ 关闭浏览器' : '⇥ 并排浏览器' }}</button>
             <div v-if="!store.chats.length" id="chatEmpty">
               <div class="eg">
                 试试:「月度结息金额和核心系统对不上,帮我看下 <code>InterestCalc.monthly()</code> 的逻辑」
@@ -82,6 +107,11 @@ function onConfirmClose() {
               :ref="(el: any) => bindWv(c.key, el)"
             ></webview>
           </div>
+          <!-- 分隔条:拖它调对话/浏览器的比例(拖动期透明罩见下,防 webview 吃事件) -->
+          <div v-if="store.splitW > 0" class="spResizer" :class="{ on: spDragging }"
+            :style="{ left: (sbw + store.splitW - 3) + 'px' }" title="拖拽调整对话与浏览器的比例"
+            @mousedown.prevent="spDragStart"></div>
+          <div v-if="spDragging" id="sbDragMask"></div>
         </section>
 
         <!-- 编排 / 动态工作流 / 邮件 / 设置 / 知识库 / 技能中心视图:webview 懒创建且保活 -->
@@ -136,6 +166,14 @@ body { padding: 0; }
 .view { position: absolute; inset: 0; display: none; flex-direction: column; }
 .view.on { display: flex; }
 .chatcol { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
+/* 同屏分栏 */
+.splitbtn { position: absolute; top: 6px; right: 8px; z-index: 6; height: 24px; padding: 0 10px;
+  border: 1px solid var(--line, #e3e6ee); border-radius: 12px; background: #fff; color: #5b6376;
+  font-size: 12px; cursor: pointer; opacity: .72; }
+.splitbtn:hover { opacity: 1; }
+.splitbtn.on { background: #eef3ff; border-color: #c7d8ff; color: #2f5fd0; opacity: 1; }
+.spResizer { position: absolute; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 7; }
+.spResizer:hover, .spResizer.on { background: rgba(47, 95, 208, .18); }
 .chat-wv { flex: 1; min-height: 0; display: flex; border: none; }
 
 /* 对话空态(设计稿空态契约:可照抄的例句 + 快捷键入口) */

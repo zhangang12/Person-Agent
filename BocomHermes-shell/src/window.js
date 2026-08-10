@@ -2592,11 +2592,14 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   // chatW = 主窗内容区左边留给【对话】的像素宽;0 = 老行为(浏览器铺满内容区,与对话互斥)。
   // 只改一个数,几何全在 browser.js 的 layoutRegion 里现算 —— 标签栏/控制台/设备模拟/分隔条一并跟着缩。
   // 渲染端负责两件事:自己让出右边这块(CSS),以及把拖出来的宽度报上来。主进程不猜渲染端的布局。
-  ipcMain.handle('browser-split', (_e, w) => {
+  ipcMain.handle('browser-split', (_e, a) => {
     if (!S.browser) return { ok: false }
-    S.browser.chatW = Math.max(0, Math.round(+w || 0))
+    const o = (a && typeof a === 'object') ? a : { chatW: a }
+    S.browser.chatW = Math.max(0, Math.round(+o.chatW || 0))
+    // 侧栏宽度也一并收:layoutRegion 原来写死 228,而侧栏可拖 —— 拖过之后浏览器视图整体错位(既有 bug)
+    if (o.sideW != null) S.browser.sideW = Math.max(0, Math.round(+o.sideW || 0))
     try { brLayout() } catch {}
-    return { ok: true, chatW: S.browser.chatW }
+    return { ok: true, chatW: S.browser.chatW, sideW: S.browser.sideW }
   })
   ipcMain.handle('open-skill-center', () => createSkillCenter())   // 「🎬 录制回放」入口(托盘/热键)
   // 分隔条拖动：start=临时分离内容视图让 chrome 独占鼠标事件；end=落定宽度并复位视图
