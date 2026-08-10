@@ -136,5 +136,52 @@ const MODEL = { providerID: 'opencode', modelID: 'mimo-v2.5-free', name: 'MiMo V
   T.modelBlacklist.clear()
 }
 
+// ── ④ 拉黑【之后那一条】才是崩点:必须真走一遍读账那几行 ─────────────────────
+// 【为什么必须单独一格】上面 ① 只走到"把模型记进账"(写),而真机崩的是【下一条消息读账】那几行
+// (拼留痕日志时引用了看不见的 num)。①②③ 全绿也照样漏掉它 —— 测试只走它自己想到的路径,
+// 而这条路要"先有一次限流、再发一条"才踩得到。这一格就是把那个前置状态摆好,真发第二条。
+{
+  const bodies = []
+  const srv = http.createServer((req, res) => {
+    const send = (o) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)) }
+    if (req.method === 'POST' && /\/message$/.test(req.url)) {
+      let raw = ''
+      req.on('data', (d) => { raw += d })
+      req.on('end', () => { try { bodies.push(JSON.parse(raw)) } catch { bodies.push(null) } send({ parts: [{ type: 'text', text: '收到' }] }) })
+      return
+    }
+    send({})
+  })
+  srv.hung = []            // close() 要遍历它(这台假 serve 不挂请求,给个空的)
+  const base = await listen(srv)
+  const info = { base, dir: '/proj' }
+  T.modelBlacklist.clear()
+  T.noteModelBlacklist(base, MODEL.modelID, 'stall')     // 前置:上一条已经被限流拉黑
+
+  const told = []
+  let err = null, out = null
+  try { out = await oc.sendMessage(info, 'ses_9', '第二条', MODEL, [], () => {}, { onModelFallback: (m) => told.push(String(m)) }) }
+  catch (e) { err = e }
+
+  ok('★★命中黑名单的那一条能【正常发出去】—— 修前这里抛 num is not defined,整条回合断',
+    !err && out === '收到', { err: err && err.message, out })
+  ok('  而且是真的不带模型指定(黑名单的全部作用就是这个)',
+    bodies.length === 1 && !bodies[0].model && !bodies[0].modelID, bodies[0])
+  ok('★告知里说清【多久之后自动改回你选的模型】—— 不说清,用户看到的就是"我选的模型莫名不生效了"',
+    told.some((s) => /分钟后自动改回/.test(s)), told)
+  ok('  只告知一次,不每条都刷', (await (async () => {
+    await oc.sendMessage(info, 'ses_9', '第三条', MODEL, [], () => {}, { onModelFallback: (m) => told.push(String(m)) })
+    return told.length === 1
+  })()), told)
+  ok('  到期之后同一个模型又能被带上了(时段性拉黑不许变成永久)', (await (async () => {
+    T.modelBlacklist.get(base).get(MODEL.modelID).at = Date.now() - T.BL_TTL.stall - 1000
+    await oc.sendMessage(info, 'ses_9', '第四条', MODEL, [], () => {})
+    const last = bodies[bodies.length - 1]
+    return !!(last && last.model && last.model.modelID === MODEL.modelID)
+  })()), bodies[bodies.length - 1])
+  T.modelBlacklist.clear()
+  await close(srv)
+}
+
 console.log(fail ? ('\n❌ 静默丢弃自测:' + pass + ' passed, ' + fail + ' failed') : ('\n✅ 静默丢弃自测:全部通过  ' + pass + ' passed, 0 failed'))
 process.exit(fail ? 1 : 0)
