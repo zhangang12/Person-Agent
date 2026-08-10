@@ -767,21 +767,17 @@ module.exports = function initBrowser(ctx) {
     if (b.win && !b.win.isDestroyed() && !b.shellHost) { try { b.win.close() } catch {} }   // 有独立/嵌入式窗 → 换宿主(tabs 重来)
     b.shellHost = true; b.embedded = false; b.shellVisible = true
     b.win = S.mainWin; b.tabs = []; b.activeId = null; b.consoleH = 0; b.seq = 0
-    // ★★【浏览器是会话的辅助面板,不是主角】(2026-08-11 用户拍板)
-    // 原来这里除了浏览器 chrome,还【另开一张卡】(card.html?title=调试助手)贴在左边 ——
-    // 于是主窗口里出现两个对话:你正在聊的那个,和这个"调试助手";
-    // 而浏览器里看到的问题要靠「发给 Agent」按钮把上下文【倒腾】给它。
-    // 用户的原话:"浏览器内嵌本身就是会话的辅助能力,我不想做成以浏览器为主导、会话为辅助"。
-    // 所以宿主模式下不再建那张卡:左边那个【你正在聊的会话】就是 Agent,
-    // 浏览器只是它的一块视野。leftW 归零,整个浏览器区给标签页与页面。
-    // (独立工作台 createWorkspace 那条老路不动 —— 它是"没有主窗时"的回退形态。)
-    b.mode = 'workspace'; b.leftW = 0; b._dragging = false
-    b.cardView = null; b.cardWcId = null
+    b.mode = 'workspace'; b.leftW = 460; b._dragging = false
     // 浏览器 chrome(标签栏/工具栏/控制台/技能条):挂主窗的 WebContentsView
     const chrome = new WebContentsView({ webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false } })
     b.chromeView = chrome
     S.mainWin.contentView.addChildView(chrome)
-    chrome.webContents.loadFile(path.join(__dirname, '..', 'ui', 'browser.html'), { query: { workspace: '1', noCard: '1' } })
+    chrome.webContents.loadFile(path.join(__dirname, '..', 'ui', 'browser.html'), { query: { workspace: '1' } })
+    // 左侧 Agent 会话卡(工作台分栏):同挂主窗
+    const cardView = new WebContentsView({ webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false } })
+    b.cardView = cardView; b.cardWcId = cardView.webContents.id
+    S.mainWin.contentView.addChildView(cardView)
+    cardView.webContents.loadFile(path.join(__dirname, '..', 'ui', 'card.html'), { query: { embedded: '1', title: '调试助手' } })
     // 主窗尺寸变化 → 重排(chrome/卡片/页面一起;layoutRegion 现读现算)
     const onResize = () => { brLayout(); if (!S.mainWin.isDestroyed()) chromeSend('browser-split-set', b.leftW) }
     S.mainWin.on('resize', onResize)

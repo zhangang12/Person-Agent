@@ -1105,10 +1105,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   //   不统一改的话,「发给 Agent」/ 技能接管通知 / 解闸询问 会全部静默失效(返回 false,没人报错)。
   function agentInjectWc() {
     const b = S.browser
-    if (b && b.shellHost) {
-      const wc = wcById(S.activeChatWc)   // 仓库里已有的助手(webContents.fromId + isDestroyed 兜底),不另造一个
-      return wc && !wc.isDestroyed() ? wc : null
-    }
+    // 收件人:优先"当前活动对话"(外壳若上报了 shell-active-chat 就用它 —— 浏览器作为会话辅助面板时的语义);
+    // 没有上报就回落到工作台自带的卡(现行 UI 走这条)。两条都试,不假设哪一种形态。
+    const live = wcById(S.activeChatWc)
+    if (live) return live
     return (b && b.cardView && !b.cardView.webContents.isDestroyed()) ? b.cardView.webContents : null
   }
 
@@ -2645,6 +2645,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     if (!S.browser) return { ok: false }
     const o = (a && typeof a === 'object') ? a : { chatW: a }
     S.browser.chatW = Math.max(0, Math.round(+o.chatW || 0))
+    log('[split] 收到分栏:chatW=' + S.browser.chatW + ' sideW=' + (o.sideW != null ? o.sideW : '(未给)') + ' shellHost=' + !!S.browser.shellHost)
     // 侧栏宽度也一并收:layoutRegion 原来写死 228,而侧栏可拖 —— 拖过之后浏览器视图整体错位(既有 bug)
     if (o.sideW != null) S.browser.sideW = Math.max(0, Math.round(+o.sideW || 0))
     try { brLayout() } catch {}

@@ -43,9 +43,6 @@ interface ChatDetail { wcId: number | null; ready: boolean; pending: string; wv:
 
 export const store = reactive({
   view: 'chat' as ViewName,
-  /** 同屏分栏:对话旁边并排显示内嵌浏览器时,【对话】占的像素宽;0 = 关(浏览器与对话互斥,老行为)。
-   *  存 localStorage,开着的时候切回对话视图不再隐藏浏览器 —— 一边聊一边看它点页面就是这个功能的全部意义。*/
-  splitW: 0,
   visited: [] as ViewName[],          // 已创建过 webview 的视图(保活)
   chats: [] as ChatEntry[],
   activeKey: '',
@@ -83,42 +80,12 @@ function removeEntry(key: string) {
   details.delete(key)
 }
 
-const SPLIT_KEY = 'bh.splitW'   // 同屏分栏的宽度(showView 与 toggleSplit 都要读,提到两者之前)
-
 // ── 视图切换(同时只显一个;webview 懒创建且保活)──
-/** 上报"当前活动对话"的 wcId —— 内嵌浏览器的「发给 Agent」要注进你正在聊的这个会话。
- *  浏览器是会话的辅助面板,不该另有一个"调试助手"接住它(见 browser.js createShellBrowser)。 */
-export function pushActiveChat(): void {
-  try {
-    const d = details.get(store.activeKey)
-    BH()?.shellActiveChat?.(d && d.wcId != null ? d.wcId : null)
-  } catch { /* 静默 */ }
-}
-
 export function showView(view: string) {
-  // ★★【浏览器不是一个视图,是对话的辅助面板】(2026-08-11 用户拍板,第二次纠正)
-  // 上一版我只砍掉了那张"调试助手"卡,却留着这条"浏览器 = 独立视图"的路 ——
-  // 于是点侧栏浏览器仍然 chatW=0 铺满内容区,对话整个不见了,比原来更像"浏览器主导"。
-  // 用户原话:"浏览器内嵌本身就是会话的辅助能力"。所以点它 = 【回到对话 + 在旁边开浏览器】,
-  // 视图永远停在 chat,浏览器只占右半。不再有"只有浏览器没有对话"的画面。
   if (view === 'browser') {
-    if (store.splitW <= 0) {
-      const saved = +(localStorage.getItem(SPLIT_KEY) || 0)
-      const half = Math.round((window.innerWidth - sideWNow()) / 2)
-      store.splitW = Math.max(360, saved > 0 ? saved : half)
-      try { localStorage.setItem(SPLIT_KEY, String(store.splitW)) } catch { /* 静默 */ }
-    }
-    store.view = 'chat' as ViewName          // ★视图是对话 —— 对话必须在场
-    pushSplit()
+    // 内嵌浏览器:工作台 = shell 主窗口的嵌入式子窗(覆盖内容区),不再独立出窗
     try { BH()?.browserEmbed?.(true) } catch (e) { /* 静默 */ }
-    return
-  }
-  // ★分栏开着 + 回到对话视图 → 浏览器【不隐藏】,让出左边那块继续显对话(同屏)。
-  //   其余视图(编排/邮件/设置…)照旧隐藏:那些页面本来就要占满内容区,并排没有意义。
-  if (store.splitW > 0 && view === 'chat') {
-    try { BH()?.browserSplit?.({ chatW: store.splitW, sideW: sideWNow() }) } catch (e) { /* 静默 */ }
-    try { BH()?.browserEmbed?.(true) } catch (e) { /* 静默 */ }
-    store.view = 'chat' as ViewName
+    store.view = 'browser' as ViewName
     return
   }
   try { BH()?.browserEmbed?.(false) } catch (e) { /* 静默 */ }   // 切走即隐藏(工作台保活,回来原样)
@@ -127,40 +94,6 @@ export function showView(view: string) {
   if (v !== 'chat' && !store.visited.includes(v)) store.visited.push(v)
 }
 export function viewSrc(v: ViewName) { return VIEW_SRC[v] || '' }
-
-// ── 同屏分栏 ────────────────────────────────────────────────────────────────
-// 【为什么值得做】浏览器与对话原来是主窗口里互斥的两个视图:看浏览器就看不见对话。
-// 而"让 Agent 去页面上验一遍"这件事,价值恰恰在于【过程和结论在同一块屏幕上】——
-// 你能看着它点,它的结论就在旁边;分屏切换等于把证据和判断拆开看。
-
-export function sideWNow(): number {
-  const n = +(localStorage.getItem('bh.sbw') || 228)
-  return Number.isFinite(n) && n > 0 ? Math.round(n) : 228
-}
-/** 报给主进程:对话占多宽、侧栏真实多宽(主进程原来把侧栏写死 228,拖过就错位)。 */
-export function pushSplit(): void {
-  try { BH()?.browserSplit?.({ chatW: store.splitW, sideW: sideWNow() }) } catch { /* 静默 */ }
-}
-/** 开/关同屏分栏。开:默认对话占内容区一半;关:浏览器隐回去,对话铺满。 */
-export function toggleSplit(on?: boolean): void {
-  const want = on == null ? store.splitW <= 0 : !!on
-  if (want) {
-    const saved = +(localStorage.getItem(SPLIT_KEY) || 0)
-    const half = Math.round((window.innerWidth - sideWNow()) / 2)
-    store.splitW = Math.max(360, saved > 0 ? saved : half)
-  } else {
-    store.splitW = 0
-  }
-  try { localStorage.setItem(SPLIT_KEY, String(store.splitW)) } catch { /* 静默 */ }
-  if (store.splitW > 0) { pushSplit(); try { BH()?.browserEmbed?.(true) } catch { /* 静默 */ } }
-  else { try { BH()?.browserSplit?.({ chatW: 0, sideW: sideWNow() }) } catch { /* 静默 */ } ; try { BH()?.browserEmbed?.(false) } catch { /* 静默 */ } }
-}
-/** 拖分隔条:只改宽度并即时报上去(落定时才写 localStorage,拖动过程不写)。 */
-export function setSplitW(w: number, persist = false): void {
-  store.splitW = Math.max(360, Math.round(w || 0))
-  pushSplit()
-  if (persist) { try { localStorage.setItem(SPLIT_KEY, String(store.splitW)) } catch { /* 静默 */ } }
-}
 
 // 视图 webview 元素引用(ShellApp ref 回调登记,备用)
 export const viewWv: Record<string, any> = {}
@@ -233,7 +166,6 @@ export function bindWv(key: string, el: any) {
     try {
       d.wcId = el.getWebContentsId()
       if (d.wcId != null && BH()?.sessionBind) BH().sessionBind(d.cardId, d.wcId)   // 登记 wcId↔卡(wf 注册表补 wcId)
-      if (key === store.activeKey) pushActiveChat()   // 首个会话:切在前、绑在后 —— 只在切换时报会漏掉它
     } catch (e) { /* 静默 */ }
     if (d.pending) { const t = d.pending; d.pending = ''; fillChat(t) }
   })
@@ -266,7 +198,6 @@ export function activateChat(key: string) {
   if (!c.hasWv) { spawnChat({ sid: c.sid, title: c.title }); return }   // 收养条目:带 sid 重开
   store.activeKey = key
   c.unread = false
-  pushActiveChat()          // 切会话就上报:内嵌浏览器的「发给 Agent」要送到这一个
   showView('chat')
 }
 
