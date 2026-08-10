@@ -260,10 +260,35 @@ const TOOLS = [
       direction: { type: 'string', enum: ['up', 'down', 'left', 'right'], description: 'action=scroll 且没给 ref/selector 时:整页往哪滚(默认 down)' },
       amount: { type: 'number', description: 'action=scroll 整页滚多少像素(默认 600)' },
       ref: { type: 'string', description: '★首选:browser_read 给的句柄(ref_3 或 3)。用它就不用拼选择器 —— 精确唯一,页面变了会明确报错而不是点错' },
-      selector: { type: 'string', description: '没有 ref 时才用(browser_read 里的现成选择器或 __text__:tag|文本);严禁 :has-text()/xpath' },
+      selector: { type: 'string', description: '没有 ref 时才用。可以是 CSS 选择器、__text__:角色或标签|文本(角色就用 browser_read 印出来的那个,如 __text__:textbox|输入客户名称),也可以直接写 "ref_58"(和 ref 参数等价);严禁 :has-text()/xpath' },
       value: { type: 'string' }, text: { type: 'string' },
       checked: { type: 'boolean' }, url: { type: 'string' }, ms: { type: 'number' },
     }, required: ['sessionId', 'action'] },
+  },
+  {
+    name: 'browser_eval',
+    description: '★在会话页面里跑一段 JS,返回值 JSON 化回给你 —— 定位不到元素时【先用这个查清结构,不要猜选择器】。'
+      + '典型用法:document.querySelectorAll(".el-dialog input[type=number]").length /'
+      + ' [...document.querySelectorAll(".el-form-item")].map(x=>x.innerText.slice(0,20)) /'
+      + ' getComputedStyle(document.querySelector("#x")).display。'
+      + '返回元素时自动给 outerHTML 摘要;NodeList 自动展开成数组。输出封顶,超了会告诉你。'
+      + '围栏与 browser_act 同一道门(只在本会话自己的标签页、只在放行的 origin 上)。',
+    inputSchema: { type: 'object', properties: {
+      sessionId: { type: 'string' },
+      expr: { type: 'string', description: '一段 JS 表达式(不是语句块)。要多步就用 (function(){…})() 包起来' },
+    }, required: ['sessionId', 'expr'] },
+  },
+  {
+    name: 'browser_html',
+    description: '拿当前页的一段 DOM(outerHTML)。★什么时候用:read 给的是扁平清单,'
+      + '回答不了"弹层里这 6 个一样的数字框在结构上怎么区分" —— 那种问题看一眼 DOM 就完了。'
+      + '不给 selector 时自动给【最上层弹层】(没有弹层才给 body);svg/style/script 已掏空。'
+      + '想细看就给 selector 或 ref 收窄,别指望整页塞回来。',
+    inputSchema: { type: 'object', properties: {
+      sessionId: { type: 'string' },
+      selector: { type: 'string', description: '收窄到这个子树(也接受 "ref_58")' },
+      ref: { type: 'string', description: '收窄到这个 ref 对应的元素' },
+    }, required: ['sessionId'] },
   },
   {
     name: 'browser_tabs',
@@ -451,6 +476,20 @@ async function callTool(name, args) {
     for (const k of ['preset', 'colorScheme']) if (args[k] != null) body[k] = String(args[k])
     const r = await relayPost('/browser/resize', body)
     return 'ok — ' + JSON.stringify(r.applied || {}) + (r.hint ? '\n' + r.hint : '')
+  }
+  if (name === 'browser_eval') {
+    const r = await relayPost('/browser/eval', { sessionId: String(args.sessionId || ''), expr: String(args.expr || '') })
+    if (r.error) return r.error
+    return '结果(' + r.type + '):' + (r.result || '(空)') + (r.truncated ? '\n⚠ ' + r.truncated : '')
+  }
+  if (name === 'browser_html') {
+    const body = { sessionId: String(args.sessionId || '') }
+    if (args.selector != null) body.selector = String(args.selector)
+    if (args.ref != null) body.ref = String(args.ref)
+    const r = await relayPost('/browser/html', body)
+    if (r.error) return r.error
+    return 'DOM(' + r.root + (r.rootClass ? '.' + r.rootClass : '') + ')@' + r.url + '\n\n' + (r.html || '(空)')
+      + (r.truncated ? '\n\n⚠ ' + r.truncated : '')
   }
   if (name === 'browser_act') {
     const body = { sessionId: String(args.sessionId || ''), action: String(args.action || '') }

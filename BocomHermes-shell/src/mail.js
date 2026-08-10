@@ -486,7 +486,7 @@ module.exports = function initMail(ctx) {
               const brief = [a1.sessionId && ('sid=' + a1.sessionId), a1.name && ('name=' + a1.name),
                 a1.url && ('url=' + String(a1.url).slice(0, 80)), a1.action && ('action=' + a1.action),
                 a1.ref && ('ref=' + a1.ref), a1.selector && ('sel=' + String(a1.selector).slice(0, 40)),
-                a1.query && ('q=' + String(a1.query).slice(0, 40)), a1.serverId && ('srv=' + a1.serverId)].filter(Boolean).join(' ')
+                a1.query && ('q=' + String(a1.query).slice(0, 40)), a1.expr && ('expr=' + String(a1.expr).slice(0, 60)), a1.serverId && ('srv=' + a1.serverId)].filter(Boolean).join(' ')
               const res = !r ? '(空回包)' : r.error ? ('✗ ' + String(r.error).slice(0, 160))
                 : (r.elemError ? '✓ 但元素采集失败:' + String(r.elemError).slice(0, 120) : '✓')
               log('[' + kind + '] ' + route + (brief ? ' ' + brief : '') + ' → ' + res)
@@ -508,7 +508,7 @@ module.exports = function initMail(ctx) {
             const ba = S.brAgent
             if (!ba) return reply({ error: '浏览器 Agent 会话未就绪(壳层还没装配完)' })
             const route = req.url.slice('/browser/'.length)
-            const fn = { open: ba.agentOpen, read: ba.agentRead, find: ba.agentFind, act: ba.agentAct, tabs: ba.agentTabs, resize: ba.agentResize, assert: ba.agentAssert, shot: ba.agentShot, diag: ba.agentDiag, close: ba.agentClose }[route]
+            const fn = { open: ba.agentOpen, read: ba.agentRead, find: ba.agentFind, act: ba.agentAct, eval: ba.agentEval, html: ba.agentHtml, tabs: ba.agentTabs, resize: ba.agentResize, assert: ba.agentAssert, shot: ba.agentShot, diag: ba.agentDiag, close: ba.agentClose }[route]
             if (!fn) return reply({ error: 'unknown ' + req.url })
             try { const r = await fn(a); toolLog('browser-tool', route, a, r); return reply(r) }
             catch (e) { toolLog('browser-tool', route, a, { error: e.message }); return reply({ error: e.message }) }

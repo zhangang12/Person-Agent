@@ -197,7 +197,18 @@
     if (s.startsWith('__text__:')) {
       const idx = s.indexOf('|'); const tag = s.slice(9, idx).toLowerCase()
       const txt = s.slice(idx + 1)
-      return `(function(){var els=document.querySelectorAll(${JSON.stringify(tag)});for(var i=0;i<els.length;i++){var t=(els[i].innerText||els[i].value||'').trim();if(t===${JSON.stringify(txt)}||t.indexOf(${JSON.stringify(txt)})===0)return els[i]}return null})()`
+      // ★这里的"标签"和"文本"都必须跟 browser_read 印出来的那一套对得上,否则模型照着回执写就是找不到。
+      //   真机 2026-08-11 实测两处错配,模型连试 6 次全废、最后开始瞎猜 nth-of-type:
+      //   ① read 印的是 role(Element-Plus 的输入框 role="textbox"、下拉 role="combobox"),
+      //      而这里只 querySelectorAll(tag) —— 没有 <textbox> 这种标签,必然 0 命中。
+      //      → 同时找 tag 和 [role=tag]。'textbox,[role="textbox"]' 是合法 CSS(类型选择器只是匹配不到),不会抛。
+      //   ② 输入框的名字来自 placeholder / aria-label,而这里只比 innerText||value ——
+      //      空输入框两者都是空串,永远比不中。→ 文本来源与 read 完全同源。
+      const q = tag + ',[role=' + JSON.stringify(tag) + ']'
+      return `(function(){var els=[];try{els=document.querySelectorAll(${JSON.stringify(q)})}catch(e){try{els=document.querySelectorAll(${JSON.stringify(tag)})}catch(e2){return null}}`
+        + `for(var i=0;i<els.length;i++){var e=els[i];`
+        + `var t=(e.innerText||e.value||e.placeholder||(e.getAttribute&&e.getAttribute('aria-label'))||'').trim();`
+        + `if(t===${JSON.stringify(txt)}||t.indexOf(${JSON.stringify(txt)})===0)return e}return null})()`
     }
     // __label__:文本 —— 找文本匹配的 <label> 的关联控件(label.control / for→#id / 内含 input)。自愈重定位输入框用。
     if (s.startsWith('__label__:')) {

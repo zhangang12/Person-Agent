@@ -235,7 +235,15 @@ module.exports = function initBrowserAgent(ctx) {
     const refRaw = a.ref != null ? str(a.ref).trim() : ''
     const refN = refRaw ? (refRaw.match(/^(?:ref_)?(\d+)$/) || [])[1] : ''
     if (refRaw && !refN) return { error: 'ref 形如 ref_3 或 3(browser_read 返回的那个);要用选择器请填 selector' }
-    const sel = refN ? '[data-bh-ref="' + refN + '"]' : (a.selector != null ? str(a.selector).slice(0, 1000) : '')
+    // ★把填进 selector 的 ref 也认了(2026-08-11 真机):browser_read 回的是「[ref_58] textbox "…"」,
+    //   模型很自然地写 selector:"ref_58" —— 而这里原来只认独立的 ref 参数,于是 ref_58 被当成 CSS 选择器
+    //   丢给 querySelector,必然找不到,然后它开始瞎猜 .el-dialog .frow:nth-of-type(3) …(实测连猜 4 次全废)。
+    //   工具不该因为"参数填错格子"就惩罚模型 —— 这个意图毫无歧义,认下来就是。
+    const selRaw = a.selector != null ? str(a.selector).trim() : ''
+    const selRefN = (selRaw.match(/^ref[_-]?(\d+)$/i) || [])[1]
+    const sel = refN ? '[data-bh-ref="' + refN + '"]'
+      : selRefN ? '[data-bh-ref="' + selRefN + '"]'
+        : selRaw.slice(0, 1000)
     const wc = tab.view.webContents
 
     // navigate 特殊:要先按【目标 URL】过策略,再执行(不能等跳过去了才发现越界)
@@ -311,7 +319,18 @@ module.exports = function initBrowserAgent(ctx) {
     const r = await execStep(wc, ev, tab, { waitMs: 4000 })
     step(s, action, sel + (action === 'type' ? ' ← ' + str(a.value).slice(0, 40) : ''), !!r.ok, r.err)
     try { await waitNetIdle(tab, 300, 2500) } catch {}
-    return r.ok ? { ok: true, url: curUrl(s) } : { error: r.err || '执行失败' }
+    if (r.ok) return { ok: true, url: curUrl(s) }
+    // ★"找不到元素"的回执必须【指出下一步】。真机 2026-08-11:回执只有一句
+    //   「selector(+alt) not found (waited 4000ms)」,模型于是接着猜 —— 连猜 4 个
+    //   .el-dialog .frow:nth-of-type(3) .el-form 这种选择器,每次白等 4 秒,最后被用户掐掉。
+    //   它不是不听话,是回执没告诉它"别猜、回去重读"。ref 句柄这条路存在的全部意义就是不用猜,
+    //   而弹层/新页面出现后必须重读一次才有新句柄 —— 这句话得由工具说出来。
+    const notFound = /not found|找不到/.test(str(r.err))
+    return { error: str(r.err || '执行失败') + (notFound
+      ? ' —— 别再换选择器猜了(猜错的代价是点到别的元素上还成功)。正确的下一步:重新 browser_read'
+        + '(弹层/新页面出现后旧的 ref 就失效了,读一次拿到新的 [ref_N]),然后用 selector:"ref_N"。'
+        + '元素在视口外时读页不会给它 ref —— 那就先 browser_act{action:"scroll"} 滚过去再读。'
+      : '') }
   }
 
   // ── assert ──────────────────────────────────────────────────────────────
@@ -486,6 +505,77 @@ module.exports = function initBrowserAgent(ctx) {
   // 什么才是问题所在,不是它有没有 200);③ 取某一条的响应体 —— 这一条最关键,"接口通了但返回体不对"
   // 是前端 bug 的大头,只看状态码永远看不见。
   // 【为什么默认值不变】不给参数时行为与老版一致(error + 失败请求),老调用不受影响。
+  // ── eval(仿 CC 的 javascript_tool)──────────────────────────────────────────
+  // 【为什么必须有】2026-08-11 真机思考过程里,模型【连着五次】问同一件事:
+  //   「内嵌浏览器可执行 JS 吗?工具集里有 headless_eval 但那是 headless。会话组没有 eval。」
+  // 它要的就是"让我自己查一下这页到底长什么样"。没有这条路,它只能靠 read 给的扁平清单去猜结构 ——
+  // 弹层里 6 个一模一样的数字输入框,它烧了整整六屏推理去拼 nth-of-type,全废,
+  // 最后跑去 rg/sed 读前端源码。一个 querySelectorAll('.el-dialog input[type=number]').length
+  // 就能结束的事。缺一件工具的代价不是"少一个功能",是模型把 token 全烧在绕路上。
+  //
+  // 安全口径:与 act 同一道门 —— 现查围栏、只在本会话自己的标签页上跑。
+  // 这不是新的信任边界:能 click/type 的地方本来就能改这一页的状态。输出封顶,别把整页 DOM 灌回上下文。
+  const EVAL_MAX = 8000
+  async function agentEval(a) {
+    const s = live(a && a.sessionId); if (!s) return { error: '会话不存在或已结束(先 browser_open)' }
+    const tab = tabOf(s); if (!tab) return { error: '这个会话的标签页已被关掉' }
+    const f = fenceNow(s); if (!f.ok) { step(s, 'eval', '', false, f.err); return { error: f.err } }
+    const expr = str(a && a.expr).trim()
+    if (!expr) return { error: 'expr 必填:一段 JS 表达式,返回值会 JSON 化回给你(例:document.querySelectorAll(".el-dialog input[type=number]").length)' }
+    if (expr.length > 4000) return { error: 'expr 太长(> 4000 字)—— 查结构不需要这么长,先缩小范围' }
+    let out = null
+    try {
+      // 包一层:返回值统一 JSON 化并封顶;抛错原样带回(排查要看它),不当成"没结果"
+      out = await tab.view.webContents.executeJavaScript(
+        '(function(){try{var __v=(' + expr + ');'
+        + 'var __t=typeof __v;'
+        + 'if(__v&&__t==="object"&&typeof __v.length==="number"&&!Array.isArray(__v))__v=Array.prototype.slice.call(__v).map(function(x){return x&&x.outerHTML?x.outerHTML.slice(0,300):String(x)});'
+        + 'if(__v&&__v.outerHTML)__v=__v.outerHTML.slice(0,2000);'
+        + 'var __s;try{__s=JSON.stringify(__v)}catch(e){__s=String(__v)}'
+        + 'if(__s===undefined)__s="undefined";'
+        + 'return {v:String(__s).slice(0,' + EVAL_MAX + '),n:String(__s).length,t:__t}}'
+        + 'catch(e){return {err:String(e&&e.message||e)}}})()', true)
+    } catch (e) { out = { err: e.message } }
+    const bad = out && out.err
+    step(s, 'eval', expr.slice(0, 120), !bad, bad || '')
+    if (bad) return { error: 'JS 报错: ' + bad + ' —— 表达式本身的错,不是页面没有这个元素' }
+    return { ok: true, url: curUrl(s), type: (out && out.t) || 'undefined', result: (out && out.v) || '',
+      truncated: (out && out.n > EVAL_MAX) ? ('结果共 ' + out.n + ' 字,只给了前 ' + EVAL_MAX + ' 字') : '' }
+  }
+
+  // ── html(拿 DOM 结构)──────────────────────────────────────────────────────
+  // 【为什么单独给】read 给的是扁平的可交互清单,回答不了"这 6 个数字框在结构上怎么区分"。
+  // 真机里模型为此想 headless_get_html(那是另一个浏览器、没有登录态),
+  // 还退到 rg/sed 去读 .vue 源码 —— 而它要的只是【当前这一页】的一小段 DOM。
+  // 默认只给弹层/主体这一层,给了 selector/ref 就给那棵子树:整页 outerHTML 灌回来是上下文自杀。
+  const HTML_MAX = 12000
+  async function agentHtml(a) {
+    const s = live(a && a.sessionId); if (!s) return { error: '会话不存在或已结束(先 browser_open)' }
+    const tab = tabOf(s); if (!tab) return { error: '这个会话的标签页已被关掉' }
+    const f = fenceNow(s); if (!f.ok) return { error: f.err }
+    const refRaw = a && a.ref != null ? str(a.ref).trim() : ''
+    const refN = refRaw ? (refRaw.match(/^(?:ref[_-]?)?(\d+)$/i) || [])[1] : ''
+    const selRaw = a && a.selector != null ? str(a.selector).trim() : ''
+    const selRefN = (selRaw.match(/^ref[_-]?(\d+)$/i) || [])[1]
+    const sel = refN ? '[data-bh-ref="' + refN + '"]' : selRefN ? '[data-bh-ref="' + selRefN + '"]' : selRaw
+    let out = null
+    try {
+      out = await tab.view.webContents.executeJavaScript(
+        '(function(){var q=' + JSON.stringify(sel) + ';var e=null;'
+        + 'if(q){try{e=document.querySelector(q)}catch(err){return {err:"选择器不合法: "+err.message}}if(!e)return {err:"没找到 "+q};}'
+        // 不给选择器时:优先给最上层的弹层(它才是当下在操作的东西),没有弹层再给 body
+        + 'else{e=document.querySelector(\'[role="dialog"],.el-dialog,.ant-modal,.modal.show\')||document.body}'
+        + 'var h=e.outerHTML||"";'
+        // 把 <svg>/<style>/<script> 的内容掏空:它们能占掉一大半字数,而对定位元素毫无用处
+        + 'h=h.replace(/<svg[\\s\\S]*?<\\/svg>/gi,"<svg/>").replace(/<style[\\s\\S]*?<\\/style>/gi,"").replace(/<script[\\s\\S]*?<\\/script>/gi,"");'
+        + 'return {h:h.slice(0,' + HTML_MAX + '),n:h.length,tag:(e.tagName||"").toLowerCase(),cls:String(e.className||"").slice(0,120)}})()', true)
+    } catch (e) { out = { err: e.message } }
+    if (out && out.err) return { error: out.err }
+    return { ok: true, url: curUrl(s), root: (out && out.tag) || '', rootClass: (out && out.cls) || '',
+      html: (out && out.h) || '',
+      truncated: (out && out.n > HTML_MAX) ? ('这段 DOM 共 ' + out.n + ' 字,只给了前 ' + HTML_MAX + ' 字 —— 想细看就给 selector/ref 收窄') : '' }
+  }
+
   async function agentDiag(a) {
     const s = live(a && a.sessionId); if (!s) return { error: '会话不存在或已结束' }
     const tab = tabOf(s); if (!tab) return { error: '这个会话的标签页已被关掉' }
@@ -576,5 +666,5 @@ module.exports = function initBrowserAgent(ctx) {
     sessions.clear()
   }
 
-  return { agentOpen, agentRead, agentFind, agentAct, agentTabs, agentResize, agentAssert, agentShot, agentDiag, agentClose, anyLive, dropAll, policyCheck, __sessions: sessions }
+  return { agentOpen, agentRead, agentFind, agentAct, agentEval, agentHtml, agentTabs, agentResize, agentAssert, agentShot, agentDiag, agentClose, anyLive, dropAll, policyCheck, __sessions: sessions }
 }

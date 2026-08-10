@@ -15,7 +15,10 @@ function resolveRef(a) {
   const refRaw = a.ref != null ? str(a.ref).trim() : ''
   const refN = refRaw ? (refRaw.match(/^(?:ref_)?(\d+)$/) || [])[1] : ''
   if (refRaw && !refN) return { error: 'bad-ref' }
-  return { sel: refN ? '[data-bh-ref="' + refN + '"]' : (a.selector != null ? str(a.selector).slice(0, 1000) : '') }
+  // 与真身同口径:填进 selector 的 ref 也认(见 browser-agent.js 里那段注释)
+  const selRaw = a.selector != null ? str(a.selector).trim() : ''
+  const selRefN = (selRaw.match(/^ref[_-]?(\d+)$/i) || [])[1]
+  return { sel: refN ? '[data-bh-ref="' + refN + '"]' : selRefN ? '[data-bh-ref="' + selRefN + '"]' : selRaw.slice(0, 1000) }
 }
 let pass = 0, fail = 0
 const ok = (n, c, e) => { c ? (pass++, console.log('  ✓ ' + n)) : (fail++, console.log('  ✗ ' + n + (e !== undefined ? '  → ' + JSON.stringify(e) : ''))) }
@@ -132,6 +135,65 @@ ok('★不许关掉最后一个(关完 tabOf 全空,后续每个工具都报"标
 ok('  还有两个时可以关', tabsGuard({ tabIds: [1, 2] }, { action: 'close', tabId: 1 }, true) === 'ok')
 ok('  switch/close 必须给 tabId', tabsGuard({ tabIds: [1, 2] }, { action: 'close' }, true) === 'need-id')
 ok('  标签数封顶 5(验证不是浏览)', tabsGuard({ tabIds: [1, 2, 3, 4, 5] }, { action: 'open' }, true) === 'too-many')
+
+console.log('\n== selector 里填 ref 也要认(2026-08-11 真机:模型就是这么写的)==')
+// browser_read 回的是「[ref_58] textbox "输入联想历史设备名"」,模型很自然地写 selector:"ref_58"。
+// 原来只认独立的 ref 参数 → ref_58 被当 CSS 选择器丢给 querySelector,必然找不到;
+// 然后它开始瞎猜 .el-dialog .frow:nth-of-type(3) .el-form…(真机连猜 4 次全废,每次白等 4 秒)。
+ok('★★selector:"ref_58" → 认成 ref(工具不该因为参数填错格子就惩罚模型)',
+  resolveRef({ selector: 'ref_58' }).sel === '[data-bh-ref="58"]', resolveRef({ selector: 'ref_58' }).sel)
+ok('  ref-58 / REF_58 都认', resolveRef({ selector: 'ref-58' }).sel === '[data-bh-ref="58"]' && resolveRef({ selector: 'REF_58' }).sel === '[data-bh-ref="58"]')
+ok('  ref 参数仍然优先', resolveRef({ ref: '1', selector: 'ref_58' }).sel === '[data-bh-ref="1"]')
+ok('★真的选择器不许被误认成 ref(别把正常路踩坏)', (() => {
+  for (const s2 of ['#ref_58', '.ref_58', 'input[name="ref_58"]', '__text__:a|ref_58', 'refresh']) {
+    if (resolveRef({ selector: s2 }).sel !== s2) return false
+  }
+  return true
+})())
+
+console.log('\n== __text__ 伪选择器要跟 browser_read 的口径对得上 ==')
+// 【真机 2026-08-11】read 印的是 role(Element-Plus 输入框 role="textbox"),名字来自 placeholder;
+// 而 selExpr 的 __text__ 只 querySelectorAll(tag) + 只比 innerText||value ——
+// 两处都对不上,模型照着回执写必然找不到。这一格【真的把生成的表达式跑一遍】:
+// 以前没人跑过它,所以这种错配可以一直躺着。
+const { selExpr } = require('../src/recorder-core.js')
+function runSel(sel, dom) {
+  // 极简假 DOM:querySelectorAll 支持 'tag' 与 '[role="x"]' 的逗号组合(selExpr 只用到这两种)
+  const document = {
+    querySelectorAll(q) {
+      const parts = String(q).split(',').map((x) => x.trim()).filter(Boolean)
+      const out = []
+      for (const el of dom) {
+        for (const p of parts) {
+          const m = p.match(/^\[role=(?:"|')?([^"'\]]+)(?:"|')?\]$/)
+          if (m ? el.role === m[1] : el.tag === p) { if (out.indexOf(el) < 0) out.push(el); break }
+        }
+      }
+      return out
+    },
+  }
+  // eslint-disable-next-line no-new-func
+  return new Function('document', 'return ' + selExpr(sel))(document)
+}
+const el = (o) => Object.assign({ tag: '', role: '', innerText: '', value: '', placeholder: '', getAttribute: (k) => (k === 'aria-label' ? (o.ariaLabel || '') : '') }, o)
+{
+  const 输入框 = el({ tag: 'input', role: 'textbox', placeholder: '输入联想历史设备名' })
+  const 链接 = el({ tag: 'a', innerText: '人事部' })
+  const 按钮 = el({ tag: 'button', innerText: '销售下单' })
+  const 下拉 = el({ tag: 'div', role: 'combobox', ariaLabel: '选择状态' })
+  const dom = [输入框, 链接, 按钮, 下拉]
+
+  ok('★★role 当"标签"也能找到(read 印 textbox,页面上没有 <textbox> 这种标签)',
+    runSel('__text__:textbox|输入联想历史设备名', dom) === 输入框)
+  ok('★★文本来源与 read 同源:placeholder 也算名字(空输入框的 innerText/value 都是空串)',
+    runSel('__text__:input|输入联想历史设备名', dom) === 输入框)
+  ok('  aria-label 也算(下拉常只有它)', runSel('__text__:combobox|选择状态', dom) === 下拉)
+  ok('  老路不许断:innerText 匹配照旧', runSel('__text__:a|人事部', dom) === 链接 && runSel('__text__:button|销售下单', dom) === 按钮)
+  ok('  前缀匹配照旧(read 里名字截到 60 字)', runSel('__text__:a|人事', dom) === 链接)
+  ok('  找不到就是 null(不许乱抓一个)', runSel('__text__:a|不存在的文案', dom) === null)
+  ok('  奇怪的"标签"不许把整段表达式搞崩', (() => { try { return runSel('__text__:1bad|x', dom) === null } catch { return false } })())
+  ok('  普通 CSS 选择器照旧走 querySelector', /querySelector\(/.test(selExpr('#submit')))
+}
 
 console.log(fail ? ('\n❌ ref 定位:' + pass + ' passed, ' + fail + ' failed') : ('\n✅ ref 定位:全部通过  ' + pass + ' passed, 0 failed'))
 process.exit(fail ? 1 : 0)

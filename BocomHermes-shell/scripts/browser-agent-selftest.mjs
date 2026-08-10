@@ -24,6 +24,9 @@ function makeCtx(over = {}) {
       getURL: () => page.url,
       getTitle: () => '标题',
       executeJavaScript: async (code) => {
+        // agentEval / agentHtml 的返回形状(先判,它们的代码里也含 innerText/querySelectorAll)
+        if (/__v=/.test(code)) return page.evalOut !== undefined ? page.evalOut : { v: '"ok"', n: 4, t: 'string' }
+        if (/outerHTML/.test(code)) return page.htmlOut !== undefined ? page.htmlOut : { h: '<div class="el-dialog">x</div>', n: 30, tag: 'div', cls: 'el-dialog' }
         if (/innerText/.test(code)) return page.text
         if (/querySelectorAll/.test(code)) return page.selCount
         return ''
@@ -50,7 +53,7 @@ function makeCtx(over = {}) {
     brShotTab: async (tab) => { calls.shots++; calls.shotTabs.push(tab && tab.id); return '/tmp/shot-' + calls.shots + '.png' },
     execStep: async (wc, ev) => {
       calls.exec.push(ev)
-      if (over.execFail) return { ok: false, err: '假失败' }
+      if (over.execFail) return { ok: false, err: over.execErr || '假失败' }
       if (ev.act === 'navigate') { const t = S.browser.tabs.find((x) => x.view.webContents === wc); if (t) t.page.url = ev.url }
       return { ok: true }
     },
@@ -217,6 +220,71 @@ console.log('用例7.5:开浏览器不许抢屏 —— 浏览器是对话的辅�
   ok('★★一次都没有改可见性(shellBrowserVisible 压根不该被调)', calls.visibleCalls.length === 0, calls.visibleCalls)
   ok('  后台标签不当活动标签(用户的视图不受影响)', S.browser.activeId === null, S.browser.activeId)
   ok('  也没抢焦点式地 activateTab', calls.activateTab.length === 0, calls.activateTab)
+}
+
+console.log('用例7.6:ref 句柄要在【真模块】里也认(ref:test 那份是镜像,会漂)')
+{
+  // 【真机 2026-08-11】browser_read 回「[ref_58] textbox "…"」,模型写 selector:"ref_58",
+  // 而 agentAct 原来只认独立的 ref 参数 → ref_58 当 CSS 选择器丢给 querySelector,必然找不到,
+  // 然后它连猜 4 个 .el-dialog .frow:nth-of-type(3) 这种选择器,每次白等 4 秒。
+  // ref:test 里那份解析是【手抄的镜像】,抄本对了不代表真身对 —— 这一格走真模块。
+  const { ba, S, calls } = makeCtx()
+  const r = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '验 ref' })
+  await ba.agentAct({ sessionId: r.sessionId, action: 'type', selector: 'ref_58', value: 'x' })
+  ok('★★selector:"ref_58" 在真模块里也解析成 data-bh-ref 选择器',
+    calls.exec[calls.exec.length - 1].sel === '[data-bh-ref="58"]', calls.exec[calls.exec.length - 1])
+  await ba.agentAct({ sessionId: r.sessionId, action: 'click', ref: 'ref_7' })
+  ok('  ref 参数照旧', calls.exec[calls.exec.length - 1].sel === '[data-bh-ref="7"]', calls.exec[calls.exec.length - 1])
+  await ba.agentAct({ sessionId: r.sessionId, action: 'click', selector: '#submit' })
+  ok('  正常选择器不被误认', calls.exec[calls.exec.length - 1].sel === '#submit', calls.exec[calls.exec.length - 1])
+  await ba.agentAct({ sessionId: r.sessionId, action: 'click', selector: '__text__:a|refresh' })
+  ok('  含 ref 字样的文本选择器也不被误认', calls.exec[calls.exec.length - 1].sel === '__text__:a|refresh', calls.exec[calls.exec.length - 1])
+  S.browser.tabs.length && ba.agentClose({ sessionId: r.sessionId, status: 'done' })
+}
+
+console.log('用例7.7:"找不到元素"的回执要指出下一步,不能让它接着猜')
+{
+  const { ba } = makeCtx({ execFail: true, execErr: 'selector(+alt) not found (waited 4000ms)' })
+  const r = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '验回执' })
+  const act = await ba.agentAct({ sessionId: r.sessionId, action: 'type', selector: 'ref_58', value: 'x' })
+  ok('★回执里点名"重新 browser_read"(真机它收到裸报错后连猜 4 个选择器,每次白等 4 秒)',
+    /browser_read/.test(String(act.error)), act.error)
+  ok('  并且明说旧 ref 会失效(弹层/新页面之后)', /失效/.test(String(act.error)), act.error)
+  ok('  也给出视口外的处理(scroll 再读)', /scroll/.test(String(act.error)), act.error)
+  ok('  原始技术报错照旧保留(排查要看它)', /not found/.test(String(act.error)), act.error)
+}
+
+console.log('用例7.8:eval / html —— 模型在真机思考里连问了五次"会话组有没有 eval"')
+{
+  // 【真机 2026-08-11 思考过程原文】「实际上内嵌浏览器可执行 JS 吗?工具集里 BocomHermes-browser
+  // 有 headless_eval 但那是 headless。会话组没有 eval。」—— 它要的就是"让我自己查一下这页长什么样"。
+  // 没有这条路,它只能拿 read 的扁平清单猜结构:弹层里 6 个一样的数字输入框,它烧了六屏推理拼
+  // nth-of-type 全废,最后跑去 rg/sed 读 .vue 源码。缺一件工具的代价不是少一个功能,
+  // 是模型把 token 全烧在绕路上。
+  const { ba, S } = makeCtx()
+  const r = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '验 eval/html' })
+  const sid = r.sessionId
+  ok('★eval 能跑并回结果 + 类型', (() => { const p = tabOf(S).page; p.evalOut = { v: '6', n: 1, t: 'number' }; return true })())
+  const e1 = await ba.agentEval({ sessionId: sid, expr: 'document.querySelectorAll("input").length' })
+  ok('  结果与类型都带回', !!e1.ok && e1.result === '6' && e1.type === 'number', e1)
+  ok('  缺 expr → 明确说要什么,并给一个例子', /必填/.test(String((await ba.agentEval({ sessionId: sid })).error)), (await ba.agentEval({ sessionId: sid })).error)
+  ok('  expr 过长拒(查结构不需要那么长)', !!(await ba.agentEval({ sessionId: sid, expr: 'x'.repeat(4001) })).error)
+  tabOf(S).page.evalOut = { err: 'x is not defined' }
+  const e2 = await ba.agentEval({ sessionId: sid, expr: 'x' })
+  ok('★JS 自己报错要说清"是表达式的错,不是页面没这个元素"(两种处境的下一步完全不同)',
+    /表达式本身的错/.test(String(e2.error)), e2.error)
+  tabOf(S).page.evalOut = { v: '"' + 'y'.repeat(9000) + '"', n: 9002, t: 'string' }
+  const e3 = await ba.agentEval({ sessionId: sid, expr: 'big' })
+  ok('  输出超上限要如实回报(不说的话它会把截断当全部)', !!e3.truncated, e3.truncated)
+
+  const h1 = await ba.agentHtml({ sessionId: sid })
+  ok('★html 不给选择器 → 给最上层弹层(那才是当下在操作的东西)', !!h1.ok && h1.rootClass === 'el-dialog', h1)
+  tabOf(S).page.htmlOut = { err: '没找到 [data-bh-ref="58"]' }
+  ok('  html 也认 selector:"ref_58"(与 act 同口径)', /data-bh-ref="58"/.test(String((await ba.agentHtml({ sessionId: sid, selector: 'ref_58' })).error)))
+  // 围栏:页面跳出去之后这两条也必须拒(它们能读到页面全部内容)
+  tabOf(S).page.url = 'https://生产系统.example.com/x'
+  ok('★★跳出围栏后 eval 被拒(它能读走整页内容,不能比 act 松)', /跳出围栏/.test(String((await ba.agentEval({ sessionId: sid, expr: '1' })).error)))
+  ok('★★跳出围栏后 html 同样被拒', /跳出围栏/.test(String((await ba.agentHtml({ sessionId: sid })).error)))
 }
 
 console.log('用例8:会话生命周期 —— 超时/并发/重复收/取证')

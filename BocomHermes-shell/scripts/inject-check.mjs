@@ -28,29 +28,64 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 /** 抠出一个文件里所有 executeJavaScript(`…`) 的模板串体(含 ${} 占位)
  *  ★必须认【拼接】:真机里有 `…` + `…` + `…` 这种写法,只取第一段会得到半截程序,
  *  于是这把尺子自己报出一个假的 SyntaxError —— 一把会误报的尺子等于没有尺子。 */
+/** 从 i(引号后第一个字符)开始扫到配对的【未转义】引号,返回 {body, next} */
+function scanString(src, i, quote) {
+  let body = ''
+  for (; i < src.length; i++) {
+    const c = src[i]
+    if (c === '\\') { body += c + (src[i + 1] || ''); i++; continue }   // 转义对整体带过,别在 \' 上收工
+    if (c === quote) return { body, next: i + 1 }
+    body += c
+  }
+  return null
+}
+
 export function extractInjected(src) {
   const out = []
-  // 两种写法都要认:① 直接 executeJavaScript(`…`) ② 本仓库惯例 const XXX_JS = `…`(录制引擎、取色器都是这么写的,
-  //   最后由变量传进 executeJavaScript —— 只盯调用点会把最大的几段整个漏掉)
-  const re = /(?:executeJavaScript\(\s*|(?:const|let|var)\s+[A-Za-z_$][\w$]*_JS\s*=\s*)`/g
+  // 三种写法都要认:
+  //   ① executeJavaScript(`…`)
+  //   ② 本仓库惯例 const XXX_JS = `…`(录制引擎、取色器都这么写,最后由变量传进去 —— 只盯调用点会漏掉最大的几段)
+  //   ③ ★单/双引号拼接:executeJavaScript('(function(){…' + '…')
+  //      —— 这是我自己刚写 agentEval/agentHtml 用的写法,而第一版尺子只认反引号,
+  //      于是新写的注入代码【压根没被检查】。盲点长在自己身上最危险:尺子说"11 段全过",
+  //      而那 11 段里不包括我刚加的两段。转义被吞这件事对单引号字符串是一模一样的。
+  const re = /(?:executeJavaScript\(\s*|(?:const|let|var)\s+[A-Za-z_$][\w$]*_JS\s*=\s*)(['"`])/g
   let m
   while ((m = re.exec(src))) {
-    let i = m.index + m[0].length
-    const end = src.indexOf('`', i)      // 注入串里不含反引号(含了这把尺子会漏,值得的取舍)
-    if (end < 0) continue
-    let body = src.slice(i, end)
-    i = end + 1
-    // 往后吃 `+ '…'` / `+ "…"` / `+ \`…\`` 拼上来的段
+    const first = scanString(src, m.index + m[0].length, m[1])
+    if (!first) continue
+    let body = first.body
+    let i = first.next
+    // 往后吃拼接:`+ '…'` 直接接上;`+ JSON.stringify(x) +` 这种【非字符串】的段要换成占位 (0),
+    // 不然它被整个跳过后会留下 `var q=;` 这种空洞 —— 那是尺子自己造的假 SyntaxError。
     for (;;) {
-      const rest = src.slice(i)
-      const j = /^[\s\r\n]*\+[\s\r\n]*(['"`])/.exec(rest)
-      if (!j) break
-      const quote = j[1]
-      const from = i + j[0].length
-      const to = src.indexOf(quote, from)
-      if (to < 0) break
-      body += src.slice(from, to)
-      i = to + 1
+      // 允许拼接段之间夹 // 注释行:本仓的注入串里到处都是解释性注释,
+      // 不认它就会在注释处断掉、把后面的 })() 整段丢了 —— 然后报一个"函数没闭合"的假错。
+      const SKIP = '(?:[\\s\\r\\n]*//[^\\n]*)*[\\s\\r\\n]*'
+      const plus = new RegExp('^' + SKIP + '\\+' + SKIP).exec(src.slice(i))
+      if (!plus) break
+      let k = i + plus[0].length
+      const q = src[k]
+      if (q === '`' || q === "'" || q === '"') {
+        const nxt = scanString(src, k + 1, q)
+        if (!nxt) break
+        body += nxt.body
+        i = nxt.next
+        continue
+      }
+      // 非字符串表达式:平衡括号往前扫,遇到 depth 0 的 + 或参数结束(, / ))就停
+      let depth = 0, stop = -1
+      for (; k < src.length; k++) {
+        const c = src[k]
+        if (c === '"' || c === "'" || c === '`') { const sc = scanString(src, k + 1, c); if (!sc) { k = src.length; break } k = sc.next - 1; continue }
+        if ('([{'.includes(c)) { depth++; continue }
+        if (')]}'.includes(c)) { if (depth === 0) { stop = k; break } depth--; continue }
+        if (depth === 0 && (c === '+' || c === ',')) { stop = k; break }
+      }
+      if (stop < 0) break
+      body += '(0)'
+      i = stop
+      if (src[i] === ',' || src[i] === ')') break   // 参数结束
     }
     out.push({ line: src.slice(0, m.index).split('\n').length, body })
     re.lastIndex = i
@@ -58,11 +93,12 @@ export function extractInjected(src) {
   return out
 }
 
-/** 模板串里被吞掉的单反斜杠(先把正确写法 \\ 成对吃掉,剩下的才是被吞的)
- *  \` 和 \$ 不算 —— 那两个是模板串自己的合法转义,作者是有意写的。 */
+/** 被吞掉的单反斜杠(先把正确写法 \\ 成对吃掉,剩下的才是被吞的)
+ *  ★转义定界符的那几个不算:\` \$ 是模板串的,\' \" 是单/双引号串的 —— 作者都是有意写的,
+ *  而且它们的求值结果就是作者想要的那个字符,不存在"静默变样"。 */
 export function swallowedEscapes(body) {
   const stripped = String(body).replace(/\\\\/g, '  ')
-  return [...new Set([...stripped.matchAll(/\\([^`$])/gs)].map((x) => (x[1] === '\n' ? '\\<换行>' : '\\' + x[1])))]
+  return [...new Set([...stripped.matchAll(/\\([^`$'\"])/gs)].map((x) => (x[1] === '\n' ? '\\<换行>' : '\\' + x[1])))]
 }
 
 /** ${…} 占位换成一个合法的 JS 值,好让整段能当源码解析 */
