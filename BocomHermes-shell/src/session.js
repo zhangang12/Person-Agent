@@ -1208,6 +1208,14 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
   const knowledgeSeed = new Map()
   const turnBusy = new Set()   // 进行中的回合 sid:card-init/reattach 回包带 running,卡片重载后知道"还在跑"
   S.turnBusy = turnBusy   // 挂到 S 上:window.js 从回合状态推导 isCardBusy(不再依赖渲染端上报)直接读这份权威记录。形态:Set<根会话sid>,成员资格即"该会话有回合在飞"(无值对象);加入=card-send 起手,移除=card-send finally/card-reinit 清旧会话。
+  // 【本卡实际生效的模型】—— card-init(给界面显示)和 card-send(真发出去)必须过【同一个】函数。
+  // ★真机 2026-08-11:标题栏 chip 写着「DeepSeek V4 Pro」,serve 日志里实发 deepseek-v4-flash。
+  //   病根是两处各算一遍、链条不同:显示走 si.model || settings.model,发送走
+  //   si.model || settings.modelMain || settings.model —— 双模型(M1)加进来时只改了发送那条。
+  //   于是用户看到的模型和真在跑的模型是两回事,而且【看不出来】。同一件事不许有两份互不知情的账本。
+  function baseModelOf(si) {
+    return (si && si.model) || S.settings.modelMain || S.settings.model || null
+  }
   // 会话就绪/重建时把 per-card 模型回放进 sessionInfo;返回给 UI 的是"实际生效"的模型
   function replayModel(wcId, sid) {
     const si = S.sessionInfo.get(sid); if (!si) return null
@@ -1219,8 +1227,9 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
       if (reg && reg.model) si.model = reg.model
       else { const h = S.history.find((x) => x.id === sid); if (h && h.model) si.model = h.model }   // 卡坞续接:恢复当初那张卡选的模型
     }
-    return si.model || S.settings.model || null
+    return baseModelOf(si)
   }
+  S.__baseModelOf = baseModelOf   // 自测用:两条路同源这件事要能被断言,不能只靠"我看过了"
   // 卡片↔会话登记(每次建/换会话都过这里):
   // ①工作流卡把最新会话 id 记进注册表(reg.sid)—— 存档头带会话,关卡后仍能重开【完整会话】而不是只甩一个 md;
   // ②分片会话 id 进 S.shardSids —— recordHistory 硬闸的第二道防线(光靠各调用点传 shard 旗标,漏一个就污染最近会话);
@@ -1412,7 +1421,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     const msg = ctxPrefix + skillPrefix + (text || '')
     S.sentPrompt.set(sessionId, msg); S.streamBuf.delete(sessionId)   // 存【实际发出的全文】(含注入前缀):回显过滤比对的是 serve 收到的东西 —— 只存原文的话,带前缀的回显漏网,整坨背景提示词会打进对话流
     touchHistory(sessionId)
-    let model = si.model || S.settings.modelMain || S.settings.model || null   // 双模型(M1):会话默认走主模型(缺省回全局 model)
+    let model = baseModelOf(si)   // ★与 card-init 给界面的那个走同一个函数 —— 见 baseModelOf 头上的注释
     // ★排障埋点(2026-08-09):真机上编排的核实卡实际跑在 serve 默认模型上,而不是 run 指定的那个
     //   (勘察卡 139 次 stream 全是 deepseek-v4-flash,核实卡 50 次全是 deepseek-v4-pro,serve 日志实证)。
     //   读代码读不出这个差别 —— 派发链上每一处看着都把模型传下去了。这一整天所有真答案都来自

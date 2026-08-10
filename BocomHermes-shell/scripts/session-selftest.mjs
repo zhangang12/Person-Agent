@@ -1072,6 +1072,43 @@ console.log('用例23:card-init 两处 —— 主控卡回包带本 tag 分片�
   ok('history dir 存在 → 照常钉住', r3.dir === PROJ && h2.S.cardDir.get(272) === PROJ, h2.S.cardDir.get(272))
 }
 
+console.log('\n用例:界面显示的模型 = 真发出去的模型(双模型 M1 加进来时只改了发送那条)')
+{
+  // 【真机 2026-08-11】标题栏 chip 写着「DeepSeek V4 Pro」,serve 日志里实发 deepseek-v4-flash。
+  // 病根:显示走 si.model || settings.model,发送走 si.model || settings.modelMain || settings.model。
+  // 两处各算一遍,双模型(modelMain)加进来时只改了发送那条 —— 于是用户看到的和真在跑的是两回事,
+  // 而且【看不出来】(除去翻 serve 日志)。这一格就把两条路钉在一起:回包里的和 sendMessage 收到的必须逐字段相同。
+  const PRO = { providerID: 'deepseek', modelID: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro' }
+  const FLASH = { providerID: 'deepseek', modelID: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' }
+  const h = makeHarness({ S: { settings: { model: PRO, modelMain: FLASH } } })
+  const { ev, initRet } = await openCard(h, 300)
+  await h.handlers['card-send'](ev, { text: '随便问一句' })
+  const sentModel = (h.calls.sendMessage[0] || [])[3] || null
+
+  ok('★★card-init 告诉界面的模型,和 card-send 真发出去的是同一个',
+    JSON.stringify(initRet.model) === JSON.stringify(sentModel),
+    { 界面显示: initRet.model, 真发出去: sentModel })
+  ok('  配了 modelMain 时两边都取它(不是一个取 modelMain 一个取 model)',
+    sentModel && sentModel.modelID === 'deepseek-v4-flash' && initRet.model.modelID === 'deepseek-v4-flash',
+    { 界面显示: initRet.model, 真发出去: sentModel })
+
+  // 没配 modelMain 时回落全局 model,两边同样要一致
+  const h2 = makeHarness({ S: { settings: { model: PRO } } })
+  const c2 = await openCard(h2, 301)
+  await h2.handlers['card-send'](c2.ev, { text: '随便问一句' })
+  const m2 = (h2.calls.sendMessage[0] || [])[3] || null
+  ok('  没配 modelMain → 两边都回落 settings.model', JSON.stringify(c2.initRet.model) === JSON.stringify(m2) && m2.modelID === 'deepseek-v4-pro', { 界面显示: c2.initRet.model, 真发出去: m2 })
+
+  // 卡内手选(modelByWc)优先级最高,也要两边一致
+  const h3 = makeHarness({ S: { settings: { model: PRO, modelMain: FLASH } } })
+  h3.S.modelByWc.set(302, PRO)
+  const c3 = await openCard(h3, 302)
+  await h3.handlers['card-send'](c3.ev, { text: '随便问一句' })
+  const m3 = (h3.calls.sendMessage[0] || [])[3] || null
+  ok('  卡内手选优先,两边同样一致', JSON.stringify(c3.initRet.model) === JSON.stringify(m3) && m3.modelID === 'deepseek-v4-pro', { 界面显示: c3.initRet.model, 真发出去: m3 })
+  ok('  两条路走的是【同一个函数】,不是两份长得像的代码', typeof h.S.__baseModelOf === 'function')
+}
+
   console.log('\n' + (fail ? '❌ 有失败' : '✅ 全部通过') + '  ' + pass + ' passed, ' + fail + ' failed')
   Module._load = origLoad
   global.setInterval = realSetInterval

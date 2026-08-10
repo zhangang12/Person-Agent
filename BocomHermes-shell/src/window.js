@@ -3224,7 +3224,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     const tab = tab0 || brActive(); if (!tab) return { error: '没有活跃标签' }
     const wc = tab.view.webContents
     const onlyInteractive = !(opts && opts.all)
-    let text = '', els = '', more = ''
+    let text = '', els = '', more = '', elemErr = ''
     try {
       const r = await wc.executeJavaScript('(function(){var t=(document.body&&document.body.innerText)||"";'
         + 'return {t:t.slice(0,' + PAGE_MAX_TEXT + '),n:t.length}})()', true)
@@ -3247,7 +3247,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
           if(n>=${PAGE_MAX_EL})continue;
           n++; e.setAttribute('data-bh-ref',String(n));
           var role=e.getAttribute('role')||e.tagName.toLowerCase();
-          var name=(e.innerText||e.value||e.placeholder||(e.getAttribute&&e.getAttribute('aria-label'))||'').trim().replace(/\s+/g,' ').slice(0,60);
+          var name=(e.innerText||e.value||e.placeholder||(e.getAttribute&&e.getAttribute('aria-label'))||'').trim().replace(/\\s+/g,' ').slice(0,60);
           var st=[];
           if(e.disabled)st.push('disabled');
           if(e.checked)st.push('checked');
@@ -3256,12 +3256,20 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
           if(e.tagName==='A'&&e.getAttribute('href'))st.push('href='+String(e.getAttribute('href')).slice(0,60));
           lines.push('[ref_'+n+'] '+role+(name?' "'+name+'"':'')+(st.length?' ('+st.join(', ')+')':''));
         }
-        return {els:lines.join('\n'),shown:n,total:total};
+        return {els:lines.join('\\n'),shown:n,total:total};
       })()`, true)
       els = (out && out.els) || ''
       if (out && out.total > out.shown) more += '可交互元素共 ' + out.total + ' 个,这里只给了前 ' + out.shown + ' 个(想看全部或按区域细看,先滚动/收窄再读一次);'
-    } catch (e) { els = '(采集失败: ' + e.message + ')' }
-    return { ok: true, url: wc.getURL(), title: wc.getTitle(), elements: els, text, truncated: more || '' }
+    } catch (e) {
+      // ★采集失败必须【留痕 + 单独一个字段】,不能塞进 elements 里冒充内容(2026-08-11 真机):
+      // 原来是 els='(采集失败: …)' 且外层照样 ok:true —— 于是模型分不清"这页没有可交互元素"和
+      // "采集这一步炸了",只会接着往下猜 selector;而日志里一个字都没有,查都没法查。
+      // 那次的真因就藏在这个 catch 里:注入串里 lines.join('\n') 的 \n 被模板串吃成真换行,
+      // 页面拿到的是一条断行的字符串字面量 → SyntaxError → 这个 catch。见 npm run inject。
+      elemErr = e.message
+      log('[browser] 元素采集失败(ref 句柄这一轮不可用):' + e.message + ' @ ' + wc.getURL())
+    }
+    return { ok: true, url: wc.getURL(), title: wc.getTitle(), elements: els, text, truncated: more || '', elemErr }
   }
   async function skillPageAct(a) {
     const t = S.browser._takeover

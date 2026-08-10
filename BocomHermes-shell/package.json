@@ -33,6 +33,8 @@
     "orch:lint": "node scripts/orch-boundary-check.mjs",
     "undef": "node scripts/undef-check.mjs",
     "undef:test": "node scripts/undef-selftest.mjs",
+    "inject": "node scripts/inject-check.mjs",
+    "inject:test": "node scripts/inject-selftest.mjs",
     "modelroute": "node scripts/model-route-probe.mjs",
     "mcp:browser": "node mcp/browser-mcp.mjs",
     "mcp:browser:test": "node mcp/selftest.mjs",

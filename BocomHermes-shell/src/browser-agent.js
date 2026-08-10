@@ -158,8 +158,14 @@ module.exports = function initBrowserAgent(ctx) {
     let snap = null
     try { snap = await pageRead(tab, { all: !!(a && a.all) }) } catch (e) { return { error: '读页失败: ' + e.message } }
     // truncated 必须透传:截断了却不说,模型就把"前 200 个"当成"全部"(今天一整天最贵的教训之一)
+    // elemErr 同理,而且更狠:采集炸了却照样 ok:true + elements 里塞一句"(采集失败)",
+    // 模型只会把它当"这页没元素"接着往下猜 selector —— 真机 2026-08-11 就是这么走的。
+    // 所以炸了要【明说 + 给下一步】,而不是让它自己揣摩。
+    const ee = str(snap && snap.elemErr)
     return { ok: true, url: curUrl(s), title: (snap && snap.title) || '', elements: (snap && snap.elements) || '',
-      text: (snap && snap.text) || '', truncated: (snap && snap.truncated) || '' }
+      text: (snap && snap.text) || '', truncated: (snap && snap.truncated) || '',
+      ...(ee ? { elemError: '元素采集失败:' + ee + ' —— 这一轮拿不到 ref 句柄,别用 ref 点(编号会指错);'
+        + '先 browser_shot 看截图确认页面长什么样,或者 browser_act 用 selector 操作' } : {}) }
   }
 
   // ── find(仿 CC 的 find:自然语言找元素 → refs)──────────────────────────────
@@ -181,12 +187,12 @@ module.exports = function initBrowserAgent(ctx) {
         if(!es.length)return {none:1};
         var q=${JSON.stringify(q)}.toLowerCase();
         // 拆词后逐词命中:中文按整串、英文/数字按空格切,任一词命中即算(宁可多给几条,也别一条不给)
-        var toks=q.split(/[\s,，、]+/).filter(Boolean);
+        var toks=q.split(/[\\s,，、]+/).filter(Boolean);
         var hits=[];
         for(var i=0;i<es.length;i++){
           var e=es[i];
           var role=e.getAttribute('role')||e.tagName.toLowerCase();
-          var name=(e.innerText||e.value||e.placeholder||(e.getAttribute&&e.getAttribute('aria-label'))||'').trim().replace(/\s+/g,' ').slice(0,60);
+          var name=(e.innerText||e.value||e.placeholder||(e.getAttribute&&e.getAttribute('aria-label'))||'').trim().replace(/\\s+/g,' ').slice(0,60);
           var hay=(role+' '+name+' '+(e.getAttribute('name')||'')+' '+(e.getAttribute('title')||'')+' '+(e.getAttribute('href')||'')).toLowerCase();
           var score=0;
           for(var k=0;k<toks.length;k++){ if(hay.indexOf(toks[k])>=0) score++; }

@@ -476,14 +476,33 @@ module.exports = function initMail(ctx) {
           // 这组是 Agent 自己开一个受围栏的会话,拿自己的标签页,做完出报告。两条路互不干扰。
           // S.brAgent 由 window.js 在 initMail 之后挂上(const 的 TDZ,不能直接注进 ctx)。
           // ── dev server(preview_*):模型只能跑 launch.json 里写好的具名配置,不接受任意命令 ──
+          // ★这两组工具的每一次调用都要留痕(2026-08-11 真机教训):原先它们一个字都不写日志 ——
+          // 于是模型在对话里说"页面元素采集失败",而日志里【完全没有这件事】,连"哪个调用、什么参数、
+          // 报了什么"都无从查起。查一个看不见的东西只能靠猜,那一整天就是这么烧掉的。
+          // 一行一调用:route + 关键参数摘要 + ok/错误。参数只摘不落全文(截图 base64 之类不能进日志)。
+          const toolLog = (kind, route, arg, r) => {
+            try {
+              const a1 = arg || {}
+              const brief = [a1.sessionId && ('sid=' + a1.sessionId), a1.name && ('name=' + a1.name),
+                a1.url && ('url=' + String(a1.url).slice(0, 80)), a1.action && ('action=' + a1.action),
+                a1.ref && ('ref=' + a1.ref), a1.selector && ('sel=' + String(a1.selector).slice(0, 40)),
+                a1.query && ('q=' + String(a1.query).slice(0, 40)), a1.serverId && ('srv=' + a1.serverId)].filter(Boolean).join(' ')
+              const res = !r ? '(空回包)' : r.error ? ('✗ ' + String(r.error).slice(0, 160))
+                : (r.elemError ? '✓ 但元素采集失败:' + String(r.elemError).slice(0, 120) : '✓')
+              log('[' + kind + '] ' + route + (brief ? ' ' + brief : '') + ' → ' + res)
+            } catch { /* 留痕绝不许把主流程带崩 */ }
+          }
           if (req.url.startsWith('/preview/')) {
             const pv = S.preview
             if (!pv) return reply({ error: 'preview 未装配' })
             const route = req.url.slice('/preview/'.length)
             const fn = { start: pv.start, logs: pv.logs, stop: pv.stop, list: pv.list, configs: pv.configs }[route]
             if (!fn) return reply({ error: '未知 preview 路由: ' + route })
-            try { const r = await fn(a); return reply(r && r.error ? r : (route === 'list' ? { ok: true, servers: r } : r)) }
-            catch (e) { return reply({ error: e.message }) }
+            try {
+              const r = await fn(a)
+              toolLog('preview-tool', route, a, r)
+              return reply(r && r.error ? r : (route === 'list' ? { ok: true, servers: r } : r))
+            } catch (e) { toolLog('preview-tool', route, a, { error: e.message }); return reply({ error: e.message }) }
           }
           if (req.url.startsWith('/browser/')) {
             const ba = S.brAgent
@@ -491,7 +510,8 @@ module.exports = function initMail(ctx) {
             const route = req.url.slice('/browser/'.length)
             const fn = { open: ba.agentOpen, read: ba.agentRead, find: ba.agentFind, act: ba.agentAct, tabs: ba.agentTabs, resize: ba.agentResize, assert: ba.agentAssert, shot: ba.agentShot, diag: ba.agentDiag, close: ba.agentClose }[route]
             if (!fn) return reply({ error: 'unknown ' + req.url })
-            try { return reply(await fn(a)) } catch (e) { return reply({ error: e.message }) }
+            try { const r = await fn(a); toolLog('browser-tool', route, a, r); return reply(r) }
+            catch (e) { toolLog('browser-tool', route, a, { error: e.message }); return reply({ error: e.message }) }
           }
           return reply({ error: 'unknown ' + req.url })
         } catch (e) { reply({ error: e.message }) }
