@@ -155,8 +155,10 @@ module.exports = function initBrowserAgent(ctx) {
     const s = live(a && a.sessionId); if (!s) return { error: '会话不存在或已结束(先 browser_open)' }
     const tab = tabOf(s); if (!tab) return { error: '这个会话的标签页已被关掉' }
     let snap = null
-    try { snap = await pageRead(tab) } catch (e) { return { error: '读页失败: ' + e.message } }
-    return { ok: true, url: curUrl(s), title: (snap && snap.title) || '', elements: (snap && snap.elements) || '', text: (snap && snap.text) || '' }
+    try { snap = await pageRead(tab, { all: !!(a && a.all) }) } catch (e) { return { error: '读页失败: ' + e.message } }
+    // truncated 必须透传:截断了却不说,模型就把"前 200 个"当成"全部"(今天一整天最贵的教训之一)
+    return { ok: true, url: curUrl(s), title: (snap && snap.title) || '', elements: (snap && snap.elements) || '',
+      text: (snap && snap.text) || '', truncated: (snap && snap.truncated) || '' }
   }
 
   // ── act ─────────────────────────────────────────────────────────────────
@@ -166,7 +168,14 @@ module.exports = function initBrowserAgent(ctx) {
     const tab = tabOf(s); if (!tab) return { error: '这个会话的标签页已被关掉' }
     if (s.steps.length >= MAX_STEPS) return { error: '本会话步数已达上限 ' + MAX_STEPS + ' —— 跑飞了,请 browser_close 收报告' }
     const action = str(a.action)
-    const sel = a.selector != null ? str(a.selector).slice(0, 1000) : ''
+    // ★ref 优先(仿 CC:read_page 给句柄、后续动作用句柄,模型不用拼选择器也就不会拼错)。
+    //   ref 由 skillPageRead 盖在 DOM 上的 data-bh-ref 属性支撑 → 解析成精确唯一选择器。
+    //   页面刷新/重渲染后属性就没了:那时 execStep 会找不到元素并报错,而不是【悄悄点到别的元素上】——
+    //   后者才是最坏的结果(动作成功、点的却不是它以为的那个)。回执直接告诉它重新 browser_read。
+    const refRaw = a.ref != null ? str(a.ref).trim() : ''
+    const refN = refRaw ? (refRaw.match(/^(?:ref_)?(\d+)$/) || [])[1] : ''
+    if (refRaw && !refN) return { error: 'ref 形如 ref_3 或 3(browser_read 返回的那个);要用选择器请填 selector' }
+    const sel = refN ? '[data-bh-ref="' + refN + '"]' : (a.selector != null ? str(a.selector).slice(0, 1000) : '')
     const wc = tab.view.webContents
 
     // navigate 特殊:要先按【目标 URL】过策略,再执行(不能等跳过去了才发现越界)

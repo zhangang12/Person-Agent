@@ -197,17 +197,26 @@ const TOOLS = [
   },
   {
     name: 'browser_read',
-    description: '读会话当前页:URL/标题/可交互元素清单(带现成选择器)/正文节选。每步操作前先读一次确认页面状态。',
-    inputSchema: { type: 'object', properties: { sessionId: { type: 'string' } }, required: ['sessionId'] },
+    description: '读会话当前页:URL/标题/【带 [ref_N] 句柄的可交互元素清单】/正文节选。'
+      + '每步操作前先读一次 —— 后续 browser_act 直接用 ref(如 ref_3),不用自己拼选择器,也就不会拼错。'
+      + '★ref 只对【这一次读页】有效:页面刷新或重渲染后必须重新 browser_read 拿新的;'
+      + '拿旧 ref 去点会明确报"找不到元素",不会悄悄点到别的东西上。'
+      + '元素或正文被截断时回执里会明说(truncated 字段),别把截断当成"页面就这么多"。',
+    inputSchema: { type: 'object', properties: {
+      sessionId: { type: 'string' },
+      all: { type: 'boolean', description: '默认只列可交互元素;true = 连标题/标签/表格单元一起列(页面结构看不清时用)' },
+    }, required: ['sessionId'] },
   },
   {
     name: 'browser_act',
     description: '在会话标签页里执行一步操作(强引擎:选择器兜底+可见性等待+红框高亮)。'
-      + 'selector 用 browser_read 给的现成选择器或 __text__:tag|文本;严禁 :has-text()/xpath。navigate 的目标也走围栏。',
+      + '★定位优先用 ref(browser_read 返回的 [ref_N]),没有 ref 再用 selector。navigate 的目标也走围栏。',
     inputSchema: { type: 'object', properties: {
       sessionId: { type: 'string' },
       action: { type: 'string', enum: ['click', 'type', 'select', 'check', 'enter', 'navigate', 'wait'] },
-      selector: { type: 'string' }, value: { type: 'string' }, text: { type: 'string' },
+      ref: { type: 'string', description: '★首选:browser_read 给的句柄(ref_3 或 3)。用它就不用拼选择器 —— 精确唯一,页面变了会明确报错而不是点错' },
+      selector: { type: 'string', description: '没有 ref 时才用(browser_read 里的现成选择器或 __text__:tag|文本);严禁 :has-text()/xpath' },
+      value: { type: 'string' }, text: { type: 'string' },
       checked: { type: 'boolean' }, url: { type: 'string' }, ms: { type: 'number' },
     }, required: ['sessionId', 'action'] },
   },

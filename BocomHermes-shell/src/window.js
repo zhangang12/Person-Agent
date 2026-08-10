@@ -3154,24 +3154,60 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   // 复用确定性引擎的同一套加固原语(waitForEl/原生 setter+事件/__text__),Element-UI 等框架事件才触发得对。
   // 读页任何时候可用;【执行】仅在接管期(S.browser._takeover.active)开放 —— 防 Agent 随手戳生产页面。
   // tab 可选:Agent 自主会话有自己的标签页,不能读 brActive()(那是用户正在看的那个)
-  async function skillPageRead(tab0) {
+  // ── 读页(ref 化,仿 Claude Code 的 read_page)────────────────────────────────
+  // 【为什么要 ref】原来这里返回的是"元素 + 现成选择器",而选择器是【模型要自己复用的字符串】:
+  //   __text__:button|提交 这种在同名按钮上直接歧义,#id 遇到动态 id 又不稳。
+  //   CC 那套的地基是 read_page 给每个可交互元素一个 [ref_N] 句柄,后续 click/type 直接用 ref ——
+  //   模型不用拼选择器,也就不会拼错。
+  // 【本仓的实现比"记一张表"更稳】读页时给元素盖一个 data-bh-ref 属性:
+  //   ref_N 解析成 [data-bh-ref="N"],是精确唯一的;页面一刷新/重渲染属性就没了 → ref 自然失效,
+  //   act 那边会明说"refs 已失效,先重新 browser_read"—— 与 CC 的"先 read_page"契约一致,
+  //   而且失效是【被发现的】,不是悄悄点到别的元素上(那才是最坏的结果)。
+  // 【截断要说出来】原来 80 个元素 / 6000 字正文是硬截且不吭声 —— 模型以为自己看全了。
+  //   今天一整天的教训:静默截断读起来和"就这么多"一模一样。
+  const PAGE_MAX_EL = 200, PAGE_MAX_TEXT = 8000
+  async function skillPageRead(tab0, opts) {
     const tab = tab0 || brActive(); if (!tab) return { error: '没有活跃标签' }
     const wc = tab.view.webContents
-    let text = '', els = ''
-    try { text = String(await wc.executeJavaScript('(document.body&&document.body.innerText)||""', true) || '').slice(0, 6000) } catch {}
+    const onlyInteractive = !(opts && opts.all)
+    let text = '', els = '', more = ''
     try {
-      els = await wc.executeJavaScript(`(function(){var out=[];var dyn=/^el-id-\\d|\\d{6,}/;
-        var es=document.querySelectorAll('button,a,input,select,textarea,[role="button"],[onclick]');
-        for(var i=0;i<es.length&&out.length<80;i++){var e=es[i];var r=e.getBoundingClientRect();if(!r.width&&!r.height)continue;
-        var t=(e.innerText||e.value||e.placeholder||(e.getAttribute&&e.getAttribute('aria-label'))||'').trim().slice(0,40);
-        var sel='';if(e.id&&!dyn.test(e.id))sel='#'+e.id;
-        else if(e.name)sel=e.tagName.toLowerCase()+'[name="'+e.name+'"]';
-        else if(e.placeholder)sel='input[placeholder="'+String(e.placeholder).replace(/"/g,'')+'"]';
-        else if(t&&t.length<=30&&!/\\n/.test(t))sel='__text__:'+e.tagName.toLowerCase()+'|'+t;
-        out.push(e.tagName.toLowerCase()+(t?' 「'+t+'」':'')+(sel?'  → '+sel:''))}
-        return out.join('\\n')})()`, true)
+      const r = await wc.executeJavaScript('(function(){var t=(document.body&&document.body.innerText)||"";'
+        + 'return {t:t.slice(0,' + PAGE_MAX_TEXT + '),n:t.length}})()', true)
+      text = (r && r.t) || ''
+      if (r && r.n > PAGE_MAX_TEXT) more += '正文共 ' + r.n + ' 字,这里只给了前 ' + PAGE_MAX_TEXT + ' 字;'
+    } catch {}
+    try {
+      const out = await wc.executeJavaScript(`(function(){
+        var SEL='button,a,input,select,textarea,[role="button"],[role="link"],[role="checkbox"],[role="tab"],[contenteditable="true"],[onclick]';
+        var es=document.querySelectorAll(${onlyInteractive ? 'SEL' : "SEL+',h1,h2,h3,label,td,th'"});
+        var lines=[],n=0,total=0;
+        // 先清掉上一次的 ref —— 不清的话旧编号会和新编号混在一页上,ref_3 到底指谁就说不清了
+        var old=document.querySelectorAll('[data-bh-ref]');
+        for(var k=0;k<old.length;k++){try{old[k].removeAttribute('data-bh-ref')}catch(e){}}
+        for(var i=0;i<es.length;i++){
+          var e=es[i];var r=e.getBoundingClientRect();
+          if(!r.width&&!r.height)continue;                       // 不可见的不给 ref:给了模型也点不着
+          var cs=window.getComputedStyle(e); if(cs&&(cs.visibility==='hidden'||cs.display==='none'))continue;
+          total++;
+          if(n>=${PAGE_MAX_EL})continue;
+          n++; e.setAttribute('data-bh-ref',String(n));
+          var role=e.getAttribute('role')||e.tagName.toLowerCase();
+          var name=(e.innerText||e.value||e.placeholder||(e.getAttribute&&e.getAttribute('aria-label'))||'').trim().replace(/\s+/g,' ').slice(0,60);
+          var st=[];
+          if(e.disabled)st.push('disabled');
+          if(e.checked)st.push('checked');
+          if(e.getAttribute&&e.getAttribute('aria-expanded'))st.push('expanded='+e.getAttribute('aria-expanded'));
+          if(e.tagName==='INPUT'&&e.type)st.push('type='+e.type);
+          if(e.tagName==='A'&&e.getAttribute('href'))st.push('href='+String(e.getAttribute('href')).slice(0,60));
+          lines.push('[ref_'+n+'] '+role+(name?' "'+name+'"':'')+(st.length?' ('+st.join(', ')+')':''));
+        }
+        return {els:lines.join('\n'),shown:n,total:total};
+      })()`, true)
+      els = (out && out.els) || ''
+      if (out && out.total > out.shown) more += '可交互元素共 ' + out.total + ' 个,这里只给了前 ' + out.shown + ' 个(想看全部或按区域细看,先滚动/收窄再读一次);'
     } catch (e) { els = '(采集失败: ' + e.message + ')' }
-    return { ok: true, url: wc.getURL(), title: wc.getTitle(), elements: els, text }
+    return { ok: true, url: wc.getURL(), title: wc.getTitle(), elements: els, text, truncated: more || '' }
   }
   async function skillPageAct(a) {
     const t = S.browser._takeover
