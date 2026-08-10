@@ -1152,6 +1152,10 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       const small = w > SHOT_W ? img.resize({ width: SHOT_W, quality: 'best' }) : img
       dataUrl = 'data:image/jpeg;base64,' + small.toJPEG(88).toString('base64')
     } catch (e) { log('[shot] 缩图失败,只给路径: ' + e.message) }
+    // ★窄条哨兵:后台标签如果没设视口,截出来会是 264×818 这种窄条(手机断点渲染),
+    // 对排查毫无价值 —— 真机 2026-08-11 就出过一张。这类"能出图但图是废的"最容易蒙混过关,
+    // 所以宁可多喊一声:宽度明显不够就留痕,别等用户看出来。
+    if (w > 0 && w < 600) log('[shot] ⚠ 截图只有 ' + w + 'px 宽 —— 后台标签视口没设成功?这张图多半是手机断点布局,对排查没用')
     shotPaths.add(fp)
     if (shotPaths.size > 200) { const it = shotPaths.values(); shotPaths.delete(it.next().value) }   // 粗粒度防涨
     try {

@@ -425,6 +425,27 @@ module.exports = function initBrowser(ctx) {
   }
   function detachDbg(tab) { try { tab.view.webContents.debugger.detach() } catch {} tab.dbg = false }
 
+  // ── 后台标签的视口 ────────────────────────────────────────────────────────
+  // ★真机 2026-08-11 一上手就踩到:后台标签【从来没被 setBounds 过】(brLayout 只排活动标签),
+  //   于是它的视口是个窄条 —— 实测截出来 264×818,页面按手机断点渲染,截图对排查毫无价值。
+  //   "看不见"不等于"没有尺寸":无头浏览器一样要显式给视口,这是 CDP Emulation 的本职。
+  //   dsf=2 是为了出图够清晰(缩略图要按 2 倍分辨率给,见 window.js SHOT_W)。
+  const BG_VIEWPORT = { width: 1440, height: 900, deviceScaleFactor: 2, mobile: false }
+  async function bgViewport(tab) {
+    if (!tab || !tab.dbg) return
+    try { await tab._dbgReady } catch {}
+    try {
+      await tab.view.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', BG_VIEWPORT)
+      tab._bgMetrics = true
+    } catch (e) { log('后台标签设视口失败(截图可能是窄条): ' + e.message) }
+  }
+  /** 用户点过来看这个后台标签时,要把强制视口撤掉,否则它被钉死在 1440×900,跟着窗口缩放全失效 */
+  async function clearBgViewport(tab) {
+    if (!tab || !tab._bgMetrics) return
+    tab._bgMetrics = false
+    try { await tab.view.webContents.debugger.sendCommand('Emulation.clearDeviceMetricsOverride') } catch {}
+  }
+
   // 控制台 REPL：在活动标签的页面上下文求值（含 CLI API：$ $$ $x copy keys values；$el=已拾取元素）
   async function brEval(expr) {
     const tab = brActive(); if (!tab) return { error: '无活动标签页', isErr: true }
@@ -460,7 +481,7 @@ module.exports = function initBrowser(ctx) {
     // 不激活的标签【压根不挂进 contentView】,所以它天然是"无头"的:JS 照跑、请求照发、
     // CDP 照样能截图(Page.captureScreenshot 不走合成表面),只是用户看不见。
     // 标签条照旧要推(brSendTabs)—— 用户想看它在干什么,点过去就行。看得见的可能性不能抹掉。
-    if (opts && opts.background) brSendTabs()
+    if (opts && opts.background) { bgViewport(tab); brSendTabs() }
     else activateTab(id)
     if (S.browser.rec && S.browser.rec.active) wireRecToTab(tab, { crossTab: true })   // 录制中新开的标签也纳入,不丢后续操作
     const u = normalizeUrl(url)
@@ -487,6 +508,7 @@ module.exports = function initBrowser(ctx) {
     const prev = brActive()
     if (prev && prev.id !== id) { try { hostWin().contentView.removeChildView(prev.view) } catch {} }
     b.activeId = id
+    clearBgViewport(tab)   // 从后台转到前台:撤掉强制视口,让它跟着窗口走
     try { hostWin().contentView.addChildView(tab.view) } catch {}
     brLayout()
     brSendTabs()
@@ -567,10 +589,21 @@ module.exports = function initBrowser(ctx) {
    *  的元凶,而且抢完还不还。CDP 的 Page.captureScreenshot 不走合成表面,视图没挂在窗口上也能出图。 */
   async function brShotTab(tab, full) {
     if (!tab || !tab.view || tab.view.webContents.isDestroyed()) return null
+    // ★必须先等调试器就绪:attachDbg 是异步的(Network/Page/Runtime.enable 全在 _dbgReady 里),
+    //   刚开的标签立刻截图会撞上 tab.dbg 还没定 —— 真机第一次自测就报「后台标签没有调试器?」。
+    try { await Promise.race([tab._dbgReady || Promise.resolve(), new Promise((r) => setTimeout(r, 4000))]) } catch {}
     if (tab.dbg) { try { return await brShotCdp(tab, full) } catch (e) { log('browser shot(tab) cdp 失败: ' + e.message) } }
-    // 没有调试器(极少见):只有它恰好就是活动标签时才可能截到
     if (tab.id === S.browser.activeId) { try { return await brShotVisible(tab) } catch (e) { log('browser shot(tab) 可视区兜底也失败: ' + e.message) } }
-    return null
+    // 最后一招:临时切前台截一张,【截完立刻还回去】。闪一下总比"截图给我"直接失败好,
+    // 但必须还 —— 老代码正是"切过去就不还",那才是用户说的"又把我的会话毁掉了"。
+    const prev = S.browser.activeId
+    try {
+      activateTab(tab.id)
+      const p = await brShotVisible(tab)
+      log('browser shot(tab): 无调试器,临时切前台截图后已切回(prev=' + prev + ')')
+      return p
+    } catch (e) { log('browser shot(tab) 全部路径失败: ' + e.message); return null }
+    finally { if (prev != null && prev !== tab.id) { try { activateTab(prev) } catch {} } }
   }
 
   async function brScreenshot(full) {
