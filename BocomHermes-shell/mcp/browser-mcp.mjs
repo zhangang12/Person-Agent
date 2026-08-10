@@ -186,6 +186,34 @@ const TOOLS = [
   //   用户看不见、和真实使用环境不是同一个东西,只适合公网只读页面。
   //   这一组跑在内嵌浏览器里,是用户真在用的那个浏览器。要"打开页面验一遍"就用这一组。
   {
+    name: 'preview_start',
+    description: '把项目【跑起来】(dev server),等端口就绪后返回地址 —— 然后就能 browser_open 去验了。'
+      + '★只能启动 launch.json 里【用户写好】的具名配置(项目下 .bocom/launch.json 或 .claude/launch.json),'
+      + '不接受任意命令 —— 这是安全边界,不要试图绕。不知道有哪些就先 preview_list。'
+      + '同名已在跑会直接复用(不会重复起、撞端口)。起不来时回执直接带最后几行日志 ——'
+      + '"起不来"三个字对排查没有价值,原因几乎总在那几行里。',
+    inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'launch.json 里配置的 name' } }, required: ['name'] },
+  },
+  {
+    name: 'preview_list',
+    description: '看有哪些可启动的配置(launch.json)以及当前在跑的 dev server(serverId/端口/地址/已跑多久)。',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'preview_logs',
+    description: 'dev server 的 stdout/stderr。level="error" 只看像错误的行,search 按关键词 —— '
+      + '编译报错、端口占用、接口 500 都先看它。命中多于给出时会明说。',
+    inputSchema: { type: 'object', properties: {
+      serverId: { type: 'string' }, lines: { type: 'number', description: '最多给几行(默认 80)' },
+      level: { type: 'string', enum: ['all', 'error'] }, search: { type: 'string' },
+    }, required: ['serverId'] },
+  },
+  {
+    name: 'preview_stop',
+    description: '停掉一个 dev server(先 SIGTERM,3 秒不退再 SIGKILL)。验完就停 —— 留着会占端口。',
+    inputSchema: { type: 'object', properties: { serverId: { type: 'string' } }, required: ['serverId'] },
+  },
+  {
     name: 'browser_open',
     description: '【端到端验证·首选】在内嵌浏览器里开一个受围栏的自主会话(自己的标签页,用户看得见,带登录态)。'
       + '默认只放行本机 localhost/127.0.0.1;其他站点需用户在 设置→浏览器→Agent 自主会话 里加白名单。'
@@ -360,6 +388,35 @@ async function callTool(name, args) {
     return r.report || JSON.stringify(r)
   }
   // ── Agent 自主浏览器会话 ────────────────────────────────────────────────
+  if (name === 'preview_start') {
+    const r = await relayPost('/preview/start', { name: String(args.name || '') })
+    if (r.error) return '起不来:' + r.error + (r.cmd ? '\n命令: ' + r.cmd + '  (cwd=' + r.cwd + ')' : '')
+      + (r.logTail && r.logTail.length ? '\n最后几行日志:\n  ' + r.logTail.join('\n  ') : '')
+    return (r.reused ? '已在跑(复用):' : '已就绪:') + r.name + '  ' + (r.url || ('端口 ' + r.port))
+      + '  serverId=' + r.serverId + (r.readyMs ? '  (' + Math.round(r.readyMs / 100) / 10 + 's)' : '')
+      + (r.note ? '\n' + r.note : '') + '\n→ 接着 browser_open 这个地址去验'
+  }
+  if (name === 'preview_list') {
+    const [cfg, run] = await Promise.all([relayPost('/preview/configs', {}), relayPost('/preview/list', {})])
+    const cs = (cfg.configs || []).map((c) => '  · ' + c.name + '  → ' + c.cmd + (c.port ? '  :' + c.port : '')).join('\n')
+    const rs = (run.servers || []).map((s) => '  · ' + s.name + '  serverId=' + s.serverId + '  ' + (s.url || '') + (s.running ? '  运行中 ' + s.uptimeSec + 's' : '  已退出')).join('\n')
+    return '可启动的配置' + (cfg.from ? '(' + cfg.from + ')' : '') + ':\n' + (cs || '  (空)' + (cfg.error ? ' —— ' + cfg.error : ''))
+      + '\n\n在跑的:\n' + (rs || '  (无)')
+  }
+  if (name === 'preview_logs') {
+    const body = { serverId: String(args.serverId || '') }
+    for (const k of ['level', 'search']) if (args[k] != null) body[k] = String(args[k])
+    if (args.lines != null) body.lines = +args.lines
+    const r = await relayPost('/preview/logs', body)
+    if (r.error) return r.error
+    return r.name + (r.running ? '(运行中)' : '(已退出 code=' + ((r.exit && r.exit.code) != null ? r.exit.code : '?') + ')')
+      + '  ' + r.matched + '/' + r.total + ' 行:\n' + ((r.lines || []).join('\n') || '  (无)')
+      + (r.truncated ? '\n⚠ ' + r.truncated : '')
+  }
+  if (name === 'preview_stop') {
+    const r = await relayPost('/preview/stop', { serverId: String(args.serverId || '') })
+    return r.error ? r.error : (r.already ? '它已经退出了' : '已发停止信号')
+  }
   if (name === 'browser_open') {
     const r = await relayPost('/browser/open', { url: String(args.url || ''), purpose: String(args.purpose || '') })
     return '会话已开: ' + r.sessionId + '(' + r.expiresInSec + 's 内有效)\n当前页: ' + r.url + (r.title ? '(' + r.title + ')' : '')

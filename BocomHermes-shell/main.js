@@ -210,7 +210,10 @@ app.on('window-all-closed', () => {
   if (app.isQuitting) return
   if (process.platform !== 'darwin') app.quit()
 })
-app.on('will-quit', () => { globalShortcut.unregisterAll(); oc.killAll(); try { S.brAgent && S.brAgent.dropAll('应用退出') } catch {} })   // Agent 浏览器会话收摊:别把会话留成僵尸(标签页随窗口走,但报告要落个终态)
+// dev server 不收就留成僵尸,下次启动直接撞端口;Agent 浏览器会话同理要落个终态
+app.on('will-quit', () => { globalShortcut.unregisterAll(); oc.killAll();
+  try { S.preview && S.preview.killAll() } catch {}
+  try { S.brAgent && S.brAgent.dropAll('应用退出') } catch {} })   // Agent 浏览器会话收摊:别把会话留成僵尸(标签页随窗口走,但报告要落个终态)
 // 兜底:任何未捕获错误都进日志,便于排查偶发崩溃
 process.on('uncaughtException', (e) => { try { log('uncaughtException: ' + (e && e.stack || e)) } catch {} })
 process.on('unhandledRejection', (r) => { try { log('unhandledRejection: ' + r) } catch {} })

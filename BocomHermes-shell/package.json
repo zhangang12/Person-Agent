@@ -53,7 +53,8 @@
     "spin:test": "node scripts/spin-selftest.mjs",
     "dropped:test": "node scripts/dropped-turn-selftest.mjs",
     "split:test": "node scripts/browser-split-selftest.mjs",
-    "ref:test": "node scripts/browser-ref-selftest.mjs"
+    "ref:test": "node scripts/browser-ref-selftest.mjs",
+    "preview:test": "node scripts/preview-selftest.mjs"
   },
   "dependencies": {
     "mammoth": "^1.8.0",

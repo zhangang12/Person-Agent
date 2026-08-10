@@ -107,7 +107,9 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
       // 没被告知的工具,弱模型不会去试;于是"验证前端页面"这类活要么不做,要么退回去读代码猜。
       // ★两套浏览器必须当场分清:选错的后果是"在一个看不见、没登录的浏览器里验了个寂寞",
       //   而它自己看不出区别(headless_* 也会正常返回 HTML)。所以规则写死在这里,不靠它悟。
-      + '<内嵌浏览器>你有一个【用户屏幕上看得见的】浏览器,工具名带 browser_ 前缀:'
+      + '<内嵌浏览器>项目没跑起来时先 preview_list 看有哪些可启动配置、preview_start 把它跑起来'
+      + '(只能跑 launch.json 里用户写好的具名配置),再去验;编译报错/端口占用看 preview_logs。'
+      + '你有一个【用户屏幕上看得见的】浏览器,工具名带 browser_ 前缀:'
       + 'browser_open(开页面)/ browser_read(读页,给每个元素一个 [ref_N] 句柄)/ '
       + 'browser_find(一句话找元素→refs,页面元素多时别自己翻清单)/ '
       + 'browser_act(点击/输入/选择/按键/滚动/悬停/导航,定位【优先用 ref】不用拼选择器)/ '

@@ -475,6 +475,16 @@ module.exports = function initMail(ctx) {
           // 与上面 /skill/* 的分工:那组是【回放录好的技能】+ 回放失败后的人工点名接管;
           // 这组是 Agent 自己开一个受围栏的会话,拿自己的标签页,做完出报告。两条路互不干扰。
           // S.brAgent 由 window.js 在 initMail 之后挂上(const 的 TDZ,不能直接注进 ctx)。
+          // ── dev server(preview_*):模型只能跑 launch.json 里写好的具名配置,不接受任意命令 ──
+          if (req.url.startsWith('/preview/')) {
+            const pv = S.preview
+            if (!pv) return reply({ error: 'preview 未装配' })
+            const route = req.url.slice('/preview/'.length)
+            const fn = { start: pv.start, logs: pv.logs, stop: pv.stop, list: pv.list, configs: pv.configs }[route]
+            if (!fn) return reply({ error: '未知 preview 路由: ' + route })
+            try { const r = await fn(a); return reply(r && r.error ? r : (route === 'list' ? { ok: true, servers: r } : r)) }
+            catch (e) { return reply({ error: e.message }) }
+          }
           if (req.url.startsWith('/browser/')) {
             const ba = S.brAgent
             if (!ba) return reply({ error: '浏览器 Agent 会话未就绪(壳层还没装配完)' })

@@ -1063,6 +1063,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
 
   // Agent 自主浏览器会话:必须在 initRecorder 之后 —— 它复用 execStep/waitNetIdle 这两个强引擎原语,
   // 不另起一套弱实现(弱实现正是 mcp/browser-mcp.mjs 里那个无登录态无头浏览器的老问题)。
+  // dev server 生命周期(仿 CC 的 preview_*):模型只能启动 launch.json 里【用户写好】的具名配置
+  const preview = require('./preview')({ S, log })
+  S.preview = preview
   const brAgent = initBrowserAgent({ S, log, brActive, newTab, closeTab, activateTab, createBrowser, brScreenshot, execStep, waitNetIdle, pageRead: skillPageRead, brSetDevice })
   // 挂 S:relay(mail.js)在本行【之前】就被 initMail 构造了,而 brAgent 是 const —— 直接传进去会踩 TDZ。
   // 本仓跨层访问的惯例本来就是挂 S(S.setCardBusy / S.dropPendingPerm 同款),relay 调用期再取,顺序天然安全。
