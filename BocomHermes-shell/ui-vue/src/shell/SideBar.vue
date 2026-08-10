@@ -8,7 +8,7 @@
 import { computed, ref } from 'vue'
 import { KMenu, KSkeleton, KSpinner } from '../components'
 import type { KMenuItem } from '../components'
-import { store, dotColor, showView, spawnChat, closeChat, pinChat, sessMouseDown, sessClick, refreshHist } from './store'
+import { store, dotColor, showView, spawnChat, closeChat, pinChat, sessMouseDown, sessClick, refreshHist, toggleSplit } from './store'
 import type { ChatEntry } from './store'
 
 const projTag = computed(() => (store.projName !== '未选目录' ? ' · ' + store.projName : ''))
@@ -59,7 +59,7 @@ function onMenu(c: ChatEntry, key: string) {
       <div class="icon" :class="{ on: store.view === 'mail' }" title="邮件中心" @click="showView('mail')">
         <svg class="ic" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 8 9 5.5L21 8"/></svg>
       </div>
-      <div class="icon" title="内嵌浏览器" @click="showView('browser')">
+      <div class="icon" :class="{ on: store.splitW > 0 }" :title="store.splitW > 0 ? '关闭浏览器面板' : '在对话旁边打开浏览器'" @click="store.splitW > 0 ? toggleSplit(false) : showView('browser')">
         <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 4 5.7 4 9s-1.5 6.4-4 9c-2.5-2.6-4-5.7-4-9s1.5-6.4 4-9z"/></svg>
       </div>
       <div class="icon" :class="{ on: store.view === 'skills' }" title="技能中心" @click="showView('skills')">

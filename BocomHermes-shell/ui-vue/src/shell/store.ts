@@ -83,6 +83,8 @@ function removeEntry(key: string) {
   details.delete(key)
 }
 
+const SPLIT_KEY = 'bh.splitW'   // 同屏分栏的宽度(showView 与 toggleSplit 都要读,提到两者之前)
+
 // ── 视图切换(同时只显一个;webview 懒创建且保活)──
 /** 上报"当前活动对话"的 wcId —— 内嵌浏览器的「发给 Agent」要注进你正在聊的这个会话。
  *  浏览器是会话的辅助面板,不该另有一个"调试助手"接住它(见 browser.js createShellBrowser)。 */
@@ -94,11 +96,21 @@ export function pushActiveChat(): void {
 }
 
 export function showView(view: string) {
+  // ★★【浏览器不是一个视图,是对话的辅助面板】(2026-08-11 用户拍板,第二次纠正)
+  // 上一版我只砍掉了那张"调试助手"卡,却留着这条"浏览器 = 独立视图"的路 ——
+  // 于是点侧栏浏览器仍然 chatW=0 铺满内容区,对话整个不见了,比原来更像"浏览器主导"。
+  // 用户原话:"浏览器内嵌本身就是会话的辅助能力"。所以点它 = 【回到对话 + 在旁边开浏览器】,
+  // 视图永远停在 chat,浏览器只占右半。不再有"只有浏览器没有对话"的画面。
   if (view === 'browser') {
-    // 内嵌浏览器:工作台 = shell 主窗口的嵌入式子窗(覆盖内容区),不再独立出窗
-    try { BH()?.browserSplit?.({ chatW: 0, sideW: sideWNow() }) } catch (e) { /* 静默 */ }   // 全屏看浏览器:不给对话留宽
+    if (store.splitW <= 0) {
+      const saved = +(localStorage.getItem(SPLIT_KEY) || 0)
+      const half = Math.round((window.innerWidth - sideWNow()) / 2)
+      store.splitW = Math.max(360, saved > 0 ? saved : half)
+      try { localStorage.setItem(SPLIT_KEY, String(store.splitW)) } catch { /* 静默 */ }
+    }
+    store.view = 'chat' as ViewName          // ★视图是对话 —— 对话必须在场
+    pushSplit()
     try { BH()?.browserEmbed?.(true) } catch (e) { /* 静默 */ }
-    store.view = 'browser' as ViewName
     return
   }
   // ★分栏开着 + 回到对话视图 → 浏览器【不隐藏】,让出左边那块继续显对话(同屏)。
@@ -120,7 +132,7 @@ export function viewSrc(v: ViewName) { return VIEW_SRC[v] || '' }
 // 【为什么值得做】浏览器与对话原来是主窗口里互斥的两个视图:看浏览器就看不见对话。
 // 而"让 Agent 去页面上验一遍"这件事,价值恰恰在于【过程和结论在同一块屏幕上】——
 // 你能看着它点,它的结论就在旁边;分屏切换等于把证据和判断拆开看。
-const SPLIT_KEY = 'bh.splitW'
+
 export function sideWNow(): number {
   const n = +(localStorage.getItem('bh.sbw') || 228)
   return Number.isFinite(n) && n > 0 ? Math.round(n) : 228
