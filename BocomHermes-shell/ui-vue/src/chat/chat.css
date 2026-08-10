@@ -102,6 +102,37 @@ html[data-embed="1"] .hl { display: none; }
 }
 .retrybtn:hover { background: var(--blue-10); }
 
+/* Agent 截的图(card-shot):壳层直推的缩略图。跟着 feed 走左对齐、拉满宽,
+   最大高度收一下 —— 整页截图能有几千像素高,不收会把一屏全占掉、后面的回答全被推走。 */
+.shot { align-self: stretch; margin: 4px 0; }
+/* ★裁高不缩宽:等比缩到 420 高的话,1280×4200 的整页截图只剩 128px 宽的细条(目检实见)。
+   满宽显示顶部那一屏才是有用的信息,余下的点开原图看。 */
+.shot-frame {
+  position: relative; max-height: 460px; overflow: hidden; cursor: zoom-in;
+  border: 1px solid var(--sep); border-radius: var(--r-sm); background: var(--fill-4);
+}
+.shot-frame:hover { border-color: var(--blue); }
+.shot-img { display: block; width: 100%; height: auto; }
+/* 被裁了要说 —— 不说的话用户会把"顶部一屏"当成整页 */
+.shot-more {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 14px 8px 4px;
+  font: var(--c1); color: var(--label-2); text-align: center;
+  background: linear-gradient(to bottom, transparent, var(--fill-2));
+}
+.shot-nothumb {
+  font: var(--c1); color: var(--label-3); padding: 10px 12px;
+  border: 1px dashed var(--sep); border-radius: var(--r-sm); background: var(--fill-4);
+}
+.shot-cap {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font: var(--c1); color: var(--label-3); padding: 3px 2px 0;
+}
+.shot-tag { color: var(--label-2); border: 1px solid var(--sep); border-radius: var(--r-sm); padding: 0 5px; }
+.shot-label { color: var(--label-2); }
+.shot-dim { font-variant-numeric: tabular-nums; }
+.shot-open { margin-left: auto; font: var(--c1); color: var(--blue); border: 1px solid var(--sep); border-radius: var(--r-sm); padding: 1px 8px; }
+.shot-open:hover { background: var(--blue-10); }
+
 /* 思考块(历史各轮独立,答完不折叠) */
 .k-think { align-self: stretch; border-left: 2px solid var(--fill-3); padding-left: 10px; }
 .k-think summary {

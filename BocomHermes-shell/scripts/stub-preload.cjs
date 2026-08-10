@@ -57,6 +57,8 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   onQuestion: (cb) => { cbs.question = cb },
   onServeHealth: (cb) => { cbs.hb = cb; setTimeout(() => cb({ ok: true, port: 4096 }), 400) },
   onCardInject: (cb) => { cbs.inject = cb },
+  onCardShot: (cb) => { cbs.shot = cb },                       // Agent 截图直推(__emit('shot', {…}) 反向驱动)
+  cardShotOpen: async (p) => { flags.shotOpen = String(p || ''); return { ok: true } },
   onShardProgress: (cb) => { cbs.shardProgress = cb },
   onRunSnapshot: (cb) => { cbs.runSnapshot = cb },
   runSnapshot: async () => null,

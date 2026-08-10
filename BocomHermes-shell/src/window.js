@@ -1093,7 +1093,77 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // dev server 生命周期(仿 CC 的 preview_*):模型只能启动 launch.json 里【用户写好】的具名配置
   const preview = require('./preview')({ S, log })
   S.preview = preview
-  const brAgent = initBrowserAgent({ S, log, brActive, newTab, closeTab, activateTab, createBrowser, brScreenshot, execStep, waitNetIdle, pageRead: skillPageRead, brSetDevice })
+  // ── Agent 截的图直接摆进对话 ────────────────────────────────────────────────
+  // 【为什么由壳层推,而不是让模型把图"说"出来】模型的回复只是纯文本 + markdown,
+  // 它手里只有一个本地路径;就算吐 ![](file:///…),渲染端也不该去读模型给的任意路径(那是任意文件读)。
+  // 而壳层【自己】刚把这张图写到盘上,它知道路径可信、知道当前是哪张对话卡 —— 这件事只有它做得对。
+  const SHOT_W = 760            // 内嵌宽度:够看清页面结构,又不至于让一条 IPC 拖着几 MB base64
+  const shotPaths = new Set()   // 壳层自己产出的截图路径白名单 —— 渲染端只能请求打开这里面的,不许开任意文件
+
+  // 【收件人是谁】不能靠 agentInjectWc 猜:那条是给「发给 Agent」按钮用的(用户手动点,收件人=当前活动对话),
+  // 而工具调用的收件人必须是【正在调这个工具的那张卡】。最硬的信号是回合在飞:
+  // 模型能调 browser_shot,说明它这一轮还没结束 —— S.turnBusy 就是权威记录(card-send 起手入册)。
+  // 只有一张卡在飞 → 就是它,没有歧义。多张都在飞才需要退让,而那时必须留痕说清"我不确定"。
+  function busyChatWcs() {
+    const out = []
+    try {
+      if (!S.turnBusy || !S.sessionInfo) return out
+      for (const sid of S.turnBusy) {
+        const si = S.sessionInfo.get(sid)
+        if (si && si.wc && !si.wc.isDestroyed() && out.indexOf(si.wc) < 0) out.push(si.wc)
+      }
+    } catch { /* 静默:找不到就回落 */ }
+    return out
+  }
+  function callerWc() {
+    const busy = busyChatWcs()
+    if (busy.length === 1) return busy[0]
+    const live = wcById(S.activeChatWc)
+    if (live) return live
+    if (busy.length > 1) { log('[shot] 有 ' + busy.length + ' 张卡都在飞,认不出是哪张在调工具 —— 先推给第一张'); return busy[0] }
+    // 没有回合在飞(用户手点 / 外部经 relay 调工具):退到"最近说过话的那张卡"。
+    // ★这一条是自测时补的:三条线索全空时 shownToUser=false,而"图截好了没人看得见"是静默失效,
+    //   最难被发现。宁可推给最近那张卡(用户一眼能认出),也不要让整件事悄悄消失。
+    const last = wcById(S.lastChatWc)
+    if (last) return last
+    return agentInjectWc()
+  }
+
+  function showShot(info) {
+    // 优先用【开这个浏览器会话时钉住的那张卡】:会话可能开了几分钟,期间别的卡也可能忙起来,
+    // 那时再现算就会推错人。钉住的卡没了才回落现算。
+    const pinned = (info && info.wc && !info.wc.isDestroyed()) ? info.wc : null
+    const wc = pinned || callerWc()
+    if (!wc) return false
+    const fp = String((info && info.path) || '')
+    if (!fp) return false
+    let dataUrl = '', w = 0, h = 0
+    try {
+      const img = nativeImage.createFromPath(fp)
+      if (img.isEmpty()) throw new Error('读不出图片(可能还没写完)')
+      const size = img.getSize(); w = size.width; h = size.height
+      // 缩到 SHOT_W 再转 JPEG:原图 1280×800 的 PNG 常有 300KB~1.5MB,base64 还要再涨 1/3。
+      // 这是给人【看一眼页面长什么样】的缩略图,原图点开就有,不必把它整个塞进 IPC。
+      const small = w > SHOT_W ? img.resize({ width: SHOT_W, quality: 'good' }) : img
+      dataUrl = 'data:image/jpeg;base64,' + small.toJPEG(82).toString('base64')
+    } catch (e) { log('[shot] 缩图失败,只给路径: ' + e.message) }
+    shotPaths.add(fp)
+    if (shotPaths.size > 200) { const it = shotPaths.values(); shotPaths.delete(it.next().value) }   // 粗粒度防涨
+    try {
+      wc.send('card-shot', { path: fp, label: String((info && info.label) || ''), url: String((info && info.url) || ''),
+        full: !!(info && info.full), dataUrl, w, h })
+    } catch (e) { log('[shot] 推送失败: ' + e.message); return false }
+    log('[shot] 已摆进对话:' + fp + ' ' + w + '×' + h + (dataUrl ? ' (缩略 ' + Math.round(dataUrl.length / 1024) + 'KB)' : ' (无缩略)'))
+    return true
+  }
+  // 点缩略图 → 用系统看图器打开原图。★只开白名单里的路径:渲染端传什么就开什么等于开了一个任意文件打开接口
+  ipcMain.handle('card-shot-open', (_e, p) => {
+    const fp = String(p || '')
+    if (!shotPaths.has(fp)) { log('[shot] 拒绝打开非本壳产出的路径:' + fp); return { error: '不是本次会话截的图' } }
+    try { shell.openPath(fp); return { ok: true } } catch (e) { return { error: e.message } }
+  })
+
+  const brAgent = initBrowserAgent({ S, log, brActive, newTab, closeTab, activateTab, createBrowser, brScreenshot, execStep, waitNetIdle, pageRead: skillPageRead, brSetDevice, showShot, callerWc })
   // 挂 S:relay(mail.js)在本行【之前】就被 initMail 构造了,而 brAgent 是 const —— 直接传进去会踩 TDZ。
   // 本仓跨层访问的惯例本来就是挂 S(S.setCardBusy / S.dropPendingPerm 同款),relay 调用期再取,顺序天然安全。
   S.brAgent = brAgent

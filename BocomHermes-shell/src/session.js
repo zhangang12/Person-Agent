@@ -1230,6 +1230,11 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     return baseModelOf(si)
   }
   S.__baseModelOf = baseModelOf   // 自测用:两条路同源这件事要能被断言,不能只靠"我看过了"
+  // 【最近用过的对话卡】—— 壳层要把东西摆回"用户正在说话的那张卡"时的兜底线索。
+  // ★为什么需要它:首选信号是"回合在飞"(S.turnBusy),那在模型调工具时最准;
+  //   但没有回合在飞的时候(用户手点、外部经 relay 调工具)那条线索是空的,
+  //   而"图截好了却没人看得见"这种静默失效,恰恰是最难被发现的一类 —— 真机自测就是这么撞上的。
+  //   所以再留一条【永远拿得到】的:最后一次真的发过消息的那张卡。
   // 卡片↔会话登记(每次建/换会话都过这里):
   // ①工作流卡把最新会话 id 记进注册表(reg.sid)—— 存档头带会话,关卡后仍能重开【完整会话】而不是只甩一个 md;
   // ②分片会话 id 进 S.shardSids —— recordHistory 硬闸的第二道防线(光靠各调用点传 shard 旗标,漏一个就污染最近会话);
@@ -1419,6 +1424,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     let skillPrefix = ''
     if (skill) { const sk = loadSkills().find((s) => s.id === skill); if (sk) { const skBody = sk.body.length > 4000 ? sk.body.slice(0, 4000) + '\n（技能正文过长已截断，完整版见 skills 目录）' : sk.body; skillPrefix = '<作答技能:' + sk.name + '>\n' + skBody + '\n</作答技能>\n\n'; log('inject skill 「' + sk.name + '」(' + skBody.length + ' chars) for ' + sessionId) } }
     const msg = ctxPrefix + skillPrefix + (text || '')
+    S.lastChatWc = e.sender.id   // 最近说过话的卡(壳层回推截图等内容的兜底收件人)
     S.sentPrompt.set(sessionId, msg); S.streamBuf.delete(sessionId)   // 存【实际发出的全文】(含注入前缀):回显过滤比对的是 serve 收到的东西 —— 只存原文的话,带前缀的回显漏网,整坨背景提示词会打进对话流
     touchHistory(sessionId)
     let model = baseModelOf(si)   // ★与 card-init 给界面的那个走同一个函数 —— 见 baseModelOf 头上的注释

@@ -80,6 +80,9 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   cardInit: (opts) => ipcRenderer.invoke('card-init', opts || {}),
   onCardInject: (cb) => ipcRenderer.on('card-inject', (_e, p) => cb(p)),
   onCardNote: (cb) => ipcRenderer.on('card-note', (_e, p) => cb(p)),
+  // Agent 截的图:壳层直推缩略图进对话流(模型只有路径,摆不出图 —— 见 window.js showShot)
+  onCardShot: (cb) => ipcRenderer.on('card-shot', (_e, p) => cb(p)),
+  cardShotOpen: (p) => ipcRenderer.invoke('card-shot-open', String(p == null ? '' : p)),
   onShardProgress: (cb) => ipcRenderer.on('shard-progress', (_e, p) => cb(p)),   // 多层派发:主控卡收分片进度(静默分片卡的聚合状态)
   shardFocus: (id) => ipcRenderer.invoke('shard-focus', id),                     // 点分片进度块 → 把那张大隐藏卡拉到台前细看
   // ── 编排面板(新引擎):批准/插话/中止都是【显式状态转移】,不再靠渲染端从工具流里嗅 ──

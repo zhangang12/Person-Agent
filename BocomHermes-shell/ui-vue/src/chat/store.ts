@@ -56,6 +56,13 @@ export interface NoteItem extends BaseItem {
    *  防停提醒要的是"接着上次停下的地方继续",必须是新消息(旧页 ui/card.html:1138 本来就是这个语义,Vue 平移时被降级成了 retry)。 */
   contMsg?: string
 }
+/** Agent 截的图(card-shot):壳层直推的缩略图 + 原图路径。
+ *  【为什么要有这么一个条目】模型手里只有一个本地路径,而它的回复是纯文本 —— 它没有能力把图摆出来,
+ *  于是"截个图给我看"对用户永远只剩一行路径。图是壳层自己截的、自己写的盘,由它推进来最直接也最安全
+ *  (渲染端不去读模型给的任意路径)。src 是缩略图 data URL,path 用来点开原图。 */
+export interface ShotItem extends BaseItem {
+  kind: 'shot'; src: string; path: string; label: string; url: string; w: number; h: number; full: boolean
+}
 /** 思考块:每轮一个,答完不折叠不移除(open 保持);title 缺省「思考过程」,压缩续聊的接力摘要复用同壳;displayLen=打字机已吐字符数(可缺省=0) */
 export interface ReasonItem extends BaseItem { kind: 'reason'; body: string; open: boolean; title?: string; displayLen?: number; full?: string }
 /** AI 气泡:流式期 = segs(冻结段,只增) + tail(每帧重渲);收尾后 = finalHtml 全量一次;displayLen=打字机已吐字符数(快照→匀速吐的游标) */
@@ -122,7 +129,7 @@ export interface QuestionItem extends BaseItem {
   sent: boolean
   doneText: string
 }
-export type FeedItem = UserItem | NoteItem | ReasonItem | AiItem | ToolItem | TodoItem | PermItem | QuestionItem
+export type FeedItem = UserItem | NoteItem | ReasonItem | AiItem | ToolItem | TodoItem | PermItem | QuestionItem | ShotItem
 
 /** 子 Agent(P2b 侧边栏):一个 task/delegate_task 扇出的独立上下文单元;思考/工具/产出各自缓冲 */
 export interface SubAgent {
@@ -1068,6 +1075,31 @@ export function wireCardNote(): void {
   } catch { /* 静默 */ }
 }
 
+// ── Agent 截的图(card-shot):壳层直推,插在答案气泡【之前】,与工具块/思考块同一条时序通道 ──
+// 纯函数,便于 vitest:把 IPC 报文整成 ShotItem。没有缩略图(缩图失败)也要成条 —— 至少让用户看见
+// "这里截了一张图、在哪儿",而不是整件事悄悄消失。
+export function shotItemFrom(p: any): ShotItem | null {
+  const path = String((p && p.path) || '')
+  if (!path) return null
+  return { id: nextId(), kind: 'shot', src: String((p && p.dataUrl) || ''), path,
+    label: String((p && p.label) || ''), url: String((p && p.url) || ''),
+    w: +((p && p.w) || 0) || 0, h: +((p && p.h) || 0) || 0, full: !!(p && p.full) }
+}
+let shotWired = false
+export function wireCardShot(): void {
+  if (shotWired) return
+  shotWired = true
+  try {
+    BH()?.onCardShot?.((p: any) => {
+      const it = shotItemFrom(p)
+      if (it) insertBeforeAnswer<ShotItem>(it)
+    })
+  } catch { /* 静默 */ }
+}
+export function openShot(path: string): void {
+  try { (BH() as any)?.cardShotOpen?.(path) } catch { /* 静默 */ }
+}
+
 // ── 权限审批条(第二棒):feed 内 PermItem(答完移除)+ pendingPerms 计数(sticky 摘要钉) ──
 let permWired = false
 export function wirePermission(): void {
@@ -1695,6 +1727,7 @@ function replayMessages(list: any[]): void {
 export async function boot(): Promise<void> {
   wireStream()
   wireCardNote()       // 系统灰字条 + 注入背景计入 ctx 估算(此前整组没接,提示丢失且估算偏低)
+  wireCardShot()       // Agent 截的图直接摆进对话(模型只有路径,摆不出图)
   wirePermission()     // 权限审批条(feed PermItem + sticky 计数;wf 自动批准分支)
   wireQuestion()       // 交互提问卡(单/多选/custom/跳过)
   wireServeHealth()    // 标题栏保活灯

@@ -48,7 +48,7 @@ function isLocal(u) {
 }
 
 module.exports = function initBrowserAgent(ctx) {
-  const { S, log, brActive, newTab, closeTab, activateTab, createBrowser, brScreenshot, execStep, waitNetIdle, pageRead, brSetDevice } = ctx
+  const { S, log, brActive, newTab, closeTab, activateTab, createBrowser, brScreenshot, execStep, waitNetIdle, pageRead, brSetDevice, showShot, callerWc } = ctx
 
   const sessions = new Map()   // id → session
 
@@ -136,6 +136,9 @@ module.exports = function initBrowserAgent(ctx) {
       startedAt: nowMs(), expiresAt: nowMs() + c.minutes * 60000,
       steps: [], asserts: [], shots: [], closed: false, result: null,
       netFrom: 0, conFrom: 0,   // 只统计本会话开始之后的网络/控制台(标签页是新开的,基线就是 0,留字段是为了将来复用已有标签)
+      // ★开会话时就钉住"是哪张对话卡在调我":截图要摆回【那张】卡。
+      // 会话能开十分钟,期间别的卡也会忙起来 —— 到截图时再现算就会推给错的人。
+      wc: (typeof callerWc === 'function' ? (() => { try { return callerWc() } catch { return null } })() : null),
     }
     sessions.set(id, s)
     step(s, 'open', url, true, '')
@@ -358,9 +361,19 @@ module.exports = function initBrowserAgent(ctx) {
       if (prev !== tab.id) activateTab(tab.id)   // 截的必须是本会话的标签页,不是用户当下在看的那个
       const p = await brScreenshot(!!(a && a.full))
       if (!p) return { error: '截图失败' }
-      s.shots.push({ path: p, label: str(a && a.label).slice(0, 120), at: nowMs() - s.startedAt })
+      const label = str(a && a.label).slice(0, 120)
+      s.shots.push({ path: p, label, at: nowMs() - s.startedAt })
       step(s, 'shot', p, true, '')
-      return { ok: true, path: p, note: '把这张图作为附件读一遍再下结论(带图消息会自动切到读图模型)' }
+      // ★截完【直接摆到对话里给用户看】(2026-08-11 用户要的就是这个):
+      // 原先只把路径回给模型,而模型没有读图能力、回复又只是纯文本 —— 它能做的最多是吐一个
+      // markdown 图片语法,而那条路径渲染不出来。于是"截图给我看"这件事对用户永远只剩一行路径。
+      // 谁有能力把图摆出来?壳层。所以由壳层直推进当前对话卡,不经过模型。
+      let shown = false
+      if (typeof showShot === 'function') { try { shown = !!showShot({ path: p, label, url: curUrl(s), full: !!(a && a.full), wc: s.wc }) } catch (e) { log('[browser-agent] 展示截图失败: ' + e.message) } }
+      return { ok: true, path: p, shownToUser: shown,
+        note: shown
+          ? '这张图已经【直接展示在用户的对话里】了,不用再把路径念给用户、也不用叫用户自己去打开。你自己要"看"内容才需要把它当附件读一遍(读图要用带视觉的模型)。'
+          : '图已存盘但没能摆进对话(当前没有活动对话卡)。要自己看内容就把它当附件读一遍(读图要用带视觉的模型)。' }
     } catch (e) { return { error: '截图失败: ' + e.message } }
   }
 

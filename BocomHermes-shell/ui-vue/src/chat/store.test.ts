@@ -421,3 +421,39 @@ describe('⑦c 结构契约:5 个轮末注入点不许绕开 canInject/injectTur
   }
 })
 
+
+// ⑧ Agent 截的图要能摆进对话流(card-shot)
+// 【为什么单测这个】用户明确要的就是"会话框里直接展示截的图"。模型手里只有一个本地路径、
+// 回复又是纯文本,它做不到 —— 图是壳层自己截的,由壳层推。这里钉住报文→条目的转换:
+// 有路径就必须成条(哪怕缩略图缺了),没路径就不许成条(免得 feed 里出现一个点不开的空框)。
+describe('⑧ card-shot → ShotItem', () => {
+  it('正常报文:缩略图/尺寸/标签/整页标记全带上', async () => {
+    const { shotItemFrom } = await import('./store')
+    const it2: any = shotItemFrom({ path: '/tmp/a.png', dataUrl: 'data:image/jpeg;base64,AAA', label: '登录页', url: 'http://127.0.0.1:5173/login', w: 1280, h: 800, full: true })
+    expect(it2).toBeTruthy()
+    expect(it2.kind).toBe('shot')
+    expect(it2.src).toBe('data:image/jpeg;base64,AAA')
+    expect(it2.path).toBe('/tmp/a.png')
+    expect(it2.label).toBe('登录页')
+    expect(it2.w).toBe(1280); expect(it2.h).toBe(800); expect(it2.full).toBe(true)
+  })
+  it('★缩略图生成失败也要成条 —— 至少让用户知道这里截了一张图、在哪儿', async () => {
+    const { shotItemFrom } = await import('./store')
+    const it2: any = shotItemFrom({ path: '/tmp/b.png' })
+    expect(it2).toBeTruthy()
+    expect(it2.src).toBe('')
+    expect(it2.path).toBe('/tmp/b.png')
+  })
+  it('没有路径 → 不成条(feed 里不许出现点不开的空框)', async () => {
+    const { shotItemFrom } = await import('./store')
+    expect(shotItemFrom({ dataUrl: 'data:image/jpeg;base64,AAA' })).toBe(null)
+    expect(shotItemFrom(null)).toBe(null)
+    expect(shotItemFrom({})).toBe(null)
+  })
+  it('脏字段不炸(尺寸给了字符串/label 给了对象)', async () => {
+    const { shotItemFrom } = await import('./store')
+    const it2: any = shotItemFrom({ path: '/tmp/c.png', w: 'abc', h: null, label: { x: 1 } })
+    expect(it2.w).toBe(0); expect(it2.h).toBe(0)
+    expect(typeof it2.label).toBe('string')
+  })
+})
