@@ -688,6 +688,26 @@ function makeOrch(deps) {
     resume(runId) { return send(runId, { type: 'USER_RESUME' }) },
     tick(runId) { return send(runId, { type: 'TICK' }) },
     snapshot(runId) { const r = runs.get(str(runId)); return r ? RUN.projectSnapshot(r) : null },
+    /**
+     * 按需把一条存档读回内存(卡坞/历史里重开编排卡时用)。已在内存就直接返回。
+     * ★为什么需要它:restore() 只在【启动时】把【非终态】的读回来。于是两种情况都够不到:
+     *   ① 已经 done/cancelled/failed 的 —— 永远不在内存,面板打开就是空的;
+     *   ② 启动之后才归档的 —— 同理。
+     * 而用户从历史里点开一条编排,期望至少能【看到当时的图和留痕】(哪怕不能续跑)。
+     * 终态的读回来【不改 phase】(它就是终态,只读回看);非终态的按 restore 同口径置 suspended,
+     * 让"续跑"这个动作仍然是用户显式点的 —— 不自动跑的理由见 restore()。
+     */
+    load(runId) {
+      const id = str(runId); if (!id) return null
+      const hit = runs.get(id); if (hit) return hit
+      let found = null
+      try { found = journal.list().find((r) => r && str(r.id) === id) || null } catch { found = null }
+      if (!found) return null
+      if (['done', 'failed', 'cancelled'].indexOf(str(found.phase)) < 0) found.phase = 'suspended'
+      runs.set(id, found)
+      log('[orch] 按需读回存档 ' + id + '(phase=' + found.phase + ')')
+      return found
+    },
     /** 重启后:把非终态存档读回内存并置 suspended(不自动跑 —— 内网重启常伴随 serve 变更,自动重跑=重复烧钱) */
     restore() {
       let n = 0

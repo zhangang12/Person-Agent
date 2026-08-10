@@ -679,7 +679,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const fileLines = (reg.files || []).map((f) => '- ' + f).join('\n')
     // 执行动作流水(时间+label+detail;wf-list 卡坞同源展示)
     const actLines = (reg.actions || []).map((a) => { const d = new Date(a.at || 0); const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ':' + String(d.getSeconds()).padStart(2, '0'); return '- [' + hm + '] ' + (a.kind ? a.kind + ' · ' : '') + a.label + (a.detail ? ' — ' + a.detail : '') }).join('\n')
-    fs.writeFileSync(reg.archive, '# ' + (reg.kind === 'pipeline' ? '任务编排' : reg.runId ? '编排' : '工作流') + ':' + reg.goal + '\n\n- id:' + reg.id + ' · 会话:' + (reg.sid || '-') + ' · 轮次:' + reg.rounds + ' · 用时:' + Math.round((reg.elapsedMs || 0) / 1000) + 's · 状态:' + reg.status + (reg.aborted ? ' · 曾被中止' : '') + (reg.diff ? ' · 改动:+' + reg.diff.additions + '/-' + reg.diff.deletions + ' (' + reg.diff.files + ' 文件)' : '') + '\n\n## 任务清单\n' + (todoLines || '(无)') + '\n\n## 产出文件\n' + (fileLines || '(无)') + '\n\n## 执行动作\n' + (actLines || '(无)') + '\n\n## 最终成果(最近一轮回答)\n\n' + reg.final)
+    fs.writeFileSync(reg.archive, '# ' + (reg.kind === 'pipeline' ? '任务编排' : reg.runId ? '编排' : '工作流') + ':' + reg.goal + '\n\n- id:' + reg.id + ' · 会话:' + (reg.sid || '-') + (reg.runId ? ' · run:' + reg.runId : '') + ' · 轮次:' + reg.rounds + ' · 用时:' + Math.round((reg.elapsedMs || 0) / 1000) + 's · 状态:' + reg.status + (reg.aborted ? ' · 曾被中止' : '') + (reg.diff ? ' · 改动:+' + reg.diff.additions + '/-' + reg.diff.deletions + ' (' + reg.diff.files + ' 文件)' : '') + '\n\n## 任务清单\n' + (todoLines || '(无)') + '\n\n## 产出文件\n' + (fileLines || '(无)') + '\n\n## 执行动作\n' + (actLines || '(无)') + '\n\n## 最终成果(最近一轮回答)\n\n' + reg.final)
   }
 
   // 邮件 → 建议待办(pending 态,人工确认后才进正式待办)。
@@ -1961,7 +1961,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
         .sort((a, b) => b.m - a.m).slice(0, 40)
       for (const a of arcs) {
         if (seen.has(a.p)) continue
-        let goal = '', kind = 'workflow', sid = ''
+        let goal = '', kind = 'workflow', sid = '', runIdA = ''
         try {
           const fd = fs.openSync(a.p, 'r'); const buf = Buffer.alloc(2048)
           const n = fs.readSync(fd, buf, 0, 2048, 0); fs.closeSync(fd)
@@ -1969,9 +1969,14 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
           goal = ((head.match(/^# (?:工作流|任务编排|编排):(.*)$/m) || [])[1] || '').trim()
           if (/^# 任务编排:/m.test(head)) kind = 'pipeline'
           sid = ((head.match(/· 会话:(\S+)/) || [])[1] || '')   // 存档头带会话 id → 关卡后重开完整会话(wf-open),不只甩 md
+          // ★存档头也要带 runId(2026-08-10):注册表【重启即空】,重启之后卡坞里的历史条目全从这里解析 ——
+          //   而它原来只捞 goal/kind/会话id,于是编排卡一旦跨过重启就再也认不出自己是编排,
+          //   wf-open 只能按普通卡重开(没有节点表、没有留痕、没有续跑)。用户说的"历史会话没法续接工作流"就是这一格。
+          //   老存档没有这一段 → runId 为空 → 照旧回落普通卡(wf-open 那边会打一行日志说明)。
+          runIdA = ((head.match(/· run:(\S+)/) || [])[1] || '')
           if (sid === '-') sid = ''
         } catch {}
-        out.push({ id: a.f.split('_')[1], goal: goal || a.f, status: 'archived', kind, rounds: 0, elapsedMs: 0, files: 0, at: a.m, archive: a.p, sid, live: false, busy: false, todoDone: 0, todoTotal: 0, current: '', actions: [] })
+        out.push({ id: a.f.split('_')[1], goal: goal || a.f, status: 'archived', kind: runIdA ? 'orch' : kind, rounds: 0, elapsedMs: 0, files: 0, at: a.m, archive: a.p, sid, runId: runIdA, live: false, busy: false, todoDone: 0, todoTotal: 0, current: '', actions: [] })
       }
     } catch {}
     const rank = { running: 0, interrupted: 1, done: 2, archived: 3 }   // 进行中置顶,被掐断的次之(要人管),其余按时间倒序
@@ -2038,6 +2043,28 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
         // 有意以【普通卡】重开(不带 wf/orch query):重开=回看全程+继续聊,不复活规划闸/看门狗/交棒。
         // 代价:续跑的长工作流失去 55% 主动交棒安全网 —— 可接受(续跑已是人工接管);要原样复活 wf 特性需重建注册表项,复杂度不值。
         const goal = String((r && r.goal) || (it && it.goal) || '工作流')
+        // ★★编排面板卡是【例外】(2026-08-10 用户实测:"历史会话没法续接工作流")。
+        // 上面那个取舍对普通工作流卡成立(重开=接着聊),对编排面板卡完全不成立:
+        // 它"有会话但永不发消息",当普通卡重开等于什么都没有 —— 没有节点表、没有留痕、没有续跑按钮,
+        // 而 runOfSender 靠 reg.runId 反查,普通卡没有这个字段,run-* 那一排 IPC 全部落空。
+        // 所以编排卡按原身份重开(orch + run id),并把存档【按需读回内存】:
+        // restore() 只在启动时读非终态的,已经 done/cancelled 的和启动后才归档的都够不到。
+        const runId = String((r && r.runId) || (it && it.runId) || '')
+        if (runId && S.orch) {
+          const back = S.orch.load(runId)
+          if (back) {
+            const cid = spawnCard('编排 · ' + goal.slice(0, 20), sid, null, goal,
+              { flash: true, wf: true, orch: true, run: runId })
+            try {
+              const reg2 = S.wfRegistry && S.wfRegistry.get(String(cid))
+              if (reg2) { reg2.runId = runId; reg2.kind = 'orch' }   // 反查要靠它:没有 runId 就等于普通卡
+            } catch { /* 注册表没建上也不该拦住重开 */ }
+            try { back.panelCardId = String(cid); back.panelWcId = regWcId(cid) } catch { /* 面板推送拿不到 wc 就只影响实时刷新 */ }
+            log('[orch] 从历史重开编排卡 ' + runId + '(phase=' + back.phase + ')')
+            return { ok: true, kind: 'orch' }
+          }
+          log('[orch] 历史里这条编排的存档已不在(可能被 GC),退回普通卡重开:' + runId)
+        }
         spawnCard('工作流 · ' + goal.slice(0, 20), sid)
         return { ok: true, kind: 'session' }
       }

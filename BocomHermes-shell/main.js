@@ -201,3 +201,65 @@ app.on('will-quit', () => { globalShortcut.unregisterAll(); oc.killAll(); try { 
 // 兜底:任何未捕获错误都进日志,便于排查偶发崩溃
 process.on('uncaughtException', (e) => { try { log('uncaughtException: ' + (e && e.stack || e)) } catch {} })
 process.on('unhandledRejection', (r) => { try { log('unhandledRejection: ' + r) } catch {} })
+
+// ★★崩溃留痕(2026-08-10:用户报"客户端会崩溃、自动关闭",而日志里【一个字都没有】)。
+// 病灶不是崩溃本身,是【崩溃不留痕】:主进程这两个 handler 只兜 JS 异常,而渲染进程崩溃、
+// GPU/工具子进程崩溃、窗口无响应,Electron 走的是 app 上的另外三个事件 —— 全仓一处都没监听。
+// 于是一张卡的渲染端被系统 OOM 杀掉,壳层既不知道、也不记,用户只看到"卡没了 / 应用关了"。
+// 这和今天 card-abort 那个坑是同一个形态:能把东西杀掉的路径必须自报姓名。
+// 【为什么不在这里做恢复】先只观测:没有证据就做自动重建,等于拿一个没验证的假设去改行为
+// (今天已经为此付过一次代价)。等日志说清是谁崩、为什么崩,再谈救。
+// 内存快照:OOM 是"应用自己关了"最常见的死法,而事后什么都看不到 —— 崩的那一刻必须把量记下来。
+// getAppMetrics 给的是【每个进程】的常驻内存,能直接指出是哪一类进程涨上去的(渲染/GPU/工具)。
+function memLine() {
+  try {
+    const ms = (typeof app.getAppMetrics === 'function' ? app.getAppMetrics() : []) || []
+    const top = ms.map((m) => ({ t: String((m.type || '?')), pid: m.pid, mb: Math.round(((m.memory && m.memory.workingSetSize) || 0) / 1024) }))
+      .sort((a, b) => b.mb - a.mb).slice(0, 5)
+    const total = top.reduce((s, x) => s + x.mb, 0)
+    return '进程数=' + ms.length + ' 前5大(MB):' + top.map((x) => x.t + '/' + x.pid + '=' + x.mb).join(' ') + ' 合计≈' + total
+  } catch { return '(拿不到进程内存)' }
+}
+app.on('render-process-gone', (_e, wc, details) => {
+  try {
+    const d = details || {}
+    // reason 的取值直接分诊:oom/out-of-memory=内存打爆;crashed=渲染端异常;killed=被系统或外部杀;
+    // launch-failed=起不来;integrity-failure=完整性校验。内网那边看这一个词就能定方向。
+    log('[crash] 渲染进程没了:reason=' + String(d.reason || '?') + ' exitCode=' + String(d.exitCode)
+      + ' wc=' + (wc && !wc.isDestroyed() ? wc.id : '(已销毁)')
+      + ' url=' + String((wc && !wc.isDestroyed() && wc.getURL && wc.getURL()) || '').slice(0, 160)
+      + ' | ' + memLine())
+  } catch {}
+})
+app.on('child-process-gone', (_e, details) => {
+  try {
+    const d = details || {}
+    // type: GPU / Pepper Plugin / Utility / Zygote / Sandbox helper …;utility 崩溃常伴随网络请求失败
+    log('[crash] 子进程没了:type=' + String(d.type || '?') + ' reason=' + String(d.reason || '?')
+      + ' exitCode=' + String(d.exitCode) + ' name=' + String(d.name || ''))
+  } catch {}
+})
+app.on('web-contents-created', (_e, wc) => {
+  try {
+    wc.on('unresponsive', () => { try { log('[crash] 窗口无响应(unresponsive) wc=' + wc.id + ' url=' + String((wc.getURL && wc.getURL()) || '').slice(0, 120)) } catch {} })
+    wc.on('responsive', () => { try { log('[crash] 窗口恢复响应 wc=' + wc.id) } catch {} })
+  } catch {}
+})
+// 退出也要留痕:分清"用户主动退出"和"最后一扇窗关了导致退出"—— 用户看到的都是"它自己关了"
+app.on('before-quit', () => { try { log('[quit] before-quit(isQuitting=' + !!app.isQuitting + ',窗口数=' + BrowserWindow.getAllWindows().length + ') | ' + memLine()) } catch {} })
+
+// ★★"上次是不是正常退出" —— 排"应用自己关了"最关键的一位信息,而且【只能在下一次启动时】拿到。
+// 做法:启动写一个运行中标记,正常退出(will-quit)删掉。下次启动时标记还在 = 上次是被杀/崩掉的,
+// 不是用户点的退出。没有这一位,日志里"最后一行普通日志 + 下一行是新的启动"和正常退出长得一模一样,
+// 只能靠猜(内网那边我不在场,更只能靠它)。标记里带上时间与内存,好对上系统日志。
+const ALIVE_MARK = path.join(app.getPath('userData'), '.running')
+try {
+  if (fs.existsSync(ALIVE_MARK)) {
+    let prev = ''
+    try { prev = fs.readFileSync(ALIVE_MARK, 'utf8').slice(0, 300) } catch {}
+    log('[crash] ★上次【没有正常退出】(运行标记还在):' + prev + ' —— 崩溃/被杀,不是用户点的退出')
+  }
+} catch {}
+const markAlive = () => { try { fs.writeFileSync(ALIVE_MARK, '起于 ' + new Date().toISOString() + ' pid=' + process.pid) } catch {} }
+markAlive()
+app.on('will-quit', () => { try { fs.unlinkSync(ALIVE_MARK) } catch {} })   // 正常退出才删 —— 被杀就留着,下次启动自报
