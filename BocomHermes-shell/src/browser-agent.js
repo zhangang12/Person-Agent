@@ -48,7 +48,7 @@ function isLocal(u) {
 }
 
 module.exports = function initBrowserAgent(ctx) {
-  const { S, log, brActive, newTab, closeTab, activateTab, createBrowser, brScreenshot, execStep, waitNetIdle, pageRead, brSetDevice, showShot, callerWc } = ctx
+  const { S, log, brActive, newTab, closeTab, activateTab, createBrowser, ensureBrowserBackground, brScreenshot, brShotTab, execStep, waitNetIdle, pageRead, brSetDevice, showShot, callerWc } = ctx
 
   const sessions = new Map()   // id → session
 
@@ -126,8 +126,13 @@ module.exports = function initBrowserAgent(ctx) {
     const liveN = [...sessions.values()].filter((s) => !s.closed).length
     if (liveN >= MAX_SESSIONS) return { error: '同时最多 ' + MAX_SESSIONS + ' 个自主浏览器会话(每个占一个标签页),先 browser_close 收掉一个再开' }
 
-    try { createBrowser() } catch (e) { return { error: '打不开浏览器: ' + e.message } }
-    const tab = newTab(url)
+    // ★后台起浏览器,不抢屏(2026-08-11 用户连着两次"又把我的会话毁掉了"):
+    //   老写法 createBrowser() 在宿主模式下第一句就是 shellBrowserVisible(true) —— 浏览器 chrome
+    //   加那张写死的「调试助手」卡一起挂到主窗上,把用户正在看的对话盖掉。
+    //   浏览器是对话的辅助能力,Agent 用它不该让用户的对话消失。
+    //   标签仍然在标签条上列着,用户想看它在干什么点过去就行(可看性没被抹掉,只是不再强塞)。
+    try { ensureBrowserBackground() } catch (e) { return { error: '打不开浏览器: ' + e.message } }
+    const tab = newTab(url, { background: true })
     if (!tab) return { error: '开标签页失败(浏览器窗口没起来)' }
     const c = cfg()
     const id = 'bs_' + nowMs().toString(36) + '_' + Math.floor(Math.random() * 1e4).toString(36)
@@ -355,12 +360,13 @@ module.exports = function initBrowserAgent(ctx) {
   async function agentShot(a) {
     const s = live(a && a.sessionId); if (!s) return { error: '会话不存在或已结束' }
     const tab = tabOf(s); if (!tab) return { error: '这个会话的标签页已被关掉' }
-    const b = S.browser
-    const prev = b.activeId
     try {
-      if (prev !== tab.id) activateTab(tab.id)   // 截的必须是本会话的标签页,不是用户当下在看的那个
-      const p = await brScreenshot(!!(a && a.full))
-      if (!p) return { error: '截图失败' }
+      // ★对【本会话的标签】直接截,不 activateTab。
+      //   老写法为了让 brScreenshot(内部取 brActive())能拿到图,先把自己的标签激活 ——
+      //   那等于把用户正在看的页面从窗口上摘下来,而且截完【不还】。
+      //   CDP 的 Page.captureScreenshot 不走合成表面,后台标签照样出图。
+      const p = await brShotTab(tab, !!(a && a.full))
+      if (!p) return { error: '截图失败(后台标签没有调试器?)' }
       const label = str(a && a.label).slice(0, 120)
       s.shots.push({ path: p, label, at: nowMs() - s.startedAt })
       step(s, 'shot', p, true, '')

@@ -1003,7 +1003,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // 必须在 initRecorder 之前构造:后者构造时即读取返回的 brActive(const,非提升)。
   // 录制钩子 wireRecToTab/brSendRecCount 是后定义但已提升的 function,按引用注入。
   // 浏览器 IPC / brWC / 调试分诊层仍留在本文件,消费下面解构出的函数。
-  const { brActive, newTab, closeTab, activateTab, brSetDevice, brRotateDevice, brZoom, brLayout, brSendTabs, sendNetSnapshot, attachDbg, detachDbg, normalizeUrl, brScreenshot, brNetBody, brPickElement, brEval, createBrowser, createWorkspace, createShellBrowser, shellBrowserVisible, chromeSend } = initBrowser({ S, session, log, path, fs, app, BrowserWindow, WebContentsView, oc, forgetBusy, wireRecToTab, brSendRecCount, cdpConsoleLevel, fmtRO, fmtException })
+  const { brActive, newTab, closeTab, activateTab, brSetDevice, brRotateDevice, brZoom, brLayout, brSendTabs, sendNetSnapshot, attachDbg, detachDbg, normalizeUrl, brScreenshot, brShotTab, brNetBody, brPickElement, brEval, createBrowser, ensureBrowserBackground, createWorkspace, createShellBrowser, shellBrowserVisible, chromeSend } = initBrowser({ S, session, log, path, fs, app, BrowserWindow, WebContentsView, oc, forgetBusy, wireRecToTab, brSendRecCount, cdpConsoleLevel, fmtRO, fmtException })
 
   // 【解析链②·文件总线】回放暂停步 ↔ Agent 的通信(设计:docs/技能系统-意图执行与Agent解析链设计.md 第 4 节):
   // 主进程写 req(userData/resolves/<gateId>.json)+ card-inject 通知工作台 Agent;
@@ -1168,7 +1168,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     try { shell.openPath(fp); return { ok: true } } catch (e) { return { error: e.message } }
   })
 
-  const brAgent = initBrowserAgent({ S, log, brActive, newTab, closeTab, activateTab, createBrowser, brScreenshot, execStep, waitNetIdle, pageRead: skillPageRead, brSetDevice, showShot, callerWc })
+  const brAgent = initBrowserAgent({ S, log, brActive, newTab, closeTab, activateTab, createBrowser, ensureBrowserBackground, brScreenshot, brShotTab, execStep, waitNetIdle, pageRead: skillPageRead, brSetDevice, showShot, callerWc })
   // 挂 S:relay(mail.js)在本行【之前】就被 initMail 构造了,而 brAgent 是 const —— 直接传进去会踩 TDZ。
   // 本仓跨层访问的惯例本来就是挂 S(S.setCardBusy / S.dropPendingPerm 同款),relay 调用期再取,顺序天然安全。
   S.brAgent = brAgent

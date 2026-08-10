@@ -15,7 +15,7 @@ function ok(name, cond, extra) {
 // ── 假装配:一套能被检查的最小 ctx ─────────────────────────────────────────
 function makeCtx(over = {}) {
   const S = { settings: Object.assign({ browserAgent: {} }, over.settings || {}), browser: { tabs: [], activeId: null, seq: 0 } }
-  const calls = { newTab: [], closeTab: [], activateTab: [], exec: [], shots: 0, createBrowser: 0 }
+  const calls = { newTab: [], newTabOpts: [], closeTab: [], activateTab: [], exec: [], shots: 0, shotTabs: [], createBrowser: 0, ensureBg: 0, visibleCalls: [] }
   // 假标签页:页面状态(url / innerText / 选择器命中数 / console / net)全可编程
   function mkTab(id, url) {
     const page = { url, text: '', selCount: 0 }
@@ -34,16 +34,20 @@ function makeCtx(over = {}) {
   const ctx = {
     S, log: () => {},
     brActive: () => S.browser.tabs.find((t) => t.id === S.browser.activeId) || null,
-    createBrowser: () => { calls.createBrowser++ },
-    newTab: (url) => {
+    createBrowser: () => { calls.createBrowser++ },                 // ★这条会亮出浏览器 —— Agent 不许走
+    ensureBrowserBackground: () => { calls.ensureBg++; return true },
+    shellBrowserVisible: (on) => { calls.visibleCalls.push(!!on) },
+    newTab: (url, opts) => {
       const t = mkTab(++S.browser.seq, url)
-      S.browser.tabs.push(t); S.browser.activeId = t.id
-      calls.newTab.push(url)
+      S.browser.tabs.push(t)
+      calls.newTab.push(url); calls.newTabOpts.push(opts || null)
+      if (!(opts && opts.background)) S.browser.activeId = t.id   // 后台标签不当活动标签(真身同义)
       return t
     },
     closeTab: (id) => { calls.closeTab.push(id); const i = S.browser.tabs.findIndex((t) => t.id === id); if (i >= 0) S.browser.tabs.splice(i, 1) },
     activateTab: (id) => { calls.activateTab.push(id); S.browser.activeId = id },
     brScreenshot: async () => { calls.shots++; return '/tmp/shot-' + calls.shots + '.png' },
+    brShotTab: async (tab) => { calls.shots++; calls.shotTabs.push(tab && tab.id); return '/tmp/shot-' + calls.shots + '.png' },
     execStep: async (wc, ev) => {
       calls.exec.push(ev)
       if (over.execFail) return { ok: false, err: '假失败' }
@@ -199,6 +203,22 @@ console.log('用例7:★verdict 是机判的 —— 调用方说了不算')
   }
 }
 
+console.log('用例7.5:开浏览器不许抢屏 —— 浏览器是对话的辅助能力,不是"一用它对话就没了"')
+{
+  // 【真机 2026-08-11,用户连着两次"又把我的会话毁掉了"】
+  // agentOpen 原来调 createBrowser(),而它在宿主模式下第一句就是 shellBrowserVisible(true) ——
+  // 浏览器 chrome + 写死的那张「调试助手」卡一起挂上主窗,把用户正在看的对话【盖掉】,
+  // 还在「历史」里凭空多一条「调试助手」。这一格把三条不变量钉死。
+  const { ba, S, calls } = makeCtx()
+  const r = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '验证后台开' })
+  ok('★走后台承载,不调 createBrowser(那条会亮出浏览器)', !!r.ok && calls.ensureBg === 1 && calls.createBrowser === 0,
+    { ensureBg: calls.ensureBg, createBrowser: calls.createBrowser })
+  ok('★开的是【后台标签】(background:true)', !!(calls.newTabOpts[0] && calls.newTabOpts[0].background), calls.newTabOpts)
+  ok('★★一次都没有改可见性(shellBrowserVisible 压根不该被调)', calls.visibleCalls.length === 0, calls.visibleCalls)
+  ok('  后台标签不当活动标签(用户的视图不受影响)', S.browser.activeId === null, S.browser.activeId)
+  ok('  也没抢焦点式地 activateTab', calls.activateTab.length === 0, calls.activateTab)
+}
+
 console.log('用例8:会话生命周期 —— 超时/并发/重复收/取证')
 {
   const { ba, S, calls } = makeCtx()
@@ -206,10 +226,18 @@ console.log('用例8:会话生命周期 —— 超时/并发/重复收/取证')
   const rs = []
   for (let i = 0; i < 4; i++) rs.push(await ba.agentOpen({ url: 'http://localhost:5199/' + i, purpose: 'p' + i }))
   ok('并发上限 3(第 4 个被拒)', rs.slice(0, 3).every((r) => r.ok) && !!rs[3].error, rs[3])
-  // 截图:必须切到本会话的标签页再截,否则截的是用户当下在看的页面
-  S.browser.activeId = rs[0] && 1 ? S.browser.tabs[2].id : null
+  // 截图:要截【本会话的】标签页,但绝不能为此把它切到前台 —— 那会把用户正在看的页面抢走。
+  // ★这一格原来钉的正是【旧的有害行为】("截图前 activateTab 到自己的标签"),
+  //   真机后果:用户连着两次"又把我的会话毁掉了"。断言写反了比没有断言更糟 ——
+  //   它把错的行为变成了"改不动的契约"。现在钉的是:截对了页面 + 一次都没抢焦点。
+  const userTabId = S.browser.tabs[2].id
+  S.browser.activeId = userTabId                    // 假装用户正在看第 3 个标签
+  const ownTabId = S.browser.tabs.find((t) => t.page.url === 'http://localhost:5199/0').id
   const shot = await ba.agentShot({ sessionId: rs[0].sessionId })
-  ok('★截图前切到本会话标签页(不然截的是别人的页面)', !!shot.ok && calls.activateTab[calls.activateTab.length - 1] === S.browser.tabs.find((t) => t.page.url === 'http://localhost:5199/0').id, calls.activateTab)
+  ok('★截的是本会话自己的标签页(不是用户当下在看的那个)',
+    !!shot.ok && calls.shotTabs[calls.shotTabs.length - 1] === ownTabId, { shotTabs: calls.shotTabs, ownTabId })
+  ok('★★而且没有把它切到前台 —— 用户的活动标签一动都不许动',
+    calls.activateTab.length === 0 && S.browser.activeId === userTabId, { activateTab: calls.activateTab, activeId: S.browser.activeId, userTabId })
   ok('  截图进报告', ba.agentClose({ sessionId: rs[0].sessionId, status: 'done' }).report.shots.length === 1)
   // 重复收:幂等返回原报告,不炸也不重复关标签
   const again = ba.agentClose({ sessionId: rs[0].sessionId, status: 'done' })

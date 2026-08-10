@@ -444,7 +444,7 @@ module.exports = function initBrowser(ctx) {
 
   // Source map 还原（vlqDecode/buildSourceMap/smLookup/getSourceMap/resolveFrame）搬进 ./cdp-format,见文件顶部 require。
 
-  function newTab(url) {
+  function newTab(url, opts) {
     const b = S.browser
     if (!b.win || b.win.isDestroyed()) return
     const id = ++b.seq
@@ -456,7 +456,12 @@ module.exports = function initBrowser(ctx) {
     b.tabs.push(tab)
     brWireTab(tab)
     attachDbg(tab)
-    activateTab(id)
+    // ★后台标签(Agent 自主会话用):不 activateTab —— 那会把用户正在看的页面从窗口上摘下来。
+    // 不激活的标签【压根不挂进 contentView】,所以它天然是"无头"的:JS 照跑、请求照发、
+    // CDP 照样能截图(Page.captureScreenshot 不走合成表面),只是用户看不见。
+    // 标签条照旧要推(brSendTabs)—— 用户想看它在干什么,点过去就行。看得见的可能性不能抹掉。
+    if (opts && opts.background) brSendTabs()
+    else activateTab(id)
     if (S.browser.rec && S.browser.rec.active) wireRecToTab(tab, { crossTab: true })   // 录制中新开的标签也纳入,不丢后续操作
     const u = normalizeUrl(url)
     const doLoad = () => { if (view.webContents.isDestroyed()) return; if (u) view.webContents.loadURL(u); else view.webContents.loadFile(path.join(__dirname, '..', 'ui', 'newtab.html')) }
@@ -556,6 +561,18 @@ module.exports = function initBrowser(ctx) {
     const shot = await dbg.sendCommand('Page.captureScreenshot', opt)
     return saveShot(Buffer.from(shot.data, 'base64'))
   }
+  /** 对【指定标签】截图,不管它是不是当前活动标签、也不管窗口有没有亮。
+   *  ★Agent 后台会话必须走这条:brScreenshot 内部取的是 brActive()——后台标签不是活动标签,
+   *  它会返回 null;老代码为此在截图前 activateTab(自己的标签),那正是"把用户正在看的页面抢走"
+   *  的元凶,而且抢完还不还。CDP 的 Page.captureScreenshot 不走合成表面,视图没挂在窗口上也能出图。 */
+  async function brShotTab(tab, full) {
+    if (!tab || !tab.view || tab.view.webContents.isDestroyed()) return null
+    if (tab.dbg) { try { return await brShotCdp(tab, full) } catch (e) { log('browser shot(tab) cdp 失败: ' + e.message) } }
+    // 没有调试器(极少见):只有它恰好就是活动标签时才可能截到
+    if (tab.id === S.browser.activeId) { try { return await brShotVisible(tab) } catch (e) { log('browser shot(tab) 可视区兜底也失败: ' + e.message) } }
+    return null
+  }
+
   async function brScreenshot(full) {
     const tab = brActive(); if (!tab) return null
     try {
@@ -642,15 +659,33 @@ module.exports = function initBrowser(ctx) {
     return { id, url: rec.url, method: rec.method, status: rec.status, statusText: rec.statusText, mime: rec.mime, type: rec.type, size: rec.size, ms: Math.round(rec.ms), state: rec.state, remoteIP: rec.remoteIP || '', reqHeaders: rec.reqHeaders || {}, respHeaders: rec.respHeaders || {}, postData: rec.postData || '', body, base64 }
   }
 
-  function createBrowser(initialUrl) {
+  // ── Agent 后台用浏览器:确保有承载,但【绝不亮出来、绝不抢焦点】────────────────
+  // ★为什么必须单独一条路(2026-08-11,用户连续两次"又把我的会话毁掉了"):
+  //   Agent 调 browser_open 走的是 createBrowser(),而它在宿主模式下第一句就是 shellBrowserVisible(true)——
+  //   浏览器 chrome + 那张写死的「调试助手」卡一起挂到主窗上,把用户正在看的对话【盖掉】。
+  //   用户要的是"浏览器是对话的辅助能力",不是"Agent 一用浏览器,我的对话就没了"。
+  //   这条路只保证【能用】,不动任何可见性:宿主已建就什么都不做;没建就悄悄建、且不建那张调试助手卡。
+  //   用户自己点「内嵌浏览器」的行为完全不变(那是他主动选的)。
+  function ensureBrowserBackground() {
     const b = S.browser
-    if (b.shellHost) { shellBrowserVisible(true); if (initialUrl) newTab(initialUrl); return }   // 宿主模式:不开新窗,亮出宿主视图
+    if (b.shellHost && b.chromeView) return true          // 已是宿主模式:不碰 shellVisible
+    if (b.win && !b.win.isDestroyed()) return true        // 已有独立窗:不 focus
+    if (S.mainWin && !S.mainWin.isDestroyed()) { createShellBrowser({ background: true }); return true }
+    createBrowser(undefined, { background: true })        // 连主窗都没有 → 独立窗,但不显示
+    return !!(b.win && !b.win.isDestroyed())
+  }
+
+  function createBrowser(initialUrl, opts) {
+    const b = S.browser
+    const bg = !!(opts && opts.background)
+    if (b.shellHost) { if (!bg) shellBrowserVisible(true); if (initialUrl) newTab(initialUrl, opts); return }   // 宿主模式:不开新窗,亮出宿主视图(后台模式不亮)
     if (b.win && !b.win.isDestroyed()) {
-      b.win.focus()
-      if (initialUrl) newTab(initialUrl)
+      if (!bg) b.win.focus()
+      if (initialUrl) newTab(initialUrl, opts)
       return
     }
     const win = new BrowserWindow({
+      show: !bg,                       // 后台模式:窗口建了但不显示(页面照跑,CDP 照样截图)
       width: 1320, height: 880, minWidth: 920, minHeight: 600,
       title: 'BocomHermes · 浏览器',
       titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
@@ -670,7 +705,7 @@ module.exports = function initBrowser(ctx) {
       S.browser = { win: null, tabs: [], activeId: null, consoleH: 0, seq: 0, mode: 'standalone', leftW: 0, cardView: null, cardWcId: null, _dragging: false }
     })
     // chrome 加载完后再建首个标签（保证 IPC 能收到）
-    win.webContents.once('did-finish-load', () => newTab(initialUrl || ''))
+    win.webContents.once('did-finish-load', () => newTab(initialUrl || '', opts))
   }
 
   // ── 调试工作台：左 Agent 会话 + 右 内嵌浏览器（并排单窗口）────────────────────
@@ -760,31 +795,37 @@ module.exports = function initBrowser(ctx) {
   // ── 宿主模式(波7 · 内嵌浏览器真重构):浏览器 chrome + 页面视图全部挂进 shell 主窗口 ──
   // chrome = 一个 WebContentsView(加载 browser.html?workspace=1),与标签页视图同为 mainWin.contentView
   // 的子视图,位置由 layoutRegion 统一算(228 侧栏右 / 38 标题栏下 / 28 状态栏上)。不再是"跟随的嵌入式子窗"。
-  function createShellBrowser() {
+  function createShellBrowser(opts) {
     const b = S.browser
+    const bg = !!(opts && opts.background)   // 后台模式:建但不亮、也不建那张「调试助手」卡
     if (!S.mainWin || S.mainWin.isDestroyed()) { createWorkspace(); return }   // 主窗不在 → 回退独立工作台(老路径)
-    if (b.shellHost && b.chromeView) { b.shellVisible = true; brLayout(); return }   // 已建:亮出即可(不递归)
+    if (b.shellHost && b.chromeView) { if (!bg) { b.shellVisible = true; brLayout() } return }   // 已建:亮出即可(不递归)
     if (b.win && !b.win.isDestroyed() && !b.shellHost) { try { b.win.close() } catch {} }   // 有独立/嵌入式窗 → 换宿主(tabs 重来)
-    b.shellHost = true; b.embedded = false; b.shellVisible = true
+    b.shellHost = true; b.embedded = false; b.shellVisible = !bg
     b.win = S.mainWin; b.tabs = []; b.activeId = null; b.consoleH = 0; b.seq = 0
-    b.mode = 'workspace'; b.leftW = 460; b._dragging = false
+    // ★后台模式不建「调试助手」卡,leftW 也就为 0。那张卡是写死的另一段会话:
+    //   它一挂上来就把用户正在看的对话盖掉,还会在「历史」里凭空多出一条「调试助手」。
+    //   用户明确说过:浏览器是对话的辅助能力,不是"一用浏览器,对话就没了"。
+    b.mode = 'workspace'; b.leftW = bg ? 0 : 460; b._dragging = false
     // 浏览器 chrome(标签栏/工具栏/控制台/技能条):挂主窗的 WebContentsView
     const chrome = new WebContentsView({ webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false } })
     b.chromeView = chrome
     S.mainWin.contentView.addChildView(chrome)
     chrome.webContents.loadFile(path.join(__dirname, '..', 'ui', 'browser.html'), { query: { workspace: '1' } })
     // 左侧 Agent 会话卡(工作台分栏):同挂主窗
-    const cardView = new WebContentsView({ webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false } })
-    b.cardView = cardView; b.cardWcId = cardView.webContents.id
-    S.mainWin.contentView.addChildView(cardView)
-    cardView.webContents.loadFile(path.join(__dirname, '..', 'ui', 'card.html'), { query: { embedded: '1', title: '调试助手' } })
+    if (!bg) {
+      const cardView = new WebContentsView({ webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false } })
+      b.cardView = cardView; b.cardWcId = cardView.webContents.id
+      S.mainWin.contentView.addChildView(cardView)
+      cardView.webContents.loadFile(path.join(__dirname, '..', 'ui', 'card.html'), { query: { embedded: '1', title: '调试助手' } })
+    }
     // 主窗尺寸变化 → 重排(chrome/卡片/页面一起;layoutRegion 现读现算)
     const onResize = () => { brLayout(); if (!S.mainWin.isDestroyed()) chromeSend('browser-split-set', b.leftW) }
     S.mainWin.on('resize', onResize)
     chrome.webContents.once('did-finish-load', () => {
       chromeSend('browser-split-set', b.leftW)
       brLayout()
-      newTab('')
+      if (!bg) newTab('')   // 后台模式不开空白首标签:Agent 自己会开它要的那个
     })
     log('browser: shell host mode on (chrome + tabs attached to mainWin)')
   }
@@ -796,5 +837,5 @@ module.exports = function initBrowser(ctx) {
     brLayout()   // visible=true 正常排布;false → brLayout 的隐藏分支统一压 0
   }
 
-  return { brActive, newTab, closeTab, activateTab, brSetDevice, brRotateDevice, brZoom, brLayout, brSendTabs, sendNetSnapshot, attachDbg, detachDbg, normalizeUrl, brScreenshot, brNetBody, brPickElement, brEval, createBrowser, createWorkspace, createShellBrowser, shellBrowserVisible, chromeSend }
+  return { brActive, newTab, closeTab, activateTab, brSetDevice, brRotateDevice, brZoom, brLayout, brSendTabs, sendNetSnapshot, attachDbg, detachDbg, normalizeUrl, brScreenshot, brShotTab, brNetBody, brPickElement, brEval, createBrowser, ensureBrowserBackground, createWorkspace, createShellBrowser, shellBrowserVisible, chromeSend }
 }
