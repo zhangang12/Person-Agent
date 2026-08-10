@@ -84,6 +84,15 @@ function removeEntry(key: string) {
 }
 
 // ── 视图切换(同时只显一个;webview 懒创建且保活)──
+/** 上报"当前活动对话"的 wcId —— 内嵌浏览器的「发给 Agent」要注进你正在聊的这个会话。
+ *  浏览器是会话的辅助面板,不该另有一个"调试助手"接住它(见 browser.js createShellBrowser)。 */
+export function pushActiveChat(): void {
+  try {
+    const d = details.get(store.activeKey)
+    BH()?.shellActiveChat?.(d && d.wcId != null ? d.wcId : null)
+  } catch { /* 静默 */ }
+}
+
 export function showView(view: string) {
   if (view === 'browser') {
     // 内嵌浏览器:工作台 = shell 主窗口的嵌入式子窗(覆盖内容区),不再独立出窗
@@ -212,6 +221,7 @@ export function bindWv(key: string, el: any) {
     try {
       d.wcId = el.getWebContentsId()
       if (d.wcId != null && BH()?.sessionBind) BH().sessionBind(d.cardId, d.wcId)   // 登记 wcId↔卡(wf 注册表补 wcId)
+      if (key === store.activeKey) pushActiveChat()   // 首个会话:切在前、绑在后 —— 只在切换时报会漏掉它
     } catch (e) { /* 静默 */ }
     if (d.pending) { const t = d.pending; d.pending = ''; fillChat(t) }
   })
@@ -244,6 +254,7 @@ export function activateChat(key: string) {
   if (!c.hasWv) { spawnChat({ sid: c.sid, title: c.title }); return }   // 收养条目:带 sid 重开
   store.activeKey = key
   c.unread = false
+  pushActiveChat()          // 切会话就上报:内嵌浏览器的「发给 Agent」要送到这一个
   showView('chat')
 }
 

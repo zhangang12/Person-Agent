@@ -1023,7 +1023,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     // 尽力通知工作台 Agent(链②):无工作台/卡已销毁 → false,解析链自动只剩人工(链③),技能照样跑
     notifyAgent(req) {
       const b = S.browser
-      if (b.mode !== 'workspace' || !b.cardView || b.cardView.webContents.isDestroyed()) return false
+      const wc = agentInjectWc(); if (!wc) return false   // 没有收件人 → false,解析链自动只剩人工(链③),技能照样跑
       let disp, text
       if (req.kind === 'takeover') {   // 混合执行:严格回放整段失败 → Agent 流程级接管,直接操作内嵌浏览器完成剩余
         disp = `回放第 ${req.step} 步起整段失败 — Agent 接管执行中…`
@@ -1060,7 +1060,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
           + `- 能 → 解出后调用 MCP 工具 skill_resolve(gateId="${req.gateId}", value="…"),回放会立即续跑;\n`
           + `- 不能(如短信验证码只在用户手机上)→ 直接回复说明,用户会在页面手动输入。不要猜。`
       }
-      try { b.cardView.webContents.send('card-inject', { text, disp }); return true } catch { return false }
+      try { wc.send('card-inject', { text, disp }); return true } catch { return false }
     },
   }
 
@@ -1097,6 +1097,20 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // 挂 S:relay(mail.js)在本行【之前】就被 initMail 构造了,而 brAgent 是 const —— 直接传进去会踩 TDZ。
   // 本仓跨层访问的惯例本来就是挂 S(S.setCardBusy / S.dropPendingPerm 同款),relay 调用期再取,顺序天然安全。
   S.brAgent = brAgent
+
+  // ── 浏览器要把东西"交给 Agent"时,收件人是谁 ─────────────────────────────────
+  // 宿主模式(浏览器挂在主窗、作为【会话的辅助面板】)→ 当前活动对话(外壳经 shell-active-chat 上报);
+  // 独立工作台(没有主窗时的回退形态)→ 它自带的那张卡。
+  // ★原来三处都直接认 b.cardView(那张"调试助手"卡),而它在宿主模式下已经不存在了 ——
+  //   不统一改的话,「发给 Agent」/ 技能接管通知 / 解闸询问 会全部静默失效(返回 false,没人报错)。
+  function agentInjectWc() {
+    const b = S.browser
+    if (b && b.shellHost) {
+      const wc = wcById(S.activeChatWc)   // 仓库里已有的助手(webContents.fromId + isDestroyed 兜底),不另造一个
+      return wc && !wc.isDestroyed() ? wc : null
+    }
+    return (b && b.cardView && !b.cardView.webContents.isDestroyed()) ? b.cardView.webContents : null
+  }
 
   // ── 调试分诊 + 多 agent 对抗分析（工作台「发给 Agent」的大脑）──────────────────
   const tinyJson = (t) => { try { const m = String(t || '').replace(/<think>[\s\S]*?<\/think>/gi, ' ').match(/\{[\s\S]*\}/); return m ? JSON.parse(m[0]) : null } catch { return null } }
@@ -1499,8 +1513,13 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     log('brAnalyze: bundle ' + bundleId + ' size=' + Buffer.byteLength(bundle) + 'B')
     const disp = `已复现并发送：${tab.url || '(空白页)'}\n（${errs.length} 条控制台报错 + ${bad.length} 条网络异常 + 页面 DOM 上下文）`
     const b = S.browser
-    if (b.mode === 'workspace' && b.cardView && !b.cardView.webContents.isDestroyed()) {
-      const cardSid = S.sessionByWc.get(b.cardWcId)
+    // ★收件人:宿主模式(浏览器挂在主窗、作为会话的辅助面板)→ 注进【当前活动对话】;
+    //   独立工作台那条老路仍用它自带的卡(没有主窗时的回退形态)。
+    //   原来只认 b.cardWcId —— 那是"调试助手"卡,而它现在不存在了(见 createShellBrowser)。
+    const targetWc = (b.shellHost ? S.activeChatWc : b.cardWcId)
+    const hasTarget = b.shellHost ? (targetWc != null) : !!(b.cardView && !b.cardView.webContents.isDestroyed())
+    if (hasTarget) {
+      const cardSid = S.sessionByWc.get(targetWc)
       const cardSi = cardSid && S.sessionInfo.get(cardSid)
       if (cardSi && cardSi.serve) {
         // 启发式分诊先验：从捕获信号判断疑似层面 + 难度 + 是否需要多 agent
@@ -1517,7 +1536,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
         // 配了后端仓库且有后端/契约信号 → 强制多 agent（这样后端调查/修复会在后端仓库 serve 上跑）
         const strategy = (layers.length >= 2 || difficulty >= 4 || (backendDir && (be || ct))) ? 'multi' : 'single'
         const summary = `URL：${tab.url || '(空白页)'}\n控制台错误/警告：${errs.length} 条${hasJsErr ? '（含 JS 错误）' : ''}\n网络异常：${bad.length} 条${be ? '（含 5xx/失败）' : ''}${ct ? '（含 4xx/CORS）' : ''}\n疑似层面：${layers.join('、') || '未定'}${backendDir ? '\n已配置后端仓库：可跨前后端调查/修复' : ''}`
-        runDebugFlow({ cardWc: b.cardView.webContents, serve: cardSi.serve, bundlePrompt: prompt, disp, heur: { layers, difficulty, strategy }, summary })   // 后台异步，不阻塞按钮
+        runDebugFlow({ cardWc: agentInjectWc(), serve: cardSi.serve, bundlePrompt: prompt, disp, heur: { layers, difficulty, strategy }, summary })   // 后台异步，不阻塞按钮
       } else {
         b.cardView.webContents.send('card-inject', { text: prompt, disp })   // 会话还没就绪 → 退化为直接注入
       }
@@ -2089,7 +2108,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
               const reg2 = S.wfRegistry && S.wfRegistry.get(String(cid))
               if (reg2) { reg2.runId = runId; reg2.kind = 'orch' }   // 反查要靠它:没有 runId 就等于普通卡
             } catch { /* 注册表没建上也不该拦住重开 */ }
-            try { back.panelCardId = String(cid); back.panelWcId = regWcId(cid) } catch { /* 面板推送拿不到 wc 就只影响实时刷新 */ }
+            try { back.panelCardId = String(cid); back.panelWcId = (S.cardWcById && S.cardWcById.get(String(cid))) != null ? S.cardWcById.get(String(cid)) : null } catch (e) { log('[orch] 回填面板 wcId 失败(只影响实时推送,面板仍可按 runId 拉快照):' + e.message) }
             log('[orch] 从历史重开编排卡 ' + runId + '(phase=' + back.phase + ')')
             return { ok: true, kind: 'orch' }
           }
@@ -3603,6 +3622,10 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   // ★侧栏「会话」里点开一条编排 —— 与卡坞的 wf-open 是【两条不同的入口】,我先前只修了后者(实测本条一次没触发)。
   // 编排面板卡有会话但永不发消息:当普通对话开出来必然是空白的"历史消息未能载入",而用户要的是节点表与留痕。
   // runId 来源两条:① 历史条目上记的(recordHistory 现在会记);② 老条目没有 → 扫存档头的 `· 会话:x · run:y`。
+  // 外壳上报"当前活动对话"的 wcId —— 内嵌浏览器的「发给 Agent」据此注进你正在聊的会话。
+  // 主进程本来无从得知哪个会话是"当前的"(它只有 wcId↔卡的登记,没有焦点概念)。
+  ipcMain.on('shell-active-chat', (_e, wcId) => { const n = +wcId; S.activeChatWc = Number.isFinite(n) ? n : null })
+
   ipcMain.handle('open-history', (_e, { sid, title }) => {
     const id = String(sid || '')
     let runId = ''
@@ -3615,7 +3638,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
           const cid = spawnCard('编排 · ' + String(title || back.goal || '').slice(0, 20), id, null, String(back.goal || title || ''),
             { flash: true, wf: true, orch: true, run: runId })
           try { const reg = S.wfRegistry && S.wfRegistry.get(String(cid)); if (reg) { reg.runId = runId; reg.kind = 'orch' } } catch {}
-          try { back.panelCardId = String(cid); back.panelWcId = regWcId(cid) } catch {}
+          try { back.panelCardId = String(cid); back.panelWcId = (S.cardWcById && S.cardWcById.get(String(cid))) != null ? S.cardWcById.get(String(cid)) : null } catch (e) { log('[orch] 回填面板 wcId 失败:' + e.message) }
           log('[orch] 从侧栏历史重开编排卡 ' + runId + '(phase=' + back.phase + ')')
           return cid
         }

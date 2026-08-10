@@ -40,7 +40,10 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   onShellQuickOpen: (cb) => ipcRenderer.on('shell-quick-open', (_e, p) => cb(p || {})),   // 主窗口:快捷输入层唤起(波4) {text?}
   onShellSpawn: (cb) => ipcRenderer.on('shell-spawn', (_e, p) => cb(p)),           // 主窗口:发卡收口 → 对话视图开/激活会话 {id,title,sid,msg,disp,orch,wf}
   onShellSessStatus: (cb) => ipcRenderer.on('shell-sess-status', (_e, p) => cb(p)), // 主窗口:会话忙闲转发 {wcId,busy}
-  sessionBind: (cardId, wcId) => ipcRenderer.invoke('session-bind', { cardId, wcId }),   // webview dom-ready 后登记 wcId↔卡(wf 注册表补 wcId)
+  sessionBind: (cardId, wcId) => ipcRenderer.invoke('session-bind', { cardId, wcId }),
+  // 当前活动对话的 wcId:内嵌浏览器的「发给 Agent」要注进【你正在聊的那个会话】——
+  // 浏览器是会话的辅助面板,不该另有一个"调试助手"接住它(见 browser.js createShellBrowser 的注释)
+  shellActiveChat: (wcId) => ipcRenderer.send('shell-active-chat', wcId),   // webview dom-ready 后登记 wcId↔卡(wf 注册表补 wcId)
   sessionList: () => ipcRenderer.invoke('session-list'),        // 活动会话清单(侧栏「会话」区)
   sessionClose: (wcId) => ipcRenderer.invoke('session-close', { wcId }),   // 关闭内嵌会话(走卡关闭清理链,幂等)
   sessionPinOut: (arg) => ipcRenderer.invoke('session-pin-out', arg || {}),   // 钉出(波3):内嵌会话 → 独立迷你卡(真窗口盯梢);arg={sid, x?, y?}
