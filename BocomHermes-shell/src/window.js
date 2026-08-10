@@ -91,10 +91,37 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // ── 历史 ────────────────────────────────────────────────────────────────────
   function saveHistory() { try { fs.writeFileSync(S.historyFile, JSON.stringify(S.history.slice(0, 50))) } catch {} }
   function loadHistory() { try { const a = JSON.parse(fs.readFileSync(S.historyFile, 'utf8')); if (Array.isArray(a)) S.history = a } catch {} }
+  // 存档头里有 `- id:… · 会话:<sid> · run:<runId> · 轮次:…` —— 老历史条目没记 runId 时靠它兜底。
+  // 只读文件头 2KB(与 wf-list 同口径),不为一次查找把整份存档读进来。
+  function runIdBySid(sid) {
+    const want = String(sid || ''); if (!want) return ''
+    try {
+      const dirW = path.join(app.getPath('userData'), 'workflows')
+      const files = fs.readdirSync(dirW).filter((f) => f.endsWith('.md'))
+        .map((f) => { const p = path.join(dirW, f); let m = 0; try { m = fs.statSync(p).mtimeMs } catch {} ; return { p, m } })
+        .sort((a, b) => b.m - a.m).slice(0, 60)
+      for (const f of files) {
+        let head = ''
+        try { const fd = fs.openSync(f.p, 'r'); const buf = Buffer.alloc(2048); const n = fs.readSync(fd, buf, 0, 2048, 0); fs.closeSync(fd); head = buf.toString('utf8', 0, n) } catch { continue }
+        if (((head.match(/· 会话:(\S+)/) || [])[1] || '') !== want) continue
+        return ((head.match(/· run:(\S+)/) || [])[1] || '')
+      }
+    } catch {}
+    return ''
+  }
+
   function recordHistory(id, title, dir) {
     if (S.shardSids && S.shardSids.has(id)) return   // 分片会话硬闸:内部工人绝不进最近会话(调用点 shard 旗标之外的第二道防线,session.js trackWcSession 登记)
     const t = (title || '对话').replace(/\s+/g, ' ').trim().slice(0, 80)
-    S.history = [{ id, title: t, dir: dir || '', project: dir ? path.basename(dir) : '未选目录', ts: Date.now(), created: Date.now() }, ...S.history.filter((h) => h.id !== id)].slice(0, 50)
+    // ★编排面板卡的会话要记住它属于哪个 run(2026-08-11:用户点侧栏「会话」里的编排,开出来是空白
+    //   "历史消息未能载入" —— 因为面板卡【有会话但永不发消息】,当普通对话开当然什么都没有)。
+    //   sid → runId 这层映射原来【任何地方都没存】:注册表重启即空,run.json 里也没有会话 id。
+    //   记在历史条目上是最省的:它本来就按 sid 存,重启也在。
+    let runId = ''
+    try { for (const r of (S.wfRegistry ? S.wfRegistry.values() : [])) if (r && r.sid === id && r.runId) { runId = String(r.runId); break } } catch {}
+    const prev = S.history.find((h) => h.id === id)
+    if (!runId && prev && prev.runId) runId = String(prev.runId)   // 已经记过就别丢(改名/刷新会重走这里)
+    S.history = [{ id, title: t, dir: dir || '', project: dir ? path.basename(dir) : '未选目录', ts: Date.now(), created: Date.now(), ...(runId ? { runId } : {}) }, ...S.history.filter((h) => h.id !== id)].slice(0, 50)
     saveHistory()
   }
   // 历史单条删除(侧栏历史区行内 ✕):只摘索引,serve 侧会话不管(与 clearHistory 同语义,索引 orphan 不影响)
@@ -3573,7 +3600,30 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   ipcMain.handle('open-dock', () => openDock())
   ipcMain.handle('open-main', () => createMainWindow())   // 桌面主窗口(shell.html)
   ipcMain.on('get-history', (e) => { e.returnValue = S.history })
-  ipcMain.handle('open-history', (_e, { sid, title }) => spawnCard(title, sid))
+  // ★侧栏「会话」里点开一条编排 —— 与卡坞的 wf-open 是【两条不同的入口】,我先前只修了后者(实测本条一次没触发)。
+  // 编排面板卡有会话但永不发消息:当普通对话开出来必然是空白的"历史消息未能载入",而用户要的是节点表与留痕。
+  // runId 来源两条:① 历史条目上记的(recordHistory 现在会记);② 老条目没有 → 扫存档头的 `· 会话:x · run:y`。
+  ipcMain.handle('open-history', (_e, { sid, title }) => {
+    const id = String(sid || '')
+    let runId = ''
+    try { const h = S.history.find((x) => x && x.id === id); if (h && h.runId) runId = String(h.runId) } catch {}
+    if (!runId) runId = runIdBySid(id)
+    if (runId && S.orch) {
+      try {
+        const back = S.orch.load(runId)
+        if (back) {
+          const cid = spawnCard('编排 · ' + String(title || back.goal || '').slice(0, 20), id, null, String(back.goal || title || ''),
+            { flash: true, wf: true, orch: true, run: runId })
+          try { const reg = S.wfRegistry && S.wfRegistry.get(String(cid)); if (reg) { reg.runId = runId; reg.kind = 'orch' } } catch {}
+          try { back.panelCardId = String(cid); back.panelWcId = regWcId(cid) } catch {}
+          log('[orch] 从侧栏历史重开编排卡 ' + runId + '(phase=' + back.phase + ')')
+          return cid
+        }
+        log('[orch] 侧栏历史:' + runId + ' 的存档已不在(可能被 GC),按普通对话开')
+      } catch (e) { log('[orch] 侧栏历史重开失败,退回普通对话:' + e.message) }
+    }
+    return spawnCard(title, id)
+  })
   ipcMain.handle('clear-history', () => { S.history = []; saveHistory(); return true })
 
   return { createBrowser, createWorkspace, createSkillCenter, createMailCenter, createMainWindow, openMailView, spawnCard, spawnWorkflow, spawnEmailCard, snapAsk, buildTray, openDock, openOutbox, openSettings, applyProject, projName, recordHistory, touchHistory, replaceHistoryId }
