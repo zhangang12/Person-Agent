@@ -2588,6 +2588,16 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       else shellBrowserVisible(true)
     } else shellBrowserVisible(false)
   })
+  // ── 同屏分栏(2026-08-10:单会话 × 内嵌浏览器整合)──────────────────────────
+  // chatW = 主窗内容区左边留给【对话】的像素宽;0 = 老行为(浏览器铺满内容区,与对话互斥)。
+  // 只改一个数,几何全在 browser.js 的 layoutRegion 里现算 —— 标签栏/控制台/设备模拟/分隔条一并跟着缩。
+  // 渲染端负责两件事:自己让出右边这块(CSS),以及把拖出来的宽度报上来。主进程不猜渲染端的布局。
+  ipcMain.handle('browser-split', (_e, w) => {
+    if (!S.browser) return { ok: false }
+    S.browser.chatW = Math.max(0, Math.round(+w || 0))
+    try { brLayout() } catch {}
+    return { ok: true, chatW: S.browser.chatW }
+  })
   ipcMain.handle('open-skill-center', () => createSkillCenter())   // 「🎬 录制回放」入口(托盘/热键)
   // 分隔条拖动：start=临时分离内容视图让 chrome 独占鼠标事件；end=落定宽度并复位视图
   ipcMain.on('browser-split', (_e, arg) => {

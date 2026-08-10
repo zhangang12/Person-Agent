@@ -195,7 +195,10 @@ contextBridge.exposeInMainWorld('BocomHermes', {
   // 内嵌浏览器
   openBrowser:          (url) => ipcRenderer.invoke('open-browser', url),
   openSkillCenter:      ()    => ipcRenderer.invoke('open-skill-center'),   // 「🎬 录制回放」入口
-  browserEmbed: (show) => ipcRenderer.invoke('browser-embed', !!show),   // 内嵌浏览器收编:嵌入式子窗随主窗视图显隐
+  browserEmbed: (show) => ipcRenderer.invoke('browser-embed', !!show),
+  // 同屏分栏:主窗内容区左边留给对话的像素宽(0=浏览器铺满,与对话互斥的老行为)。
+  // 渲染端自己让出右边那块并把宽度报上来 —— 主进程不猜渲染端布局。
+  browserSplit: (w) => ipcRenderer.invoke('browser-split', w),   // 内嵌浏览器收编:嵌入式子窗随主窗视图显隐
   browserNavigate:      (url) => ipcRenderer.invoke('browser-navigate', url),
   browserMenuOverlay:   (on)  => ipcRenderer.send('browser-menu-overlay', !!on),
   browserSettingsOverlay: (on) => ipcRenderer.send('browser-settings-overlay', !!on),

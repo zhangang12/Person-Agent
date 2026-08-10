@@ -36,10 +36,24 @@ module.exports = function initBrowser(ctx) {
     } catch {}
   }
   // 浏览器页面区(原点+尺寸):standalone=窗口内容区(0,0 起);shellHost=主窗内容区(228 侧栏右/38 标题栏下/28 状态栏上)
+  // 主窗内容区左边留给对话的宽度(px)。0 = 老行为:浏览器铺满内容区、与对话互斥(切过去就看不见对话)。
+  // ★同屏(2026-08-10 用户要的"单会话与内嵌浏览器整合"):浏览器只占右半,左边继续显对话 ——
+  //   一边聊一边看它点页面,验证的过程和结论在同一块屏幕上。
+  //   只加一个减数,不动其余布局:标签栏/控制台/设备模拟/拖动分离那些几何全部按 rg 算,自动跟着缩。
+  const num = (v, d) => { const n = +v; return Number.isFinite(n) ? n : d }
+  const SPLIT_MIN = 360        // 两边各自的最小可用宽度:再窄对话就没法读了,浏览器也没法看
+  function splitChatW(cw) {
+    const want = Math.round(num(S.browser.chatW, 0))
+    if (want <= 0) return 0
+    const avail = Math.max(0, cw - 228)
+    if (avail < SPLIT_MIN * 2) return 0        // 窗口太窄 → 自动退回互斥(硬挤只会两边都不能用)
+    return Math.min(Math.max(want, SPLIT_MIN), avail - SPLIT_MIN)
+  }
   function layoutRegion() {
     if (S.browser.shellHost && S.mainWin && !S.mainWin.isDestroyed()) {
       const [cw, ch] = S.mainWin.getContentSize()
-      return { x: 228, y: 38, w: Math.max(0, cw - 228), h: Math.max(0, ch - 38 - 28) }
+      const chatW = splitChatW(cw)
+      return { x: 228 + chatW, y: 38, w: Math.max(0, cw - 228 - chatW), h: Math.max(0, ch - 38 - 28) }
     }
     const w = S.browser.win
     if (w && !w.isDestroyed()) { const [cw, ch] = w.getContentSize(); return { x: 0, y: 0, w: cw, h: ch } }
