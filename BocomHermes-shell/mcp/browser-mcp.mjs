@@ -238,6 +238,19 @@ const TOOLS = [
     }, required: ['sessionId', 'action'] },
   },
   {
+    name: 'browser_tabs',
+    description: '会话内的多标签:list 看有哪些 / open 开一个新页 / switch 切过去 / close 关掉。'
+      + '★什么时候用:要【对着两个页面看】的时候 —— 改前改后、列表页与详情页、两个环境同一功能。'
+      + '单标签只能来回 navigate,前一页的滚动位置、填了一半的表单、控制台历史全丢,"对比"就只能靠记忆描述。'
+      + '新标签一样过围栏;只能操作本会话自己开的标签(用户手动开的页面不归你碰);不许关掉最后一个。',
+    inputSchema: { type: 'object', properties: {
+      sessionId: { type: 'string' },
+      action: { type: 'string', enum: ['list', 'open', 'switch', 'close'], description: '默认 list' },
+      url: { type: 'string', description: 'action=open 时要打开的地址' },
+      tabId: { type: 'number', description: 'action=switch/close 时的目标(list 里给的 tabId)' },
+    }, required: ['sessionId'] },
+  },
+  {
     name: 'browser_resize',
     description: '切设备尺寸(desktop/mobile/tablet)或配色(light/dark),用来验响应式与暗色 —— 这两类问题不切过去就看不见。'
       + '切完页面会重排,要看效果请再 browser_read 或 browser_shot 一次。',
@@ -364,6 +377,17 @@ async function callTool(name, args) {
     const r = await relayPost('/browser/find', { sessionId: String(args.sessionId || ''), query: String(args.query || ''), limit: args.limit == null ? 10 : +args.limit })
     if (!r.found) return String(r.hint || '没找到')
     return '找到 ' + r.found + (r.total > r.found ? '/' + r.total : '') + ' 个(按相关度):\n' + (r.elements || '')
+  }
+  if (name === 'browser_tabs') {
+    const body = { sessionId: String(args.sessionId || ''), action: String(args.action || 'list') }
+    if (args.url != null) body.url = String(args.url)
+    if (args.tabId != null) body.tabId = args.tabId
+    const r = await relayPost('/browser/tabs', body)
+    if (r.tabs) {
+      return '本会话标签(' + r.tabs.length + ' 个,★=当前):\n'
+        + r.tabs.map((t) => '  ' + (t.active ? '★' : ' ') + ' [tabId=' + t.tabId + '] ' + (t.title || '(无标题)') + '  ' + t.url).join('\n')
+    }
+    return 'ok — 当前标签 tabId=' + r.activeTabId + ' ' + (r.url || '') + (r.hint ? '\n' + r.hint : '')
   }
   if (name === 'browser_resize') {
     const body = { sessionId: String(args.sessionId || '') }

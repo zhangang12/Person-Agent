@@ -479,7 +479,7 @@ module.exports = function initMail(ctx) {
             const ba = S.brAgent
             if (!ba) return reply({ error: '浏览器 Agent 会话未就绪(壳层还没装配完)' })
             const route = req.url.slice('/browser/'.length)
-            const fn = { open: ba.agentOpen, read: ba.agentRead, find: ba.agentFind, act: ba.agentAct, resize: ba.agentResize, assert: ba.agentAssert, shot: ba.agentShot, diag: ba.agentDiag, close: ba.agentClose }[route]
+            const fn = { open: ba.agentOpen, read: ba.agentRead, find: ba.agentFind, act: ba.agentAct, tabs: ba.agentTabs, resize: ba.agentResize, assert: ba.agentAssert, shot: ba.agentShot, diag: ba.agentDiag, close: ba.agentClose }[route]
             if (!fn) return reply({ error: 'unknown ' + req.url })
             try { return reply(await fn(a)) } catch (e) { return reply({ error: e.message }) }
           }

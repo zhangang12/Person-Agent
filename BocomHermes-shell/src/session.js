@@ -111,6 +111,7 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
       + 'browser_open(开页面)/ browser_read(读页,给每个元素一个 [ref_N] 句柄)/ '
       + 'browser_find(一句话找元素→refs,页面元素多时别自己翻清单)/ '
       + 'browser_act(点击/输入/选择/按键/滚动/悬停/导航,定位【优先用 ref】不用拼选择器)/ '
+      + 'browser_tabs(多标签:要【对着两个页面看】时用 —— 改前改后/列表页与详情页/两个环境)/ '
       + 'browser_assert(断言页面状态)/ browser_shot(截图)/ browser_resize(切手机/平板/暗色,验响应式)/ '
       + 'browser_diag(控制台与网络:可按关键词筛、可看成功请求、可按 id 取【响应体】—— 接口通了但返回体不对是前端 bug 的大头)/ browser_close。'
       + '它带着用户的登录态,你在里面做的每一步用户都能看到 —— 所以【验证本项目的页面、复现前端问题、走一遍真实流程】一律用这一组,'

@@ -132,7 +132,7 @@ module.exports = function initBrowserAgent(ctx) {
     const c = cfg()
     const id = 'bs_' + nowMs().toString(36) + '_' + Math.floor(Math.random() * 1e4).toString(36)
     const s = {
-      id, purpose, tabId: tab.id,
+      id, purpose, tabId: tab.id, tabIds: [tab.id],   // tabId=活动标签(其余代码照旧只认它);tabIds=本会话拥有的全部
       startedAt: nowMs(), expiresAt: nowMs() + c.minutes * 60000,
       steps: [], asserts: [], shots: [], closed: false, result: null,
       netFrom: 0, conFrom: 0,   // 只统计本会话开始之后的网络/控制台(标签页是新开的,基线就是 0,留字段是为了将来复用已有标签)
@@ -358,6 +358,67 @@ module.exports = function initBrowserAgent(ctx) {
     } catch (e) { return { error: '截图失败: ' + e.message } }
   }
 
+  // ── tabs(仿 CC 的 tabs_context / create / select / close)────────────────────
+  // 【为什么需要】一次验证经常要【对着两个页面看】:改前改后、列表页与详情页、两个环境同一功能。
+  // 单标签只能来回 navigate,前一页的状态(滚动位置、填了一半的表单、控制台历史)全丢 ——
+  // 于是"对比"这件事实际上做不了,只能靠记忆描述,而记忆正是最不可靠的那部分。
+  // 【设计上刻意保守】① 新开的标签一样过围栏(不能借开标签绕过白名单);
+  //   ② 只能操作【本会话自己开的】标签 —— 用户手动开的页面不归 Agent 碰,那是他的浏览器;
+  //   ③ 不许关掉最后一个(关完 tabOf 全空,后续每个工具都会报"标签页已被关掉",等于把会话废了)。
+  async function agentTabs(a) {
+    const s = live(a && a.sessionId); if (!s) return { error: '会话不存在或已结束(先 browser_open)' }
+    if (!Array.isArray(s.tabIds)) s.tabIds = [s.tabId]
+    const b = S.browser
+    const own = () => s.tabIds.map((id) => (b.tabs || []).find((x) => x.id === id))
+      .filter((t) => t && t.view && !t.view.webContents.isDestroyed())
+    const act = str(a && a.action) || 'list'
+
+    if (act === 'list') {
+      const list = own().map((t) => ({ tabId: t.id, active: t.id === s.tabId,
+        url: t.view.webContents.getURL(), title: t.view.webContents.getTitle() }))
+      s.tabIds = list.map((x) => x.tabId)                    // 顺手清掉已经没了的(用户手动关过)
+      return { ok: true, tabs: list, activeTabId: s.tabId }
+    }
+
+    if (act === 'open') {
+      const url = str(a && a.url)
+      const pol = policyCheck(url)                            // 新标签一样过围栏
+      if (!pol.ok) { step(s, 'tab-open', url, false, pol.err); return { error: pol.err } }
+      if (s.tabIds.length >= 5) return { error: '一个会话最多 5 个标签(再多就该收口了 —— 验证不是浏览)' }
+      let t = null
+      try { t = newTab(url) } catch (e) { return { error: '开标签失败: ' + e.message } }
+      const id = t && (t.id != null ? t.id : t)
+      if (id == null) return { error: '开标签失败(没拿到标签 id)' }
+      s.tabIds.push(id); s.tabId = id
+      step(s, 'tab-open', url, true, '')
+      try { await waitNetIdle(tabOf(s), 300, 4000) } catch {}
+      return { ok: true, tabId: id, activeTabId: s.tabId, url: curUrl(s), hint: '已切到新标签 —— 后续 read/act 都作用在它上面' }
+    }
+
+    const tid = a && a.tabId != null ? a.tabId : null
+    if (tid == null) return { error: 'switch / close 需要 tabId(用 action="list" 看有哪些)' }
+    if (!s.tabIds.some((x) => String(x) === String(tid))) return { error: '这个标签不属于本会话 —— Agent 只能操作自己开的标签,用户手动开的页面不归你碰' }
+
+    if (act === 'switch') {
+      const t = (b.tabs || []).find((x) => String(x.id) === String(tid))
+      if (!t) return { error: '这个标签已经没了(用 action="list" 刷新)' }
+      s.tabId = t.id
+      try { activateTab(t.id) } catch {}
+      step(s, 'tab-switch', String(tid), true, '')
+      return { ok: true, activeTabId: s.tabId, url: curUrl(s) }
+    }
+
+    if (act === 'close') {
+      if (own().length <= 1) return { error: '这是本会话最后一个标签,关了后续什么都做不了 —— 要收口请用 browser_close' }
+      try { closeTab(tid) } catch (e) { return { error: '关标签失败: ' + e.message } }
+      s.tabIds = s.tabIds.filter((x) => String(x) !== String(tid))
+      if (String(s.tabId) === String(tid)) { s.tabId = s.tabIds[s.tabIds.length - 1]; try { activateTab(s.tabId) } catch {} }
+      step(s, 'tab-close', String(tid), true, '')
+      return { ok: true, activeTabId: s.tabId, url: curUrl(s) }
+    }
+    return { error: '未知 action: ' + act + '(可用 list|open|switch|close)' }
+  }
+
   // ── resize(仿 CC 的 resize_window:响应式 + 暗色)────────────────────────────
   // 【为什么值得有】设备模拟这套能力代码里【早就有】(BR_DEVICES + brLayout 按 device 宽度居中),
   // 只是从没暴露成工具 —— 于是"手机上布局崩没崩""暗色模式下看不看得清"这两类问题,Agent 一直验不了。
@@ -490,5 +551,5 @@ module.exports = function initBrowserAgent(ctx) {
     sessions.clear()
   }
 
-  return { agentOpen, agentRead, agentFind, agentAct, agentResize, agentAssert, agentShot, agentDiag, agentClose, anyLive, dropAll, policyCheck, __sessions: sessions }
+  return { agentOpen, agentRead, agentFind, agentAct, agentTabs, agentResize, agentAssert, agentShot, agentDiag, agentClose, anyLive, dropAll, policyCheck, __sessions: sessions }
 }

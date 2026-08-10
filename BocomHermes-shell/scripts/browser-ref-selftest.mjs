@@ -102,5 +102,36 @@ ok('★only=all 才看得到【成功】请求 —— "接口通了但返回体�
 ok('★urlPattern 收窄到某个接口', diagPick({ only: 'all', urlPattern: '/api' }).net === 2, diagPick({ only: 'all', urlPattern: '/api' }))
 ok('  筛不到就是 0(不许兜底把全部倒出来)', diagPick({ only: 'all', urlPattern: '/nope' }).net === 0)
 
+// ── 多标签的三条守则(与 agentTabs 同口径)──────────────────────────────────
+// 这三条都是"不守就出事"的:借开标签绕过白名单 / 去动用户自己的页面 / 把会话关成空壳。
+function tabsGuard(st, a, policyOk) {
+  const ids = st.tabIds
+  const act = String((a && a.action) || 'list')
+  if (act === 'open') {
+    if (!policyOk) return 'fenced'
+    if (ids.length >= 5) return 'too-many'
+    return 'ok'
+  }
+  const tid = a && a.tabId != null ? a.tabId : null
+  if (act === 'switch' || act === 'close') {
+    if (tid == null) return 'need-id'
+    if (!ids.some((x) => String(x) === String(tid))) return 'not-mine'
+    if (act === 'close' && ids.length <= 1) return 'last-one'
+  }
+  return 'ok'
+}
+console.log('\n== 多标签守则 ==')
+ok('★新开标签一样过围栏(不许借开标签绕过白名单)',
+  tabsGuard({ tabIds: [1] }, { action: 'open', url: 'http://evil' }, false) === 'fenced')
+ok('  围栏放行就能开', tabsGuard({ tabIds: [1] }, { action: 'open' }, true) === 'ok')
+ok('★只能操作自己开的标签(用户手动开的页面不归 Agent 碰)',
+  tabsGuard({ tabIds: [1, 2] }, { action: 'switch', tabId: 9 }, true) === 'not-mine')
+ok('  自己的标签可以切', tabsGuard({ tabIds: [1, 2] }, { action: 'switch', tabId: 2 }, true) === 'ok')
+ok('★不许关掉最后一个(关完 tabOf 全空,后续每个工具都报"标签页已被关掉",会话等于废了)',
+  tabsGuard({ tabIds: [1] }, { action: 'close', tabId: 1 }, true) === 'last-one')
+ok('  还有两个时可以关', tabsGuard({ tabIds: [1, 2] }, { action: 'close', tabId: 1 }, true) === 'ok')
+ok('  switch/close 必须给 tabId', tabsGuard({ tabIds: [1, 2] }, { action: 'close' }, true) === 'need-id')
+ok('  标签数封顶 5(验证不是浏览)', tabsGuard({ tabIds: [1, 2, 3, 4, 5] }, { action: 'open' }, true) === 'too-many')
+
 console.log(fail ? ('\n❌ ref 定位:' + pass + ' passed, ' + fail + ' failed') : ('\n✅ ref 定位:全部通过  ' + pass + ' passed, 0 failed'))
 process.exit(fail ? 1 : 0)
