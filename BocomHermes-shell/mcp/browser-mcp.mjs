@@ -238,6 +238,16 @@ const TOOLS = [
     }, required: ['sessionId', 'action'] },
   },
   {
+    name: 'browser_resize',
+    description: '切设备尺寸(desktop/mobile/tablet)或配色(light/dark),用来验响应式与暗色 —— 这两类问题不切过去就看不见。'
+      + '切完页面会重排,要看效果请再 browser_read 或 browser_shot 一次。',
+    inputSchema: { type: 'object', properties: {
+      sessionId: { type: 'string' },
+      preset: { type: 'string', enum: ['desktop', 'mobile', 'tablet'], description: '手机 390 / 平板 834 / 桌面(还原)' },
+      colorScheme: { type: 'string', enum: ['light', 'dark', 'no-preference'], description: '模拟系统配色偏好(prefers-color-scheme)' },
+    }, required: ['sessionId'] },
+  },
+  {
     name: 'browser_assert',
     description: '断言一条可判定的事实,结果进报告。这是"验过了"和"打开看了一眼"的分界线 —— 一条断言都没有的会话判 INCONCLUSIVE,不算通过。'
       + ' no_console_error / no_failed_request 查的是浏览器自己采集的控制台与网络,是"页面看着正常但其实报错了"的唯一抓手,建议每次都验。',
@@ -256,8 +266,20 @@ const TOOLS = [
   },
   {
     name: 'browser_diag',
-    description: '取会话标签页的控制台错误与失败请求明细(排查用;判定请用 browser_assert)。',
-    inputSchema: { type: 'object', properties: { sessionId: { type: 'string' } }, required: ['sessionId'] },
+    description: '取会话标签页的控制台与网络明细(排查用;判定请用 browser_assert)。默认只给错误与失败请求。'
+      + '★三件事最值钱:① pattern 按关键词找那一条(报错信息你通常已知一半);'
+      + '② only="all" 看【成功】请求 —— 接口返回了什么才是问题所在,不是它有没有 200;'
+      + '③ requestId 取某一条的【响应体】——"接口通了但返回体不对"是前端 bug 的大头,只看状态码永远看不见。'
+      + '列表里每条都带 id,拿 id 回来取体。命中数多于给出数时回执会明说,别把"最近 N 条"当成全部。',
+    inputSchema: { type: 'object', properties: {
+      sessionId: { type: 'string' },
+      level: { type: 'string', enum: ['error', 'warn', 'all'], description: '控制台级别(默认 error)' },
+      pattern: { type: 'string', description: '控制台按关键词筛(命中 message 或来源文件)' },
+      only: { type: 'string', enum: ['failed', 'all'], description: '请求:默认只给失败/4xx+;all = 全部(要看成功接口返回什么就用它)' },
+      urlPattern: { type: 'string', description: '请求按 URL 关键词筛,如 /api/order' },
+      requestId: { type: 'string', description: '给了就【只返回这一条的响应体】(id 来自列表)' },
+      limit: { type: 'number', description: '各最多给几条(默认 30,上限 100)' },
+    }, required: ['sessionId'] },
   },
   {
     name: 'browser_close',
@@ -343,6 +365,12 @@ async function callTool(name, args) {
     if (!r.found) return String(r.hint || '没找到')
     return '找到 ' + r.found + (r.total > r.found ? '/' + r.total : '') + ' 个(按相关度):\n' + (r.elements || '')
   }
+  if (name === 'browser_resize') {
+    const body = { sessionId: String(args.sessionId || '') }
+    for (const k of ['preset', 'colorScheme']) if (args[k] != null) body[k] = String(args[k])
+    const r = await relayPost('/browser/resize', body)
+    return 'ok — ' + JSON.stringify(r.applied || {}) + (r.hint ? '\n' + r.hint : '')
+  }
   if (name === 'browser_act') {
     const body = { sessionId: String(args.sessionId || ''), action: String(args.action || '') }
     for (const k of ['ref', 'selector', 'value', 'text', 'url', 'key', 'direction']) if (args[k] != null) body[k] = String(args[k])
@@ -364,13 +392,29 @@ async function callTool(name, args) {
     return '截图已保存: ' + r.path + '\n' + (r.note || '')
   }
   if (name === 'browser_diag') {
-    const r = await relayPost('/browser/diag', { sessionId: String(args.sessionId || '') })
-    const errs = (r.consoleErrors || []).map((e, i) => '  ' + (i + 1) + '. ' + e.message + (e.source ? '  @' + e.source + ':' + e.line : '')).join('\n')
-    const bad = (r.failedRequests || []).map((x, i) => '  ' + (i + 1) + '. ' + (x.status || x.failText) + ' ' + x.method + ' ' + x.url).join('\n')
-    return '页面: ' + r.url + '\n控制台错误 ' + (r.consoleErrors || []).length + ' 条(警告 ' + (r.consoleWarnCount || 0) + ' 条):\n' + (errs || '  (无)')
-      + '\n失败请求 ' + (r.failedRequests || []).length + ' / 总请求 ' + (r.totalRequests || 0) + ':\n' + (bad || '  (无)')
+    const body = { sessionId: String(args.sessionId || '') }
+    for (const k of ['level', 'pattern', 'only', 'urlPattern', 'requestId']) if (args[k] != null) body[k] = String(args[k])
+    if (args.limit != null) body.limit = +args.limit
+    const r = await relayPost('/browser/diag', body)
+    if (r.body != null) {   // 取单条响应体
+      const q = r.request || {}
+      return '请求 ' + q.method + ' ' + q.url + ' → ' + q.status + (q.mime ? ' ' + q.mime : '')
+        + '\n\n响应体:\n' + String(r.body) + (r.truncated ? '\n\n⚠ ' + r.truncated : '')
+    }
+    const errs = (r.consoleErrors || []).map((e, i) => '  ' + (i + 1) + '. [' + (e.level || 'error') + '] ' + e.message + (e.source ? '  @' + e.source + ':' + e.line : '')).join('\n')
+    // ★每条带 id:要看响应体就是拿这个 id 再调一次 browser_diag(requestId=...)。不印 id 等于把那条路封了
+    const bad = (r.failedRequests || []).map((x) => '  [' + x.id + '] ' + (x.status || x.failText) + ' ' + x.method + ' ' + x.url + (x.ms ? '  ' + x.ms + 'ms' : '')).join('\n')
+    return '页面: ' + r.url
+      + '\n控制台 ' + (r.consoleShown || 0) + ' 条(命中 ' + (r.consoleMatched || 0) + ' / 全部 ' + (r.consoleTotal || 0) + ',警告 ' + (r.consoleWarnCount || 0) + ' 条):\n' + (errs || '  (无)')
+      + '\n请求 ' + (r.requestsShown || 0) + ' 条(命中 ' + (r.requestsMatched || 0) + ' / 全部 ' + (r.totalRequests || 0) + '):\n' + (bad || '  (无)')
+      + '\n  ↑ 想看某条返回了什么:browser_diag(requestId="上面方括号里的 id")'
+      + (r.truncated ? '\n⚠ ' + r.truncated : '')
   }
-  if (name === 'headless_close') {
+  // ★条件原来写成 headless_close(复制粘贴改漏了名字),两头都坏:
+  //   ① browser_close 没有任何分发 —— 而它是"必调、verdict 机器算"的收口,等于整套问责流程收不了口;
+  //   ② headless_close 反而会去收掉 Agent 的【可见会话】,而真正的无头关闭(下方 closeBrowser)永远走不到。
+  //   两个工具的说明里都写着"与另一个不是一回事",偏偏实现把它们弄成了一回事。
+  if (name === 'browser_close') {
     const r = await relayPost('/browser/close', { sessionId: String(args.sessionId || ''), status: String(args.status || 'done'), note: args.note == null ? '' : String(args.note) })
     const rep = r.report || {}
     const lines = [

@@ -33,6 +33,7 @@ const MAX_STEPS = 400             // 单会话步数上限:跑飞了要有个头
 
 function nowMs() { return Date.now() }
 function str(x) { return x == null ? '' : String(x) }
+function arr(x) { return Array.isArray(x) ? x : [] }
 
 /** 取 origin(protocol//host)。取不到返回空串 —— 空串在围栏里一律不放行 */
 function originOf(u) {
@@ -47,7 +48,7 @@ function isLocal(u) {
 }
 
 module.exports = function initBrowserAgent(ctx) {
-  const { S, log, brActive, newTab, closeTab, activateTab, createBrowser, brScreenshot, execStep, waitNetIdle, pageRead } = ctx
+  const { S, log, brActive, newTab, closeTab, activateTab, createBrowser, brScreenshot, execStep, waitNetIdle, pageRead, brSetDevice } = ctx
 
   const sessions = new Map()   // id → session
 
@@ -357,15 +358,99 @@ module.exports = function initBrowserAgent(ctx) {
     } catch (e) { return { error: '截图失败: ' + e.message } }
   }
 
-  function agentDiag(a) {
+  // ── resize(仿 CC 的 resize_window:响应式 + 暗色)────────────────────────────
+  // 【为什么值得有】设备模拟这套能力代码里【早就有】(BR_DEVICES + brLayout 按 device 宽度居中),
+  // 只是从没暴露成工具 —— 于是"手机上布局崩没崩""暗色模式下看不看得清"这两类问题,Agent 一直验不了。
+  // 【为什么不用 enableDeviceEmulation】browser.js:525 记着一条血的教训:那个原生调用在 WebContentsView 上
+  // (尤其分屏 + 高 dpr backing store)会触发 GPU 原生崩溃、整窗/进程直接退出。
+  // 所以走安全那条:只改视图边界让页面自己响应式重排 —— 效果一样,不碰会崩的 API。
+  // 【暗色】走 CDP 的 Emulation.setEmulatedMedia(prefers-color-scheme),与设备模拟无关,不受上面那条约束。
+  async function agentResize(a) {
+    const s = live(a && a.sessionId); if (!s) return { error: '会话不存在或已结束(先 browser_open)' }
+    const tab = tabOf(s); if (!tab) return { error: '这个会话的标签页已被关掉' }
+    const out = {}
+    const preset = str(a && a.preset).trim().toLowerCase()
+    if (preset) {
+      if (['desktop', 'mobile', 'tablet'].indexOf(preset) < 0) return { error: 'preset 只能是 desktop / mobile / tablet' }
+      // brSetDevice 只作用于【活动标签】—— 会话标签未必在前台,先激活它再切
+      // (激活自己的标签是无害的:这本来就是这个会话独占的那一页)
+      try { activateTab(tab.id); brSetDevice(preset) } catch (e) { return { error: '切设备失败: ' + e.message } }
+      out.preset = preset
+    }
+    const cs = str(a && a.colorScheme).trim().toLowerCase()
+    if (cs) {
+      if (['light', 'dark', 'no-preference'].indexOf(cs) < 0) return { error: 'colorScheme 只能是 light / dark / no-preference' }
+      try {
+        // 没附调试器就先附:暗色靠 CDP,不附着这条命令发不出去(而失败要说出来,不能静默不生效)
+        const wc = tab.view.webContents
+        if (!tab.dbg) { try { wc.debugger.attach('1.3'); tab.dbg = true } catch { /* 已附着就算了 */ } }
+        await wc.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: cs }] })
+        out.colorScheme = cs
+      } catch (e) { return { error: '切配色失败(CDP 未就绪?): ' + e.message } }
+    }
+    if (!out.preset && !out.colorScheme) return { error: '给 preset(desktop/mobile/tablet)或 colorScheme(light/dark)至少一个' }
+    step(s, 'resize', JSON.stringify(out), true, '')
+    await new Promise((r) => setTimeout(r, 350))   // 给重排/重绘一点时间,紧接着的 read/shot 才是新布局
+    return { ok: true, url: curUrl(s), applied: out, hint: '布局已切 —— 要看效果请再 browser_read 或 browser_shot 一次' }
+  }
+
+  // ── diag(仿 CC 的 read_console_messages / read_network_requests)──────────
+  // 【原来的问题】一把抓:只给 level=3 的控制台 + 只给失败请求,各最后 30 条,不能过滤、取不到响应体。
+  // 而排障真正要的是三件事:① 按关键词找那一条(报错信息通常已知一半);② 看成功请求(接口返回了
+  // 什么才是问题所在,不是它有没有 200);③ 取某一条的响应体 —— 这一条最关键,"接口通了但返回体不对"
+  // 是前端 bug 的大头,只看状态码永远看不见。
+  // 【为什么默认值不变】不给参数时行为与老版一致(error + 失败请求),老调用不受影响。
+  async function agentDiag(a) {
     const s = live(a && a.sessionId); if (!s) return { error: '会话不存在或已结束' }
     const tab = tabOf(s); if (!tab) return { error: '这个会话的标签页已被关掉' }
-    const errs = (tab.console || []).filter((e) => e && e.level === 3).slice(-30)
-      .map((e) => ({ message: str(e.message).slice(0, 400), source: str(e.source).slice(0, 200), line: e.line || 0 }))
-    const warns = (tab.console || []).filter((e) => e && e.level === 2).length
-    const bad = (tab.net || []).filter((r) => r && (r.state === 'failed' || r.status >= 400)).slice(-30)
-      .map((r) => ({ status: r.status || 0, method: r.method, url: str(r.url).slice(0, 300), failText: str(r.failText).slice(0, 200) }))
-    return { ok: true, url: curUrl(s), consoleErrors: errs, consoleWarnCount: warns, failedRequests: bad, totalRequests: (tab.net || []).length }
+    const lim = Math.min(Math.max(+(a && a.limit) || 30, 1), 100)
+
+    // ③ 取某一条响应体(按会话自己的 tab 取,不用 brNetBody —— 那个只认活动标签,会话标签未必在前台)
+    const rid = a && a.requestId != null ? str(a.requestId) : ''
+    if (rid) {
+      const rec = tab.netById && tab.netById.get(rid)
+      if (!rec) return { error: '没有这条请求(id 用 diag 列表里给的那个;列表只保留最近若干条)' }
+      let body = null, base64 = false
+      if (tab.dbg && (rec.state === 'done' || rec.status)) {
+        try { const r = await tab.view.webContents.debugger.sendCommand('Network.getResponseBody', { requestId: rid }); body = r.body; base64 = !!r.base64Encoded }
+        catch (e) { body = '(无法获取响应体:' + e.message + ')' }
+      } else body = '(这条还没收完或调试器未附着,拿不到响应体)'
+      const cap = 20000   // 响应体给模型看要有预算:整包 400KB 灌进上下文比不给还坏
+      let out = str(body)
+      const cut = out.length > cap
+      if (cut) out = out.slice(0, cap)
+      return { ok: true, request: { id: rid, url: str(rec.url).slice(0, 300), method: rec.method, status: rec.status || 0, mime: rec.mime || '', size: rec.size || 0 },
+        body: out, base64, truncated: cut ? ('响应体共 ' + str(body).length + ' 字,只给了前 ' + cap + ' 字') : '' }
+    }
+
+    // ① 控制台:level/关键词可筛
+    const lvl = str((a && a.level) || 'error').toLowerCase()
+    const wantLvl = lvl === 'all' ? null : lvl === 'warn' ? [2, 3] : [3]
+    const pat = str(a && a.pattern).trim().toLowerCase()
+    const allCon = arr(tab.console)
+    const con = allCon.filter((e) => e && (!wantLvl || wantLvl.indexOf(e.level) >= 0)
+      && (!pat || (str(e.message) + ' ' + str(e.source)).toLowerCase().indexOf(pat) >= 0))
+    const errs = con.slice(-lim).map((e) => ({ level: e.level === 3 ? 'error' : e.level === 2 ? 'warn' : 'log',
+      message: str(e.message).slice(0, 400), source: str(e.source).slice(0, 200), line: e.line || 0 }))
+
+    // ② 网络:失败/全部 + url 关键词可筛;每条带 id,拿 id 再来取响应体
+    const only = str((a && a.only) || 'failed').toLowerCase()
+    const up = str(a && a.urlPattern).trim().toLowerCase()
+    const allNet = arr(tab.net)
+    const net = allNet.filter((r) => r
+      && (only === 'all' || r.state === 'failed' || (r.status || 0) >= 400)
+      && (!up || str(r.url).toLowerCase().indexOf(up) >= 0))
+    const reqs = net.slice(-lim).map((r) => ({ id: r.id, status: r.status || 0, method: r.method,
+      url: str(r.url).slice(0, 300), mime: r.mime || '', ms: Math.round(r.ms || 0), failText: str(r.failText).slice(0, 200) }))
+
+    return { ok: true, url: curUrl(s),
+      consoleErrors: errs, consoleShown: errs.length, consoleMatched: con.length, consoleTotal: allCon.length,
+      consoleWarnCount: allCon.filter((e) => e && e.level === 2).length,
+      failedRequests: reqs, requestsShown: reqs.length, requestsMatched: net.length, totalRequests: allNet.length,
+      // 截断/筛掉了多少必须说出来:只给"最近 30 条"而不说,模型会当成"总共就这些"
+      truncated: (con.length > errs.length ? ('控制台命中 ' + con.length + ' 条,只给了最近 ' + errs.length + ' 条;') : '')
+        + (net.length > reqs.length ? ('请求命中 ' + net.length + ' 条,只给了最近 ' + reqs.length + ' 条;') : ''),
+    }
   }
 
   // ── close:出报告 ────────────────────────────────────────────────────────
@@ -405,5 +490,5 @@ module.exports = function initBrowserAgent(ctx) {
     sessions.clear()
   }
 
-  return { agentOpen, agentRead, agentFind, agentAct, agentAssert, agentShot, agentDiag, agentClose, anyLive, dropAll, policyCheck, __sessions: sessions }
+  return { agentOpen, agentRead, agentFind, agentAct, agentResize, agentAssert, agentShot, agentDiag, agentClose, anyLive, dropAll, policyCheck, __sessions: sessions }
 }

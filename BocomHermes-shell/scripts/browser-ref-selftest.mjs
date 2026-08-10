@@ -65,5 +65,42 @@ ok('★常用键都在(Escape 关弹层 / Tab 移焦点 / 方向键选下拉,原
 ok('  大小写随便写', pickKey('escape') === 'Escape' && pickKey('ENTER') === 'Enter')
 ok('★整句话当按键 → 拒(否则既不报错也不生效,又是一次静默失败)', pickKey('按回车提交') === '')
 
+// ── diag 的筛选(与 agentDiag 同口径)────────────────────────────────────────
+// 【为什么要测】排障时最值钱的三件事都靠它:按关键词找那一条、看【成功】请求返回了什么、取响应体。
+// 原来只给 error + 失败请求 —— 而"接口通了但返回体不对"是前端 bug 的大头,只看状态码永远看不见。
+const S2 = (x) => (x == null ? '' : String(x))
+const A2 = (x) => (Array.isArray(x) ? x : [])
+const TAB = {
+  console: [{ level: 3, message: 'TypeError: x is not a function', source: 'app.js', line: 12 },
+    { level: 2, message: 'deprecated api' }, { level: 1, message: 'hello' },
+    { level: 3, message: 'Failed to fetch /api/user' }],
+  net: [{ id: 'r1', status: 200, method: 'GET', url: '/api/user' },
+    { id: 'r2', status: 500, method: 'POST', url: '/api/order' },
+    { id: 'r3', state: 'failed', method: 'GET', url: '/static/x.png' }],
+}
+function diagPick(a) {
+  const lvl = S2((a && a.level) || 'error').toLowerCase()
+  const wantLvl = lvl === 'all' ? null : lvl === 'warn' ? [2, 3] : [3]
+  const pat = S2(a && a.pattern).trim().toLowerCase()
+  const con = A2(TAB.console).filter((e) => e && (!wantLvl || wantLvl.indexOf(e.level) >= 0)
+    && (!pat || (S2(e.message) + ' ' + S2(e.source)).toLowerCase().indexOf(pat) >= 0))
+  const only = S2((a && a.only) || 'failed').toLowerCase()
+  const up = S2(a && a.urlPattern).trim().toLowerCase()
+  const net = A2(TAB.net).filter((r) => r && (only === 'all' || r.state === 'failed' || (r.status || 0) >= 400)
+    && (!up || S2(r.url).toLowerCase().indexOf(up) >= 0))
+  return { con: con.length, net: net.length }
+}
+console.log('\n== diag 筛选 ==')
+ok('缺省 = 老行为(只给 error + 失败请求),老调用不受影响',
+  diagPick({}).con === 2 && diagPick({}).net === 2, diagPick({}))
+ok('★level=all 看得到 warn 与 log(排"页面看着正常"的问题要靠它)', diagPick({ level: 'all' }).con === 4, diagPick({ level: 'all' }))
+ok('  level=warn 含 warn 与 error', diagPick({ level: 'warn' }).con === 3, diagPick({ level: 'warn' }))
+ok('★pattern 按关键词命中那一条(报错信息通常已知一半)', diagPick({ pattern: 'fetch' }).con === 1, diagPick({ pattern: 'fetch' }))
+ok('  pattern 也匹配来源文件', diagPick({ pattern: 'app.js' }).con === 1)
+ok('★only=all 才看得到【成功】请求 —— "接口通了但返回体不对"只有这样才发现得了',
+  diagPick({ only: 'all' }).net === 3, diagPick({ only: 'all' }))
+ok('★urlPattern 收窄到某个接口', diagPick({ only: 'all', urlPattern: '/api' }).net === 2, diagPick({ only: 'all', urlPattern: '/api' }))
+ok('  筛不到就是 0(不许兜底把全部倒出来)', diagPick({ only: 'all', urlPattern: '/nope' }).net === 0)
+
 console.log(fail ? ('\n❌ ref 定位:' + pass + ' passed, ' + fail + ' failed') : ('\n✅ ref 定位:全部通过  ' + pass + ' passed, 0 failed'))
 process.exit(fail ? 1 : 0)
