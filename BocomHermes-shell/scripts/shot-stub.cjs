@@ -40,7 +40,8 @@ async function shot(win, name) {
 
 async function mkWin() {
   const win = new BrowserWindow({
-    width: 760, height: 900, show: false,
+    // 刻意开宽:用户是在 1500px 宽的对话区上看出「太糊」的 —— 窄窗根本验不出放大
+    width: 1180, height: 900, show: false,
     webPreferences: { preload: path.join(__dirname, 'stub-preload.cjs'), contextIsolation: true, backgroundThrottling: false },
   })
   win.webContents.on('console-message', (_e, level, message) => {
@@ -56,9 +57,13 @@ app.whenReady().then(async () => {
   setTimeout(() => { console.log('❌ 看门狗超时'); app.exit(2) }, 90000)
   const wins = []
   const ev = (win, js) => win.webContents.executeJavaScript(js)
-  // 壳层真身用的是 760 宽缩略 + JPEG82;这里照抄同一口径,看到的就是真机会看到的东西
-  const wide = 'data:image/jpeg;base64,' + require('electron').nativeImage.createFromBuffer(fakeShotPng(1280, 800)).resize({ width: 760 }).toJPEG(82).toString('base64')
-  const tall = 'data:image/jpeg;base64,' + require('electron').nativeImage.createFromBuffer(fakeShotPng(1280, 4200)).resize({ width: 760 }).toJPEG(82).toString('base64')
+  // 照抄壳层真身的口径(SHOT_W=1520 物理像素 + JPEG88),看到的就是真机会看到的东西。
+  // ★这个口径必须跟 window.js 的 SHOT_W 一致,否则目检出来的清晰度是假的。
+  const SHOT_W = 1520
+  const mk = (w, h) => 'data:image/jpeg;base64,' + require('electron').nativeImage
+    .createFromBuffer(fakeShotPng(w, h)).resize({ width: SHOT_W, quality: 'best' }).toJPEG(88).toString('base64')
+  const wide = mk(1280, 800)
+  const tall = mk(1280, 4200)
 
   // ── 场景1:一轮问答之后来一张截图(最常见的形态)──
   {
@@ -67,6 +72,11 @@ app.whenReady().then(async () => {
     await sleep(700)
     await ev(win, `__emit('shot', ${JSON.stringify({ path: '/Users/x/Downloads/BocomHermes-1.png', label: '项目总览页', url: 'http://127.0.0.1:5173/overview', w: 1280, h: 800, full: false }).replace(/}$/, '')}, dataUrl: ${JSON.stringify(wide)} })`)
     await sleep(500)
+    // ★量出来,不靠眼估:显示宽必须 ≤ 图片自然宽的一半(Retina 2x 才是 1:1)。
+    //   第一版就是"出图 760、显示占满 1500",放大 2 倍 —— 用户一眼看出糊,而我看代码看不出来。
+    const box = await ev(win, `(() => { const i = document.querySelector('.shot-img'); if (!i) return null; return { css: Math.round(i.getBoundingClientRect().width), nat: i.naturalWidth } })()`)
+    console.log('  · 显示宽 ' + (box && box.css) + 'px / 图片自然宽 ' + (box && box.nat) + 'px')
+    if (!box || box.css > box.nat / 2 + 1) { bad++; console.log('  ✗ 图被放大了(显示宽超过自然宽的一半)—— Retina 上必糊') }
     await shot(win, 'shot-stub-1-normal')
     const flag = await ev(win, `(() => { const b = document.querySelector('.shot-open'); if (!b) return 'no-button'; b.click(); return 'clicked' })()`)
     await sleep(200)

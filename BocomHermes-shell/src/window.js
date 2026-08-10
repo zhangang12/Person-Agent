@@ -1097,7 +1097,11 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // 【为什么由壳层推,而不是让模型把图"说"出来】模型的回复只是纯文本 + markdown,
   // 它手里只有一个本地路径;就算吐 ![](file:///…),渲染端也不该去读模型给的任意路径(那是任意文件读)。
   // 而壳层【自己】刚把这张图写到盘上,它知道路径可信、知道当前是哪张对话卡 —— 这件事只有它做得对。
-  const SHOT_W = 760            // 内嵌宽度:够看清页面结构,又不至于让一条 IPC 拖着几 MB base64
+  // 缩略图【像素宽】= 显示宽的 2 倍:macOS 是 Retina,760 CSS px 实际要 1520 个物理像素。
+  // ★第一版按 760 出图、又让它占满对话区(1500px 宽)—— 等于放大到 2 倍,用户一眼就说"太糊了"。
+  // 两件事要分开定:出图分辨率(这里)和显示尺寸(chat.css 的 .shot-frame max-width),
+  // 显示尺寸必须 ≤ 出图宽度的一半,否则一定糊。
+  const SHOT_W = 1520
   const shotPaths = new Set()   // 壳层自己产出的截图路径白名单 —— 渲染端只能请求打开这里面的,不许开任意文件
 
   // 【收件人是谁】不能靠 agentInjectWc 猜:那条是给「发给 Agent」按钮用的(用户手动点,收件人=当前活动对话),
@@ -1144,8 +1148,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       const size = img.getSize(); w = size.width; h = size.height
       // 缩到 SHOT_W 再转 JPEG:原图 1280×800 的 PNG 常有 300KB~1.5MB,base64 还要再涨 1/3。
       // 这是给人【看一眼页面长什么样】的缩略图,原图点开就有,不必把它整个塞进 IPC。
-      const small = w > SHOT_W ? img.resize({ width: SHOT_W, quality: 'good' }) : img
-      dataUrl = 'data:image/jpeg;base64,' + small.toJPEG(82).toString('base64')
+      // 原图比 SHOT_W 还窄就【不放大】—— 放大只会更糊,还白占 IPC
+      const small = w > SHOT_W ? img.resize({ width: SHOT_W, quality: 'best' }) : img
+      dataUrl = 'data:image/jpeg;base64,' + small.toJPEG(88).toString('base64')
     } catch (e) { log('[shot] 缩图失败,只给路径: ' + e.message) }
     shotPaths.add(fp)
     if (shotPaths.size > 200) { const it = shotPaths.values(); shotPaths.delete(it.next().value) }   // 粗粒度防涨
