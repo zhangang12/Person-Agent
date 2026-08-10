@@ -82,12 +82,28 @@ let DROP_WATCH_MS = 90000
 function setDropWatchMs(ms) { const n = +ms; if (Number.isFinite(n) && n >= 100) DROP_WATCH_MS = n }
 // 盯防的拉取间隔跟着阈值缩放:自测把阈值调到几百毫秒时,5s 一拍会永远等不到第二拍
 const dropPollMs = () => Math.max(200, Math.min(5000, Math.round(DROP_WATCH_MS / 6)))
-function noteModelBlacklist(base, modelID) {
+// 拉黑分两种,寿命必须不同 —— 这两件事以前记在同一本账上、都是【永久】的:
+//   reject:serve 的 zod 不认这个模型字段形状(4xx)。这是【结构性】的,再试一百次也是同一个结果 → 永久。
+//   stall :收下请求后不出字(实测真因是上游限流)。这是【时段性】的,额度桶过一阵就回来了 → 到期作废。
+// 【为什么必须分开】永久拉黑一个只是限流的模型 = 用户选的模型被悄悄换成 serve 默认,而且【不会再换回来】,
+// 直接违背"一件事情,一个模型干"。更隐蔽的是:这条路以前压根走不到(拼日志那行引用了看不见的 num,
+// 一进来就 ReferenceError,回合直接断),所以"拉黑之后会怎样"这件事从来没有真的发生过。
+const BL_TTL = { stall: 10 * 60 * 1000, reject: Infinity }
+function noteModelBlacklist(base, modelID, kind) {
   if (!base || !modelID) return
   if (modelBlacklist.size > 200) modelBlacklist.clear()
   let m = modelBlacklist.get(base)
   if (!m) { m = new Map(); modelBlacklist.set(base, m) }
-  m.set(modelID, { at: Date.now(), notified: false })
+  m.set(modelID, { at: Date.now(), notified: false, kind: kind === 'reject' ? 'reject' : 'stall' })
+}
+/** 查这个模型现在还在黑名单里吗;stall 类到期即失效(顺手删掉,让下一条重新用用户选的模型) */
+function blacklistHit(base, modelID) {
+  const m = (base && modelID) ? modelBlacklist.get(base) : null
+  const e = m ? m.get(modelID) : null
+  if (!e) return null
+  const ttl = BL_TTL[e.kind] || BL_TTL.stall
+  if (Date.now() - (+e.at || 0) > ttl) { m.delete(modelID); return null }
+  return e
 }
 // ── 真实 token 计量(tokens plumbing)─────────────────────────────────────────
 // 卡片"上下文用量 chip / 80% 自动压缩"需要 serve 的真实用量,不是字符估算。
@@ -635,19 +651,29 @@ async function sendMessage(info, sessionId, text, model, files, onNote, opts = {
   // 按消息级 Agent 切换(OMO/自定义 agent 兼容):POST message/prompt_async schema 均认 agent 字段;
   // 只在卡片选定非默认 agent 时带,缺省不带(走 serve 默认 build,老 serve 也少一个被拒的面)
   if (opts && opts.agent) body.agent = String(opts.agent)
-  // C5 模型黑名单:这台 serve 曾 4xx 拒过这个 modelID → 本条直接不指定(省一次必败往返);首次命中经 onModelFallback 告知一句话
-  const blMap = (model && model.modelID) ? modelBlacklist.get(info.base) : null
-  const blEnt = blMap ? blMap.get(model.modelID) : null
+  // C5 模型黑名单:这台 serve 拒过/卡过这个 modelID → 本条直接不指定(省一次必败往返);首次命中经 onModelFallback 告知一句话
+  const blEnt = (model && model.modelID) ? blacklistHit(info.base, model.modelID) : null
   if (blEnt && !blEnt.notified) {
     blEnt.notified = true
-    if (opts && opts.onModelFallback) { try { opts.onModelFallback('模型 ' + (model.name || model.modelID) + ' 曾被本机 serve 拒绝(4xx 参数校验),本条起改用默认模型发送') } catch {} }
+    // 两种拉黑的话术必须不同:结构性的没得等,时段性的要明确说【多久之后自动改回来】——
+    // 不说清楚,用户看到的就是"我选的模型不知为什么不生效了",而且不知道会不会好
+    const back = blEnt.kind === 'stall'
+      ? ('本条起先用默认模型发送,' + Math.round(BL_TTL.stall / 60000) + ' 分钟后自动改回你选的模型再试')
+      : '本条起改用默认模型发送'
+    const why = blEnt.kind === 'stall' ? '收下请求后不出字(多半是额度/限流)' : '曾被本机 serve 拒绝(4xx 参数校验)'
+    if (opts && opts.onModelFallback) { try { opts.onModelFallback('模型 ' + (model.name || model.modelID) + ' ' + why + ',' + back) } catch {} }
   }
   // ★★拉黑命中要【无条件】留痕(2026-08-09):上面那句告知走 opts.onModelFallback,调用方不传就静默 ——
   // 于是"这个模型被拉黑了"这件事在日志里完全不存在,而它会让后续每一条都悄悄不带模型。
   // 我为此卡了很久:日志里只有一句 "(不指定,由 serve 挑)",而它同时是【模型为空】和【模型被拉黑】
   // 两种完全不同处境的输出 —— 拿一个分不清的量去查,只能猜。证据通道不许是可选的。
-  if (blEnt) oclog('[oc] 模型被拉黑,本条不带模型指定:' + model.providerID + '/' + model.modelID
-    + '(记于 ' + new Date(num(blEnt.at) || 0).toISOString().slice(11, 19) + ',base=' + info.base + ')')
+  // ★这里【不能】用 num():那是 normalizeUsage 内部的局部帮手,在本函数里压根看不见 ——
+  // 写成 num(...) 的后果不是日志少一行,是整条回合断在「num is not defined」上,
+  // 而这行只在【模型已被拉黑】时才走到,正常跑一百遍都碰不到。见 npm run undef。
+  if (blEnt) oclog('[oc] 模型被拉黑(' + blEnt.kind + '),本条不带模型指定:' + model.providerID + '/' + model.modelID
+    + '(记于 ' + new Date(+blEnt.at || 0).toISOString().slice(11, 19)
+    + (blEnt.kind === 'stall' ? ',还剩 ' + Math.max(0, Math.round((BL_TTL.stall - (Date.now() - (+blEnt.at || 0))) / 1000)) + 's 到期' : ',永久')
+    + ',base=' + info.base + ')')
   const withModel = !!(model && model.providerID && model.modelID) && !blEnt
   // ★把"为什么没带模型"写清楚:空 / 被拉黑,是两条完全不同的排查路
   const noModelWhy = blEnt ? '(不指定:该模型已被拉黑)' : (model ? '(不指定:模型字段不全)' : '(不指定:上游没给模型,由 serve 挑)')
@@ -720,10 +746,11 @@ async function sendMessage(info, sessionId, text, model, files, onNote, opts = {
       //   让既有的重派机制去开一张【新卡新会话】。
       try { await abort(info, sessionId) } catch { /* 已经没了就算了 */ }
       if (withModel) {
-        noteModelBlacklist(info.base, model.modelID)   // 同一本账(4xx 那条也记这里):后续发送直接跳过这个模型指定
+        // kind='stall':限流是【时段性】的,到期自动作废,别把用户选的模型永久换掉(见 noteModelBlacklist)
+        noteModelBlacklist(info.base, model.modelID, 'stall')
         if (onNote) { try { onNote('模型 ' + (model.name || model.modelID) + ' 收下请求后不出字(' + Math.round(DROP_WATCH_MS / 1000) + 's 内 0 token、无产出、无报错)。'
           + '实测最常见的真因是【这个模型的额度/限流】—— 上游 1~2 秒就回了 Rate limit,但 serve 收到 stream error 之后不发任何会话事件、不结束回合,所以这边只看得到"一直在思考"。'
-          + '要确认就 grep 一下 serve 自己的日志:~/.local/share/opencode/log/opencode.log 里搜 "stream error"。后续发送已改用默认模型') } catch {} }
+          + '要确认就 grep 一下 serve 自己的日志:~/.local/share/opencode/log/opencode.log 里搜 "stream error"。后续 ' + Math.round(BL_TTL.stall / 60000) + ' 分钟内先用默认模型发送,之后自动改回这个模型再试') } catch {} }
       }
       throw new Error('回合失败:' + direct.__dropped__)
     }
@@ -756,7 +783,7 @@ async function sendMessage(info, sessionId, text, model, files, onNote, opts = {
     if (withModel && /->\s*4\d\d/.test(String(e && e.message || '')) && !abortedSince(sessionId, tSend)) {
       if (onNote) { try { onNote('serve 拒绝了模型指定(' + (model.name || model.modelID) + '),本条已用默认模型发送') } catch {} }
       const d2 = extractText(await api(info.base, 'POST', `/session/${sessionId}/message`, { parts: body.parts }))
-      noteModelBlacklist(info.base, model.modelID)   // 降级重发成功 → 记入黑名单,后续发送直接跳过模型指定
+      noteModelBlacklist(info.base, model.modelID, 'reject')   // kind='reject':serve 的 zod 不认这个字段形状,是结构性的,永久跳过
       return d2 || await waitAssistantText(info, sessionId, undefined, undefined, opts)
     }
     // R4 POST 在飞断开(连接被掐/进程重启等):请求可能已到 serve 只是响应没回来 —— 先探最后一条 user 是否就是本次内容,
@@ -1471,6 +1498,6 @@ function anyHealthyServe() {
 
 module.exports = { ensureServe, createSession, deleteSession, sendMessage, listModels, listAgents, checkMcp, abort, replyPermission, replyQuestion, rejectQuestion, sessionExists, listSessions, getMessages, getRawMessages, getSessionChildren, getSessionTodo, listPendingQuestions, generationStalled, pollTurnParts, getSessionUsage, getStreamState, consumeAbortFlag, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, anyHealthyServe, AUTO_ALLOW,
   __test: { dispatch, waitAssistantText, extractText, pickTurnText, abortedSince, abortedSids, normalizeMessages, stripInjected, splitThink,
-    normDirKey, sameDir, inflight, noteChild, noteModelBlacklist, modelBlacklist, setDropWatchMs, refreshSessionTree, runEventLoop, turnTextCache, stoppedSids, lastUserMatches, noteUsage,
+    normDirKey, sameDir, inflight, noteChild, noteModelBlacklist, modelBlacklist, blacklistHit, BL_TTL, setDropWatchMs, refreshSessionTree, runEventLoop, turnTextCache, stoppedSids, lastUserMatches, noteUsage,
     maps: { pool, baseToEntry, childToParent, childTitle, classifiedSessions, sidBase },
     setSpawnHook: (fn) => { spawnServeHook = fn } } }

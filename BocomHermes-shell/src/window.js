@@ -1141,7 +1141,11 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   }
 
   // 整个流程是后台异步（不阻塞「发给 Agent」按钮）：分诊 → 单 agent 直注 / 多 agent 并行调查 + 汇总回灌会话
-  async function runDebugFlow({ cardWc, serve, bundlePrompt, disp, heur, summary }) {
+  // bundleId 必须【显式传进来】:便签工具(read_notes / bundle_note)拿它当主键。
+  // 原先这里没这个形参,函数体里却直接写 `bundleId || S.browser.lastBundleId` ——
+  // 读一个不存在的名字是 ReferenceError(不是 undefined),`||` 兜不住,
+  // 于是整个多 agent 对抗调查在拼提示词那一步就断了。见 npm run undef。
+  async function runDebugFlow({ cardWc, serve, bundlePrompt, disp, heur, summary, bundleId }) {
     const inj = (text) => { if (cardWc && !cardWc.isDestroyed()) cardWc.send('card-inject', { text, disp: '' }) }
     // 子会话(分诊/lens/后端修复)跟随宿主调试卡当前所选模型;卡没选就用全局默认
     const hostSid = S.sessionByWc.get(cardWc && cardWc.id)
@@ -1476,7 +1480,7 @@ ${netLines.length ? netLines.join('\n') : '  (无)'}
 ${dialogLines || '  (无 alert/confirm/prompt)'}
 ${modalLines || '  (无错误样态 DOM 节点)'}
 
-(大 payload 已落盘 userData/evidence/${bundleId}/;agent 可用 mcp 'tianshu-repro' 的 get_evidence 工具按需拉:传入 'ref#${bundleId}/<name>')`
+(大 payload 已落盘 userData/evidence/${bundleId}/;agent 可用 mcp 'BocomHermes-repro' 的 get_evidence 工具按需拉:传入 'ref#${bundleId}/<name>')`
     return { bundleId, text, errs, bad }
   }
 
@@ -1536,7 +1540,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
         // 配了后端仓库且有后端/契约信号 → 强制多 agent（这样后端调查/修复会在后端仓库 serve 上跑）
         const strategy = (layers.length >= 2 || difficulty >= 4 || (backendDir && (be || ct))) ? 'multi' : 'single'
         const summary = `URL：${tab.url || '(空白页)'}\n控制台错误/警告：${errs.length} 条${hasJsErr ? '（含 JS 错误）' : ''}\n网络异常：${bad.length} 条${be ? '（含 5xx/失败）' : ''}${ct ? '（含 4xx/CORS）' : ''}\n疑似层面：${layers.join('、') || '未定'}${backendDir ? '\n已配置后端仓库：可跨前后端调查/修复' : ''}`
-        runDebugFlow({ cardWc: agentInjectWc(), serve: cardSi.serve, bundlePrompt: prompt, disp, heur: { layers, difficulty, strategy }, summary })   // 后台异步，不阻塞按钮
+        runDebugFlow({ cardWc: agentInjectWc(), serve: cardSi.serve, bundlePrompt: prompt, disp, heur: { layers, difficulty, strategy }, summary, bundleId })   // 后台异步，不阻塞按钮
       } else {
         b.cardView.webContents.send('card-inject', { text: prompt, disp })   // 会话还没就绪 → 退化为直接注入
       }

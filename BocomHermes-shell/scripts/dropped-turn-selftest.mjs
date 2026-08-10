@@ -77,6 +77,9 @@ const MODEL = { providerID: 'opencode', modelID: 'mimo-v2.5-free', name: 'MiMo V
   ok('★记进【同一本】模型账(4xx 那条也记这里)—— 后续发送直接跳过这个模型指定',
     !!(T.modelBlacklist.get(base) && T.modelBlacklist.get(base).get('mimo-v2.5-free')),
     T.modelBlacklist.get(base) && [...T.modelBlacklist.get(base).keys()])
+  ok('★记的是 kind=stall(限流是时段性的)—— 记成永久就等于把用户选的模型悄悄换掉且永不换回',
+    (T.modelBlacklist.get(base).get('mimo-v2.5-free') || {}).kind === 'stall',
+    T.modelBlacklist.get(base).get('mimo-v2.5-free'))
   ok('  告知上层一次,话术指向额度/凭据而不是网络', notes.some((s) => /额度|凭据/.test(s)), notes)
   await close(srv)
 }
@@ -105,6 +108,32 @@ const MODEL = { providerID: 'opencode', modelID: 'mimo-v2.5-free', name: 'MiMo V
     !(T.modelBlacklist.get(base) && T.modelBlacklist.get(base).get('mimo-v2.5-free')))
   ok('  没有白 abort 一个活着的回合', !srv.aborted, srv.aborted)
   await close(srv)
+}
+
+// ── ③ 拉黑的寿命:限流会过期,4xx 不会 ───────────────────────────────────────
+// 【为什么补这一格】拉黑之后会发生什么,在真机上【从来没有发生过】—— 拼那条留痕日志时
+// 引用了一个看不见的名字(num),一进这条路就 ReferenceError,整条回合断在
+// 「Error invoking remote method 'card-send': Error: num is not defined」。
+// 也就是说 2026-08-09 加的"拉黑后跳过模型指定"从写下那天起一次都没跑过。修了引用之后
+// 这条路才【第一次】通电,而它原本的语义是【永久】的 —— 一次限流就把用户选的模型永远换成
+// serve 默认,直接违背"一件事情,一个模型干"。所以必须先把寿命分开,再让它通电。
+{
+  const B = 'http://127.0.0.1:1/'
+  T.modelBlacklist.clear()
+  T.noteModelBlacklist(B, 'm-stall', 'stall')
+  T.noteModelBlacklist(B, 'm-reject', 'reject')
+  ok('刚记上:两种都命中', !!T.blacklistHit(B, 'm-stall') && !!T.blacklistHit(B, 'm-reject'))
+  // 把记账时间往前推到超过 TTL(不真等 10 分钟)
+  const past = Date.now() - T.BL_TTL.stall - 1000
+  T.modelBlacklist.get(B).get('m-stall').at = past
+  T.modelBlacklist.get(B).get('m-reject').at = past
+  ok('★stall(限流)过期即失效 —— 下一条重新用用户选的模型', T.blacklistHit(B, 'm-stall') === null)
+  ok('  过期的条目顺手删掉,不在账上留垃圾', !T.modelBlacklist.get(B).has('m-stall'))
+  ok('★reject(4xx 参数校验)是结构性的 → 仍然命中,不会到期',
+    !!T.blacklistHit(B, 'm-reject'), T.modelBlacklist.get(B).get('m-reject'))
+  ok('  没记过的模型不命中', T.blacklistHit(B, 'm-never') === null)
+  ok('  缺参数不炸', T.blacklistHit('', 'x') === null && T.blacklistHit(B, '') === null)
+  T.modelBlacklist.clear()
 }
 
 console.log(fail ? ('\n❌ 静默丢弃自测:' + pass + ' passed, ' + fail + ' failed') : ('\n✅ 静默丢弃自测:全部通过  ' + pass + ' passed, 0 failed'))

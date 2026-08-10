@@ -31,6 +31,8 @@
     "replay:test": "node scripts/replay/run.mjs",
     "orch:test": "node scripts/orch-selftest.mjs",
     "orch:lint": "node scripts/orch-boundary-check.mjs",
+    "undef": "node scripts/undef-check.mjs",
+    "undef:test": "node scripts/undef-selftest.mjs",
     "modelroute": "node scripts/model-route-probe.mjs",
     "mcp:browser": "node mcp/browser-mcp.mjs",
     "mcp:browser:test": "node mcp/selftest.mjs",
@@ -68,6 +70,7 @@
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.4",
     "@vue/language-server": "^3.3.8",
+    "acorn": "^8.18.0",
     "electron": "^34.0.0",
     "electron-builder": "^25.1.8",
     "vite": "^6.3.5",
