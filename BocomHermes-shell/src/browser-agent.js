@@ -161,6 +161,51 @@ module.exports = function initBrowserAgent(ctx) {
       text: (snap && snap.text) || '', truncated: (snap && snap.truncated) || '' }
   }
 
+  // ── find(仿 CC 的 find:自然语言找元素 → refs)──────────────────────────────
+  // 【为什么需要】页面一大,browser_read 就算给到 200 个元素,模型也得在里面翻;
+  // 真实场景里它心里想的是"那个搜索框""提交按钮",而不是第几个元素。
+  // 【为什么只在已盖 ref 的元素上找,不重新扫一遍】重扫会重新编号 —— 上一次读页拿到的 ref 会集体指错,
+  // 而模型不会知道(它手里那些编号看着还有效)。这是最坏的一类失败:动作成功、点的却不是它以为的那个。
+  // 所以没读过页就明说"先 browser_read",与 CC 的"Call read_page first"同一条契约。
+  async function agentFind(a) {
+    const s = live(a && a.sessionId); if (!s) return { error: '会话不存在或已结束(先 browser_open)' }
+    const tab = tabOf(s); if (!tab) return { error: '这个会话的标签页已被关掉' }
+    const q = str(a && a.query).trim()
+    if (!q) return { error: '要找什么?给一句话,比如「登录按钮」「用户名输入框」' }
+    const limit = Math.min(Math.max(+(a && a.limit) || 10, 1), 30)
+    let out = null
+    try {
+      out = await tab.view.webContents.executeJavaScript(`(function(){
+        var es=document.querySelectorAll('[data-bh-ref]');
+        if(!es.length)return {none:1};
+        var q=${JSON.stringify(q)}.toLowerCase();
+        // 拆词后逐词命中:中文按整串、英文/数字按空格切,任一词命中即算(宁可多给几条,也别一条不给)
+        var toks=q.split(/[\s,，、]+/).filter(Boolean);
+        var hits=[];
+        for(var i=0;i<es.length;i++){
+          var e=es[i];
+          var role=e.getAttribute('role')||e.tagName.toLowerCase();
+          var name=(e.innerText||e.value||e.placeholder||(e.getAttribute&&e.getAttribute('aria-label'))||'').trim().replace(/\s+/g,' ').slice(0,60);
+          var hay=(role+' '+name+' '+(e.getAttribute('name')||'')+' '+(e.getAttribute('title')||'')+' '+(e.getAttribute('href')||'')).toLowerCase();
+          var score=0;
+          for(var k=0;k<toks.length;k++){ if(hay.indexOf(toks[k])>=0) score++; }
+          if(!score)continue;
+          if(hay.indexOf(q)>=0)score+=2;                      // 整串命中更靠前
+          hits.push({ref:e.getAttribute('data-bh-ref'),role:role,name:name,score:score});
+        }
+        hits.sort(function(x,y){return y.score-x.score});
+        return {hits:hits.slice(0,${limit}),total:hits.length};
+      })()`, true)
+    } catch (e) { return { error: '查找失败: ' + e.message } }
+    if (out && out.none) return { error: '这一页还没读过(元素上没有 ref)—— 先 browser_read 一次,再 browser_find' }
+    const hits = (out && out.hits) || []
+    if (!hits.length) return { ok: true, found: 0, hint: '没找到匹配「' + q + '」的元素 —— 换个说法,或先 scroll 到那块再 browser_read' }
+    return {
+      ok: true, found: hits.length, total: (out && out.total) || hits.length,
+      elements: hits.map((h) => '[ref_' + h.ref + '] ' + h.role + (h.name ? ' "' + h.name + '"' : '')).join('\n'),
+    }
+  }
+
   // ── act ─────────────────────────────────────────────────────────────────
   // 复用 recorder.js 的 execStep(强引擎:selAlt 兜底 + 可见性等待 + 红框高亮),不另起一套弱实现。
   async function agentAct(a) {
@@ -198,13 +243,55 @@ module.exports = function initBrowserAgent(ctx) {
     else if (action === 'select') ev = { act: 'select', sel, selAlt: [], value: str(a.value).slice(0, 200), text: str(a.text).slice(0, 60) }
     else if (action === 'check') ev = { act: 'check', sel, selAlt: [], checked: a.checked !== false }
     else if (action === 'enter') ev = { act: 'key', sel, selAlt: [], key: 'Enter' }
+    // ★key:enter 只是它的一个特例。真实页面里 Escape 关弹层、Tab 移焦点、方向键选下拉项都是必需的,
+    //   原来只给 enter 等于把这些流程整个挡在门外。白名单挡住"把整段文本当按键发"这种误用。
+    else if (action === 'key') {
+      const KEYS = ['Enter', 'Escape', 'Tab', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown']
+      const k = KEYS.find((x) => x.toLowerCase() === str(a.key).trim().toLowerCase())
+      if (!k) return { error: 'key 只能是:' + KEYS.join(' / ') + '(要输入文字请用 action=type)' }
+      ev = { act: 'key', sel, selAlt: [], key: k }
+    }
+    // ★scroll:页面很长时"点不到"最常见的原因就是它压根不在视口里 —— 而元素不可见时读页不给 ref、
+    //   动作也点不着,于是模型会误判成"这个按钮不存在"。给 ref/selector 就滚到它,不给就整页滚。
+    else if (action === 'scroll') {
+      const dir = (str(a.direction) || 'down').toLowerCase()
+      const amt = Math.min(Math.max(+a.amount || 600, 50), 5000)
+      const dx = dir === 'left' ? -amt : dir === 'right' ? amt : 0
+      const dy = dir === 'up' ? -amt : dir === 'down' ? amt : 0
+      let r2 = null
+      try {
+        r2 = await wc.executeJavaScript(sel
+          ? `(function(){var e=document.querySelector(${JSON.stringify(sel)});if(!e)return {err:'找不到元素'};`
+            + `e.scrollIntoView({block:'center',inline:'center'});return {ok:1,into:1}})()`
+          : `(function(){window.scrollBy(${dx},${dy});return {ok:1,y:Math.round(window.scrollY)}})()`, true)
+      } catch (e) { r2 = { err: e.message } }
+      const bad = r2 && r2.err
+      step(s, 'scroll', sel || (dir + ' ' + amt), !bad, bad || '')
+      return bad ? { error: bad } : { ok: true, url: curUrl(s), scrolled: sel ? '已滚到元素' : ('已滚动 ' + dir + ' ' + amt) }
+    }
+    // ★hover:菜单/提示/悬浮操作条都要先悬停才出来。用【真实鼠标事件】而不是 JS 派发的 mouseover ——
+    //   后者触发不了 CSS :hover,而很多下拉菜单恰恰是纯 CSS 的,只派事件会看着"悬停了却什么都没弹"。
+    else if (action === 'hover') {
+      if (!sel) return { error: 'hover 需要 ref 或 selector' }
+      let box = null
+      try {
+        box = await wc.executeJavaScript(`(function(){var e=document.querySelector(${JSON.stringify(sel)});if(!e)return null;`
+          + `var r=e.getBoundingClientRect();if(!r.width&&!r.height)return null;`
+          + `return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()`, true)
+      } catch {}
+      if (!box) { step(s, 'hover', sel, false, '找不到元素或元素不可见'); return { error: '找不到元素或元素不可见(先 browser_read 拿新 ref,或先 scroll 到它)' } }
+      try { wc.sendInputEvent({ type: 'mouseMove', x: box.x, y: box.y }) } catch (e) { return { error: '悬停失败: ' + e.message } }
+      await new Promise((r) => setTimeout(r, 250))   // 给悬浮层一点出现时间,否则紧接着的 read 读不到它
+      step(s, 'hover', sel, true, '')
+      return { ok: true, url: curUrl(s), hint: '已悬停 —— 悬浮层通常要再 browser_read 一次才看得到' }
+    }
     else if (action === 'wait') {
       const ms = Math.min(Math.max(+a.ms || 800, 100), 5000)
       await new Promise((r) => setTimeout(r, ms))
       step(s, 'wait', ms + 'ms', true, '')
       return { ok: true, url: curUrl(s) }
     }
-    else return { error: '未知 action: ' + action + '(可用 click|type|select|check|enter|navigate|wait)' }
+    else return { error: '未知 action: ' + action + '(可用 click|type|select|check|enter|key|scroll|hover|navigate|wait)' }
 
     const r = await execStep(wc, ev, tab, { waitMs: 4000 })
     step(s, action, sel + (action === 'type' ? ' ← ' + str(a.value).slice(0, 40) : ''), !!r.ok, r.err)
@@ -318,5 +405,5 @@ module.exports = function initBrowserAgent(ctx) {
     sessions.clear()
   }
 
-  return { agentOpen, agentRead, agentAct, agentAssert, agentShot, agentDiag, agentClose, anyLive, dropAll, policyCheck, __sessions: sessions }
+  return { agentOpen, agentRead, agentFind, agentAct, agentAssert, agentShot, agentDiag, agentClose, anyLive, dropAll, policyCheck, __sessions: sessions }
 }

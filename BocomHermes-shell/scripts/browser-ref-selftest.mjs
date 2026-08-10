@@ -36,5 +36,34 @@ ok('  空 ref 不算写歪(等于没给)', !resolveRef({ ref: '   ', selector: '
 ok('  超长 selector 截断到 1000(防把整段 HTML 当选择器灌进来)',
   resolveRef({ selector: 'x'.repeat(5000) }).sel.length === 1000)
 
+// ── find 的匹配打分(与 agentFind 注入页面的那段同口径)──────────────────────
+// 【为什么单测它】find 的价值在于"模型说人话就能拿到 ref";打分错了它会把不相干的排前面,
+// 而模型通常只看第一条 —— 排错序 = 点错元素,和拼错选择器一个后果。
+function score(hay, q) {
+  const toks = q.toLowerCase().split(/[\s,，、]+/).filter(Boolean)
+  const h = hay.toLowerCase()
+  let sc = 0
+  for (const t of toks) if (h.indexOf(t) >= 0) sc++
+  if (h.indexOf(q.toLowerCase()) >= 0) sc += 2
+  return sc
+}
+console.log('\n== find 匹配打分 ==')
+ok('★整串命中排在只命中一个词的前面', score('button 登录', '登录') > score('button 登录注册说明', '登录 说明') - 3)
+ok('  完全不相干 → 0(不进结果)', score('input 用户名', '提交按钮') === 0)
+ok('  多词任一命中就算(宁可多给几条,也别一条不给)', score('a 退出登录', '退出 zzz') === 1)
+ok('★大小写不敏感(模型写 Submit / submit 都得中)', score('button Submit', 'submit') > 0 && score('button submit', 'Submit') > 0)
+ok('  中文按整串匹配(不会被空格切碎)', score('button 提交订单', '提交订单') >= 3)
+
+// ── key 白名单 ────────────────────────────────────────────────────────────
+// 【为什么要白名单】不挡的话模型会把整句话当按键发(实测常见),而那既不会报错也不会生效 ——
+// 又是一个"动作看着成功、其实什么都没发生"的静默失败。
+const KEYS = ['Enter', 'Escape', 'Tab', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown']
+const pickKey = (k) => KEYS.find((x) => x.toLowerCase() === String(k || '').trim().toLowerCase()) || ''
+console.log('\n== key 白名单 ==')
+ok('★常用键都在(Escape 关弹层 / Tab 移焦点 / 方向键选下拉,原来只有 enter)',
+  ['Escape', 'Tab', 'ArrowDown'].every((k) => pickKey(k) === k))
+ok('  大小写随便写', pickKey('escape') === 'Escape' && pickKey('ENTER') === 'Enter')
+ok('★整句话当按键 → 拒(否则既不报错也不生效,又是一次静默失败)', pickKey('按回车提交') === '')
+
 console.log(fail ? ('\n❌ ref 定位:' + pass + ' passed, ' + fail + ' failed') : ('\n✅ ref 定位:全部通过  ' + pass + ' passed, 0 failed'))
 process.exit(fail ? 1 : 0)

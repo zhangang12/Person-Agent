@@ -208,12 +208,29 @@ const TOOLS = [
     }, required: ['sessionId'] },
   },
   {
-    name: 'browser_act',
-    description: '在会话标签页里执行一步操作(强引擎:选择器兜底+可见性等待+红框高亮)。'
-      + '★定位优先用 ref(browser_read 返回的 [ref_N]),没有 ref 再用 selector。navigate 的目标也走围栏。',
+    name: 'browser_find',
+    description: '在【已读过的】当前页里按一句话找元素,返回匹配的 [ref_N](按相关度排序)。'
+      + '页面元素多的时候不要自己在 browser_read 的清单里翻 —— 直接说"登录按钮""用户名输入框"让它找。'
+      + '★必须先 browser_read 过这一页(ref 是那次读页盖上去的);没读过会明确提示。'
+      + '找不到时先 scroll 到那一块再 browser_read —— 不在视口里的元素不给 ref。',
     inputSchema: { type: 'object', properties: {
       sessionId: { type: 'string' },
-      action: { type: 'string', enum: ['click', 'type', 'select', 'check', 'enter', 'navigate', 'wait'] },
+      query: { type: 'string', description: '一句话描述,如「提交按钮」「搜索框」「退出登录」' },
+      limit: { type: 'number', description: '最多返回几条(默认 10)' },
+    }, required: ['sessionId', 'query'] },
+  },
+  {
+    name: 'browser_act',
+    description: '在会话标签页里执行一步操作(强引擎:选择器兜底+可见性等待+红框高亮)。'
+      + '★定位优先用 ref(browser_read 返回的 [ref_N]),没有 ref 再用 selector。navigate 的目标也走围栏。'
+      + ' scroll:给 ref/selector 就滚到那个元素,不给就整页滚 —— 页面很长时"点不到"最常见的原因就是它不在视口里。'
+      + ' hover:发【真实鼠标事件】(纯 CSS 的下拉菜单也能弹出来),悬停后通常要再 browser_read 一次才看得到浮层。',
+    inputSchema: { type: 'object', properties: {
+      sessionId: { type: 'string' },
+      action: { type: 'string', enum: ['click', 'type', 'select', 'check', 'enter', 'key', 'scroll', 'hover', 'navigate', 'wait'] },
+      key: { type: 'string', description: 'action=key 时:Enter/Escape/Tab/Backspace/Delete/方向键/Home/End/PageUp/PageDown(输入文字用 type)' },
+      direction: { type: 'string', enum: ['up', 'down', 'left', 'right'], description: 'action=scroll 且没给 ref/selector 时:整页往哪滚(默认 down)' },
+      amount: { type: 'number', description: 'action=scroll 整页滚多少像素(默认 600)' },
       ref: { type: 'string', description: '★首选:browser_read 给的句柄(ref_3 或 3)。用它就不用拼选择器 —— 精确唯一,页面变了会明确报错而不是点错' },
       selector: { type: 'string', description: '没有 ref 时才用(browser_read 里的现成选择器或 __text__:tag|文本);严禁 :has-text()/xpath' },
       value: { type: 'string' }, text: { type: 'string' },
@@ -315,17 +332,25 @@ async function callTool(name, args) {
       + '\n\n正文节选:\n' + String(r.text || '').slice(0, 2000)
   }
   if (name === 'browser_read') {
-    const r = await relayPost('/browser/read', { sessionId: String(args.sessionId || '') })
-    return '当前页: ' + r.url + (r.title ? '(' + r.title + ')' : '') + '\n\n可交互元素(→ 后为现成选择器):\n' + (r.elements || '(无)')
+    const r = await relayPost('/browser/read', { sessionId: String(args.sessionId || ''), all: !!args.all })
+    return '当前页: ' + r.url + (r.title ? '(' + r.title + ')' : '') + '\n\n可交互元素(用 [ref_N] 直接给 browser_act 的 ref 参数):\n' + (r.elements || '(无)')
+      // 截断必须原样带出来:不说的话模型把"前 N 个"当成"页面就这么多"
+      + (r.truncated ? '\n\n⚠ 本次读页有截断:' + r.truncated : '')
       + '\n\n正文节选:\n' + String(r.text || '').slice(0, 3000)
+  }
+  if (name === 'browser_find') {
+    const r = await relayPost('/browser/find', { sessionId: String(args.sessionId || ''), query: String(args.query || ''), limit: args.limit == null ? 10 : +args.limit })
+    if (!r.found) return String(r.hint || '没找到')
+    return '找到 ' + r.found + (r.total > r.found ? '/' + r.total : '') + ' 个(按相关度):\n' + (r.elements || '')
   }
   if (name === 'browser_act') {
     const body = { sessionId: String(args.sessionId || ''), action: String(args.action || '') }
-    for (const k of ['selector', 'value', 'text', 'url']) if (args[k] != null) body[k] = String(args[k])
+    for (const k of ['ref', 'selector', 'value', 'text', 'url', 'key', 'direction']) if (args[k] != null) body[k] = String(args[k])
+    if (args.amount != null) body.amount = +args.amount
     if (args.checked != null) body.checked = !!args.checked
     if (args.ms != null) body.ms = +args.ms
     const r = await relayPost('/browser/act', body)
-    return 'ok — 当前页: ' + (r.url || '')
+    return 'ok — 当前页: ' + (r.url || '') + (r.scrolled ? '(' + r.scrolled + ')' : '') + (r.hint ? '\n' + r.hint : '')
   }
   if (name === 'browser_assert') {
     const r = await relayPost('/browser/assert', {
