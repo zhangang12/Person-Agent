@@ -564,7 +564,11 @@ module.exports = function initBrowserAgent(ctx) {
         '(function(){var q=' + JSON.stringify(sel) + ';var e=null;'
         + 'if(q){try{e=document.querySelector(q)}catch(err){return {err:"选择器不合法: "+err.message}}if(!e)return {err:"没找到 "+q};}'
         // 不给选择器时:优先给最上层的弹层(它才是当下在操作的东西),没有弹层再给 body
-        + 'else{e=document.querySelector(\'[role="dialog"],.el-dialog,.ant-modal,.modal.show\')||document.body}'
+        // ★只认【可见的】弹层:真机自检时抓到一个隐藏的 el-overlay-dialog(aria-label="添加列",内容全空)——
+        // 模型会把那当成"当前弹层"然后一路推错。"看着成功、其实拿错了东西"比直接失败坏得多。
+        + 'else{var ds=document.querySelectorAll(\'[role="dialog"],.el-dialog,.ant-modal,.modal.show\');'
+        + 'for(var di=ds.length-1;di>=0;di--){var d=ds[di];if(d.getClientRects().length&&(d.innerText||"").trim()){e=d;break}}'
+        + 'if(!e)e=document.body}'
         + 'var h=e.outerHTML||"";'
         // 把 <svg>/<style>/<script> 的内容掏空:它们能占掉一大半字数,而对定位元素毫无用处
         + 'h=h.replace(/<svg[\\s\\S]*?<\\/svg>/gi,"<svg/>").replace(/<style[\\s\\S]*?<\\/style>/gi,"").replace(/<script[\\s\\S]*?<\\/script>/gi,"");'
