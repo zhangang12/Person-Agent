@@ -150,10 +150,35 @@ module.exports = function initBrowserAgent(ctx) {
     log('[browser-agent] 开会话 ' + id + ' → ' + url + ' (' + purpose + ')')
     // 等页面基本安定再交给 Agent,省得它第一步读到空白页
     try { await waitNetIdle(tab, 400, 6000) } catch {}
+
+    // ★★主文档没打开就必须【报错】,不许回 ok(2026-08-11 真机,用户说"截图毁了"):
+    //   dev server 没起来,主文档 ERR_CONNECTION_REFUSED,而 open 照样回 ok:true —— 只是
+    //   elements/text 是空的。模型于是接着截图,拿到一张全白的图,再对用户说"已启动并截图"。
+    //   用户看到的是一张白图,而真因("端口上没有服务")在三层之外。
+    //   "打开失败"和"页面是空的"必须在【第一步】就分开,这是整条链路的地基。
+    const mainFail = arr(tab.net).find((r) => r && r.state === 'failed'
+      && (str(r.url) === url || str(r.url).replace(/\/$/, '') === url.replace(/\/$/, '')))
+    if (mainFail) {
+      const why = str(mainFail.failText) || '加载失败'
+      closeTab(tab.id); sessions.delete(id)
+      const refused = /CONNECTION_REFUSED/i.test(why)
+      return { error: '页面没打开:' + why + '(' + url + ')'
+        + (refused
+          ? ' —— 这个端口上没有服务在听。先确认服务起没起(preview_start / 看进程),'
+            + '另外注意 127.0.0.1 与 localhost 【不是一回事】:有的 dev server 只监听 IPv6 的 ::1,'
+            + '那时 localhost 通、127.0.0.1 被拒;反过来也有。两个都试一下再下结论。'
+          : ' —— 先把这一层修好再谈页面内容,现在读到的任何"空页面"都只是这条错误的影子。') }
+    }
+
     let snap = null
     try { snap = await pageRead(tab) } catch {}
+    // 打开了但页面是【空壳】(SPA 没挂载):也要明说,别让模型把空页当"这页就是没东西"
+    const emptyish = !str(snap && snap.elements).trim() && str(snap && snap.text).trim().length < 8
     return {
       ok: true, sessionId: id, expiresInSec: Math.round((s.expiresAt - nowMs()) / 1000),
+      ...(emptyish ? { warning: '页面打开了,但一个可交互元素、几乎一个字都没有 —— 多半是 SPA 还没挂载完,'
+        + '或者这个端口上跑的【不是你以为的那个项目】(端口冲突很常见)。'
+        + '先 browser_eval 看一眼 document.title / location.href / #app 的内容再往下走,别急着截图。' } : {}),
       url: curUrl(s), title: (snap && snap.title) || '', elements: (snap && snap.elements) || '', text: (snap && String(snap.text || '').slice(0, 3000)) || '',
       note: '标签页已开,用户看得见。围栏:' + (isLocal(url) ? '本机' : originOf(url)) + '。做完必须调 browser_close 出报告。',
     }

@@ -42,6 +42,7 @@ function makeCtx(over = {}) {
     shellBrowserVisible: (on) => { calls.visibleCalls.push(!!on) },
     newTab: (url, opts) => {
       const t = mkTab(++S.browser.seq, url)
+      if (S.__failNext) { t.net.push(S.__failNext); S.__failNext = null }   // 模拟主文档请求失败
       S.browser.tabs.push(t)
       calls.newTab.push(url); calls.newTabOpts.push(opts || null)
       if (!(opts && opts.background)) S.browser.activeId = t.id   // 后台标签不当活动标签(真身同义)
@@ -58,7 +59,9 @@ function makeCtx(over = {}) {
       return { ok: true }
     },
     waitNetIdle: async () => {},
-    pageRead: async (tab) => ({ ok: true, url: tab.page.url, title: '标题', elements: 'button 「提交」  → #submit', text: tab.page.text }),
+    pageRead: async (tab) => (over.emptyPage
+      ? { ok: true, url: tab.page.url, title: '', elements: '', text: '' }
+      : { ok: true, url: tab.page.url, title: '标题', elements: 'button 「提交」  → #submit', text: tab.page.text }),
   }
   return { ba: initBrowserAgent(ctx), S, calls, ctx }
 }
@@ -285,6 +288,34 @@ console.log('用例7.8:eval / html —— 模型在真机思考里连问了五�
   tabOf(S).page.url = 'https://生产系统.example.com/x'
   ok('★★跳出围栏后 eval 被拒(它能读走整页内容,不能比 act 松)', /跳出围栏/.test(String((await ba.agentEval({ sessionId: sid, expr: '1' })).error)))
   ok('★★跳出围栏后 html 同样被拒', /跳出围栏/.test(String((await ba.agentHtml({ sessionId: sid })).error)))
+}
+
+console.log('用例7.9:打开失败必须报错,不许回 ok —— 用户看到的是一张白图')
+{
+  // 【真机 2026-08-11,用户原话"截图毁了"】dev server 没在跑(5173 上是【另一个项目】、还只监听 IPv6),
+  // 主文档 ERR_CONNECTION_REFUSED,而 open 照样回 ok:true(只是 elements/text 空)。
+  // 模型接着截图 → 一张全白的图 → 对用户说"已启动并截图"。
+  // 用户看到白图,真因在三层之外。"打开失败"和"页面是空的"必须在第一步就分开。
+  const { ba, S, calls } = makeCtx()
+  const url = 'http://127.0.0.1:5173/overview'
+  // 让这次 open 的主文档请求落一条 failed(与真身 tab.net 同形状)
+  // 开之前先埋好"下一次建的标签要带一条失败的主文档请求"
+  S.__failNext = { state: 'failed', url, failText: 'net::ERR_CONNECTION_REFUSED' }
+  const r = await ba.agentOpen({ url, purpose: '验打开失败' })
+  ok('★★连接被拒 → 报错,不是 ok(回 ok 的后果就是那张白图)', !!r.error && !r.ok, r)
+  ok('  错误里带上真因原文(ERR_CONNECTION_REFUSED)', /CONNECTION_REFUSED/.test(String(r.error)), r.error)
+  ok('★  并点出 127.0.0.1 与 localhost 不是一回事(真机就是栽在 IPv6-only 上)',
+    /localhost/.test(String(r.error)) && /IPv6|::1/.test(String(r.error)), r.error)
+  ok('  失败的标签页要收掉,不留孤儿', calls.closeTab.length === 1, calls.closeTab)
+  ok('  会话也不许留(留着后续每个工具都对着一个死会话报错)',
+    !!(await ba.agentRead({ sessionId: String(r.sessionId || 'x') })).error)
+
+  // 打开成功但页面是空壳 → 不报错,但要明确警告
+  const h2 = makeCtx({ emptyPage: true })
+  const r2 = await h2.ba.agentOpen({ url: 'http://127.0.0.1:5173/', purpose: '验空壳' })
+  ok('★页面打开了但一个元素/几乎一个字都没有 → 给 warning(别让它把空页当"这页就是没东西")',
+    !!r2.ok && /没挂载完|不是你以为的那个项目/.test(String(r2.warning || '')), r2.warning)
+  ok('  warning 指出下一步是先 eval 看一眼,别急着截图', /browser_eval/.test(String(r2.warning || '')), r2.warning)
 }
 
 console.log('用例8:会话生命周期 —— 超时/并发/重复收/取证')
