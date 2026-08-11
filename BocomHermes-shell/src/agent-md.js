@@ -92,6 +92,10 @@ module.exports = function initAgentMd(ctx) {
       L.push('', '## 前端自验')
       for (const c of li(d.devCmd, '（待确认）')) L.push('- 起 dev 服务：`' + c + '`')
       L.push('- 入口 URL：' + (d.devUrl || '（待确认：通常 ' + (d.eco.includes('vue') ? 'http://127.0.0.1:8080' : 'http://127.0.0.1:3000') + '，以实际输出为准）'))
+      // ★浏览器自动化只走内嵌这一条(2026-08-12 用户提):Agent 惯性会去装 playwright/puppeteer——
+      // 那是【另一个浏览器】:没有用户的登录态、用户看不见、装一堆依赖、跑完也没有可核对的报告。
+      // 内嵌浏览器带真登录态、用户全程能点过去看、每一步进结构化报告。所以写死规矩:先用它,不行再说。
+      L.push('- **浏览器自动化只用内嵌的 browser_\* 工具**，不要装/用 playwright、puppeteer、selenium：那是另一个浏览器，没有你现在这份登录态、用户也看不见，跑完还拿不出报告。定位不到元素时用 browser_eval / browser_html 查结构（别猜选择器）；确实做不到再说明原因、征得用户同意后降级。')
       L.push('- 页面验证步骤：browser_open 打开入口（内嵌浏览器，带登录态、用户看得见）→ browser_assert 验 no_console_error / no_failed_request → 再断一条本次改动的具体预期（text_present 或 selector_exists）→ browser_shot 截图并把图读一遍 → browser_close 出报告。VERDICT 由壳层机判：零断言算 INCONCLUSIVE，不算通过。')
     }
     if (d.eco.includes('java-maven') || d.eco.includes('java-gradle')) {

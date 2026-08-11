@@ -479,6 +479,10 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     for (const r of rules) { if (matchPermRule(tool, detail, r)) return String(r) }
     return ''
   }
+  // 驱动浏览器的那几个库(只拦【执行】,不拦读代码/查依赖 —— 那是正常排查)
+  const BROWSER_LIB_RE = /(^|[\s;&|(`'"])(npx\s+)?(playwright|puppeteer|pyppeteer|selenium|chromedriver|geckodriver)\b|playwright\s+(test|codegen|install)|from\s+playwright|require\(['"]puppeteer/i
+  const READONLY_CMD_RE = /^\s*(grep|rg|cat|less|head|tail|ls|find|which|npm\s+ls|pip\s+show|type)\b/i
+  S.__onPermission = (a) => onPermission(a)   // 自测入口:这段判断埋在回调里,不挂出来没法断言(函数声明已提升)
   function onPermission({ sessionId, requestId, tool, detail, serve }) {
     const si = S.sessionInfo.get(sessionId)
     if (!si) {
@@ -497,6 +501,21 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
       try { S.audit && S.audit('permission', '规则拒绝(deny)', { rule: permDenyHit, tool: String(tool || ''), detail: String(detail || '').slice(0, 200) }) } catch {}
       try { if (si.wc && !si.wc.isDestroyed()) si.wc.send('card-note', { text: '权限规则拦截(deny)：' + permDenyHit + ' —— 已拒绝 ' + tool, tone: 'muted' }) } catch {}
       oc.replyPermission(si.serve, sessionId, requestId, 'reject'); return
+    }
+    // ★浏览器自动化先走内嵌的,别上来就装 playwright(2026-08-12 用户提)。
+    // 【为什么要有这道闸,而不是只在 AGENTS.md 写一句】只写在提示词里的规矩,模型忙起来就绕过去了 ——
+    // 而这条绕过去的代价很大:playwright/puppeteer 是【另一个浏览器】,没有用户这份登录态(内网系统直接卡登录)、
+    // 用户全程看不见它在点什么、还要装一堆依赖,跑完也拿不出可核对的报告。内嵌那套三样全有。
+    // 【降级留口】用户的原话是"不行的话再走降级方案":真的试过内嵌、且撞了失败(brStat.fails≥2),就放行。
+    // 所以这不是禁令,是【顺序】:先试自家的,试不通再降级。拒绝理由把这层意思说清楚。
+    if (String(tool || '') === 'bash' && BROWSER_LIB_RE.test(String(detail || '')) && !READONLY_CMD_RE.test(String(detail || ''))) {
+      const st = S.brStat || { opens: 0, fails: 0 }
+      if (!(st.opens > 0 && st.fails >= 2)) {
+        log('浏览器自动化改走内嵌:拒绝 ' + String(detail || '').slice(0, 80) + ' (内嵌已试 open=' + st.opens + ' 失败=' + st.fails + ')')
+        try { if (si.wc && !si.wc.isDestroyed()) si.wc.send('card-note', { text: '已拦截 playwright/puppeteer —— 本机有内嵌浏览器工具(browser_*),带登录态且用户看得见', tone: 'muted' }) } catch {}
+        oc.replyPermission(si.serve, sessionId, requestId, 'reject'); return
+      }
+      log('内嵌浏览器已试过并失败(open=' + st.opens + ' 失败=' + st.fails + '),放行降级方案')
     }
     if (oc.AUTO_ALLOW.has(tool)) { oc.replyPermission(si.serve, sessionId, requestId, 'once'); return }
     // 天枢技能工具族(skill_*):回放接管/断点解析的 MCP 工具,引擎侧已有门禁(如 page_act 仅接管期可执行),

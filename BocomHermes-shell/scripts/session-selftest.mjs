@@ -1109,6 +1109,51 @@ console.log('\n用例:界面显示的模型 = 真发出去的模型(双模型 M1
   ok('  两条路走的是【同一个函数】,不是两份长得像的代码', typeof h.S.__baseModelOf === 'function')
 }
 
+console.log('\n用例:浏览器自动化先走内嵌的,不许上来就 playwright')
+{
+  // 【用户 2026-08-12】"Agent 容易使用 playwright 做浏览器自动化,现在有现成的工具了,
+  //   能否让 Agent 必须使用内嵌浏览器?不行的话再走降级方案。"
+  // 只写在 AGENTS.md 里的规矩,模型忙起来就绕过去了 —— 而绕过去的代价很大:
+  // playwright 是另一个浏览器,没有用户这份登录态(内网系统直接卡登录)、用户看不见它在点什么、
+  // 跑完也拿不出可核对的报告。所以提示词是主、这道闸是底。
+  const mkPerm = (h, wcId, tool, detail) => {
+    const replies = []
+    h.oc.replyPermission = (...a2) => replies.push(a2)
+    const sid = h.S.sessionByWc.get(wcId)
+    h.handlers['card-init'] && null
+    h.S.sessionInfo.get(sid).serve = h.serve
+    h.oc.onPermissionCb && h.oc.onPermissionCb({ sessionId: sid, requestId: 'q1', tool, detail, serve: h.serve })
+    return replies
+  }
+  const h = makeHarness()
+  const { ev } = await openCard(h, 400)
+  const sid = h.S.sessionByWc.get(400)
+  const replies = []
+  h.oc.replyPermission = (...a2) => replies.push(a2)
+  const perm = h.S.__onPermission
+  ok('权限入口挂得出来(自测要用它)', typeof perm === 'function', typeof perm)
+  if (typeof perm === 'function') {
+    perm({ sessionId: sid, requestId: 'q1', tool: 'bash', detail: 'npx playwright test e2e/login.spec.ts', serve: h.serve })
+    ok('★★上来就 npx playwright → 拒(先用内嵌的)', replies.some((r) => r[3] === 'reject'), replies)
+    replies.length = 0
+    perm({ sessionId: sid, requestId: 'q2', tool: 'bash', detail: 'rg -n "playwright" package.json', serve: h.serve })
+    ok('  只是查一下依赖(rg/grep)→ 不拦(那是正常排查)', !replies.some((r) => r[3] === 'reject'), replies)
+    replies.length = 0
+    perm({ sessionId: sid, requestId: 'q3', tool: 'bash', detail: 'node -e "require(\'puppeteer\')"', serve: h.serve })
+    ok('  puppeteer 同样拦', replies.some((r) => r[3] === 'reject'), replies)
+    // ★降级留口:真的试过内嵌、且撞了失败 → 放行(用户原话"不行的话再走降级方案")
+    replies.length = 0
+    h.S.brStat = { opens: 1, fails: 2 }
+    perm({ sessionId: sid, requestId: 'q4', tool: 'bash', detail: 'npx playwright test', serve: h.serve })
+    ok('★内嵌真的试过又失败了 → 放行降级(这不是禁令,是顺序)', !replies.some((r) => r[3] === 'reject'), replies)
+    // 只开过没失败 → 仍然拦(不许"开一下就算试过")
+    replies.length = 0
+    h.S.brStat = { opens: 3, fails: 0 }
+    perm({ sessionId: sid, requestId: 'q5', tool: 'bash', detail: 'npx playwright test', serve: h.serve })
+    ok('  开过但没失败过 → 还是拦("试过"要有失败为证)', replies.some((r) => r[3] === 'reject'), replies)
+  }
+}
+
   console.log('\n' + (fail ? '❌ 有失败' : '✅ 全部通过') + '  ' + pass + ' passed, ' + fail + ' failed')
   Module._load = origLoad
   global.setInterval = realSetInterval

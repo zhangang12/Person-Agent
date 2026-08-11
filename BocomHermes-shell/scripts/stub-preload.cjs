@@ -19,6 +19,10 @@ contextBridge.exposeInMainWorld('BocomHermes', {
     flags.sendN++
     flags.lastSend = String(text || '')
     flags.sendTexts.push(String(text || ''))
+    // 挂住不返回,直到页面里调 __release() —— 测"回合进行中"的形态(交错时序/流式分段)必须有它:
+    // 不挂住的话 cardSend 立刻 resolve、curAnswer 被清空,后续 __emit('stream') 全被丢弃,
+    // 夹具看着在跑、其实一个字都没进气泡(第一版就栽在这儿,断言拿到的是空)。
+    if (/__hold__/.test(String(text))) { await new Promise((r) => { flags.__release = r }); return '收尾' }
     if (/__slow__/.test(String(text))) {   // 慢轮(状态行/hang 探针场景):2.5s 才回
       await new Promise((r) => setTimeout(r, 2500))
       return '慢回答'
@@ -86,3 +90,4 @@ contextBridge.exposeInMainWorld('BocomHermes', {
 })
 contextBridge.exposeInMainWorld('__emit', (kind, payload) => { const cb = cbs[kind]; if (cb) cb(payload) })
 contextBridge.exposeInMainWorld('__flag', (name) => flags[name])
+contextBridge.exposeInMainWorld('__release', () => { if (flags.__release) { const f = flags.__release; flags.__release = null; f() } })

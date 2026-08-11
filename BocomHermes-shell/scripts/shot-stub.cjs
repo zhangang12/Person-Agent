@@ -103,6 +103,37 @@ app.whenReady().then(async () => {
     await shot(win, 'shot-stub-3-nothumb')
     wins.push(win)
   }
+  // ── 场景4:交错时序(用户 2026-08-12 的原话:"工具调用和截图在最上面,输出一直在最底部")──
+  {
+    const win = await mkWin()
+    const say = (t, id) => ev(win, `__emit('stream', ${JSON.stringify({ kind: 'text', text: t, partID: id })})`)
+    const tool = (n, id, title, out) => ev(win, `__emit('stream', ${JSON.stringify({ kind: 'tool', text: n, partID: id, status: 'completed', title, input: '{}', output: out })})`)
+    await sleep(1200)   // ★先等开卡自动首条那一轮收尾 —— 不等的话我这条会被排队,后面的 emits 落进上一轮的气泡
+    await ev(win, `(() => { const ci = document.getElementById('ci'); ci.value = '把这几个页面都跑一遍截图 __hold__'; ci.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('.send').click() })()`)
+    await sleep(600)
+    await say('C1 项目目录。先打开看看。', 'a1'); await sleep(350)
+    await tool('browser_open', 't1', '打开页面', 'ok'); await sleep(250)
+    await ev(win, `__emit('shot', ${JSON.stringify({ path: '/x/1.png', label: 'C1 项目目录', url: 'http://127.0.0.1:5173/', w: 1440, h: 900, full: false }).replace(/}$/, '')}, dataUrl: ${JSON.stringify(wide)} })`)
+    await sleep(300)
+    await say('C1 项目目录。先打开看看。\n\nC1 加载成功(9 个 tab)。截图。\n\nC2 采购管理。', 'a1'); await sleep(350)
+    await tool('browser_act', 't2', '点击 采购管理', 'ok'); await sleep(250)
+    await ev(win, `__emit('shot', ${JSON.stringify({ path: '/x/2.png', label: 'C2 采购管理', url: 'http://127.0.0.1:5173/purchase', w: 1440, h: 900, full: false }).replace(/}$/, '')}, dataUrl: ${JSON.stringify(wide)} })`)
+    await sleep(300)
+    await say('C1 项目目录。先打开看看。\n\nC1 加载成功(9 个 tab)。截图。\n\nC2 采购管理。\n\nC2 加载成功。截图。', 'a1')
+    await ev(win, `window.__release()`)   // 收尾:回合正常结束
+    await sleep(900)
+    const order = await ev(win, `[...document.querySelectorAll('.msg-a, .toolblk, .shot')].map(e => e.classList.contains('shot') ? 'shot' : e.classList.contains('toolblk') ? 'tool' : 'text').join(' ')`)
+    console.log('  · feed 顺序:' + order)
+    if (!/text tool shot text tool shot/.test(order)) { bad++; console.log('  ✗ 时序没有交错(工具/截图应该夹在两段文字中间)') }
+    const segs = await ev(win, `[...document.querySelectorAll('.msg-a')].map(e => e.innerText.replace(/\\s+/g,' ').trim().slice(0,40))`)
+    console.log('  · 各段文字:' + JSON.stringify(segs))
+    if (!segs.some((x) => /C2 加载成功/.test(x))) { bad++; console.log('  ✗ 最后一段文字丢了(封存偏移把尾巴也吃掉了?)') }
+    if (segs.filter((x) => !x).length) { bad++; console.log('  ✗ feed 里留了空气泡') }
+    const dup = await ev(win, `(() => { const t = [...document.querySelectorAll('.msg-a')].map(e => e.innerText).join('|'); return (t.match(/C1 加载成功/g) || []).length })()`)
+    if (dup !== 1) { bad++; console.log('  ✗ 分段后文字重复了 ' + dup + ' 次(封存偏移没算对)') }
+    await shot(win, 'shot-stub-4-interleave')
+    wins.push(win)
+  }
   for (const w of wins) { try { w.destroy() } catch {} }
   console.log(bad ? '❌ 有问题(见上)' : '✅ 目检截图完成,无渲染错误')
   app.exit(bad ? 1 : 0)

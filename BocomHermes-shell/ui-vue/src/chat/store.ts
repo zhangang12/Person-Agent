@@ -406,7 +406,7 @@ function twTick(): void {
   twTimer = null
   const ai = curAnswer
   if (!ai) return
-  const st = splitThink(joinParts(answerParts))
+  const st = splitThink(liveAnswerText())
   const full = st.rest
   // 思考块平滑(ReAct 时序):逐块匀速推进 displayLen —— 每个 reasoning partID 一块,与工具块按到达顺序穿插
   let reasonCaughtUp = true
@@ -603,6 +603,46 @@ let delegatedSeen = false, delegateNudged = false
 let contNudgeN = 0, contLastOpen = -1, contNudgeOff = false   // contNudgeOff:熔断粘性标志(只有真有进展才复活),见 maybeContinueNudge
 let wfProduceNag = false
 let latestOpenTodos: string[] = [], latestTodoTotal = 0
+// ── 答案分段(2026-08-12 用户:"Agent 输出一直在最底部,工具调用和截图在最上面,跟踪不到连贯性")──
+// 【原来的形态】一个回合只建【一个】答案气泡,回合开始就钉在底部;工具/截图/思考全部 insertBeforeAnswer
+// 塞到它上面。跑 70 步下来 = 所有工具和截图堆在上面、模型的叙述挤成底部一大坨,
+// 而"这句话是哪一步做完之后说的"这个信息【整个丢了】—— 用户要的连贯性正是它。
+// 【改法】动作类条目(工具/todo/截图)到达时,把当前气泡就地封存,新起一个空气泡接着流:
+//   文字 → 工具 → 文字 → 截图 → 文字 …… 按真实时序穿插。
+// 【为什么不在思考块上切】思考本来就按 partID 各自成块、天然穿插;而正文里的内联 <think>
+// 是在渲染途中抽出来的,在那儿切会和打字机游标打架。
+// 【封存偏移】每个 part 的文本是【全量快照】(不是增量)。封存时记下各 part 已归属前段的长度,
+// 后续同 part 继续变长时只把【尾巴】算进新气泡 —— 不记的话已显示的前缀会在新气泡里重复一遍。
+let sealedOff = new Map<string, number>()
+let sealedAny = false
+function liveAnswerText(): string {
+  let out = ''
+  for (const [k, v] of answerParts) out += String(v || '').slice(sealedOff.get(k) || 0)
+  return out
+}
+/** 动作条目到达:当前气泡有内容就封存它、另起一段 */
+function sealAnswerSegment(): void {
+  const ai = curAnswer
+  if (!ai) return
+  const st = splitThink(liveAnswerText())
+  if (!st.rest.trim()) return                      // 还没说过话:不用切,直接插在它前面就行
+  ai.raw = st.rest
+  ai.finalHtml = renderMarkdown(st.rest)
+  ai.displayLen = st.rest.length
+  ai.status = 'done'
+  for (const [k, v] of answerParts) sealedOff.set(k, String(v || '').length)
+  sealedAny = true
+  const next = addAi()                             // 新的空气泡接在最后,后续文字流进它
+  curAnswer = next
+}
+/** 动作类条目(工具/todo/截图):先封存当前段,再把它接在【最后】—— 这样它就落在"刚才那段话"之后 */
+function appendInterleaved<T extends FeedItem>(it: T): T {
+  sealAnswerSegment()
+  const at = curAnswer ? s.items.indexOf(curAnswer) : -1
+  const i = at < 0 ? s.items.length : at           // 插在新空气泡之前 = 紧跟上一段文字
+  s.items.splice(i, 0, it as FeedItem)
+  return s.items[i] as T
+}
 function insertBeforeAnswer<T extends FeedItem>(it: T): T {
   const at = curAnswer ? s.items.indexOf(curAnswer) : -1
   const i = at < 0 ? s.items.length : at
@@ -644,7 +684,7 @@ function upsertToolEvent(ev: StreamEvent): void {
   if (isTodoTool(name)) { upsertTodo(partID, ev, st); return }
   let it = toolItems.get(partID) as ToolItem | undefined
   if (!it) {
-    it = insertBeforeAnswer<ToolItem>({
+    it = appendInterleaved<ToolItem>({
       id: nextId(), kind: 'tool', partID, name: toolLabel(name), title: '', status: '',
       state: 'running', inStr: '', outStr: '', hasErr: false, summary: '',
       open: s.verbose, isWf: /^run_workflow$/i.test(name), askNoted: false, t0: Date.now(),
@@ -719,7 +759,7 @@ function upsertTodo(partID: string, ev: StreamEvent, st: ToolState): void {
     return
   }
   if (!it) {
-    it = insertBeforeAnswer<TodoItem>({ id: nextId(), kind: 'todo', partID, model, updating: true })
+    it = appendInterleaved<TodoItem>({ id: nextId(), kind: 'todo', partID, model, updating: true })
     toolItems.set(partID, it)
   }
   it.model = model
@@ -899,9 +939,10 @@ export async function turn(text: string, files?: any[] | null): Promise<boolean>
   if (!ctxLimitReal) refreshCtxLimit()   // 上限还没拿到真值(serve 晚起/列表为空):每个回合补刷,防开卡终身吃兜底
   s.aborting = false
   runningTools.clear(); paintRunAct()   // 状态行:新一轮从"思考中"起
-  const ai = addAi()
-  curAnswer = ai
+  const ai0 = addAi()   // 本轮的第一段;切过段之后收尾要写的是 curAnswer(最后一段),别写它
+  curAnswer = ai0
   answerParts = new Map(); reasonParts = new Map(); reasonItems.clear()
+  sealedOff = new Map(); sealedAny = false
   twStop()   // 新一轮:打字机游标随新 AiItem 归零(displayLen 在 addAi 初始化),旧 ticker 停掉
   s.busy = true; s.done = false
   lastSend = { text, files: files || null }
@@ -911,7 +952,12 @@ export async function turn(text: string, files?: any[] | null): Promise<boolean>
   try {
     const reply = await BH()!.cardSend(text, files || [], s.activeSkill ? s.activeSkill.id : null)   // 挂载技能(作答方法论预置,对齐旧页 submit 第三参)
     twStop()   // 末帧:停打字机 ticker(终态由 finalHtml 全量接管;思考块逐块补全)
-    const raw = reply || joinParts(answerParts)
+    // ★收尾要写【当前这一段】,不是回合开始时捕获的那个气泡。
+    //   切过段之后 ai 指的是【第一段】(已经定稿),再往它身上写终稿等于把第一段覆盖掉,
+    //   而新起的那段永远空着、永远 streaming —— 自测里看到的正是 ["第二段。"] + 空气泡。
+    const ai = curAnswer || ai0
+    // ★切过段就【不许】用 reply:那是整轮全文,而前面的段已经各自定稿 —— 用它等于把内容再来一遍
+    const raw = sealedAny ? liveAnswerText() : (reply || liveAnswerText())
     const st = splitThink(raw)
     finalizeReasonItems(st.think)
     const finalText = st.rest
@@ -922,6 +968,13 @@ export async function turn(text: string, files?: any[] | null): Promise<boolean>
       ai.status = 'done'
       s.lastFinalText = finalText   // 成果抽屉「最终结论」数据源(最近一轮终答)
       if ((text || '').length <= REGEN_MAX) { ai.retryText = text; ai.retryFiles = files || null }
+    } else if (sealedAny) {
+      // ★切过段:最后一次动作之后模型没再说话 —— 那个空气泡要【摘掉】,不是标成"无文本输出"。
+      //   前面的段各自都有内容,这一轮显然不是空答;留个空壳在末尾只是噪音,
+      //   更不能挂"可直接重试"的钩子(会把一次成功的回合说成失败,诱导用户白重跑一遍)。
+      gotText = true
+      const i = s.items.indexOf(ai)
+      if (i >= 0) s.items.splice(i, 1)
     } else if (st.think) {
       ai.status = 'done'; ai.plainText = '（本轮只有思考过程，见上方思考块）'
     } else {
@@ -932,7 +985,8 @@ export async function turn(text: string, files?: any[] | null): Promise<boolean>
   } catch (e: any) {
     ok = false
     // 半截答案是用户的,错误不许覆盖它:保留半截 + 错误另起一行 note;思考同样分流进思考块
-    const pst = splitThink(joinParts(answerParts))
+    const ai = curAnswer || ai0
+    const pst = splitThink(liveAnswerText())
     finalizeReasonItems(pst.think)
     if (pst.rest) {
       gotText = true   // 半截也是文本(分片/主控空答重试不冤枉它)
@@ -1092,7 +1146,7 @@ export function wireCardShot(): void {
   try {
     BH()?.onCardShot?.((p: any) => {
       const it = shotItemFrom(p)
-      if (it) insertBeforeAnswer<ShotItem>(it)
+      if (it) appendInterleaved<ShotItem>(it)
     })
   } catch { /* 静默 */ }
 }
@@ -1624,6 +1678,7 @@ export function resetConversation(): void {
   for (const it of keptQueued) { it.queued = true; s.items.push(it) }
   curAnswer = null; reasonItems.clear()
   answerParts = new Map(); reasonParts = new Map()
+  sealedOff = new Map(); sealedAny = false
   meter.reset(); s.ctxUsedChars = 0; s.ctxRealTokens = null; s.ctxCacheHit = null
   wfExecSeen = false; wfSawTodo = false   // 新会话重看规划/执行信号(planApproved 主进程侧按卡记,不动)
   ctxNag = false   // 水位提醒复位:上下文已回起点,下次涨回 90% 要允许再提醒

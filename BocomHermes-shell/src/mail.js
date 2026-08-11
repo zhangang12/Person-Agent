@@ -490,6 +490,12 @@ module.exports = function initMail(ctx) {
               const res = !r ? '(空回包)' : r.error ? ('✗ ' + String(r.error).slice(0, 160))
                 : (r.elemError ? '✓ 但元素采集失败:' + String(r.elemError).slice(0, 120) : '✓')
               log('[' + kind + '] ' + route + (brief ? ' ' + brief : '') + ' → ' + res)
+              // 内嵌浏览器的使用/失败计数:权限层据此判"真的试过了吗"(playwright 降级闸,见 session.js)
+              if (kind === 'browser-tool') {
+                if (!S.brStat) S.brStat = { opens: 0, fails: 0 }
+                if (route === 'open') S.brStat.opens++
+                if (!r || r.error) S.brStat.fails++
+              }
             } catch { /* 留痕绝不许把主流程带崩 */ }
           }
           if (req.url.startsWith('/preview/')) {

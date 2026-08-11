@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs'
 const sent: string[] = []
 let streamCb: ((ev: any) => void) | null = null
 let injectCb: ((p: any) => void) | null = null
+let shotCb: ((p: any) => void) | null = null
 let runCb: ((p: any) => void) | null = null
 const runCalls: any[][] = []
 // ⑦ 单会话审计用:cardSend 的可控回包 + 发送瞬间的回调钩子(用来在"摘要轮正在飞"的窗口里插队发消息)
@@ -31,6 +32,7 @@ const mock = {
   compactLogAppend: (p: any) => { compactLogged.push(String((p && p.text) || '')) },
   onStream: (cb: (ev: any) => void) => { streamCb = cb },
   onCardInject: (cb: (p: any) => void) => { injectCb = cb },
+  onCardShot: (cb: (p: any) => void) => { shotCb = cb },
   onRunSnapshot: (cb: (p: any) => void) => { runCb = cb },
   runApprove: async (...a: any[]) => { runCalls.push(['approve', ...a]); return { ok: true } },
   runNote: async (...a: any[]) => { runCalls.push(['note', ...a]); return { ok: true } },
@@ -455,5 +457,65 @@ describe('⑧ card-shot → ShotItem', () => {
     const it2: any = shotItemFrom({ path: '/tmp/c.png', w: 'abc', h: null, label: { x: 1 } })
     expect(it2.w).toBe(0); expect(it2.h).toBe(0)
     expect(typeof it2.label).toBe('string')
+  })
+})
+
+
+// ⑨ 交错时序:动作条目到达就把当前段封存、另起一段
+// 【用户 2026-08-12 原话】"Agent 输出一直在最底部,工具调用和截图在最上面。用户跟踪不到连贯性。"
+// 老形态:一个回合只建一个答案气泡,回合开始就钉在底部,工具/截图全 insertBeforeAnswer 塞它上面 ——
+// 跑 70 步下来所有动作堆在上面、叙述挤成底部一大坨,"这句话是哪一步之后说的"整个丢了。
+describe('⑨ 交错时序(工具/截图夹在两段文字之间)', () => {
+  it('★动作到达 → 封存当前段、另起一段;文字不许重复', async () => {
+    s.ready = true; s.wfMode = false
+    const before = s.items.length
+    onSend = () => {
+      streamCb!({ kind: 'text', text: '第一段。', partID: 'a1' })
+      shotCb!({ path: '/x/1.png', dataUrl: 'data:image/jpeg;base64,AA', w: 100, h: 60, label: '一' })
+      streamCb!({ kind: 'text', text: '第一段。第二段。', partID: 'a1' })   // 全量快照(真身就是快照不是增量)
+    }
+    sendReply = '第一段。第二段。'
+    store.submit('跑一下', [])
+    await settle()
+    const seq = s.items.slice(before).filter((i: any) => ['user', 'ai', 'shot'].includes(i.kind))
+    expect(seq.map((i: any) => i.kind)).toEqual(['user', 'ai', 'shot', 'ai'])
+    expect((seq[1] as any).raw).toBe('第一段。')
+    // ★尾巴只能是尾巴:封存偏移没算对的话,第二段会把"第一段。"再来一遍
+    expect((seq[3] as any).raw).toBe('第二段。')
+    expect(String((seq[3] as any).raw)).not.toContain('第一段')
+  })
+
+  it('★切过段之后不许用 reply 收尾(那是整轮全文,会把已封存的内容再来一遍)', async () => {
+    s.ready = true; s.wfMode = false
+    const before = s.items.length
+    onSend = () => {
+      streamCb!({ kind: 'text', text: '甲。', partID: 'a1' })
+      shotCb!({ path: '/x/2.png', dataUrl: 'd', w: 10, h: 10, label: '' })
+      streamCb!({ kind: 'text', text: '甲。乙。', partID: 'a1' })
+    }
+    sendReply = '甲。乙。'      // POST 回来的是整轮全文
+    store.submit('再跑一下', [])
+    await settle()
+    const ais = s.items.slice(before).filter((i: any) => i.kind === 'ai')
+    expect(ais.map((i: any) => i.raw)).toEqual(['甲。', '乙。'])
+  })
+
+  it('★最后一次动作之后不再说话 → 末尾不留空气泡,也不挂"可直接重试"', async () => {
+    s.ready = true; s.wfMode = false
+    const before = s.items.length
+    onSend = () => {
+      streamCb!({ kind: 'text', text: '我截一张。', partID: 'a1' })
+      shotCb!({ path: '/x/3.png', dataUrl: 'd', w: 10, h: 10, label: '' })
+      // 之后模型不再说话
+    }
+    sendReply = '我截一张。'
+    store.submit('截个图', [])
+    await settle()
+    // 只看 user/ai/shot 的相对顺序(别的 note 由 todo 提醒等产生,与本格无关)
+    const seq = s.items.slice(before).filter((i: any) => ['user', 'ai', 'shot'].includes(i.kind))
+    expect(seq.map((i: any) => i.kind)).toEqual(['user', 'ai', 'shot'])
+    expect(seq.every((i: any) => i.kind !== 'ai' || String(i.raw || i.plainText || '').trim())).toBe(true)
+    // 这一轮明明有产出,不能挂重试钩子把它说成失败
+    expect(s.items.some((i: any) => i.kind === 'note' && /没拿到文本输出/.test(String(i.text || '')))).toBe(false)
   })
 })
