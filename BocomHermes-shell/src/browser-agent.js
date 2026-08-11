@@ -80,10 +80,25 @@ module.exports = function initBrowserAgent(ctx) {
     }
   }
 
-  function live(id) {
+  // ★时间盒改成【滑动的】(2026-08-12 真机最贵的一处):原来从 open 那一刻起固定 N 分钟,
+  //   于是跑长流程必被腰斩 —— 日志实录「收会话 → FAIL (断言 0/0, 步骤 105)」:跑到第 105 步
+  //   被自己的定时器收掉,紧接着两条工具调用报"会话不存在",模型只好重开一个会话【并重新登录】。
+  //   时间盒的本意是防"开了忘关",不是防"正在干活":每来一次工具调用就续期,
+  //   同时留一个绝对上限,跑飞了照样有个头。两种超时的说法也要分开,否则查不出是哪一种。
+  const HARD_CAP_MS = 60 * 60000        // 绝对上限:再怎么续期也不能超过一小时
+  function live(id, touch) {
     const s = sessions.get(str(id))
     if (!s || s.closed) return null
-    if (nowMs() > s.expiresAt) { finish(s, 'timeout', '会话超时(' + Math.round((s.expiresAt - s.startedAt) / 60000) + ' 分钟)'); return null }
+    const now = nowMs()
+    if (now > s.hardExpiresAt) {
+      finish(s, 'timeout', '会话总时长到顶(' + Math.round(HARD_CAP_MS / 60000) + ' 分钟)—— 这么长通常是跑飞了,重开一个并缩小目标')
+      return null
+    }
+    if (now > s.expiresAt) {
+      finish(s, 'timeout', '会话空闲超时(' + Math.round(cfg().minutes) + ' 分钟没有任何操作)—— 只要还在操作就会自动续期,这条说明它真的停了')
+      return null
+    }
+    if (touch !== false) s.expiresAt = now + cfg().minutes * 60000   // 有动作 = 还在干活,续期
     return s
   }
   /** 有没有任意一个存活的自主会话(供 skillPageAct 放闸用) */
@@ -122,7 +137,7 @@ module.exports = function initBrowserAgent(ctx) {
     const pol = policyCheck(url)
     if (!pol.ok) return { error: pol.err }
     // 过期会话先收掉,再判并发上限(否则超时会话会永久占坑)
-    for (const s of [...sessions.values()]) live(s.id)
+    for (const s of [...sessions.values()]) live(s.id, false)   // ★清扫用,不许顺手续期(会把别人的空闲计时抹掉)
     const liveN = [...sessions.values()].filter((s) => !s.closed).length
     if (liveN >= MAX_SESSIONS) return { error: '同时最多 ' + MAX_SESSIONS + ' 个自主浏览器会话(每个占一个标签页),先 browser_close 收掉一个再开' }
 
@@ -138,7 +153,7 @@ module.exports = function initBrowserAgent(ctx) {
     const id = 'bs_' + nowMs().toString(36) + '_' + Math.floor(Math.random() * 1e4).toString(36)
     const s = {
       id, purpose, tabId: tab.id, tabIds: [tab.id],   // tabId=活动标签(其余代码照旧只认它);tabIds=本会话拥有的全部
-      startedAt: nowMs(), expiresAt: nowMs() + c.minutes * 60000,
+      startedAt: nowMs(), expiresAt: nowMs() + c.minutes * 60000, hardExpiresAt: nowMs() + HARD_CAP_MS,
       steps: [], asserts: [], shots: [], closed: false, result: null,
       netFrom: 0, conFrom: 0,   // 只统计本会话开始之后的网络/控制台(标签页是新开的,基线就是 0,留字段是为了将来复用已有标签)
       // ★开会话时就钉住"是哪张对话卡在调我":截图要摆回【那张】卡。
@@ -677,7 +692,10 @@ module.exports = function initBrowserAgent(ctx) {
     const stepFail = s.steps.filter((x) => !x.ok)
     // verdict 由机器算,不接受调用方自述:有断言失败 / 有步骤失败 / 非正常收尾 → 一律不算 PASS。
     // 一条断言都没有也不算 PASS —— "打开看了一眼没报错"不是验证,那是浏览过。
-    const verdict = status !== 'done' ? 'FAIL'
+    // ★超时是【壳层定时器到点】,不是"验证没过" —— 判 FAIL 会把一次好端端的会话说成失败
+    //   (真机:跑到第 105 步被收掉,报告写 FAIL,而它一条断言都没失败过)。断不出结论就说断不出。
+    const verdict = status === 'timeout' ? 'INCONCLUSIVE'
+      : status !== 'done' ? 'FAIL'
       : (failed.length || stepFail.length) ? 'FAIL'
       : s.asserts.length ? 'PASS' : 'INCONCLUSIVE'
     s.result = {

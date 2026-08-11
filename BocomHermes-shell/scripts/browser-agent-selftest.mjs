@@ -382,8 +382,30 @@ console.log('用例9:超时会话自动失效(时间盒)')
   const s = ba.__sessions.get(r.sessionId)
   s.expiresAt = Date.now() - 1   // 手动把它推过期(不睡一分钟)
   const act = await ba.agentAct({ sessionId: r.sessionId, action: 'click', selector: '#x' })
-  ok('超时后操作被拒', !!act.error)
-  ok('  超时会话自动收成 FAIL 报告(不是留着当僵尸)', s.closed === true && s.result.verdict === 'FAIL', s.result && s.result.verdict)
+  ok('空闲超时后操作被拒', !!act.error)
+  const rep2 = ba.agentClose({ sessionId: r.sessionId }).report || ba.__sessions.get(r.sessionId).result
+  ok('★超时判 INCONCLUSIVE,不判 FAIL —— 那是壳层定时器到点,不是"验证没过"',
+    (rep2 && rep2.verdict) === 'INCONCLUSIVE', rep2 && rep2.verdict)
+  ok('  但会话确实被收掉了(不留僵尸)', (rep2 && rep2.status) === 'timeout', rep2 && rep2.status)
+  ok('  说法要分得开:这条是【空闲】超时', /空闲超时/.test(String(rep2 && rep2.note)), rep2 && rep2.note)
+
+  // ★滑动续期:一直在操作就不该被腰斩(真机跑到第 105 步被固定时间盒收掉,还得重开重登录)
+  const { ba: ba2 } = makeCtx({ settings: { browserAgent: { minutes: 1 } } })
+  const r2 = await ba2.agentOpen({ url: 'http://localhost:5199/', purpose: 'p' })
+  const s2 = ba2.__sessions.get(r2.sessionId)
+  const exp0 = s2.expiresAt
+  s2.expiresAt = Date.now() + 5000               // 假装只剩 5 秒
+  await ba2.agentAct({ sessionId: r2.sessionId, action: 'click', selector: '#x' })
+  ok('★★每来一次操作就续期(时间盒防的是"开了忘关",不是"正在干活")',
+    ba2.__sessions.get(r2.sessionId).expiresAt > Date.now() + 50000, { was: 5000, now: ba2.__sessions.get(r2.sessionId).expiresAt - Date.now() })
+  ok('  但绝对上限不许被续期抹掉(跑飞了照样有个头)',
+    ba2.__sessions.get(r2.sessionId).hardExpiresAt <= exp0 - 60000 + 60 * 60000 + 1000, s2.hardExpiresAt - exp0)
+  const s3 = ba2.__sessions.get(r2.sessionId)
+  s3.hardExpiresAt = Date.now() - 1
+  const act3 = await ba2.agentAct({ sessionId: r2.sessionId, action: 'click', selector: '#x' })
+  ok('★到绝对上限照样收(续期不是无限续)', !!act3.error, act3)
+  ok('  这条说法是【总时长】,与空闲超时分得开',
+    /总时长/.test(String((ba2.__sessions.get(r2.sessionId).result || {}).note)), (ba2.__sessions.get(r2.sessionId).result || {}).note)
 }
 
 console.log('\n' + (fail === 0 ? '✅ 全部通过' : '❌ 有失败') + `  ${pass} passed, ${fail} failed`)
