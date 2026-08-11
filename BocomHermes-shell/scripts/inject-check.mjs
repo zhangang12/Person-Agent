@@ -49,7 +49,9 @@ export function extractInjected(src) {
   //      —— 这是我自己刚写 agentEval/agentHtml 用的写法,而第一版尺子只认反引号,
   //      于是新写的注入代码【压根没被检查】。盲点长在自己身上最危险:尺子说"11 段全过",
   //      而那 11 段里不包括我刚加的两段。转义被吞这件事对单引号字符串是一模一样的。
-  const re = /(?:executeJavaScript\(\s*|(?:const|let|var)\s+[A-Za-z_$][\w$]*_JS\s*=\s*)(['"`])/g
+  //   ④ evalJs(frame, `…`) —— recorder.js 里几乎所有注入都走这个包装(它内部才调 executeJavaScript)。
+  //      只盯 executeJavaScript( 的话,【整个 recorder.js 都在盲区】,而那是注入代码最多的一个文件。
+  const re = /(?:executeJavaScript\(\s*|evalJs\([^,()]*,\s*|(?:const|let|var)\s+[A-Za-z_$][\w$]*_JS\s*=\s*)(['"`])/g
   let m
   while ((m = re.exec(src))) {
     const first = scanString(src, m.index + m[0].length, m[1])

@@ -391,12 +391,46 @@ module.exports = function initRecorder(ctx) {
       // 密码步录制时不存明文:没带运行参数就显式失败(优于静默清空密码框);登录态靠 preState 恢复兜底
       if (ev.secret && !ev.value) return { ok: false, err: 'password 步未提供运行参数(录制未存明文,请把该步设为参数或先在浏览器登录)', secret: true }
       try {
+        const val = String(ev.value == null ? '' : ev.value)
+        // ★两件事必须做,原来一件都没做(2026-08-11 真机:登录框连填三次,每次都报 ✓,值一直是空):
+        //   ① ref/选择器指到的常常是【包裹层】(Element-Plus 的 el-input 是个 div,真正的 input 在里面)。
+        //      往 div 上设 .value 只是挂了个无用的自定义属性,然后照样 return 'OK'。
+        //      里面【只有一个】input/textarea 时直接下潜到它 —— 这是无歧义的,比让模型自己去猜靠谱。
+        //   ② 设完值要【回读】。框架(el-input 的 modelValue 同步)会把 DOM 值冲回去,
+        //      而老代码 dispatch 完就 return 'OK' —— "动作报成功、实际没做到"是最坏的一类回执:
+        //      模型据此往下走,错的地方在三步之外才爆出来。
         const r = await evalJs(fr, `(()=>{var __el=null;if(!(${elExpr}))return 'NF';
-          var v=${JSON.stringify(String(ev.value == null ? '' : ev.value))};
-          if (__el.isContentEditable){__el.focus();__el.innerText=v}
-          else{var p=Object.getOwnPropertyDescriptor(__el.__proto__,'value');p&&p.set?p.set.call(__el,v):(__el.value=v);}
-          __el.dispatchEvent(new Event('input',{bubbles:true}));__el.dispatchEvent(new Event('change',{bubbles:true}));return 'OK';})()`, true)
-        return r === 'OK' ? { ok: true } : { ok: false, err: 'selector(+alt) not found' }
+          var v=${JSON.stringify(val)};
+          if(!__el.isContentEditable){
+            var tg=(__el.tagName||'').toLowerCase();
+            if(tg!=='input'&&tg!=='textarea'&&tg!=='select'){
+              var ins=__el.querySelectorAll?__el.querySelectorAll('input,textarea'):[];
+              if(ins.length===1){__el=ins[0]}
+              else{return 'NOTINPUT|'+tg+'|'+ins.length}
+            }
+          }
+          try{__el.focus()}catch(e){}
+          if (__el.isContentEditable){__el.innerText=v}
+          else{var p=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(__el),'value');p&&p.set?p.set.call(__el,v):(__el.value=v);}
+          __el.dispatchEvent(new Event('input',{bubbles:true}));__el.dispatchEvent(new Event('change',{bubbles:true}));
+          window.__bocom_typed=__el;return 'OK';})()`, true)
+        if (String(r).indexOf('NOTINPUT') === 0) {
+          const bits = String(r).split('|')
+          return { ok: false, err: '这个元素不是输入框(<' + (bits[1] || '?') + '>,里面有 ' + (bits[2] || '0') + ' 个 input)'
+            + ' —— 多半指到了包裹层(Element-Plus 的 el-input 就是个 div)。用 browser_eval 找到里面那个真正的 input 再填' }
+        }
+        if (r !== 'OK') return { ok: false, err: 'selector(+alt) not found' }
+        // 回读:给框架一点时间把值冲回去(有的组件在 updated 钩子里同步),再看框里到底是什么
+        await new Promise((res) => setTimeout(res, 80))
+        const back = await evalJs(fr, `(()=>{var e=window.__bocom_typed;if(!e)return '__GONE__';
+          return String(e.isContentEditable?(e.innerText||''):(e.value==null?'':e.value))})()`, true)
+        // 只在【填了非空、框里却是空】时判失败:组件对值做规整(去空格/格式化)不算失败
+        if (val && String(back || '') === '') {
+          return { ok: false, err: '值没有落进输入框(填了 ' + val.length + ' 个字,回读还是空)'
+            + ' —— 常见于组件把 DOM 值又同步回去了。改用 browser_eval 直接设值并派发事件,'
+            + '或先 click 聚焦这个框、再 type' }
+        }
+        return { ok: true }
       } catch (e) { return { ok: false, err: e.message } }
     }
     if (ev.act === 'select') {
