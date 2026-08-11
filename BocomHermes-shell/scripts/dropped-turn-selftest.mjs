@@ -183,5 +183,53 @@ const MODEL = { providerID: 'opencode', modelID: 'mimo-v2.5-free', name: 'MiMo V
   await close(srv)
 }
 
+// ── ⑤ 多步回合:每一步新建一条 assistant 消息,最新那条永远是刚建的空壳 ────────
+// 【这一格是用户逼出来的,原话:"怎么就自动结束了"】
+// serve 在多步回合里每走一步就新建一条 assistant 消息。到阈值那一刻,最新那条往往刚建出来:
+// 0 token、0 part、没 completed —— 与"冻住"的指纹逐字相同。老判据只看最新那一条,于是
+// 把一个【正在正常干活】的回合掐了。serve 日志实证:13:22:36 step=12 → 13:23:02 step=16
+// 五步都在跑,13:23:03 收到我的 cancel。
+// ①②③ 全绿也没拦住它 —— 那三格造的都是【单条消息】的场景,从没模拟过多步。
+// 判据要看【这一轮在不在动】,不是【最新那条空不空】。
+{
+  let step = 0
+  const hung = []
+  const srv = http.createServer((req, res) => {
+    const send = (o) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)) }
+    if (req.method === 'POST' && /\/message$/.test(req.url)) { hung.push(res); return }
+    if (req.method === 'GET' && /\/message$/.test(req.url)) {
+      step++          // 每次拉取都"又走了一步":前面几条有产出,最新一条是刚建的空壳
+      const msgs = [{ info: { id: 'm0', role: 'user' }, parts: [] }]
+      for (let i = 1; i <= step; i++) {
+        msgs.push({ info: { id: 'msg' + i, role: 'assistant', modelID: 'deepseek-v4-flash',
+          time: { created: Date.now(), completed: Date.now() },
+          tokens: { input: 900, output: 40, reasoning: 0, cache: { read: 0, write: 0 } } },
+        parts: [{ type: 'text', text: '第 ' + i + ' 步' }] })
+      }
+      // ★最新一条:刚建、全 0、无 part、没 completed —— 与冻住指纹一模一样
+      msgs.push({ info: { id: 'msg' + (step + 1), role: 'assistant', modelID: 'deepseek-v4-flash',
+        time: { created: Date.now() }, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } }, parts: [] })
+      return send(msgs)
+    }
+    if (req.method === 'POST' && /\/abort$/.test(req.url)) { srv.aborted = (srv.aborted || 0) + 1; return send({ ok: true }) }
+    send({})
+  })
+  srv.hung = hung
+  const base = await listen(srv)
+  T.modelBlacklist.clear()
+  let err = null, out = null
+  out = await Promise.race([
+    oc.sendMessage({ base, dir: '/proj' }, 'ses_1', '干活', MODEL, [], () => {}).catch((e) => { err = e; return null }),
+    new Promise((r) => setTimeout(() => r('__still_waiting__'), 3000)),   // 阈值 600ms 的 5 倍
+  ])
+  ok('★★多步回合里"最新一条是刚建的空壳" → 绝不许开枪(真机就是这样被掐掉的)',
+    out === '__still_waiting__' && !err, { out: String(out).slice(0, 80), err: err && err.message })
+  ok('  也没有白 abort 一个活着的回合', !srv.aborted, srv.aborted)
+  ok('  更没被误记进模型账(记了的话后续每条都会悄悄不带模型)',
+    !(T.modelBlacklist.get(base) && T.modelBlacklist.get(base).get('mimo-v2.5-free')), [...(T.modelBlacklist.get(base) || new Map()).keys()])
+  T.modelBlacklist.clear()
+  await close(srv)
+}
+
 console.log(fail ? ('\n❌ 静默丢弃自测:' + pass + ' passed, ' + fail + ' failed') : ('\n✅ 静默丢弃自测:全部通过  ' + pass + ' passed, 0 failed'))
 process.exit(fail ? 1 : 0)

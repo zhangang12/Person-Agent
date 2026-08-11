@@ -718,15 +718,45 @@ async function sendMessage(info, sessionId, text, model, files, onNote, opts = {
     // 【为什么阈值这么大】要压过合法的慢首字:实测同一台 serve 上 ling-3.0-tiny-free 收官 36.4s、
     //   deepseek-v4-pro 5.1s、内网慢端点首字曾要 12s。90s 远在其上,而真故障能持续 25 分钟以上 ——
     //   两边都留足余量。只要出现【任何】part 或【任何】非零 token 就立刻停止盯防,不误伤。
+    // ★★判据必须是【这一轮有没有在动】,不是【最新那条消息空不空】(2026-08-11 真机,用户:"怎么就自动结束了")
+    //   serve 在多步回合里【每一步新建一条 assistant 消息】(日志里 messageID 每步都变)。
+    //   到 90 秒那一刻,最新那条往往是刚建出来的:0 token、0 part、没 completed ——
+    //   与"冻住"的指纹一模一样。于是一个正在正常干活的回合被我掐掉了:
+    //   serve 日志实证 13:22:36 step=12 → 13:23:02 step=16 五步都在跑,13:23:03 收到我的 cancel。
+    //   ①②③ 那三格自测全绿也没拦住:它们造的是【单条消息】的场景,从没模拟过"多步、最新一条是空壳"。
+    //   现在改成看【进度签名】:消息条数 / 各条的 parts 数 / token 总量 / 文本总长。
+    //   任何一项变了 = 活着,把停滞计时清零;只有连着 STALL_CONFIRM 毫秒一动不动、
+    //   且最新那条仍符合冻住指纹,才开枪。真死的回合照样抓得到(只是晚 STALL_CONFIRM),
+    //   而正在干活的回合永远不会被误杀。
+    const progressSig = (asst) => {
+      let parts = 0, toks = 0, chars = 0
+      for (const m of asst) {
+        const inf = (m && (m.info || m)) || {}
+        const ps = (m && (m.parts || (m.data && m.data.parts))) || []
+        parts += ps.length
+        for (const p of ps) chars += String((p && p.text) || '').length
+        const t = inf.tokens || {}; const c = t.cache || {}
+        toks += (+t.input || 0) + (+t.output || 0) + (+t.reasoning || 0) + (+c.read || 0) + (+c.write || 0)
+      }
+      const last = asst[asst.length - 1]
+      const lid = String((((last && (last.info || last)) || {}).id) || '')
+      return asst.length + '/' + parts + '/' + toks + '/' + chars + '/' + lid
+    }
+    // 停滞确认窗:至少两拍、且不短于阈值的三分之一 —— 一拍就下结论会被"两次轮询之间恰好没动"骗到
+    const stallConfirmMs = () => Math.max(2 * dropPollMs(), Math.round(DROP_WATCH_MS / 3))
     let dropIv = null
     const dropWatch = new Promise((res) => {
       const t0 = Date.now()
+      let sig = null, lastMove = t0
       dropIv = setInterval(async () => {
         if (Date.now() - t0 < DROP_WATCH_MS) return
         try {
           const raw = await api(info.base, 'GET', `/session/${sessionId}/message`, undefined, 8000)
           const list = Array.isArray(raw) ? raw : (raw && raw.data) || []
           const asst = list.filter((m) => ((m && (m.info || m)) || {}).role === 'assistant')
+          const s2 = progressSig(asst)
+          if (s2 !== sig) { sig = s2; lastMove = Date.now(); return }   // 有动静 = 活着,重新计时
+          if (Date.now() - lastMove < stallConfirmMs()) return          // 还没停够久,再看一拍
           const why = droppedOf(asst[asst.length - 1])
           if (why) { clearInterval(dropIv); dropIv = null; res({ __dropped__: why }) }
         } catch { /* 拉不到就下一拍再看:盯防本身绝不能把正常回合搞崩 */ }
@@ -748,7 +778,7 @@ async function sendMessage(info, sessionId, text, model, files, onNote, opts = {
       if (withModel) {
         // kind='stall':限流是【时段性】的,到期自动作废,别把用户选的模型永久换掉(见 noteModelBlacklist)
         noteModelBlacklist(info.base, model.modelID, 'stall')
-        if (onNote) { try { onNote('模型 ' + (model.name || model.modelID) + ' 收下请求后不出字(' + Math.round(DROP_WATCH_MS / 1000) + 's 内 0 token、无产出、无报错)。'
+        if (onNote) { try { onNote('模型 ' + (model.name || model.modelID) + ' 的回合卡死了(至少 ' + Math.round(DROP_WATCH_MS / 1000) + 's 起不再有任何进展:消息数/产出/token 全都不动,最新一条 0 token、无产出、无报错)。'
           + '实测最常见的真因是【这个模型的额度/限流】—— 上游 1~2 秒就回了 Rate limit,但 serve 收到 stream error 之后不发任何会话事件、不结束回合,所以这边只看得到"一直在思考"。'
           + '要确认就 grep 一下 serve 自己的日志:~/.local/share/opencode/log/opencode.log 里搜 "stream error"。后续 ' + Math.round(BL_TTL.stall / 60000) + ' 分钟内先用默认模型发送,之后自动改回这个模型再试') } catch {} }
       }
