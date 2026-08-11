@@ -1101,6 +1101,35 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   // ★第一版按 760 出图、又让它占满对话区(1500px 宽)—— 等于放大到 2 倍,用户一眼就说"太糊了"。
   // 两件事要分开定:出图分辨率(这里)和显示尺寸(chat.css 的 .shot-frame max-width),
   // 显示尺寸必须 ≤ 出图宽度的一半,否则一定糊。
+  // 【本机有没有能读图的模型】—— 截图回执要据此说实话(2026-08-12 用户问"是不是该结合识图模型")。
+  // 真机实测:这台 serve 12 个模型 input 全空、attachment 全 None,【一个都不能读图】,
+  // 而 settings.modelVision 却存着一个 deepseek-v4-flash —— 一个同样不能读图的模型,纯空架子。
+  // 后果是模型截完图去 read 那个 png,拿回一句「image omitted: could not be resized below the image size limit」,
+  // 白烧一轮,然后改去翻数据库、翻后端源码找答案(真机就是这么走偏的)。
+  // 所以不能让回执继续写"要看就读一遍"——【说不了就说不了】,并把还能用的路(read/eval/html)指出来。
+  let visionCache = { at: 0, ok: false, why: '' }
+  async function visionInfo() {
+    if (Date.now() - visionCache.at < 5 * 60000) return visionCache
+    const mv = S.settings.modelVision
+    let ok = false, why = '本机没有能读图的模型'
+    try {
+      const bases = [...new Set([...S.sessionInfo.values()].map((si) => si && si.serve).filter(Boolean))]
+      const list = bases.length ? await oc.listModels(bases[0]) : []
+      const imgs = (list || []).filter((m) => m && m.image)
+      if (mv && mv.modelID) {
+        const hit = imgs.find((m) => m.modelID === mv.modelID && (!mv.providerID || m.providerID === mv.providerID))
+        if (hit) { ok = true; why = '' }
+        else why = '设置里的读图模型「' + (mv.name || mv.modelID) + '」其实不支持读图'
+          + (imgs.length ? ',本机能读图的是:' + imgs.slice(0, 3).map((m) => m.providerID + '/' + m.modelID).join(' / ') : ',而本机一个能读图的模型都没有')
+      } else if (imgs.length) {
+        why = '还没在设置里选读图模型(本机可用:' + imgs.slice(0, 3).map((m) => m.providerID + '/' + m.modelID).join(' / ') + ')'
+      }
+    } catch (e) { why = '查不到模型清单(' + e.message + ')' }
+    visionCache = { at: Date.now(), ok, why }
+    return visionCache
+  }
+  S.visionInfo = visionInfo
+
   const SHOT_W = 1520
   const shotPaths = new Set()   // 壳层自己产出的截图路径白名单 —— 渲染端只能请求打开这里面的,不许开任意文件
 
@@ -1172,7 +1201,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     try { shell.openPath(fp); return { ok: true } } catch (e) { return { error: e.message } }
   })
 
-  const brAgent = initBrowserAgent({ S, log, brActive, newTab, closeTab, activateTab, createBrowser, ensureBrowserBackground, brScreenshot, brShotTab, execStep, waitNetIdle, pageRead: skillPageRead, brSetDevice, showShot, callerWc })
+  const brAgent = initBrowserAgent({ S, log, brActive, newTab, closeTab, activateTab, createBrowser, ensureBrowserBackground, brScreenshot, brShotTab, execStep, waitNetIdle, pageRead: skillPageRead, brSetDevice, showShot, callerWc, visionInfo })
   // 挂 S:relay(mail.js)在本行【之前】就被 initMail 构造了,而 brAgent 是 const —— 直接传进去会踩 TDZ。
   // 本仓跨层访问的惯例本来就是挂 S(S.setCardBusy / S.dropPendingPerm 同款),relay 调用期再取,顺序天然安全。
   S.brAgent = brAgent

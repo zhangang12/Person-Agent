@@ -48,7 +48,7 @@ function isLocal(u) {
 }
 
 module.exports = function initBrowserAgent(ctx) {
-  const { S, log, brActive, newTab, closeTab, activateTab, createBrowser, ensureBrowserBackground, brScreenshot, brShotTab, execStep, waitNetIdle, pageRead, brSetDevice, showShot, callerWc } = ctx
+  const { S, log, brActive, newTab, closeTab, activateTab, createBrowser, ensureBrowserBackground, brScreenshot, brShotTab, execStep, waitNetIdle, pageRead, brSetDevice, showShot, callerWc, visionInfo } = ctx
 
   const sessions = new Map()   // id → session
 
@@ -420,10 +420,21 @@ module.exports = function initBrowserAgent(ctx) {
       // 谁有能力把图摆出来?壳层。所以由壳层直推进当前对话卡,不经过模型。
       let shown = false
       if (typeof showShot === 'function') { try { shown = !!showShot({ path: p, label, url: curUrl(s), full: !!(a && a.full), wc: s.wc }) } catch (e) { log('[browser-agent] 展示截图失败: ' + e.message) } }
-      return { ok: true, path: p, shownToUser: shown,
-        note: shown
-          ? '这张图已经【直接展示在用户的对话里】了,不用再把路径念给用户、也不用叫用户自己去打开。你自己要"看"内容才需要把它当附件读一遍(读图要用带视觉的模型)。'
-          : '图已存盘但没能摆进对话(当前没有活动对话卡)。要自己看内容就把它当附件读一遍(读图要用带视觉的模型)。' }
+      // ★"你自己能不能看这张图"必须说实话(2026-08-12):本机 12 个模型一个都不能读图,
+      //   而回执以前写着"要看就把它当附件读一遍"—— 模型照做,拿回
+      //   「image omitted: could not be resized below the image size limit」,白烧一轮,
+      //   然后改去翻数据库、翻后端源码。说不了就说不了,并把还能用的路指出来。
+      let vis = { ok: false, why: '' }
+      if (typeof visionInfo === 'function') { try { vis = await visionInfo() } catch {} }
+      const selfSee = vis.ok
+        ? '你自己要"看"内容的话,把这个文件当附件读一遍(本机的读图模型会接手)。'
+        : '★你【看不了】这张图(' + (vis.why || '本机没有能读图的模型') + ')—— 别去 read 这个 png,'
+          + '那只会拿回一句"image omitted"白烧一轮。要确认页面状态请用 browser_read(元素+ref)/'
+          + ' browser_eval(直接查 DOM)/ browser_html(看结构),这三样给的是文字,你读得到。'
+      return { ok: true, path: p, shownToUser: shown, youCanSeeIt: !!vis.ok,
+        note: (shown
+          ? '这张图已经【直接展示在用户的对话里】了,不用再把路径念给用户、也不用叫用户自己去打开。'
+          : '图已存盘但没能摆进对话(当前没有活动对话卡)。') + selfSee }
     } catch (e) { return { error: '截图失败: ' + e.message } }
   }
 

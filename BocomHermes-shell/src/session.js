@@ -1480,7 +1480,14 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
       const mv = S.settings.modelVision
       if (mv && mv.modelID) {
         model = { providerID: mv.providerID, modelID: mv.modelID, name: mv.name }
-        if (!si.wc.isDestroyed()) si.wc.send('card-note', { text: '检测到图片，本条用读图模型「' + (mv.name || mv.modelID) + '」识别', tone: 'muted' })
+        // ★设置里存的"读图模型"未必真能读图(真机:存着 deepseek-v4-flash,而本机 12 个模型一个都不支持)。
+        //   不核一下就路由过去 = 图被静默丢弃,模型对着"没有图"的消息胡答 —— 用户完全看不出发生了什么。
+        let visOk = true
+        try { const v = S.visionInfo ? await S.visionInfo() : null; if (v && !v.ok) visOk = false }
+        catch { /* 查不到就按老行为走,不因为探测失败挡住发送 */ }
+        if (!si.wc.isDestroyed()) si.wc.send('card-note', visOk
+          ? { text: '检测到图片，本条用读图模型「' + (mv.name || mv.modelID) + '」识别', tone: 'muted' }
+          : { text: '⚠ 检测到图片，但设置里的读图模型「' + (mv.name || mv.modelID) + '」其实不支持读图 —— 这张图多半会被丢掉。请在设置里换一个支持图片输入的模型。', tone: 'muted' })
       } else {
         try {
           const models = await oc.listModels(si.serve, {})

@@ -59,6 +59,7 @@ function makeCtx(over = {}) {
       return { ok: true }
     },
     waitNetIdle: async () => {},
+    visionInfo: async () => (over.vision || { ok: false, why: '本机没有能读图的模型' }),
     pageRead: async (tab) => (over.emptyPage
       ? { ok: true, url: tab.page.url, title: '', elements: '', text: '' }
       : { ok: true, url: tab.page.url, title: '标题', elements: 'button 「提交」  → #submit', text: tab.page.text }),
@@ -316,6 +317,32 @@ console.log('用例7.9:打开失败必须报错,不许回 ok —— 用户看到
   ok('★页面打开了但一个元素/几乎一个字都没有 → 给 warning(别让它把空页当"这页就是没东西")',
     !!r2.ok && /没挂载完|不是你以为的那个项目/.test(String(r2.warning || '')), r2.warning)
   ok('  warning 指出下一步是先 eval 看一眼,别急着截图', /browser_eval/.test(String(r2.warning || '')), r2.warning)
+}
+
+console.log('用例7.10:截图回执要说实话 ——「你自己能不能看这张图」')
+{
+  // 【用户 2026-08-12】"只有主模型不会识图,感觉会走很多偏路"。查实:这台 serve 12 个模型
+  // input 全空、attachment 全 None,一个都不能读图;而 settings.modelVision 存着一个同样不能读图的
+  // deepseek-v4-flash —— 空架子。回执以前写着"要看就把它当附件读一遍",模型照做,拿回
+  // 「image omitted: could not be resized below the image size limit」白烧一轮,然后改去翻数据库、
+  // 翻后端源码找答案(真机就是这么走偏的)。说不了就说不了,并且把还能用的路指出来。
+  {
+    const { ba } = makeCtx({ vision: { ok: false, why: '本机没有能读图的模型' } })
+    const r = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '验回执' })
+    const sh = await ba.agentShot({ sessionId: r.sessionId })
+    ok('★★没有读图模型 → 明说"你看不了",不要它去 read 那个 png',
+      sh.youCanSeeIt === false && /看不了/.test(String(sh.note)) && /别去 read/.test(String(sh.note)), sh.note)
+    ok('  并且指出还能用的三条路(read/eval/html 给的是文字)',
+      /browser_read/.test(String(sh.note)) && /browser_eval/.test(String(sh.note)) && /browser_html/.test(String(sh.note)), sh.note)
+    ok('  带上具体原因,便于用户去设置里改', /本机没有能读图的模型/.test(String(sh.note)), sh.note)
+  }
+  {
+    const { ba } = makeCtx({ vision: { ok: true, why: '' } })
+    const r = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '验回执' })
+    const sh = await ba.agentShot({ sessionId: r.sessionId })
+    ok('★配了真能读图的模型 → 才说"读一遍"', sh.youCanSeeIt === true && /当附件读一遍/.test(String(sh.note)), sh.note)
+    ok('  这时不许再说"你看不了"', !/看不了/.test(String(sh.note)), sh.note)
+  }
 }
 
 console.log('用例8:会话生命周期 —— 超时/并发/重复收/取证')
