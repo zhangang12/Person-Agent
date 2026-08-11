@@ -430,15 +430,46 @@ module.exports = function initBrowserAgent(ctx) {
             + ':' + dls.map((d) => d.name + '/' + d.state + '/' + d.bytes + 'B').join('、'))
             : '本会话【一次下载都没发生】—— 点了"导出"但浏览器没收到文件,多半是接口报错或前端没触发下载')
       } else if (kind === 'no_console_error') {
-        const errs = (tab.console || []).filter((e) => e && e.level === 3)
+        // expect = 豁免清单(逗号分隔的片段):反向用例里"页面本该报这个错",不豁免就必然误判
+        const ex = str(expect).split(/[,，]/).map((x) => x.trim()).filter(Boolean)
+        const all = (tab.console || []).filter((e) => e && e.level === 3)
+        const errs = all.filter((e) => !ex.some((x) => str(e.message).indexOf(x) >= 0))
         pass = errs.length === 0
-        actual = errs.length ? errs.length + ' 条控制台错误,首条:' + str(errs[0].message).slice(0, 200) : '无控制台错误'
+        actual = errs.length ? errs.length + ' 条控制台错误,首条:' + str(errs[0].message).slice(0, 200)
+          : (ex.length && all.length ? '无非预期的控制台错误(已豁免 ' + (all.length - errs.length) + ' 条)' : '无控制台错误')
       } else if (kind === 'no_failed_request') {
-        const bad = (tab.net || []).filter((r) => r && (r.state === 'failed' || (r.status >= 400)))
+        // expect = 豁免清单(url 片段 或 状态码):反向用例期望的 400/422 不该算失败
+        const ex = str(expect).split(/[,，]/).map((x) => x.trim()).filter(Boolean)
+        const all = (tab.net || []).filter((r) => r && (r.state === 'failed' || (r.status >= 400)))
+        const bad = all.filter((r) => !ex.some((x) => str(r.url).indexOf(x) >= 0 || String(r.status) === x))
         pass = bad.length === 0
-        actual = bad.length ? bad.length + ' 个失败请求,首个:' + str(bad[0].status || bad[0].failText) + ' ' + str(bad[0].url).slice(0, 160) : '无失败请求'
+        actual = bad.length ? bad.length + ' 个失败请求,首个:' + str(bad[0].status || bad[0].failText) + ' ' + str(bad[0].url).slice(0, 160)
+          : (ex.length && all.length ? '无非预期的失败请求(已豁免 ' + (all.length - bad.length) + ' 个)' : '无失败请求')
+      } else if (kind === 'request_status') {
+        // ★反向用例的核心:断言某个接口【确实】返回了预期状态码。
+        //   "点了提交、页面弹了红字"只能证明前端显示了什么;而"后端确实拒了这条脏数据"要看这个。
+        //   expect 形如 "/api/purchase 400"(最后一段是状态码,前面是 url 片段)。
+        const parts = str(expect).trim().split(/\s+/)
+        const code = parts.length > 1 ? parts.pop() : ''
+        const urlPart = parts.join(' ')
+        if (!code || !/^\d{3}$/.test(code)) return { error: 'request_status 的 expect 形如 "/api/purchase 400"(url 片段 + 空格 + 三位状态码)' }
+        const hits = (tab.net || []).filter((r) => r && (!urlPart || str(r.url).indexOf(urlPart) >= 0))
+        const ok2 = hits.filter((r) => String(r.status) === code)
+        pass = ok2.length > 0
+        actual = ok2.length ? ('命中 ' + ok2.length + ' 条:' + str(ok2[0].status) + ' ' + str(ok2[0].url).slice(0, 160))
+          : (hits.length ? ('匹配 ' + urlPart + ' 的请求有 ' + hits.length + ' 条,状态码是 '
+              + [...new Set(hits.map((r) => String(r.status || r.state)))].join('/') + ',不是 ' + code)
+            : ('本会话【没有】匹配 ' + (urlPart || '(任意)') + ' 的请求 —— 可能前端根本没发出去,或者路径写错了'))
+      } else if (kind === 'no_request') {
+        // ★另一半反向用例:前端就该把它拦住,一个请求都不许发出去(比如必填项为空时点提交)
+        const urlPart = str(expect).trim()
+        if (!urlPart) return { error: 'no_request 的 expect 要给 url 片段(断言这个接口【没有】被调用)' }
+        const hits = (tab.net || []).filter((r) => r && str(r.url).indexOf(urlPart) >= 0)
+        pass = hits.length === 0
+        actual = hits.length ? ('不该发出去却发了 ' + hits.length + ' 条,首个:' + str(hits[0].status) + ' ' + str(hits[0].url).slice(0, 160))
+          : ('没有任何请求打到 ' + urlPart + '(前端拦住了)')
       } else {
-        return { error: '未知断言类型: ' + kind + '(可用 text_present|text_absent|selector_exists|selector_absent|url_matches|no_console_error|no_failed_request)' }
+        return { error: '未知断言类型: ' + kind + '(可用 text_present|text_absent|selector_exists|selector_absent|url_matches|no_console_error|no_failed_request|request_status|no_request|download_ok)' }
       }
     } catch (e) { pass = false; actual = '断言执行出错: ' + e.message }
     s.asserts.push({ label, kind, expect, pass, actual: actual.slice(0, 300), at: nowMs() - s.startedAt })

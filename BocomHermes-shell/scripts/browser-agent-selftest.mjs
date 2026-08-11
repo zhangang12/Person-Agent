@@ -423,6 +423,42 @@ console.log('用例7.13:下载留痕 ——「点了导出」不等于「导出�
   ok('  diag 里能看到下载清单(排查时不用另开工具)', Array.isArray(dg.downloads) && dg.downloads.length === 1, dg.downloads)
 }
 
+console.log('用例7.14:反向用例(故意输错、期望被拦)—— 正例能跑不等于反例能跑')
+{
+  // 【用户 2026-08-12 问"现在是不是完全可以正常跑测试案例了(正反案例,人写的)"】
+  // 查下来正例基本够了,反例会【反着错】:
+  //   一条正确的反向用例(提交空表单 → 期望 400 + 页面提示)会被 no_failed_request 判成失败,
+  //   而 AGENTS.md 还让它每次都验这一条 —— 用例写对了、结论是错的,这比不支持更坏。
+  //   而且"后端到底拒没拒"当时压根没有断言能表达(页面弹红字只能证明前端显示了什么)。
+  const { ba, S } = makeCtx()
+  const r = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '验反向用例' })
+  const t = tabOf(S)
+  t.net = [{ url: 'http://x/api/purchase', status: 400, state: 'complete' }, { url: 'http://x/api/list', status: 200, state: 'complete' }]
+  t.console = [{ level: 3, message: 'POST /api/purchase 400 (Bad Request)' }]
+
+  const a1 = await ba.agentAssert({ sessionId: r.sessionId, kind: 'no_failed_request', label: '无失败请求' })
+  ok('不豁免时:预期内的 400 照旧算失败(老行为不变)', !a1.pass, a1.actual)
+  const a2 = await ba.agentAssert({ sessionId: r.sessionId, kind: 'no_failed_request', expect: '400', label: '除预期外无失败' })
+  ok('★★反例豁免:expect 给状态码/片段后,预期内的失败不再拖垮用例', !!a2.pass && /已豁免/.test(String(a2.actual)), a2.actual)
+  const a3 = await ba.agentAssert({ sessionId: r.sessionId, kind: 'no_console_error', expect: 'Bad Request', label: '除预期外无报错' })
+  ok('  控制台同样能豁免(反例里页面本来就会报这个错)', !!a3.pass && /已豁免/.test(String(a3.actual)), a3.actual)
+
+  const b1 = await ba.agentAssert({ sessionId: r.sessionId, kind: 'request_status', expect: '/api/purchase 400', label: '后端拒了脏数据' })
+  ok('★★request_status:断言后端【确实】返回 400(页面弹红字只能证明前端显示了什么)', !!b1.pass && /400/.test(String(b1.actual)), b1.actual)
+  const b2 = await ba.agentAssert({ sessionId: r.sessionId, kind: 'request_status', expect: '/api/purchase 200', label: '错的期望' })
+  ok('  期望对不上要说清实际是多少', !b2.pass && /状态码是 400/.test(String(b2.actual)), b2.actual)
+  const b3 = await ba.agentAssert({ sessionId: r.sessionId, kind: 'request_status', expect: '/api/nope 400', label: '没这个请求' })
+  ok('  压根没这个请求要单独说(可能前端没发出去/路径写错)', !b3.pass && /没有】匹配/.test(String(b3.actual)), b3.actual)
+  ok('  expect 形状不对要明确拒', /形如/.test(String((await ba.agentAssert({ sessionId: r.sessionId, kind: 'request_status', expect: '/api/x' })).error)))
+
+  const c1 = await ba.agentAssert({ sessionId: r.sessionId, kind: 'no_request', expect: '/api/submit', label: '前端拦住了' })
+  ok('★no_request:断言这个接口【没有】被调用(必填为空时前端就该拦住)', !!c1.pass && /前端拦住了/.test(String(c1.actual)), c1.actual)
+  const c2 = await ba.agentAssert({ sessionId: r.sessionId, kind: 'no_request', expect: '/api/purchase', label: '本不该发' })
+  ok('  真发出去了就要判失败并指出是哪条', !c2.pass && /不该发出去却发了/.test(String(c2.actual)), c2.actual)
+  ok('  缺 expect 明确拒', /要给 url 片段/.test(String((await ba.agentAssert({ sessionId: r.sessionId, kind: 'no_request' })).error)))
+  ok('  未知判据的提示里带上新增的这几种', /request_status/.test(String((await ba.agentAssert({ sessionId: r.sessionId, kind: '瞎写' })).error)))
+}
+
 console.log('用例8:会话生命周期 —— 超时/并发/重复收/取证')
 {
   const { ba, S, calls } = makeCtx()

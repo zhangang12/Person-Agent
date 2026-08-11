@@ -96,6 +96,9 @@ module.exports = function initAgentMd(ctx) {
       // 那是【另一个浏览器】:没有用户的登录态、用户看不见、装一堆依赖、跑完也没有可核对的报告。
       // 内嵌浏览器带真登录态、用户全程能点过去看、每一步进结构化报告。所以写死规矩:先用它,不行再说。
       L.push('- **浏览器自动化只用内嵌的 browser_\* 工具**，不要装/用 playwright、puppeteer、selenium：那是另一个浏览器，没有你现在这份登录态、用户也看不见，跑完还拿不出报告。定位不到元素时用 browser_eval / browser_html 查结构（别猜选择器）；确实做不到再说明原因、征得用户同意后降级。')
+      // ★反向用例要单独说:一条正确的反例(故意输错、期望被拦)如果照正例那套验,
+      // no_failed_request 会把预期内的 400 当失败 —— 用例写对了、结论却是错的,比不支持更坏。
+      L.push('- **反向用例**(故意输错、期望被拦):用 request_status 断言后端【确实】拒了(expect 形如 "/api/purchase 400"),或 no_request 断言前端根本没把请求发出去;同时给 no_failed_request / no_console_error 的 expect 填上豁免片段,否则预期内的报错会把这条正确的用例判成失败。页面弹红字只能证明前端显示了什么,不能证明后端拒了。')
       L.push('- 页面验证步骤：browser_open 打开入口（内嵌浏览器，带登录态、用户看得见）→ browser_assert 验 no_console_error / no_failed_request → 再断一条本次改动的具体预期（text_present 或 selector_exists）→ browser_shot 截图并把图读一遍 → browser_close 出报告。VERDICT 由壳层机判：零断言算 INCONCLUSIVE，不算通过。')
     }
     if (d.eco.includes('java-maven') || d.eco.includes('java-gradle')) {

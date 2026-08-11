@@ -331,10 +331,15 @@ const TOOLS = [
     description: '断言一条可判定的事实,结果进报告。这是"验过了"和"打开看了一眼"的分界线 —— 一条断言都没有的会话判 INCONCLUSIVE,不算通过。'
       + ' no_console_error / no_failed_request 查的是浏览器自己采集的控制台与网络,是"页面看着正常但其实报错了"的唯一抓手,建议每次都验。'
       + ' download_ok:验"导出"真的下下来了(文件落盘且字节数不为 0);expect 可给文件名片段或后缀(如 .xlsx)。'
-      + '点了导出按钮不等于导出成功 —— 这条是那件事唯一的证据。',
+      + '点了导出按钮不等于导出成功 —— 这条是那件事唯一的证据。'
+      + ' ★反向用例(故意输错、期望被拦)专用两条:request_status —— 断言某接口【确实】返回了预期状态码,'
+      + 'expect 形如 "/api/purchase 400"(页面弹红字只能证明前端显示了什么,后端到底拒没拒要看这条);'
+      + 'no_request —— 断言这个接口【没有】被调用(必填为空时前端就该拦住,expect 给 url 片段)。'
+      + ' 反向用例里 no_console_error / no_failed_request 的 expect 是【豁免清单】(逗号分隔的片段或状态码):'
+      + '预期内的报错不豁免就会把一条正确的反向用例判成失败。',
     inputSchema: { type: 'object', properties: {
       sessionId: { type: 'string' },
-      kind: { type: 'string', enum: ['text_present', 'text_absent', 'selector_exists', 'selector_absent', 'url_matches', 'no_console_error', 'no_failed_request', 'download_ok'] },
+      kind: { type: 'string', enum: ['text_present', 'text_absent', 'selector_exists', 'selector_absent', 'url_matches', 'no_console_error', 'no_failed_request', 'request_status', 'no_request', 'download_ok'] },
       expect: { type: 'string', description: '前五种需要:要找的文本/选择器/URL 片段' },
       label: { type: 'string', description: '这条断言在验什么(写进报告,用人话)' },
     }, required: ['sessionId', 'kind'] },
