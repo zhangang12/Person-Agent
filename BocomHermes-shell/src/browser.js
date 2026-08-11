@@ -241,9 +241,34 @@ module.exports = function initBrowser(ctx) {
     } catch(_){}
   })();`
 
+  // ── 下载留痕 ──────────────────────────────────────────────────────────────
+  // 【为什么要有】业务系统满屏"导出"。点完之后 Agent 只知道"点了",不知道下载成没成、
+  // 文件落在哪、多大 —— 于是"导出功能正常"这句话没有任何证据支撑(这正是本仓最反对的那种断言)。
+  // Electron 的 will-download 能把这件事变成事实:文件名/路径/字节数/成功与否,逐条记在标签页上。
+  // 记在【标签页】上而不是全局:Agent 会话只该看见自己那张标签页下载了什么。
+  function wireDownloads(tab) {
+    const wc = tab.view.webContents
+    let ses = null
+    try { ses = wc.session } catch { return }
+    if (!ses || ses.__bhDlWired) return
+    ses.__bhDlWired = true
+    ses.on('will-download', (_e, item, fromWc) => {
+      const t = (S.browser.tabs || []).find((x) => { try { return x.view.webContents === fromWc } catch { return false } })
+      const rec = { name: item.getFilename(), url: String(item.getURL() || '').slice(0, 300), bytes: 0, state: 'progressing', path: '', at: Date.now() }
+      if (t) { t.downloads = t.downloads || []; t.downloads.push(rec); if (t.downloads.length > 50) t.downloads.shift() }
+      item.on('done', (_e2, state) => {
+        rec.state = String(state)
+        try { rec.path = item.getSavePath() || '' } catch {}
+        try { rec.bytes = item.getReceivedBytes() || 0 } catch {}
+        log('[download] ' + rec.name + ' → ' + rec.state + ' ' + rec.bytes + 'B ' + rec.path)
+      })
+    })
+  }
+
   function brWireTab(tab) {
     const wc = tab.view.webContents
     const b = S.browser
+    wireDownloads(tab)
     // 每次 dom-ready 都重注入(防 SPA 内导航后丢失);__bocom_cap_init 防重
     wc.on('dom-ready', () => { wc.executeJavaScript(CAPTURE_JS, true).catch(() => {}) })
     const onNav = () => {

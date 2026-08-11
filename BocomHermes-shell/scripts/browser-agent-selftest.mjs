@@ -21,10 +21,20 @@ function makeCtx(over = {}) {
     const page = { url, text: '', selCount: 0 }
     const wc = {
       isDestroyed: () => false,
+      debugger: { sendCommand: async (m, p2) => {
+        if (m === 'DOM.getDocument') return { root: { nodeId: 1 } }
+        if (m === 'DOM.querySelector') return { nodeId: 7 }
+        if (m === 'DOM.setFileInputFiles') { page.uploaded = (p2 && p2.files) || []; return {} }
+        return {}
+      } },
       getURL: () => page.url,
       getTitle: () => '标题',
       executeJavaScript: async (code) => {
         // agentEval / agentHtml 的返回形状(先判,它们的代码里也含 innerText/querySelectorAll)
+        if (/tagName===.SELECT./.test(code)) return !!page.nativeSelect
+        if (/el-select-dropdown__item/.test(code)) return page.comboOut !== undefined ? page.comboOut : { ok: 1, picked: page.comboPick || '某项' }
+        if (/data-bh-upload/.test(code) && /setAttribute/.test(code)) return page.uploadFind !== undefined ? page.uploadFind : { ok: 1 }
+        if (/data-bh-upload/.test(code)) return page.uploadBack !== undefined ? page.uploadBack : { n: 1, names: ['a.xlsx'] }
         if (/__v=/.test(code)) return page.evalOut !== undefined ? page.evalOut : { v: '"ok"', n: 4, t: 'string' }
         if (/outerHTML/.test(code)) return page.htmlOut !== undefined ? page.htmlOut : { h: '<div class="el-dialog">x</div>', n: 30, tag: 'div', cls: 'el-dialog' }
         if (/innerText/.test(code)) return page.text
@@ -32,7 +42,7 @@ function makeCtx(over = {}) {
         return ''
       },
     }
-    return { id, view: { webContents: wc }, console: [], net: [], page }
+    return { id, view: { webContents: wc }, console: [], net: [], page, dbg: true, downloads: [] }
   }
   const ctx = {
     S, log: () => {},
@@ -343,6 +353,74 @@ console.log('用例7.10:截图回执要说实话 ——「你自己能不能看�
     ok('★配了真能读图的模型 → 才说"读一遍"', sh.youCanSeeIt === true && /当附件读一遍/.test(String(sh.note)), sh.note)
     ok('  这时不许再说"你看不了"', !/看不了/.test(String(sh.note)), sh.note)
   }
+}
+
+console.log('用例7.11:组件库下拉一次做完(el-select 不是原生 select)')
+{
+  const { ba, S } = makeCtx()
+  const r = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '验下拉' })
+  const p = tabOf(S).page
+  p.nativeSelect = false; p.comboPick = '进行中'
+  const r1 = await ba.agentAct({ sessionId: r.sessionId, action: 'select', selector: '.el-select', text: '进行中' })
+  ok('★★非原生下拉:一次调用里点开+按文本选中(原来要 点→read→点 三次往返)',
+    !!r1.ok && r1.picked === '进行中', r1)
+  ok('  不给 text 就明说要什么', /要给 text/.test(String((await ba.agentAct({ sessionId: r.sessionId, action: 'select', selector: '.el-select' })).error)))
+  p.comboOut = { err: '浮层里没有匹配的选项', options: ['待开始', '已完成'] }
+  const r2 = await ba.agentAct({ sessionId: r.sessionId, action: 'select', selector: '.el-select', text: '不存在' })
+  ok('★找不到时把【浮层里实际有哪些项】带回来(比一句"没找到"有用得多,真因常是文案对不上)',
+    /待开始/.test(String(r2.error)) && /已完成/.test(String(r2.error)), r2.error)
+  p.nativeSelect = true; p.comboOut = undefined
+  const r3 = await ba.agentAct({ sessionId: r.sessionId, action: 'select', selector: 'select#s', value: 'a' })
+  ok('  原生 <select> 照旧走原生那条路(不许把老路踩坏)', !!r3.ok && r3.picked === undefined, r3)
+}
+
+console.log('用例7.12:文件上传(业务系统"上传附件"整类流程靠它)')
+{
+  const { ba, S } = makeCtx({ settings: { projectDir: '/tmp' } })
+  const r = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '验上传' })
+  const fs2 = await import('node:fs')
+  const os2 = await import('node:os')
+  const pathm = await import('node:path')
+  const dir = fs2.mkdtempSync(pathm.join(os2.tmpdir(), 'bh-up-'))
+  const good = pathm.join(dir, 'a.xlsx'); fs2.writeFileSync(good, 'x')
+  const { ba: ba2, S: S2 } = makeCtx({ settings: { projectDir: dir } })
+  const r2 = await ba2.agentOpen({ url: 'http://localhost:5199/', purpose: '验上传' })
+  const up = await ba2.agentUpload({ sessionId: r2.sessionId, files: [good], selector: 'input[type=file]' })
+  ok('★★允许目录里的文件能放进去', !!up.ok && tabOf(S2).page.uploaded[0] === fs2.realpathSync(good), up)
+  ok('  回执带文件名', (up.files || []).includes('a.xlsx'), up)
+  ok('  缺 files 明确拒', /files 必填/.test(String((await ba2.agentUpload({ sessionId: r2.sessionId })).error)))
+  ok('  文件不存在明确拒', /不存在/.test(String((await ba2.agentUpload({ sessionId: r2.sessionId, files: ['/nope/x.txt'] })).error)))
+  const bad = await ba2.agentUpload({ sessionId: r2.sessionId, files: ['/etc/hosts'] })
+  ok('★★白名单外的文件坚决拒(浏览器带着用户的登录态,不能拿它把任意本地文件送进业务系统)',
+    /拒绝上传/.test(String(bad.error)) && /登录态/.test(String(bad.error)), bad.error)
+  ok('  并且告诉用户怎么办(拷到允许目录),不是干拒', /拷到/.test(String(bad.error)), bad.error)
+  // 回读:文件没进去要判失败,不许假成功(与 type 同一条教训)
+  tabOf(S2).page.uploadBack = { n: 0, names: [] }
+  const nf = await ba2.agentUpload({ sessionId: r2.sessionId, files: [good] })
+  ok('★放完要回读:文件没进去就判失败(不许"报成功、实际没做到")', !!nf.error && /没有进到输入框/.test(String(nf.error)), nf)
+  try { fs2.rmSync(dir, { recursive: true, force: true }) } catch {}
+  void r; void S
+}
+
+console.log('用例7.13:下载留痕 ——「点了导出」不等于「导出成功」')
+{
+  const { ba, S } = makeCtx()
+  const r = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '验导出' })
+  const t = tabOf(S)
+  const d1 = await ba.agentAssert({ sessionId: r.sessionId, kind: 'download_ok', label: '导出' })
+  ok('★一次下载都没有 → 断言不过,并说清"点了导出但浏览器没收到文件"',
+    !d1.pass && /一次下载都没发生/.test(String(d1.actual)), d1.actual)
+  t.downloads = [{ name: '采购单.xlsx', state: 'completed', bytes: 20480, path: '/tmp/采购单.xlsx', url: 'http://x/export' }]
+  const d2 = await ba.agentAssert({ sessionId: r.sessionId, kind: 'download_ok', expect: '.xlsx', label: '导出' })
+  ok('★★真的落盘且字节非 0 → 过,并把文件名/大小/路径写进报告', !!d2.pass && /20480B/.test(String(d2.actual)) && /\/tmp\//.test(String(d2.actual)), d2.actual)
+  t.downloads = [{ name: 'x.csv', state: 'interrupted', bytes: 0, path: '', url: '' }]
+  const d3 = await ba.agentAssert({ sessionId: r.sessionId, kind: 'download_ok', label: '导出' })
+  ok('  下载中断/0 字节 → 不过(这才是"导出坏了"的样子)', !d3.pass && /interrupted/.test(String(d3.actual)), d3.actual)
+  t.downloads = [{ name: 'other.pdf', state: 'completed', bytes: 99, path: '/tmp/o.pdf', url: '' }]
+  const d4 = await ba.agentAssert({ sessionId: r.sessionId, kind: 'download_ok', expect: '.xlsx', label: '导出' })
+  ok('  文件名对不上也不算过(别拿别的下载冒领)', !d4.pass && /没有匹配/.test(String(d4.actual)), d4.actual)
+  const dg = await ba.agentDiag({ sessionId: r.sessionId })
+  ok('  diag 里能看到下载清单(排查时不用另开工具)', Array.isArray(dg.downloads) && dg.downloads.length === 1, dg.downloads)
 }
 
 console.log('用例8:会话生命周期 —— 超时/并发/重复收/取证')

@@ -291,6 +291,19 @@ const TOOLS = [
     }, required: ['sessionId'] },
   },
   {
+    name: 'browser_upload',
+    description: '给文件输入框放文件(走 CDP,和真人选文件等价,change 事件会正常派发)。'
+      + '★业务系统的"上传附件/导入"整类流程靠它才能端到端验。'
+      + 'ref/selector 指到包裹层也行(el-upload 是个 div,里面唯一那个 file input 会自动认);都不给就找页面上唯一的 file input。'
+      + '安全边界:只允许 下载/桌面/文档/项目目录 里的文件 —— 这个浏览器带着用户的登录态,不能拿它把任意本地文件送进业务系统。'
+      + '放完会回读确认文件真的进去了(没进去会明确报错,不会假成功)。',
+    inputSchema: { type: 'object', properties: {
+      sessionId: { type: 'string' },
+      files: { type: 'array', items: { type: 'string' }, description: '绝对路径数组' },
+      ref: { type: 'string' }, selector: { type: 'string' },
+    }, required: ['sessionId', 'files'] },
+  },
+  {
     name: 'browser_tabs',
     description: '会话内的多标签:list 看有哪些 / open 开一个新页 / switch 切过去 / close 关掉。'
       + '★什么时候用:要【对着两个页面看】的时候 —— 改前改后、列表页与详情页、两个环境同一功能。'
@@ -316,17 +329,22 @@ const TOOLS = [
   {
     name: 'browser_assert',
     description: '断言一条可判定的事实,结果进报告。这是"验过了"和"打开看了一眼"的分界线 —— 一条断言都没有的会话判 INCONCLUSIVE,不算通过。'
-      + ' no_console_error / no_failed_request 查的是浏览器自己采集的控制台与网络,是"页面看着正常但其实报错了"的唯一抓手,建议每次都验。',
+      + ' no_console_error / no_failed_request 查的是浏览器自己采集的控制台与网络,是"页面看着正常但其实报错了"的唯一抓手,建议每次都验。'
+      + ' download_ok:验"导出"真的下下来了(文件落盘且字节数不为 0);expect 可给文件名片段或后缀(如 .xlsx)。'
+      + '点了导出按钮不等于导出成功 —— 这条是那件事唯一的证据。',
     inputSchema: { type: 'object', properties: {
       sessionId: { type: 'string' },
-      kind: { type: 'string', enum: ['text_present', 'text_absent', 'selector_exists', 'selector_absent', 'url_matches', 'no_console_error', 'no_failed_request'] },
+      kind: { type: 'string', enum: ['text_present', 'text_absent', 'selector_exists', 'selector_absent', 'url_matches', 'no_console_error', 'no_failed_request', 'download_ok'] },
       expect: { type: 'string', description: '前五种需要:要找的文本/选择器/URL 片段' },
       label: { type: 'string', description: '这条断言在验什么(写进报告,用人话)' },
     }, required: ['sessionId', 'kind'] },
   },
   {
     name: 'browser_shot',
-    description: '给会话标签页截图,返回 PNG 路径。截完把它当附件读一遍再下结论(带图消息会自动切到读图模型)——'
+    description: '给会话标签页截图。图会【直接摆进用户的对话里】,不用把路径念给用户。'
+      + '回执里的 youCanSeeIt 告诉你自己能不能读这张图:false 就别去 read 那个 png(本机没有能读图的模型,'
+      + '读回来只有一句 image omitted),改用 browser_read / browser_eval / browser_html —— 那三样给的是文字。旧说明:'
+      + '截完把它当附件读一遍再下结论(带图消息会自动切到读图模型)——'
       + '布局崩没崩、内容对不对,只有看图才知道。',
     inputSchema: { type: 'object', properties: { sessionId: { type: 'string' }, full: { type: 'boolean', description: '整页长图(默认只截可视区)' }, label: { type: 'string' } }, required: ['sessionId'] },
   },
@@ -476,6 +494,14 @@ async function callTool(name, args) {
     for (const k of ['preset', 'colorScheme']) if (args[k] != null) body[k] = String(args[k])
     const r = await relayPost('/browser/resize', body)
     return 'ok — ' + JSON.stringify(r.applied || {}) + (r.hint ? '\n' + r.hint : '')
+  }
+  if (name === 'browser_upload') {
+    const body = { sessionId: String(args.sessionId || ''), files: Array.isArray(args.files) ? args.files.map(String) : [] }
+    if (args.ref != null) body.ref = String(args.ref)
+    if (args.selector != null) body.selector = String(args.selector)
+    const r = await relayPost('/browser/upload', body)
+    if (r.error) return r.error
+    return '已放入文件:' + (r.files || []).join('、') + '\n' + (r.note || '')
   }
   if (name === 'browser_eval') {
     const r = await relayPost('/browser/eval', { sessionId: String(args.sessionId || ''), expr: String(args.expr || '') })

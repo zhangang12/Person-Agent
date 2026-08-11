@@ -303,7 +303,26 @@ module.exports = function initBrowserAgent(ctx) {
     let ev = null
     if (action === 'click') ev = { act: 'click', sel, selAlt: [] }
     else if (action === 'type') ev = { act: 'input', sel, selAlt: [], value: str(a.value).slice(0, 500) }
-    else if (action === 'select') ev = { act: 'select', sel, selAlt: [], value: str(a.value).slice(0, 200), text: str(a.text).slice(0, 60) }
+    else if (action === 'select') {
+      // ★组件库的下拉不是原生 <select>(Element-Plus 的 el-select 是 div + 浮层列表),
+      //   原生 select 那条路对它完全无效。真机里模型只能"点触发器 → read → 在浮层里找选项 → 点",
+      //   一个下拉三次往返,而这套表单里下拉极多。
+      //   这里先看它到底是不是原生:是就走原生;不是就在页面里【一次做完】展开+按文本选中,
+      //   省掉那两次往返,也省掉模型自己去猜浮层的 class。
+      const want = str(a.text || a.value).slice(0, 60)
+      const native = await wc.executeJavaScript('(function(){try{var e=document.querySelector('
+        + JSON.stringify(sel) + ');return !!e&&e.tagName===\'SELECT\'}catch(err){return false}})()', true).catch(() => false)
+      if (!native) {
+        if (!want) return { error: 'select 非原生下拉时要给 text(要选的那一项的文字)' }
+        const r2 = await comboSelect(wc, sel, want)
+        step(s, 'select', sel + ' → ' + want, !!r2.ok, r2.err)
+        try { await waitNetIdle(tab, 300, 2500) } catch {}
+        return r2.ok ? { ok: true, url: curUrl(s), picked: r2.picked }
+          : { error: str(r2.err) + ' —— 这是组件库的下拉(不是原生 select)。可以先 browser_act{action:"click"} 点开它,'
+            + '再 browser_read 看浮层里有哪些项,然后按 ref 点。' }
+      }
+      ev = { act: 'select', sel, selAlt: [], value: str(a.value).slice(0, 200), text: str(a.text).slice(0, 60) }
+    }
     else if (action === 'check') ev = { act: 'check', sel, selAlt: [], checked: a.checked !== false }
     else if (action === 'enter') ev = { act: 'key', sel, selAlt: [], key: 'Enter' }
     // ★key:enter 只是它的一个特例。真实页面里 Escape 关弹层、Tab 移焦点、方向键选下拉项都是必需的,
@@ -398,6 +417,18 @@ module.exports = function initBrowserAgent(ctx) {
         const u = curUrl(s)
         pass = u.includes(expect)
         actual = u
+      } else if (kind === 'download_ok') {
+        // ★"导出功能正常"这句话得有证据:文件真的落盘了、字节数不为 0。
+        //   expect 给了就再按文件名匹配(如 .xlsx 或 "采购单")。
+        const dls = downloadsOf(s)
+        const want = str(expect).trim()
+        const hit = dls.filter((d) => d.state === 'completed' && d.bytes > 0 && (!want || String(d.name).indexOf(want) >= 0 || String(d.name).endsWith(want)))
+        pass = hit.length > 0
+        actual = hit.length ? ('已下载 ' + hit.map((d) => d.name + '(' + d.bytes + 'B)').join('、')
+          + ' → ' + (hit[0].path || '(路径未知)'))
+          : (dls.length ? ('本会话有 ' + dls.length + ' 次下载,但' + (want ? '没有匹配「' + want + '」的' : '都没有成功落盘')
+            + ':' + dls.map((d) => d.name + '/' + d.state + '/' + d.bytes + 'B').join('、'))
+            : '本会话【一次下载都没发生】—— 点了"导出"但浏览器没收到文件,多半是接口报错或前端没触发下载')
       } else if (kind === 'no_console_error') {
         const errs = (tab.console || []).filter((e) => e && e.level === 3)
         pass = errs.length === 0
@@ -556,6 +587,118 @@ module.exports = function initBrowserAgent(ctx) {
   // 什么才是问题所在,不是它有没有 200);③ 取某一条的响应体 —— 这一条最关键,"接口通了但返回体不对"
   // 是前端 bug 的大头,只看状态码永远看不见。
   // 【为什么默认值不变】不给参数时行为与老版一致(error + 失败请求),老调用不受影响。
+  // ── 组件库下拉(el-select / ant-select / 任意 role=combobox)────────────────
+  // 【为什么要在页面里一次做完】分成 click → read → click 三个来回的话:
+  //   ① 每一步都要模型自己判断浮层出没出来、选项在哪个 class 里(它猜不准,真机里猜过很多次);
+  //   ② 浮层常常挂在 body 末尾而不是触发器里面,read 的清单里位置很远,ref 也容易指错。
+  // 所以把"点开 → 等浮层 → 按文本找 → 点中"写成一段例程,回执直接告诉它选中了哪一项。
+  // 找不到时把【浮层里实际有哪些项】原样带回来 —— 比一句"没找到"有用得多(常见真因是文案对不上)。
+  const COMBO_OPT_SEL = '.el-select-dropdown__item,.ant-select-item-option,[role=\"option\"],li[role=\"menuitem\"],.el-option'
+  async function comboSelect(wc, sel, want) {
+    try {
+      const r = await wc.executeJavaScript('(function(){return new Promise(function(res){'
+        + 'var trig=null;try{trig=document.querySelector(' + JSON.stringify(sel) + ')}catch(e){return res({err:\'选择器不合法\'})}'
+        + 'if(!trig)return res({err:\'找不到这个下拉\'});'
+        + 'var inner=trig.querySelector&&trig.querySelector(\'input,.el-select__wrapper,.el-input__inner\');'
+        + '(inner||trig).click();'
+        + 'var want=' + JSON.stringify(want) + ';var t0=Date.now();'
+        + 'function pick(){'
+        + 'var opts=[].slice.call(document.querySelectorAll(' + JSON.stringify(COMBO_OPT_SEL) + '))'
+        + '.filter(function(o){var r2=o.getBoundingClientRect();return r2.width||r2.height});'
+        + 'if(opts.length){'
+        + 'var texts=opts.map(function(o){return (o.innerText||o.textContent||\'\').trim()});'
+        + 'var i=texts.indexOf(want);'
+        + 'if(i<0)i=texts.findIndex(function(t){return t&&t.indexOf(want)===0});'
+        + 'if(i<0)i=texts.findIndex(function(t){return t&&t.indexOf(want)>=0});'
+        + 'if(i>=0){opts[i].click();return res({ok:1,picked:texts[i]})}'
+        + 'if(Date.now()-t0>2500)return res({err:\'浮层里没有匹配的选项\',options:texts.slice(0,20)})}'
+        + 'if(Date.now()-t0>2500)return res({err:\'点开之后没等到选项浮层\'});'
+        + 'setTimeout(pick,120)}'
+        + 'setTimeout(pick,120)})})()', true)
+      if (r && r.ok) return { ok: true, picked: str(r.picked) }
+      const opts = arr(r && r.options)
+      return { ok: false, err: str((r && r.err) || '选中失败') + (opts.length ? '(浮层里实际有:' + opts.join(' / ') + ')' : '') }
+    } catch (e) { return { ok: false, err: e.message } }
+  }
+
+  // ── upload(文件上传)────────────────────────────────────────────────────
+  // 【为什么必须有】业务系统到处是"上传附件/导入" —— 没有它,这一整类端到端验证做不了:
+  //   Agent 只能点开文件框然后卡住(sendInputEvent 设不了 file input,JS 也造不出真 File)。
+  //   走 CDP 的 DOM.setFileInputFiles 才是真路子(和真人选文件等价,change 事件也会正常派发)。
+  // ★安全边界:只允许【用户自己目录里】的文件 —— 下载/桌面/文档/项目目录。
+  //   不设这道闸的话,一句"把配置传上去"就能把 ~/.ssh/id_rsa 传进一个业务系统,
+  //   而这个浏览器还带着用户的登录态。与发信附件同一条口径(见 mail.js checkAttachments)。
+  function uploadAllowRoots() {
+    const st = (S.settings || {})
+    const out = []
+    try {
+      const { app } = require('electron')
+      for (const k of ['downloads', 'desktop', 'documents']) { try { out.push(app.getPath(k)) } catch {} }
+    } catch { /* 非 Electron 环境(自测)*/ }
+    if (st.projectDir) out.push(st.projectDir)
+    if (st.backendDir) out.push(st.backendDir)
+    return out.filter(Boolean)
+  }
+  async function agentUpload(a) {
+    const s = live(a && a.sessionId); if (!s) return { error: '会话不存在或已结束(先 browser_open)' }
+    const tab = tabOf(s); if (!tab) return { error: '这个会话的标签页已被关掉' }
+    const f = fenceNow(s); if (!f.ok) { step(s, 'upload', '', false, f.err); return { error: f.err } }
+    const files = arr(a && a.files).map(str).filter(Boolean)
+    if (!files.length) return { error: 'files 必填:要上传的文件绝对路径(数组)' }
+    const path = require('path'); const fs = require('fs')
+    // ★根目录也要 realpath:macOS 的 /var 是指向 /private/var 的软链,文件 realpath 过、根没有,
+    //   就会把【允许目录里的文件】误判成越界(自测第一次就撞上)。用户的项目目录带软链同理。
+    const roots = uploadAllowRoots().map((d) => {
+      try { return fs.realpathSync(d) } catch { return path.resolve(d) }
+    }).map((d) => d + path.sep)
+    const real = []
+    for (const fp of files) {
+      let rp = ''
+      try { rp = fs.realpathSync(path.resolve(fp)) } catch { return { error: '文件不存在:' + fp } }
+      if (roots.length && !roots.some((r) => (rp + path.sep).startsWith(r))) {
+        return { error: '拒绝上传该文件(不在允许目录):' + fp
+          + ' —— 只允许 下载/桌面/文档/项目目录 里的文件。这个浏览器带着用户的登录态,'
+          + '不能拿它把任意本地文件送进业务系统。要传别处的文件,先让用户把它拷到上面任一目录。' }
+      }
+      real.push(rp)
+    }
+    const refRaw = a && a.ref != null ? str(a.ref).trim() : ''
+    const refN = refRaw ? (refRaw.match(/^(?:ref[_-]?)?(\d+)$/i) || [])[1] : ''
+    const selRaw = a && a.selector != null ? str(a.selector).trim() : ''
+    const selRefN = (selRaw.match(/^ref[_-]?(\d+)$/i) || [])[1]
+    let sel = refN ? '[data-bh-ref="' + refN + '"]' : selRefN ? '[data-bh-ref="' + selRefN + '"]' : selRaw
+    if (!sel) sel = 'input[type=file]'      // 不给就找页面上唯一的那个(el-upload 常把它藏起来)
+    const wc = tab.view.webContents
+    // 定位:给的可能是包裹层(el-upload 是个 div,真 input 藏在里面)—— 与 type 同一条口径,下潜到真 input
+    const found = await wc.executeJavaScript('(function(){var e=null;try{e=document.querySelector('
+      + JSON.stringify(sel) + ')}catch(err){return {err:\'选择器不合法\'}}'
+      + 'if(!e)return {err:\'找不到 \'+' + JSON.stringify(sel) + '};'
+      + 'if(e.tagName!==\'INPUT\'||e.type!==\'file\'){var ins=e.querySelectorAll?e.querySelectorAll(\'input[type=file]\'):[];'
+      + 'if(ins.length!==1)return {err:\'这不是文件输入框(<\'+e.tagName.toLowerCase()+\'>,里面有 \'+ins.length+\' 个 file input)\'};'
+      + 'e=ins[0]}'
+      + 'e.setAttribute(\'data-bh-upload\',\'1\');return {ok:1}})()', true).catch((e) => ({ err: e.message }))
+    if (!found || found.err) return { error: str((found && found.err) || '定位失败') }
+    if (!tab.dbg) return { error: '这个标签页没有调试器,发不了文件(CDP 不可用)' }
+    try {
+      const dbg = wc.debugger
+      const doc = await dbg.sendCommand('DOM.getDocument')
+      const q = await dbg.sendCommand('DOM.querySelector', { nodeId: doc.root.nodeId, selector: '[data-bh-upload="1"]' })
+      if (!q || !q.nodeId) return { error: '拿不到文件框的 CDP 节点' }
+      await dbg.sendCommand('DOM.setFileInputFiles', { files: real, nodeId: q.nodeId })
+    } catch (e) { step(s, 'upload', sel, false, e.message); return { error: '上传失败:' + e.message } }
+    // ★回读:设完要确认框里真的有文件(与 type 同一条教训 —— 不回读就是"报成功、实际没做到")
+    const back = await wc.executeJavaScript('(function(){var e=document.querySelector(\'[data-bh-upload="1"]\');'
+      + 'if(!e)return {n:-1};e.removeAttribute(\'data-bh-upload\');'
+      + 'return {n:e.files?e.files.length:0,names:[].slice.call(e.files||[]).map(function(x){return x.name})}})()', true)
+      .catch(() => ({ n: -1 }))
+    const n = +(back && back.n) || 0
+    step(s, 'upload', sel + ' ← ' + real.map((x) => path.basename(x)).join(','), n > 0, n > 0 ? '' : '文件没进输入框')
+    if (n <= 0) return { error: '文件没有进到输入框(回读 files 为空)—— 可能这个组件用的是拖拽区而不是 file input' }
+    try { await waitNetIdle(tab, 300, 4000) } catch {}
+    return { ok: true, url: curUrl(s), files: arr(back && back.names),
+      note: '文件已放进输入框(change 事件已派发)。多数组件此时会自动开始上传;要提交表单的还得再点提交。' }
+  }
+
   // ── eval(仿 CC 的 javascript_tool)──────────────────────────────────────────
   // 【为什么必须有】2026-08-11 真机思考过程里,模型【连着五次】问同一件事:
   //   「内嵌浏览器可执行 JS 吗?工具集里有 headless_eval 但那是 headless。会话组没有 eval。」
@@ -631,6 +774,12 @@ module.exports = function initBrowserAgent(ctx) {
       truncated: (out && out.n > HTML_MAX) ? ('这段 DOM 共 ' + out.n + ' 字,只给了前 ' + HTML_MAX + ' 字 —— 想细看就给 selector/ref 收窄') : '' }
   }
 
+  /** 本会话标签页上发生过的下载(点"导出"之后唯一能拿来当证据的东西) */
+  function downloadsOf(s) {
+    const t = tabOf(s)
+    return arr(t && t.downloads).map((d) => ({ name: d.name, state: d.state, bytes: d.bytes, path: d.path, url: d.url }))
+  }
+
   async function agentDiag(a) {
     const s = live(a && a.sessionId); if (!s) return { error: '会话不存在或已结束' }
     const tab = tabOf(s); if (!tab) return { error: '这个会话的标签页已被关掉' }
@@ -675,6 +824,7 @@ module.exports = function initBrowserAgent(ctx) {
       url: str(r.url).slice(0, 300), mime: r.mime || '', ms: Math.round(r.ms || 0), failText: str(r.failText).slice(0, 200) }))
 
     return { ok: true, url: curUrl(s),
+      downloads: downloadsOf(s),   // 点过"导出"之后,这里是唯一能当证据的东西(文件名/状态/字节数/落盘路径)
       consoleErrors: errs, consoleShown: errs.length, consoleMatched: con.length, consoleTotal: allCon.length,
       consoleWarnCount: allCon.filter((e) => e && e.level === 2).length,
       failedRequests: reqs, requestsShown: reqs.length, requestsMatched: net.length, totalRequests: allNet.length,
@@ -724,5 +874,5 @@ module.exports = function initBrowserAgent(ctx) {
     sessions.clear()
   }
 
-  return { agentOpen, agentRead, agentFind, agentAct, agentEval, agentHtml, agentTabs, agentResize, agentAssert, agentShot, agentDiag, agentClose, anyLive, dropAll, policyCheck, __sessions: sessions }
+  return { agentOpen, agentRead, agentFind, agentAct, agentEval, agentHtml, agentUpload, agentTabs, agentResize, agentAssert, agentShot, agentDiag, agentClose, anyLive, dropAll, policyCheck, __sessions: sessions }
 }
