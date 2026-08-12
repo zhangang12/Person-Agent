@@ -747,9 +747,13 @@ module.exports = function initBrowserAgent(ctx) {
 
     if (fu) ev.fu = fu
     const r = await execStep(wc, ev, tab, { waitMs: 4000 })
-    step(s, action, sel + (action === 'type' ? ' ← ' + str(a.value).slice(0, 40) : ''), !!r.ok, r.err)
+    step(s, action, sel + (action === 'type' ? ' ← ' + str(a.value).slice(0, 40) : '') + (r.how ? ' [' + r.how + ']' : ''), !!r.ok, r.err)
     try { await waitNetIdle(tab, 300, 2500) } catch {}
     loopNote(s, action, sel, ev.value, !!r.ok)
+    if (r.ok && r.how === 'synth') {
+      // 走到降级说明调试器没接上:合成事件 isTrusted 是 false,检查这个的库不认 —— 这状态必须可见
+      s.__synthKey = true
+    }
     if (r.ok) {
       // 只把【会改变页面状态】的动作记进可回放流(scroll/wheel/hover 是辅助动作,回放时不必要)
       if (['click', 'input', 'select', 'check', 'key', 'submit'].includes(ev.act)) {

@@ -464,15 +464,47 @@ module.exports = function initRecorder(ctx) {
       } catch (e) { return { ok: false, err: e.message } }
     }
     if (ev.act === 'key') {
+      // ★2026-08-12 真机把这件事查到底了(探针页面数 document 上的 keydown):
+      //   原来这里发 wc.sendInputEvent —— 而【后台标签页收不到真实输入事件】,计数 0。
+      //   于是这一步什么都没做,却照样 return ok:true。Enter 之所以"看着是好的",
+      //   是靠下面 form.requestSubmit() 兜的 —— 也就是:
+      //   · 元素在 <form> 里 → 表单被提交(不是按键触发的)
+      //   · 不在 form 里(Vue 的 @keyup.enter="search",Element-Plus 搜索框标配)→ 一个字都不触发
+      //   · Escape 关弹窗、方向键选下拉 → 全空转,而工具永远报成功。
+      //   然后我改成 CDP Input.dispatchKeyEvent —— 【也不落地】(计数还是 0,而且不报错)。
+      //   结论:自主会话跑在后台标签页,那里【没有任何真实输入通道】,两条路都到不了那个 widget。
+      //   所以合成事件不是降级,是这个模式下唯一可行的路;CDP 那段留着只会变成
+      //   "报了 cdp 其实没做"的新陷阱,已删。how 照实回报:synth 意味着 isTrusted 是 false,
+      //   检查这个的库不认 —— 那是个该被看见的状态,不许藏。
+      const KMAP = { Enter: [13, 'Enter', '\r'], Tab: [9, 'Tab', ''], Escape: [27, 'Escape', ''],
+        Backspace: [8, 'Backspace', ''], Delete: [46, 'Delete', ''], ArrowUp: [38, 'ArrowUp', ''],
+        ArrowDown: [40, 'ArrowDown', ''], ArrowLeft: [37, 'ArrowLeft', ''], ArrowRight: [39, 'ArrowRight', ''],
+        Home: [36, 'Home', ''], End: [35, 'End', ''], PageUp: [33, 'PageUp', ''], PageDown: [34, 'PageDown', ''], ' ': [32, 'Space', ' '] }
+      const k = String(ev.key || '')
+      const m = KMAP[k] || [k.length === 1 ? k.toUpperCase().charCodeAt(0) : 0, k.length === 1 ? ('Key' + k.toUpperCase()) : k, k.length === 1 ? k : '']
+      // 标签页正显示着(录制回放那条路)→ 真实输入是通的,继续用它,别动一条在用的路。
+      const visible = !!(S.browser && S.browser.shellVisible && tab && S.browser.activeId === tab.id)
       try {
-        // 先在目标 frame 里 focus 元素,再由 webContents 发键(sendInputEvent 打到当前聚焦 frame)
         await evalJs(fr, `(()=>{var __el=null;if(${elExpr})__el.focus();})()`, true)
-        wc.sendInputEvent({ type: 'keyDown', keyCode: ev.key })
-        wc.sendInputEvent({ type: 'keyUp', keyCode: ev.key })
-        if (ev.key === 'Enter') {
-          try { await evalJs(fr, `(()=>{var __el=null;if((${elExpr})&&__el.form){__el.form.requestSubmit?__el.form.requestSubmit():__el.form.submit()}})()`, true) } catch {}
+        if (visible) {
+          wc.sendInputEvent({ type: 'keyDown', keyCode: k })
+          wc.sendInputEvent({ type: 'keyUp', keyCode: k })
+          if (k === 'Enter') {
+            try { await evalJs(fr, `(()=>{var __el=null;if((${elExpr})&&__el.form){__el.form.requestSubmit?__el.form.requestSubmit():__el.form.submit()}})()`, true) } catch {}
+          }
+          return { ok: true, how: 'real' }
         }
-        return { ok: true }
+        // 后台标签页:合成 keydown/keypress/keyup。keydown 没被 preventDefault 且元素在 form 里时,
+        // 才补一次 requestSubmit —— 这是照抄浏览器的原生行为(拦掉了就不该提交)。
+        const r2 = await evalJs(fr, `(()=>{var __el=null;if(!(${elExpr}))return 'NF';`
+          + `var o={key:${JSON.stringify(k)},code:${JSON.stringify(m[1])},keyCode:${m[0]},which:${m[0]},bubbles:true,cancelable:true};`
+          + `var d=__el.dispatchEvent(new KeyboardEvent('keydown',o));`
+          + `if(${JSON.stringify(m[2])})__el.dispatchEvent(new KeyboardEvent('keypress',o));`
+          + `__el.dispatchEvent(new KeyboardEvent('keyup',o));`
+          + `if(${JSON.stringify(k)}==='Enter'&&d&&__el.form){__el.form.requestSubmit?__el.form.requestSubmit():__el.form.submit()}`
+          + `return 'OK';})()`, true)
+        if (r2 !== 'OK') return { ok: false, err: 'selector(+alt) not found' }
+        return { ok: true, how: 'synth' }
       } catch (e) { return { ok: false, err: e.message } }
     }
     if (ev.act === 'submit') {

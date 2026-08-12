@@ -93,7 +93,25 @@ for (const [label, body] of [['可视区', {}], ['整页', { full: true }]]) {
   if (sh.truncated) console.log('    (' + String(sh.truncated).slice(0, 90) + ')')
 }
 
-console.log('\n== ⑤ 上传白名单(Windows 大小写/盘符差异最容易在这翻车)==')
+console.log('\n== ⑤ 键盘事件真的落地了吗(这条在 Mac 上咬过一次)==')
+{
+  // 【为什么单独验这个】自主会话跑在【后台标签页】,而后台视图收不到真实输入事件:
+  // 2026-08-12 实测 wc.sendInputEvent 和 CDP Input.dispatchKeyEvent 【两条都不落地】,
+  // 计数为 0 而工具照报成功。Enter 靠 form.requestSubmit() 蒙对,不在 form 里的
+  // (Vue @keyup.enter="search" 这种)一个字都不触发。改成合成 KeyboardEvent 才通。
+  // 平台差异可能不同,所以这一格要在【你那台机器】上跑一遍。
+  const ins = await post('/browser/eval', { sessionId: S, expr: '(function(){window.__bhk=0;document.addEventListener("keydown",function(){window.__bhk++},true);return "装好了"})()' })
+  if (!ins.ok) note('装不上计数器,跳过这一格:' + ins.error)
+  else {
+    const k1 = await post('/browser/act', { sessionId: S, action: 'enter', selector: 'body' })
+    const k2 = await post('/browser/act', { sessionId: S, action: 'key', selector: 'body', key: 'Escape' })
+    const cnt = await post('/browser/eval', { sessionId: S, expr: 'window.__bhk' })
+    const n = +String(cnt.result || 0) || 0
+    ok('★键盘事件真的到了页面上(计数 ' + n + ',期望 ≥2)—— 报 ok 但计数 0 就是"报成功没做事"', n >= 2, { n, k1: k1.error || 'ok', k2: k2.error || 'ok' })
+  }
+}
+
+console.log('\n== ⑥ 上传白名单(Windows 大小写/盘符差异最容易在这翻车)==')
 {
   const dl = process.platform === 'win32' ? path.join(os.homedir(), 'Downloads') : path.join(os.homedir(), 'Downloads')
   const f = path.join(dl, 'bocom-smoke-' + Date.now() + '.txt')
@@ -109,7 +127,7 @@ console.log('\n== ⑤ 上传白名单(Windows 大小写/盘符差异最容易在
   }
 }
 
-console.log('\n== ⑥ 收会话 ==')
+console.log('\n== ⑦ 收会话 ==')
 const cl = await post('/browser/close', { sessionId: S, status: 'done', note: '平台冒烟' })
 ok('close 出报告(' + cl.__ms + 'ms)', !!cl.ok, cl.error)
 
