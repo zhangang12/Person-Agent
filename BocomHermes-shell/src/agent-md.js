@@ -95,13 +95,6 @@ module.exports = function initAgentMd(ctx) {
       // ★浏览器自动化只走内嵌这一条(2026-08-12 用户提):Agent 惯性会去装 playwright/puppeteer——
       // 那是【另一个浏览器】:没有用户的登录态、用户看不见、装一堆依赖、跑完也没有可核对的报告。
       // 内嵌浏览器带真登录态、用户全程能点过去看、每一步进结构化报告。所以写死规矩:先用它,不行再说。
-      L.push('- **浏览器自动化一律先用内嵌的 browser_\\* 工具**(15 个)。不要用 playwright/puppeteer,也不要用同一个 MCP 里的 headless_\\*：那些都是【另一个浏览器】，没有你现在这份登录态、用户也看不见、跑完拿不出报告；内嵌那套三样全有。确实做不到再说明原因、征得用户同意后降级。')
-      L.push('- 定位不到元素时用 browser_eval / browser_html 查结构，别猜选择器；ref 失效就重新 browser_read。')
-      L.push('- **看不清页面就用 browser_see**：它让【视觉模型】看图再把结果用文字告诉你。你自己多半读不了图，而 read/eval/html 回答不了"这页看起来对不对"(布局错位/样式塌了/弹窗遮住内容)——那些只有看图才知道。看图会看错，涉及具体数值再用 browser_eval 核一次。')
-      L.push('- **跑通了就 browser_save_flow 存进技能库**（close 之前）。试错十几次才跑通的流程，不存下来，下一个会话还得从头试一遍——这是最亏的浪费。存下来别的会话 skill_run 直接回放，还自带选择器自愈。')
-      // ★反向用例要单独说:一条正确的反例(故意输错、期望被拦)如果照正例那套验,
-      // no_failed_request 会把预期内的 400 当失败 —— 用例写对了、结论却是错的,比不支持更坏。
-      L.push('- **反向用例**(故意输错、期望被拦):用 request_status 断言后端【确实】拒了(expect 形如 "/api/purchase 400"),或 no_request 断言前端根本没把请求发出去;同时给 no_failed_request / no_console_error 的 expect 填上豁免片段,否则预期内的报错会把这条正确的用例判成失败。页面弹红字只能证明前端显示了什么,不能证明后端拒了。')
       L.push('- 页面验证步骤：browser_open 打开入口（内嵌浏览器，带登录态、用户看得见）→ browser_assert 验 no_console_error / no_failed_request → 再断一条本次改动的具体预期（text_present 或 selector_exists）→ browser_shot 截图并把图读一遍 → browser_close 出报告。VERDICT 由壳层机判：零断言算 INCONCLUSIVE，不算通过。')
     }
     if (d.eco.includes('java-maven') || d.eco.includes('java-gradle')) {

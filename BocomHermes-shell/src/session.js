@@ -14,6 +14,34 @@ const VERIFY_CMD = /(npm|pnpm|yarn)\s+(run\s+)?(test|build|lint|typecheck|tsc|ch
 // deps 可选项:replaceHistoryId(oldId, newId) —— stale 重开时把旧历史条目原地换 id(保留 created/title/model);
 // 没给就退化为现状(recordHistory 新增条目)。由 window.js 装配层接线。
 module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, recordHistory, touchHistory, replaceHistoryId }) {
+  // ── 工具规程(壳层级,每个会话首条都注入)──────────────────────────────────
+  // ★为什么在这儿而不是写进项目的 AGENTS.md(2026-08-12 用户点出来的设计错误):
+  //   这些规矩跟【项目】一点关系都没有 —— 浏览器工具怎么用、卡住怎么办、反向用例怎么写,
+  //   换个项目一模一样。写进 AGENTS.md 就是:有 N 个项目要写 N 遍,改一条要改 N 遍,
+  //   而且新项目在第一次生成 AGENTS.md 之前完全没有这些规矩。
+  //   AGENTS.md 该留的是【这个项目怎么构建/怎么测/入口在哪】那种真·项目知识。
+  //   我前几轮把 5 条通用规矩塞进了 AGENTS.md,这里把它们收回壳层。
+  // ★注入进首条消息 = 每个项目、每个新会话自动带上,改一处全生效。
+  //   代价是每个会话多几百字 —— 值:它省掉的是"模型上来先用 playwright 试一遍"那种整轮浪费。
+  function loadToolRules() {
+    return '<工具规程>\n'
+      + '· 浏览器自动化【一律先用内嵌的 browser_* 工具】。不要用 playwright/puppeteer,也不要用 headless_*:\n'
+      + '  那些都是另一个浏览器 —— 没有用户当前的登录态、用户看不见、跑完拿不出报告;内嵌那套三样全有。\n'
+      + '  确实做不到再说明原因、征得用户同意后降级。\n'
+      + '· 定位不到元素:用 browser_read 重新拿 ref(页面变过旧 ref 必失效)/ browser_html 看 DOM 结构 /\n'
+      + '  browser_eval 直接查。【不要猜选择器】—— 猜错的代价是点到别的元素上还报成功。\n'
+      + '· 同一个动作失败两次就别试第三次:换手段,或者停手把"试了什么、卡在哪、页面什么样"告诉用户。\n'
+      + '  继续试只是浪费额度,而用户看一眼可能三秒就知道原因。\n'
+      + '· 判断"这页看起来对不对"(布局/样式/图表/弹窗遮挡)用 browser_see:它让视觉模型看图、把结果用文字给你。\n'
+      + '  你自己多半读不了图,而 read/eval/html 是结构性的,回答不了这类问题。涉及具体数值再用 eval 核一次。\n'
+      + '· 流程跑通了,close 之前调 browser_save_flow 存进技能库 —— 别的会话 skill_run 直接回放,\n'
+      + '  不用再试错一遍。密码步不存明文。\n'
+      + '· 反向用例(故意输错、期望被拦):用 request_status 断言后端确实拒了(如 "/api/x 400"),\n'
+      + '  或 no_request 断言前端根本没发出去;同时给 no_failed_request / no_console_error 的 expect 填豁免片段,\n'
+      + '  否则预期内的报错会把一条正确的反例判成失败。页面弹红字只能证明前端显示了什么,不能证明后端拒了。\n'
+      + '</工具规程>\n\n'
+  }
+
   // ── 个人记忆库 ──────────────────────────────────────────────────────────────
   const memoryFile = path.join(require('electron').app.getPath('userData'), 'memory.md')
   // 注入预算:记忆只增不减,不设上限会把每张卡首条消息的基线越垫越高(128k 口径)。超预算保留【最新】一段(相关性新→旧),截断处明示。
@@ -1331,7 +1359,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
       const model1 = replayModel(e.sender.id, ns)
       S.pushServeHealth && S.pushServeHealth(e.sender, serve)
       // C2:知识不在开卡时注入(标题片段命中差),留 KNOWLEDGE_SLOT 占位,首条发送时用完整消息现场命中(见 card-send)
-      const ctx1 = loadMemory() + loadProjectContext(dir) + KNOWLEDGE_SLOT; S.firstMsgCtx.set(ns, ctx1)
+      const ctx1 = loadToolRules() + loadMemory() + loadProjectContext(dir) + KNOWLEDGE_SLOT; S.firstMsgCtx.set(ns, ctx1)
       // R8 stale 历史:旧条目原地换 id(保留 created/title/model);装配层没给 replaceHistoryId 就退化为新增条目
       if (typeof replaceHistoryId === 'function') { try { replaceHistoryId(sid, ns) } catch { recordHistory(ns, wantTitle || (h && h.title), dir) } }
       else recordHistory(ns, wantTitle || (h && h.title), dir)
@@ -1349,7 +1377,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     trackWcSession(e.sender.id, sessionId)
     const model0 = replayModel(e.sender.id, sessionId)
     S.pushServeHealth && S.pushServeHealth(e.sender, serve)
-    const ctx0 = loadMemory() + loadProjectContext(dir) + KNOWLEDGE_SLOT; S.firstMsgCtx.set(sessionId, ctx0)   // C2:知识留占位,发送时懒构建
+    const ctx0 = loadToolRules() + loadMemory() + loadProjectContext(dir) + KNOWLEDGE_SLOT; S.firstMsgCtx.set(sessionId, ctx0)   // C2:知识留占位,发送时懒构建
     if (!(opts && opts.shard)) recordHistory(sessionId, wantTitle, dir)   // 分片/索引棒是内部工人,不进历史(对用户只是一条工作流)
     return { sessionId, project: dir ? path.basename(dir) : '未选目录', dir, model: model0, agent: agent0 || null, reattached: false, running: false, shards: shardSnapshot(e.sender.id) }
     } catch (err) {
@@ -1392,7 +1420,7 @@ desc: 写/改 SQL 与数据访问代码：索引先行、慢 SQL 模式红线、
     // C2:知识留占位发送时懒构建;续聊场景 target = 接力摘要 + 首条消息(seed 存原文,card-send 拼)
     // 注入顺序铁律(KV-cache):稳定块在前(纪律/项目背景/知识/记忆)且字节恒定,动态内容只许追加尾部(接力摘要 carry → 用户消息)——
     // 前缀逐字节稳定 = 缓存命中(Manus 实测缓存 token 成本≈1/10)。新增任何注入物一律插尾部,不许插队。
-    const ctx = loadMemory() + loadProjectContext(dir) + KNOWLEDGE_SLOT + carry; S.firstMsgCtx.set(sessionId, ctx)
+    const ctx = loadToolRules() + loadMemory() + loadProjectContext(dir) + KNOWLEDGE_SLOT + carry; S.firstMsgCtx.set(sessionId, ctx)
     if (carryRaw) knowledgeSeed.set(sessionId, carryRaw)
     if (!(opts && opts.shard)) recordHistory(sessionId, 'BocomHermes 对话', dir)   // 分片/索引棒是内部工人,不进历史(对用户只是一条工作流)
     // 旧 serve 若已无任何会话引用且是自起的 → 退休,不留孤儿进程

@@ -1154,6 +1154,29 @@ console.log('\n用例:浏览器自动化先走内嵌的,不许上来就 playwrig
   }
 }
 
+console.log('\n用例:通用工具规程要在【壳层】注入,不能写进每个项目的 AGENTS.md')
+{
+  // 【用户 2026-08-12】"我的项目非常多。你应该写进壳层……写进项目不是治标不治本吗"
+  // 他是对的,而且这是我的设计错误:浏览器工具怎么用、卡住怎么办、反向用例怎么写 ——
+  // 这些跟项目一点关系都没有。写进 AGENTS.md 就是 N 个项目写 N 遍、改一条改 N 遍,
+  // 而且新项目在第一次生成 AGENTS.md 之前完全没有这些规矩。
+  // 壳层注入进首条消息才是对的:每个项目、每个新会话自动带上,改一处全生效。
+  const h = makeHarness()
+  const { ev } = await openCard(h, 500)
+  await h.handlers['card-send'](ev, { text: '随便问一句' })
+  const sent = String((h.calls.sendMessage[0] || [])[2] || '')
+  ok('★★工具规程进了首条消息(不依赖项目里有没有 AGENTS.md)', /<工具规程>/.test(sent), sent.slice(0, 80))
+  ok('  写死"先用内嵌 browser_*,别用 playwright/headless"', /内嵌的 browser_\*/.test(sent) && /playwright/.test(sent) && /headless_\*/.test(sent))
+  ok('  写死"别猜选择器"', /不要猜选择器/.test(sent))
+  ok('  写死"失败两次就换手段或停手问用户"', /别试第三次/.test(sent) && /告诉用户/.test(sent))
+  ok('  写死 browser_see 和 save_flow 的用法', /browser_see/.test(sent) && /browser_save_flow/.test(sent))
+  ok('  写死反向用例的写法', /request_status/.test(sent) && /no_request/.test(sent))
+  // ★这些规矩【不】依赖项目文件:本用例的临时项目目录里压根没有 AGENTS.md
+  const fs2 = await import('node:fs')
+  ok('★★而且和项目里有没有 AGENTS.md 无关(本用例的项目目录里就没有)',
+    !fs2.existsSync(path.join(PROJ, 'AGENTS.md')), PROJ)
+}
+
   console.log('\n' + (fail ? '❌ 有失败' : '✅ 全部通过') + '  ' + pass + ' passed, ' + fail + ' failed')
   Module._load = origLoad
   global.setInterval = realSetInterval
