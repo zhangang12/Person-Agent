@@ -48,7 +48,7 @@ function isLocal(u) {
 }
 
 module.exports = function initBrowserAgent(ctx) {
-  const { S, log, brActive, newTab, closeTab, activateTab, createBrowser, ensureBrowserBackground, brScreenshot, brShotTab, execStep, waitNetIdle, pageRead, brSetDevice, showShot, callerWc, visionInfo, saveRec, askVision } = ctx
+  const { S, log, brActive, newTab, closeTab, activateTab, createBrowser, ensureBrowserBackground, brScreenshot, brShotTab, execStep, waitNetIdle, pageRead, brSetDevice, showShot, callerWc, visionInfo, saveRec, skillList, askVision } = ctx
 
   const sessions = new Map()   // id → session
 
@@ -127,6 +127,30 @@ module.exports = function initBrowserAgent(ctx) {
     if (!r.ok) return { ok: false, err: '当前页面已跳出围栏(' + originOf(u) + '):' + r.err }
     return { ok: true }
   }
+  // ── 召回:这个站点是不是已经有人(或它自己)跑通过 ────────────────────────────
+  // 【沉淀的价值全在这一半】用户原话:"试错了很多次后跑通了,还是没法在其他会话中复用"。
+  // 只存不召回等于没沉淀 —— 技能库里明明躺着一条现成的,模型也不会主动去 skill_list 翻,
+  // 它会当零起点重新试错一遍。所以【开会话时把匹配结果推到它眼前,放回执第一行】。
+  // 按 host 匹配就够了:同一个系统的路径千变万化,host 是唯一稳定的锚。
+  const hostOf = (u) => { try { return new URL(str(u)).host.toLowerCase() } catch { return '' } }
+  function recallFor(url) {
+    const h = hostOf(url); if (!h) return []
+    let all = []; try { all = skillList ? (skillList() || []) : [] } catch { return [] }
+    return all.filter((k) => hostOf(k.startUrl) === h)
+      .sort((x, y) => (+new Date(y.lastRun || 0) || 0) - (+new Date(x.lastRun || 0) || 0))
+      .slice(0, 3)
+  }
+  function recallNote(url) {
+    const ks = recallFor(url)
+    if (!ks.length) return ''
+    return '★这个站点已经有 ' + ks.length + ' 条沉淀好的流程:\n'
+      + ks.map((k) => '  · ' + k.id + ' 「' + k.name + '」' + k.steps + ' 步'
+        + (k.params && k.params.length ? '(参数:' + k.params.map((x) => x.key).join(',') + ')' : '')
+        + (k.description ? ' —— ' + str(k.description).slice(0, 80) : '')).join('\n')
+      + '\n【先用 skill_run 跑现成的这条】,别从零试错一遍 —— 它已经带选择器自愈,比你现场猜稳。'
+      + '只有确认它办不了你这件事,才自己动手。'
+  }
+
   function step(s, kind, detail, ok, err) {
     if (s.steps.length < MAX_STEPS) s.steps.push({ i: s.steps.length + 1, kind, detail: str(detail).slice(0, 300), ok: !!ok, err: str(err).slice(0, 300), at: nowMs() - s.startedAt })
     return ok
@@ -202,12 +226,13 @@ module.exports = function initBrowserAgent(ctx) {
     const emptyish = !str(snap && snap.elements).trim() && str(snap && snap.text).trim().length < 8
     return {
       ok: true, sessionId: id, expiresInSec: Math.round((s.expiresAt - nowMs()) / 1000),
+      ...(recallNote(url) ? { recall: recallNote(url) } : {}),
       ...(emptyish ? { warning: '页面打开了,但一个可交互元素、几乎一个字都没有 —— 多半是 SPA 还没挂载完,'
         + '或者这个端口上跑的【不是你以为的那个项目】(端口冲突很常见)。'
         + '先 browser_eval 看一眼 document.title / location.href / #app 的内容再往下走,别急着截图。' } : {}),
       url: curUrl(s), title: (snap && snap.title) || '', elements: (snap && snap.elements) || '', text: (snap && String(snap.text || '').slice(0, 3000)) || '',
       note: '标签页已开,用户看得见(在标签条上,点过去就能看)。做完必须调 browser_close 出报告 —— '
-        + '★跑通之后记得 browser_save_flow 把这条流程存进技能库,别的会话就不用再试错一遍了。',
+        + '跑通之后 browser_save_flow 把这条流程存进技能库(收会话的报告里会再提醒一次),别的会话就不用再试错一遍。',
     }
   }
 
@@ -1247,8 +1272,18 @@ module.exports = function initBrowserAgent(ctx) {
   // 本仓已经有一整套录制技能的回放引擎(选择器自愈 selAlt、参数化、skill_run、断点接管),
   // 所以沉淀只要把会话里那条动作流写成同样形状的录制文件,别的会话直接 skill_run 就能跑。
   // 另造一套"Agent 专用流程"是错的:回放里最难的那些(元素找不到怎么自愈、参数怎么填)全要重写一遍。
+  // ★收了会话【还能存】:纯写文件,不需要活标签页。
+  // 之前用 live() 拦,于是"报告里催它沉淀 → 它照着调 → 被自己的工具拒了"—— 催了也白催。
+  // 真实顺序就是先 close 拿报告再想起沉淀,所以这里给一段墓碑期。
+  const SAVE_GRACE_MS = 10 * 60000
   function agentSaveFlow(a) {
-    const s = live(a && a.sessionId); if (!s) return { error: '会话不存在或已结束' }
+    const id0 = str(a && a.sessionId)
+    const s = sessions.get(id0) || live(id0)
+    if (!s) return { error: '会话不存在' }
+    if (s.closed && nowMs() - (s.closedAt || 0) > SAVE_GRACE_MS) {
+      return { error: '这个会话收掉超过 ' + Math.round(SAVE_GRACE_MS / 60000) + ' 分钟了,流程没留住。'
+        + '下次跑通后【先 browser_save_flow 再 browser_close】,或者收完立刻存。' }
+    }
     const name = str(a && a.name).trim()
     if (!name) return { error: 'name 必填:一句话说清这个流程干什么(别人在技能库里就靠它认出来)' }
     const acts = arr(s.flow).filter((e) => e && e.act !== 'navigate')
@@ -1266,7 +1301,8 @@ module.exports = function initBrowserAgent(ctx) {
       params: [],
     }
     try { saveRec(rec) } catch (e) { return { error: '存不下来: ' + e.message } }
-    step(s, 'save_flow', id + ' ' + name, true, '')
+    s.savedFlow = true
+    if (!s.closed) step(s, 'save_flow', id + ' ' + name, true, '')
     log('[browser-agent] 沉淀流程 ' + id + ' 「' + name + '」共 ' + rec.events.length + ' 步')
     return { ok: true, skillId: id, steps: rec.events.length,
       note: '已存进技能库。别的会话里用 skill_run 跑它(skill_list 能看到),不用再从头试一遍。'
@@ -1429,6 +1465,20 @@ module.exports = function initBrowserAgent(ctx) {
       assertPassed: s.asserts.length - failed.length, assertTotal: s.asserts.length,
       failures: [...failed.map((x) => '断言未过:' + x.label + ' —— ' + x.actual), ...stepFail.map((x) => '步骤失败:' + x.kind + ' ' + x.detail + ' —— ' + x.err)].slice(0, 20),
     }
+    // ★沉淀待办:在【报告里点名催】,不是靠开场那句"记得存"。
+    // 开场提的那句,等它把一个流程试通时早被几十屏工具回执埋掉了 —— 真机上一次都没触发过。
+    // 收会话是唯一"这条路刚跑通、还记得怎么走"的时刻,所以催要催在这里,而且要把命令写全能照抄。
+    // 试错次数一起报出来:那是不沉淀的【代价】,下一个会话会把这些试错原样再走一遍。
+    const flowActs = arr(s.flow).filter((e) => e && e.act !== 'navigate').length
+    if (status === 'done' && flowActs >= 2 && !s.savedFlow) {
+      s.result.sediment = '★这条流程有 ' + flowActs + ' 个会改状态的动作'
+        + (stepFail.length ? '、试错 ' + stepFail.length + ' 次才跑通' : '') + ',还没沉淀。\n'
+        + '现在调 browser_save_flow{sessionId:"' + s.id + '",name:"一句话说清它干什么"} 存进技能库'
+        + '(会话收了之后 ' + Math.round(SAVE_GRACE_MS / 60000) + ' 分钟内仍然能存)。\n'
+        + '不存的话,下一个会话会把'
+        + (stepFail.length ? '这 ' + stepFail.length + ' 次试错' : '这些步骤') + '原样再走一遍。'
+    }
+    s.closedAt = nowMs()
     const t = tabOf(s)
     if (t) { try { closeTab(t.id) } catch {} }
     log('[browser-agent] 收会话 ' + s.id + ' → ' + verdict + ' (断言 ' + s.result.assertPassed + '/' + s.result.assertTotal + ', 步骤 ' + s.steps.length + ')')
@@ -1437,7 +1487,11 @@ module.exports = function initBrowserAgent(ctx) {
   function agentClose(a) {
     const s = sessions.get(str(a && a.sessionId))
     if (!s) return { error: '会话不存在' }
-    if (s.closed) return { ok: true, report: s.result, note: '(已经收过了,返回原报告)' }
+    if (s.closed) {
+      // 存过之后再收一次,不许把那条过期的催促原样喂回去 —— 它会照着再存一遍,技能库里多一条重复的。
+      const rep = s.savedFlow && s.result && s.result.sediment ? { ...s.result, sediment: undefined } : s.result
+      return { ok: true, report: rep, note: '(已经收过了,返回原报告)' }
+    }
     const status = str(a && a.status) === 'failed' ? 'failed' : 'done'
     return { ok: true, report: finish(s, status, str(a && a.note)) }
   }

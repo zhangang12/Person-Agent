@@ -577,7 +577,8 @@ async function callTool(name, args) {
   }
   if (name === 'browser_open') {
     const r = await relayPost('/browser/open', { url: String(args.url || ''), purpose: String(args.purpose || '') })
-    return '会话已开: ' + r.sessionId + '(' + r.expiresInSec + 's 内有效)\n当前页: ' + r.url + (r.title ? '(' + r.title + ')' : '')
+    return (r.recall ? r.recall + '\n\n' : '')
+      + '会话已开: ' + r.sessionId + '(' + r.expiresInSec + 's 内有效)\n当前页: ' + r.url + (r.title ? '(' + r.title + ')' : '')
       + '\n' + (r.note || '') + '\n\n可交互元素(→ 后为现成选择器):\n' + (r.elements || '(无)')
       + '\n\n正文节选:\n' + String(r.text || '').slice(0, 2000)
   }
@@ -715,6 +716,7 @@ async function callTool(name, args) {
     if ((rep.failures || []).length) lines.push('未过项:\n' + rep.failures.map((x) => '  · ' + x).join('\n'))
     if ((rep.shots || []).length) lines.push('截图:\n' + rep.shots.map((x) => '  · ' + x).join('\n'))
     if (rep.verdict === 'INCONCLUSIVE') lines.push('注意: 一条断言都没做 —— 这只是"打开看了一眼",不算验证。')
+    if (rep.sediment) lines.push('\n' + rep.sediment)
     return lines.join('\n')
   }
   if (name === 'skill_page_read') {
