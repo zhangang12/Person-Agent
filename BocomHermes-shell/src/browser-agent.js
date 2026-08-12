@@ -492,6 +492,85 @@ module.exports = function initBrowserAgent(ctx) {
       s.flow.push({ act: 'navigate', url: curUrl(s) })   // 沉淀时按"导航到那个地址"回放,比重放历史稳
       return { ok: true, url: curUrl(s) }
     }
+    else if (action === 'drag') {
+      // ★拖拽:排序、拖放上传、滑块、看板拖卡都要它。
+      //   两套机制必须都发 —— 库不同做法完全不同:
+      //   · HTML5 原生 DnD(draggable + dragstart/dragover/drop):要带 DataTransfer,少一个事件就不落地;
+      //   · 鼠标模拟(sortablejs / el-slider / 大部分自研拖拽):认 pointerdown/mousemove/mouseup,
+      //     而且【中间必须有多个 move】—— 只发首尾两个,判"拖动了没有"的阈值过不去,表现是"点了一下没拖动"。
+      //   后台标签收不到真实输入事件(实测),所以全部走合成事件。
+      const toSel = (() => {
+        const tr = a.toRef != null ? str(a.toRef).trim() : ''
+        const trN = tr ? (tr.match(/^(?:ref[_-]?)?(\d+)$/i) || [])[1] : ''
+        if (trN) return '[data-bh-ref="' + trN + '"]'
+        const ts = a.toSelector != null ? str(a.toSelector).trim() : ''
+        const tsN = (ts.match(/^ref[_-]?(\d+)$/i) || [])[1]
+        return tsN ? '[data-bh-ref="' + tsN + '"]' : ts
+      })()
+      const ddx = +a.dx || 0, ddy = +a.dy || 0
+      if (!sel) return { error: 'drag 要给源元素(ref 或 selector)' }
+      if (!toSel && !ddx && !ddy) return { error: 'drag 要给目标:toRef/toSelector(拖到哪个元素上),或者 dx/dy(相对位移,如滑块)' }
+      let r2 = null
+      try {
+        r2 = await wc.executeJavaScript('(function(){'
+          + 'var a1=document.querySelector(' + JSON.stringify(sel) + ');if(!a1)return {err:"找不到源元素"};'
+          + 'var b1=' + (toSel ? 'document.querySelector(' + JSON.stringify(toSel) + ')' : 'null') + ';'
+          + (toSel ? 'if(!b1)return {err:"找不到目标元素"};' : '')
+          + 'function C(e){var r=e.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}}'
+          + 'var p1=C(a1);var p2=b1?C(b1):{x:p1.x+' + ddx + ',y:p1.y+' + ddy + '};'
+          + 'function mk(t,x,y,extra){var o={bubbles:true,cancelable:true,clientX:x,clientY:y,buttons:1};'
+          + 'if(extra)for(var k in extra)o[k]=extra[k];'
+          + 'try{return new MouseEvent(t,o)}catch(e){var ev=document.createEvent("MouseEvent");ev.initMouseEvent(t,true,true,window,0,0,0,x,y,false,false,false,false,0,null);return ev}}'
+          + 'var dt=null;try{dt=new DataTransfer()}catch(e){dt={data:{},setData:function(k,v){this.data[k]=v},getData:function(k){return this.data[k]},items:[],files:[],effectAllowed:"all",dropEffect:"move"}}'
+          + 'function dnd(t,el,x,y){var e2;try{e2=new DragEvent(t,{bubbles:true,cancelable:true,clientX:x,clientY:y,dataTransfer:dt})}catch(err){e2=mk(t,x,y);try{e2.dataTransfer=dt}catch(e3){}}el.dispatchEvent(e2)}'
+          + 'a1.dispatchEvent(mk("pointerdown",p1.x,p1.y));a1.dispatchEvent(mk("mousedown",p1.x,p1.y));'
+          + 'dnd("dragstart",a1,p1.x,p1.y);'
+          // ★中间步:少了它,拖动阈值过不去 —— 表现成"点了一下没拖动"
+          + 'var N=8;for(var i=1;i<=N;i++){var x=p1.x+(p2.x-p1.x)*i/N,y=p1.y+(p2.y-p1.y)*i/N;'
+          + 'document.dispatchEvent(mk("pointermove",x,y));document.dispatchEvent(mk("mousemove",x,y));'
+          + 'var over=document.elementFromPoint(x,y)||(b1||a1);dnd("dragover",over,x,y)}'
+          + 'var tgt=b1||document.elementFromPoint(p2.x,p2.y)||a1;'
+          + 'dnd("drop",tgt,p2.x,p2.y);'
+          + 'tgt.dispatchEvent(mk("pointerup",p2.x,p2.y));tgt.dispatchEvent(mk("mouseup",p2.x,p2.y));'
+          + 'dnd("dragend",a1,p2.x,p2.y);'
+          + 'return {ok:1,from:[Math.round(p1.x),Math.round(p1.y)],to:[Math.round(p2.x),Math.round(p2.y)]}})()', true)
+      } catch (e) { r2 = { err: e.message } }
+      const bad3 = r2 && r2.err
+      step(s, 'drag', sel + ' → ' + (toSel || ('+' + ddx + ',' + ddy)), !bad3, bad3 || '')
+      loopNote(s, action, sel, toSel, !bad3)
+      if (bad3) return { error: bad3 }
+      if (['click', 'input'].length) s.flow.push({ act: 'drag', sel, selAlt: [], toSel, dx: ddx, dy: ddy })
+      try { await waitNetIdle(tab, 300, 2500) } catch {}
+      return { ok: true, url: curUrl(s), from: r2.from, to: r2.to,
+        note: '两套机制都发了(HTML5 DnD + 鼠标模拟,中间带 8 个移动步)。拖完【务必再 browser_read 或 browser_eval 核一下结果】——'
+          + '合成事件能不能被那个库认下来,只有看结果才知道,不能凭"没报错"当成拖成功了。' }
+    }
+    else if (action === 'point') {
+      // ★坐标点击:canvas / 地图 / 图表内部【没有 DOM 元素可选】,只能按坐标点。
+      //   给了 ref/selector 就以它为原点(x/y 是相对偏移),不给就按视口绝对坐标 ——
+      //   相对偏移稳得多:窗口一变,绝对坐标就全错。
+      const px = +a.x || 0, py = +a.y || 0
+      let r2 = null
+      try {
+        r2 = await wc.executeJavaScript('(function(){'
+          + 'var base={x:0,y:0};'
+          + (sel ? 'var e0=document.querySelector(' + JSON.stringify(sel) + ');if(!e0)return {err:"找不到基准元素"};'
+            + 'var r0=e0.getBoundingClientRect();base={x:r0.left,y:r0.top};' : '')
+          + 'var x=base.x+' + px + ',y=base.y+' + py + ';'
+          + 'var el=document.elementFromPoint(x,y);if(!el)return {err:"这个坐标上没有元素(x="+Math.round(x)+" y="+Math.round(y)+",可能超出了视口)"};'
+          + 'function mk(t){var o={bubbles:true,cancelable:true,clientX:x,clientY:y,buttons:1};'
+          + 'try{return new MouseEvent(t,o)}catch(e){var ev=document.createEvent("MouseEvent");ev.initMouseEvent(t,true,true,window,0,0,0,x,y,false,false,false,false,0,null);return ev}}'
+          + '["pointerdown","mousedown","pointerup","mouseup","click"].forEach(function(t){el.dispatchEvent(mk(t))});'
+          + 'return {ok:1,at:[Math.round(x),Math.round(y)],hit:(el.tagName||"").toLowerCase()+(el.className?"."+String(el.className).split(" ")[0]:"")}})()', true)
+      } catch (e) { r2 = { err: e.message } }
+      const bad4 = r2 && r2.err
+      step(s, 'point', (sel ? sel + ' ' : '') + px + ',' + py, !bad4, bad4 || '')
+      loopNote(s, action, sel + ':' + px + ',' + py, '', !bad4)
+      if (bad4) return { error: bad4 }
+      return { ok: true, url: curUrl(s), at: r2.at, hit: r2.hit,
+        note: '点在 ' + r2.hit + ' 上(clientX/clientY 已带上,canvas 的处理器读的就是这两个值)。'
+          + (sel ? '' : '★没给基准元素时用的是视口绝对坐标 —— 窗口一变就全错,能给 ref 就给。') }
+    }
     else if (action === 'dialog') {
       // 预置【下一个】原生弹窗的答案。一次只管一个 —— 不设成常驻是刻意的:
       // "以后所有 confirm 都点确定"这种设置,踩到删除确认时就是灾难。
@@ -1017,6 +1096,51 @@ module.exports = function initBrowserAgent(ctx) {
         + '涉及具体数值/文案的地方最好再用 browser_eval 核一次(看图会看错,查 DOM 不会)。' }
   }
 
+  // ── cookie 细粒度 ────────────────────────────────────────────────────────
+  // 【和 browser_state 的分工】state 是【整份】快照(切身份、测未登录);
+  // 这里是【单条】操作:改一个 token 看后端怎么反应、删一个 cookie 测过期跳登录、
+  // 看一眼 httpOnly 的值(那个 eval 读不到 —— document.cookie 拿不到 httpOnly)。
+  // 反向用例特别需要它:"带一个过期/伪造的 token 请求,期望 401"这类,没有它就没法造场景。
+  async function agentCookie(a) {
+    const s = live(a && a.sessionId); if (!s) return { error: '会话不存在或已结束(先 browser_open)' }
+    const tab = tabOf(s); if (!tab) return { error: '这个会话的标签页已被关掉' }
+    const f = fenceNow(s); if (!f.ok) return { error: f.err }
+    const wc = tab.view.webContents
+    const ses = (() => { try { return wc.session } catch { return null } })()
+    if (!ses) return { error: '拿不到浏览器 session' }
+    const act = str(a && a.action).toLowerCase() || 'list'
+    const url = str(a && a.url) || curUrl(s)
+    const name = str(a && a.name)
+
+    if (act === 'list' || act === 'get') {
+      let cs = []
+      try { cs = await ses.cookies.get(name ? { url, name } : { url }) } catch (e) { return { error: '读失败: ' + e.message } }
+      step(s, 'cookie', act + ' ' + (name || url), true, '')
+      return { ok: true, url,
+        cookies: cs.map((c) => ({ name: c.name, value: str(c.value).slice(0, 200), domain: c.domain, path: c.path,
+          httpOnly: !!c.httpOnly, secure: !!c.secure, expires: c.expirationDate || null })),
+        note: cs.length ? '★httpOnly 的 cookie 只有这条路看得到 —— browser_eval 里的 document.cookie 读不到它们。' : '这个 URL 下没有 cookie。' }
+    }
+    if (act === 'set') {
+      if (!name) return { error: 'set 要给 name' }
+      try {
+        await ses.cookies.set({ url, name, value: str(a && a.value),
+          domain: a && a.domain ? str(a.domain) : undefined, path: a && a.path ? str(a.path) : '/',
+          secure: !!(a && a.secure), httpOnly: !!(a && a.httpOnly),
+          expirationDate: (a && a.expires) ? +a.expires : undefined })
+      } catch (e) { return { error: '写失败: ' + e.message + '(url 与 domain/secure 要自洽:https 的 secure cookie 不能写到 http 的 url 上)' } }
+      step(s, 'cookie', 'set ' + name, true, '')
+      return { ok: true, name, note: '已写入。★页面里已经加载好的请求不会重发 —— 要生效通常得 navigate 一次或重新触发那个请求。' }
+    }
+    if (act === 'delete') {
+      if (!name) return { error: 'delete 要给 name' }
+      try { await ses.cookies.remove(url, name) } catch (e) { return { error: '删失败: ' + e.message } }
+      step(s, 'cookie', 'delete ' + name, true, '')
+      return { ok: true, name, note: '已删除。测"token 过期后是否跳登录"就用这个,然后 navigate 一次。' }
+    }
+    return { error: 'action 只能是 list|get|set|delete' }
+  }
+
   // ── 浏览器状态:存 / 复用 / 清空 ──────────────────────────────────────────
   // 【用户 2026-08-12】"还有 session 复用等浏览器状态保持的工具"。
   // 先说清现状,免得做重复功:cookies 走的是同一个 Electron session,【本来就共享且落盘持久】——
@@ -1324,5 +1448,5 @@ module.exports = function initBrowserAgent(ctx) {
     sessions.clear()
   }
 
-  return { __dialogJs: DIALOG_JS, __armDialogJs: armDialogJs, agentOpen, agentRead, agentFind, agentAct, agentEval, agentHtml, agentUpload, agentSaveFlow, agentSee, agentState, agentTabs, agentResize, agentAssert, agentShot, agentDiag, agentClose, anyLive, dropAll, policyCheck, __sessions: sessions }
+  return { __dialogJs: DIALOG_JS, __armDialogJs: armDialogJs, agentOpen, agentRead, agentFind, agentAct, agentEval, agentHtml, agentUpload, agentSaveFlow, agentSee, agentState, agentCookie, agentTabs, agentResize, agentAssert, agentShot, agentDiag, agentClose, anyLive, dropAll, policyCheck, __sessions: sessions }
 }

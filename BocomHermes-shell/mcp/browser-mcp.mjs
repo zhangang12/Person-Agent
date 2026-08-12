@@ -285,10 +285,16 @@ const TOOLS = [
       + ' back|forward:走浏览器历史(比重新 navigate 稳,不丢页面状态)。'
       + ' ★dialog:给【下一个】原生弹窗预置答案(accept:true=点确定)。业务系统满屏"确认删除吗",'
       + '不预置就默认点【取消】—— 这是刻意的:默认同意一次删除就是事故。弹窗实际问了什么,browser_read 回执里能看到。'
+      + ' ★drag:拖拽(排序/拖放/滑块/看板拖卡)。给 toRef 拖到某元素上,或给 dx/dy 做相对位移。'
+      + 'HTML5 原生 DnD 和鼠标模拟两套机制都会发(库不同做法不同),中间带 8 个移动步 —— '
+      + '只发首尾两个的话拖动阈值过不去,表现成"点了一下没拖动"。拖完务必再读一次核结果:'
+      + '合成事件能不能被那个库认下来,只有看结果才知道。'
+      + ' ★point:按【坐标】点 —— canvas / 地图 / 图表内部没有 DOM 元素可选,只能这样。'
+      + '给 ref/selector 时 x/y 是相对它左上角的偏移(强烈推荐:窗口一变绝对坐标就全错)。'
       + ' hover:发合成鼠标事件(纯 CSS 的下拉菜单也能弹出来),悬停后通常要再 browser_read 一次才看得到浮层。',
     inputSchema: { type: 'object', properties: {
       sessionId: { type: 'string' },
-      action: { type: 'string', enum: ['click', 'type', 'select', 'check', 'enter', 'key', 'scroll', 'wheel', 'hover', 'navigate', 'back', 'forward', 'dialog', 'wait'] },
+      action: { type: 'string', enum: ['click', 'type', 'select', 'check', 'enter', 'key', 'scroll', 'wheel', 'hover', 'navigate', 'back', 'forward', 'dialog', 'drag', 'point', 'wait'] },
       key: { type: 'string', description: 'action=key 时:Enter/Escape/Tab/Backspace/Delete/方向键/Home/End/PageUp/PageDown(输入文字用 type)' },
       direction: { type: 'string', enum: ['up', 'down', 'left', 'right'], description: 'action=scroll 且没给 ref/selector 时:整页往哪滚(默认 down)' },
       amount: { type: 'number', description: 'action=scroll 整页滚多少像素(默认 600)' },
@@ -300,6 +306,12 @@ const TOOLS = [
       until: { type: 'string', enum: ['visible', 'hidden', 'gone'], description: 'wait:等这个元素变成什么状态(要配 ref/selector)。等 loading 消失用 hidden' },
       urlContains: { type: 'string', description: 'wait:等地址栏里出现这段(跳转/登录完成最常用)' },
       accept: { type: 'boolean', description: 'dialog:下一个弹窗点确定(true)还是取消(默认取消)' },
+      toRef: { type: 'string', description: 'drag:拖到这个 ref 上' },
+      toSelector: { type: 'string', description: 'drag:拖到这个选择器上(也接受 "ref_58")' },
+      dx: { type: 'number', description: 'drag:相对位移 X(滑块/拖条用这个,不用目标元素)' },
+      dy: { type: 'number', description: 'drag:相对位移 Y' },
+      x: { type: 'number', description: 'point:X 坐标 —— 给了 ref/selector 就是【相对它左上角】的偏移(推荐),不给才是视口绝对坐标' },
+      y: { type: 'number', description: 'point:Y 坐标' },
     }, required: ['sessionId', 'action'] },
   },
   {
@@ -366,6 +378,23 @@ const TOOLS = [
       question: { type: 'string', description: '想让它看什么(越具体越准),如「表格里第一行的状态是什么」「有没有报错弹窗」' },
       full: { type: 'boolean', description: '看整页(默认只看当前视口)' },
     }, required: ['sessionId'] },
+  },
+  {
+    name: 'browser_cookie',
+    description: '★单条 cookie 的看/改/删(与 browser_state 分工:那个是整份快照切身份,这个是精细操作)。'
+      + ' list|get:看 cookie —— ★httpOnly 的只有这条路看得到,browser_eval 里的 document.cookie 读不到;'
+      + ' set:改一个(造"带过期/伪造 token"的反向用例就靠它);'
+      + ' delete:删一个(测"token 过期后是否跳登录")。'
+      + '改完页面里已加载的请求不会重发,要生效通常得 navigate 一次。',
+    inputSchema: { type: 'object', properties: {
+      sessionId: { type: 'string' },
+      action: { type: 'string', enum: ['list', 'get', 'set', 'delete'] },
+      name: { type: 'string' }, value: { type: 'string' },
+      url: { type: 'string', description: '默认当前页;要操作别的域就给它' },
+      domain: { type: 'string' }, path: { type: 'string' },
+      secure: { type: 'boolean' }, httpOnly: { type: 'boolean' },
+      expires: { type: 'number', description: 'Unix 秒;不给=会话 cookie' },
+    }, required: ['sessionId', 'action'] },
   },
   {
     name: 'browser_state',
@@ -588,6 +617,16 @@ async function callTool(name, args) {
     const r = await relayPost('/browser/upload', body)
     if (r.error) return r.error
     return '已放入文件:' + (r.files || []).join('、') + '\n' + (r.note || '')
+  }
+  if (name === 'browser_cookie') {
+    const body = { sessionId: String(args.sessionId || ''), action: String(args.action || 'list') }
+    for (const k of ['name', 'value', 'url', 'domain', 'path', 'expires']) if (args[k] != null) body[k] = args[k]
+    if (args.secure) body.secure = true
+    if (args.httpOnly) body.httpOnly = true
+    const r = await relayPost('/browser/cookie', body)
+    if (r.error) return r.error
+    if (r.cookies) return (r.cookies.length ? r.cookies.map((c) => c.name + '=' + c.value + (c.httpOnly ? ' [httpOnly]' : '') + (c.secure ? ' [secure]' : '') + ' @' + c.domain + c.path).join('\n') : '(无)') + '\n' + (r.note || '')
+    return (r.name || '') + ' ok\n' + (r.note || '')
   }
   if (name === 'browser_state') {
     const body = { sessionId: String(args.sessionId || ''), action: String(args.action || 'save') }

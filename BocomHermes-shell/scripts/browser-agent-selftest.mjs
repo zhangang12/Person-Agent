@@ -24,7 +24,8 @@ function makeCtx(over = {}) {
       session: {
         cookies: {
           get: async () => (page.cookies || [{ name: 'JSESSIONID', value: 'x', domain: 'localhost', path: '/' }]),
-          set: async () => { page.cookieSet = (page.cookieSet || 0) + 1 },
+          set: async (c) => { page.cookieSet = (page.cookieSet || 0) + 1; page.lastSet = c },
+          remove: async (u, n) => { page.removed = n },
         },
         clearStorageData: async () => { page.cleared = true },
       },
@@ -38,6 +39,8 @@ function makeCtx(over = {}) {
       getTitle: () => '标题',
       executeJavaScript: async (code) => {
         // agentEval / agentHtml 的返回形状(先判,它们的代码里也含 innerText/querySelectorAll)
+        if (/dragstart/.test(code)) { if (!page.dragOk) return { err: '找不到源元素' }; page.dragged = { steps: (code.match(/var N=(\d+)/) || [])[1] }; return { ok: 1, from: [10, 10], to: [50, 60] } }
+        if (/elementFromPoint/.test(code) && /pointerdown/.test(code)) { if (page.noHit) return { err: '这个坐标上没有元素(x=9999 y=9999,可能超出了视口)' }; page.pointed = true; return { ok: 1, at: [30, 40], hit: 'canvas.chart' } }
         if (/getBoundingClientRect/.test(code) && /x:Math\.round/.test(code)) return { x: 10, y: 10 }
         if (/__bocom_dlg/.test(code) && /armed=/.test(code)) { page.armed = JSON.parse((code.match(/armed=(\{[^}]*\})/) || [])[1] || '{}'); return 1 }
         if (/__bocom_dlg/.test(code)) return page.dialogs || []
@@ -715,6 +718,48 @@ console.log('用例7.21:弹窗守卫【真跑一遍】—— 光测"预置机制
     new Function('window', 'return ' + ba.__dialogJs)(win)
     return win.__bocom_dlg.seen.length === n
   })())
+}
+
+console.log('用例7.22:拖拽 / 坐标点击 / cookie 细粒度')
+{
+  const { ba, S } = makeCtx()
+  const r = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '验这三件' })
+  const p = tabOf(S).page
+
+  // ★拖拽:两套机制都发 + 中间要有多个移动步
+  p.dragOk = true
+  const dg = await ba.agentAct({ sessionId: r.sessionId, action: 'drag', selector: '#card1', toSelector: '#col2' })
+  ok('★★拖到目标元素', !!dg.ok && Array.isArray(dg.to), dg)
+  ok('★  中间带多个移动步(只发首尾两个的话拖动阈值过不去,表现成"点了一下没拖动")',
+    +(p.dragged || {}).steps >= 5, p.dragged)
+  ok('  回执要求"拖完再核结果"(合成事件能不能被那个库认下来,只有看结果才知道)',
+    /核一下结果|核结果/.test(String(dg.note)), dg.note)
+  const dg2 = await ba.agentAct({ sessionId: r.sessionId, action: 'drag', selector: '#slider', dx: 120 })
+  ok('  也支持相对位移(滑块/拖条没有目标元素)', !!dg2.ok, dg2)
+  ok('  缺源元素 / 缺目标都明确拒', !!(await ba.agentAct({ sessionId: r.sessionId, action: 'drag' })).error
+    && /要给目标/.test(String((await ba.agentAct({ sessionId: r.sessionId, action: 'drag', selector: '#a' })).error)))
+
+  // ★坐标点击:canvas/地图内部没有 DOM 可选
+  const pt = await ba.agentAct({ sessionId: r.sessionId, action: 'point', selector: '#chart', x: 30, y: 40 })
+  ok('★★按坐标点(canvas/地图内部只能这样)', !!pt.ok && /canvas/.test(String(pt.hit)) && p.pointed === true, pt)
+  ok('  回执说清点在了什么上面(不然它不知道点没点中)', /点在 canvas/.test(String(pt.note)), pt.note)
+  const pt2 = await ba.agentAct({ sessionId: r.sessionId, action: 'point', x: 30, y: 40 })
+  ok('★  不给基准元素时警告"绝对坐标窗口一变就全错"', /绝对坐标/.test(String(pt2.note)), pt2.note)
+  p.noHit = true
+  ok('  坐标上没元素 → 报错并带上坐标', /没有元素/.test(String((await ba.agentAct({ sessionId: r.sessionId, action: 'point', x: 9999, y: 9999 })).error)))
+  p.noHit = false
+
+  // ★cookie 细粒度
+  const cl = await ba.agentCookie({ sessionId: r.sessionId, action: 'list' })
+  ok('★★列 cookie(含 httpOnly)', !!cl.ok && (cl.cookies || []).length >= 1, cl.cookies)
+  ok('★  说明 httpOnly 只有这条路看得到(document.cookie 读不到)', /httpOnly/.test(String(cl.note)) && /document\.cookie/.test(String(cl.note)), cl.note)
+  const cs = await ba.agentCookie({ sessionId: r.sessionId, action: 'set', name: 'token', value: 'bad' })
+  ok('★set 能改(造"带伪造 token"的反向用例就靠它)', !!cs.ok && (p.lastSet || {}).name === 'token', p.lastSet)
+  ok('  提醒改完要 navigate 一次才生效(已加载的请求不会重发)', /navigate/.test(String(cs.note)), cs.note)
+  const cd = await ba.agentCookie({ sessionId: r.sessionId, action: 'delete', name: 'token' })
+  ok('★delete 能删(测"token 过期后是否跳登录")', !!cd.ok && p.removed === 'token')
+  ok('  set/delete 缺 name 明确拒', /要给 name/.test(String((await ba.agentCookie({ sessionId: r.sessionId, action: 'set' })).error)))
+  ok('  未知 action 明确拒', /list\|get\|set\|delete/.test(String((await ba.agentCookie({ sessionId: r.sessionId, action: '瞎写' })).error)))
 }
 
 console.log('用例8:会话生命周期 —— 超时/并发/重复收/取证')
