@@ -164,6 +164,7 @@ module.exports = function initBrowserAgent(ctx) {
       // 只记【成功的、真会改变页面状态的】那几种,形状与录制技能的 events 完全一致 ——
       // 这样存下来就能直接进技能库,复用现成的回放引擎(选择器自愈/参数化/skill_run),不另造一套。
       flow: [{ act: 'navigate', url }],
+      recent: [],   // 最近几次动作的指纹(原地打转检测用,见 loopGuard)
       netFrom: 0, conFrom: 0,   // 只统计本会话开始之后的网络/控制台(标签页是新开的,基线就是 0,留字段是为了将来复用已有标签)
       // ★开会话时就钉住"是哪张对话卡在调我":截图要摆回【那张】卡。
       // 会话能开十分钟,期间别的卡也会忙起来 —— 到截图时再现算就会推给错的人。
@@ -278,6 +279,11 @@ module.exports = function initBrowserAgent(ctx) {
     const tab = tabOf(s); if (!tab) return { error: '这个会话的标签页已被关掉' }
     if (s.steps.length >= MAX_STEPS) return { error: '本会话步数已达上限 ' + MAX_STEPS + ' —— 跑飞了,请 browser_close 收报告' }
     const action = str(a.action)
+    // ★原地打转要拦在执行【之前】—— 拦在之后那 4 秒等待照样白烧,而那正是最贵的部分
+    {
+      const stuck = loopGuard(s, action, a.ref != null ? a.ref : a.selector, a.value)
+      if (stuck) { step(s, action, str(a.selector || a.ref), false, '原地打转已拦下'); return { error: stuck } }
+    }
     // ★ref 优先(仿 CC:read_page 给句柄、后续动作用句柄,模型不用拼选择器也就不会拼错)。
     //   ref 由 skillPageRead 盖在 DOM 上的 data-bh-ref 属性支撑 → 解析成精确唯一选择器。
     //   页面刷新/重渲染后属性就没了:那时 execStep 会找不到元素并报错,而不是【悄悄点到别的元素上】——
@@ -433,6 +439,7 @@ module.exports = function initBrowserAgent(ctx) {
     const r = await execStep(wc, ev, tab, { waitMs: 4000 })
     step(s, action, sel + (action === 'type' ? ' ← ' + str(a.value).slice(0, 40) : ''), !!r.ok, r.err)
     try { await waitNetIdle(tab, 300, 2500) } catch {}
+    loopNote(s, action, sel, ev.value, !!r.ok)
     if (r.ok) {
       // 只把【会改变页面状态】的动作记进可回放流(scroll/wheel/hover 是辅助动作,回放时不必要)
       if (['click', 'input', 'select', 'check', 'key', 'submit'].includes(ev.act)) {
@@ -847,6 +854,43 @@ module.exports = function initBrowserAgent(ctx) {
     try { await waitNetIdle(tab, 300, 4000) } catch {}
     return { ok: true, url: curUrl(s), files: arr(back && back.names),
       note: '文件已放进输入框(change 事件已派发)。多数组件此时会自动开始上传;要提交表单的还得再点提交。' }
+  }
+
+  // ── 原地打转的闸 ──────────────────────────────────────────────────────────
+  // 【为什么必须由壳层来拦】"卡住"在真机里的样子是:同一个动作换着选择器试第 4 次、第 5 次,
+  // 每次白等 4 秒,一直烧到用户看不下去把它掐掉(2026-08-11 实录:连猜 4 个 nth-of-type)。
+  // 模型自己判断不出"我在打转"—— 它每一步都觉得"这次换个写法应该行"。
+  // 判据要机械:同一指纹(动作+目标+值)在最近 8 次里出现 3 次,或者连续 5 次全失败。
+  // 拦下来【不是干拒】:把试过什么原样列出来,并指出还没试过的手段 —— 目的是换路,不是停摆。
+  // LOOP_SAME=2 的含义是【已经试过 2 次就不许试第 3 次】——
+  // 第一版写 3,实际要到第 4 次才拦,白放过一次 4 秒等待。边界要按"给它几次机会"来定,不是按计数器写。
+  const LOOP_SAME = 2, LOOP_WIN = 8, LOOP_FAILS = 5
+  function loopGuard(s, action, sel, value) {
+    const fp = action + '|' + str(sel) + '|' + str(value).slice(0, 40)
+    const rec = arr(s.recent)
+    // ★只数【失败的】重复:重复一个成功的动作是正常的(翻页、切回某个 tab、逐行处理),
+    //   把它算成打转就是误伤 —— 自测里一串各不相同且全成功的动作被拦下,就是这么来的。
+    //   打转的定义是"同一件事试了又没成",不是"同一件事做了多次"。
+    const same = rec.slice(-LOOP_WIN).filter((x) => x.fp === fp && !x.ok).length
+    let tailFails = 0
+    for (let i = rec.length - 1; i >= 0 && !rec[i].ok; i--) tailFails++
+    if (same < LOOP_SAME && tailFails < LOOP_FAILS) return ''
+    const tried = [...new Set(rec.slice(-LOOP_WIN).map((x) => x.fp.split('|').slice(0, 2).join(' ')))].slice(0, 6)
+    const why = same >= LOOP_SAME
+      ? '同一个动作你已经试了 ' + same + ' 次(' + fp.split('|').slice(0, 2).join(' ') + ')'
+      : '最近 ' + tailFails + ' 次动作【全部失败】'
+    return why + ' —— 这是在原地打转,再试一次也是同样结果。已经试过:' + tried.join(' / ')
+      + '。换条路:① browser_read 重新拿 ref(页面变过,旧 ref 必然失效)'
+      + ' ② browser_html 看这块的 DOM 结构(比猜选择器快得多)'
+      + ' ③ browser_eval 直接查或直接改(结果你自己看得见)'
+      + ' ④ browser_see 让视觉模型看一眼(结构对了但"看起来不对"时只有这条路)'
+      + ' ⑤ 都试过还不行就【停手】,把"试了什么、卡在哪一步、页面现在什么样"告诉用户 —— '
+      + '继续烧只是浪费他的额度,而他看一眼可能三秒就知道原因。'
+  }
+  function loopNote(s, action, sel, value, okFlag) {
+    if (!s.recent) s.recent = []
+    s.recent.push({ fp: action + '|' + str(sel) + '|' + str(value).slice(0, 40), ok: !!okFlag })
+    if (s.recent.length > 40) s.recent.shift()
   }
 
   // ── see:看一眼这页(多模态)────────────────────────────────────────────────

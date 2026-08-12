@@ -582,6 +582,46 @@ console.log('用例7.18:多模态 —— 让视觉模型替它看,回来的是�
   }
 }
 
+console.log('用例7.19:原地打转要能自己停 —— 卡住时的应对')
+{
+  // 【真机 2026-08-11 实录】元素找不到时,模型连猜 4 个 .el-dialog .frow:nth-of-type(3) 这种选择器,
+  // 每次白等 4 秒,一直烧到用户把它掐掉。模型自己判断不出"我在打转"——
+  // 它每一步都觉得"这次换个写法应该行"。所以这道闸必须由壳层来落,而且要拦在【执行之前】:
+  // 拦在之后的话那 4 秒等待照样白烧,而那正是最贵的部分。
+  const { ba, calls } = makeCtx({ execFail: true, execErr: 'selector(+alt) not found' })
+  const r = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '验打转' })
+  const same = async () => ba.agentAct({ sessionId: r.sessionId, action: 'click', selector: '#same' })
+  await same(); await same()
+  const before = calls.exec.length
+  const r3 = await same()
+  ok('★★同一个动作试到第 3 次 → 拦下,不再执行', !!r3.error && calls.exec.length === before, { err: String(r3.error).slice(0, 60), exec: calls.exec.length - before })
+  ok('  说清"这是在原地打转,再试也是同样结果"', /原地打转/.test(String(r3.error)), r3.error)
+  ok('★  把【已经试过什么】列出来(不然它不知道自己重复了)', /已经试过/.test(String(r3.error)), r3.error)
+  ok('★★给出还没试过的手段(read/html/eval/see),不是干拒', (() => {
+    const e = String(r3.error)
+    return /browser_read/.test(e) && /browser_html/.test(e) && /browser_eval/.test(e) && /browser_see/.test(e)
+  })(), r3.error)
+  ok('★★最后一条是【停手去问用户】—— 继续烧只是浪费他的额度',
+    /停手/.test(String(r3.error)) && /告诉用户/.test(String(r3.error)), String(r3.error).slice(-90))
+
+  // 连续多次失败(即使每次目标不同)也要拦:那同样是卡住,只是换着花样卡
+  const { ba: ba2 } = makeCtx({ execFail: true, execErr: 'not found' })
+  const r2 = await ba2.agentOpen({ url: 'http://localhost:5199/', purpose: '验连败' })
+  for (let i = 0; i < 5; i++) await ba2.agentAct({ sessionId: r2.sessionId, action: 'click', selector: '#s' + i })
+  const r4 = await ba2.agentAct({ sessionId: r2.sessionId, action: 'click', selector: '#other' })
+  ok('★连续 5 次全失败(每次目标都不同)也拦 —— 换着花样猜同样是卡住',
+    !!r4.error && /全部失败/.test(String(r4.error)), String(r4.error).slice(0, 70))
+
+  // 成功一次就该清零:别把正常流程误伤成"打转"
+  const { ba: ba3 } = makeCtx()
+  const r5 = await ba3.agentOpen({ url: 'http://localhost:5199/', purpose: '验不误伤' })
+  for (let i = 0; i < 10; i++) {
+    const rr = await ba3.agentAct({ sessionId: r5.sessionId, action: 'click', selector: '#a' + (i % 4) })
+    if (rr.error) { ok('★不许误伤正常流程(动作各不相同且都成功)', false, rr.error); break }
+    if (i === 9) ok('★不许误伤正常流程(动作各不相同且都成功)', true)
+  }
+}
+
 console.log('用例8:会话生命周期 —— 超时/并发/重复收/取证')
 {
   const { ba, S, calls } = makeCtx()
