@@ -48,7 +48,7 @@ function isLocal(u) {
 }
 
 module.exports = function initBrowserAgent(ctx) {
-  const { S, log, brActive, newTab, closeTab, activateTab, createBrowser, ensureBrowserBackground, brScreenshot, brShotTab, execStep, waitNetIdle, pageRead, brSetDevice, showShot, callerWc, visionInfo } = ctx
+  const { S, log, brActive, newTab, closeTab, activateTab, createBrowser, ensureBrowserBackground, brScreenshot, brShotTab, execStep, waitNetIdle, pageRead, brSetDevice, showShot, callerWc, visionInfo, saveRec, askVision } = ctx
 
   const sessions = new Map()   // id → session
 
@@ -57,27 +57,31 @@ module.exports = function initBrowserAgent(ctx) {
     return {
       enabled: c.enabled !== false,                                  // 缺省开(只放行本机,已经足够安全)
       origins: Array.isArray(c.origins) ? c.origins.map(str) : [],   // 用户显式加白的站点(整串 origin,如 https://uat.example.com)
+      fence: ['off', 'local', 'list'].includes(str(c.fence)) ? str(c.fence) : 'off',   // 缺省不限(2026-08-12 用户拍板)
       minutes: Math.min(Math.max(+c.minutes || DEFAULT_MINUTES, 1), MAX_MINUTES),
     }
   }
 
-  /** 这个 URL 允许 Agent 自主操作吗?返回 {ok} 或 {ok:false, err:'…(带开通指引)'} */
+  /** 这个 URL 允许 Agent 自主操作吗?返回 {ok} 或 {ok:false, err:'…(带开通指引)'}
+   *  ★围栏模式(2026-08-12 用户拍板"现在什么网站都应该可以访问"):
+   *    settings.browserAgent.fence = 'off'(缺省,放行任意 http/https)| 'local'(只本机)| 'list'(只白名单)
+   *    放开之后仍然保留两件事:① 只允许 http/https(file:/data: 永远不放行,那是读本地文件的口子)
+   *    ② 每一次跨出本机的访问都【留痕】—— 权限可以放宽,痕迹不能少,否则出事时查不回来。 */
   function policyCheck(url) {
     const c = cfg()
     if (!c.enabled) return { ok: false, err: 'Agent 自主浏览器已被关闭(设置 → 浏览器 → Agent 自主会话)。仍可用录制技能回放。' }
     const o = originOf(url)
     if (!o) return { ok: false, err: '无法解析 URL 的 origin: ' + str(url).slice(0, 120) }
-    if (!/^https?:$/.test(o.split('//')[0] + ':')) { /* 下面统一按 protocol 判 */ }
     let proto = ''
     try { proto = new URL(url).protocol } catch {}
-    if (proto !== 'http:' && proto !== 'https:') return { ok: false, err: '只允许 http/https,拒绝: ' + proto }
+    if (proto !== 'http:' && proto !== 'https:') return { ok: false, err: '只允许 http/https,拒绝: ' + proto + '(file:/data: 这类是读本地文件的口子,任何模式下都不放行)' }
     if (isLocal(url)) return { ok: true }
+    if (c.fence === 'off') { log('[browser-agent] 访问外部站点(围栏已放开):' + o); return { ok: true } }
     if (c.origins.includes(o)) return { ok: true }
-    return {
-      ok: false,
-      err: '越出围栏:' + o + ' 不在允许清单里。默认只放行本机(localhost/127.0.0.1)—— 内嵌浏览器带着你的内网登录态,'
-        + '让 Agent 在真业务系统上自由点击风险太大。要放行请在 设置 → 浏览器 → Agent 自主会话 → 允许的站点 里加上「' + o + '」。',
+    if (c.fence === 'local') {
+      return { ok: false, err: '围栏当前是【只本机】:' + o + ' 不放行。要放开请在 设置 → 浏览器 → Agent 自主会话 里把围栏改成"不限",或把这个站点加进允许清单。' }
     }
+    return { ok: false, err: '围栏当前是【白名单】:' + o + ' 不在清单里。要放行请在 设置 → 浏览器 → Agent 自主会话 → 允许的站点 里加上「' + o + '」(或把围栏改成"不限")。' }
   }
 
   // ★时间盒改成【滑动的】(2026-08-12 真机最贵的一处):原来从 open 那一刻起固定 N 分钟,
@@ -155,6 +159,11 @@ module.exports = function initBrowserAgent(ctx) {
       id, purpose, tabId: tab.id, tabIds: [tab.id],   // tabId=活动标签(其余代码照旧只认它);tabIds=本会话拥有的全部
       startedAt: nowMs(), expiresAt: nowMs() + c.minutes * 60000, hardExpiresAt: nowMs() + HARD_CAP_MS,
       steps: [], asserts: [], shots: [], closed: false, result: null,
+      // ★可回放的动作流(2026-08-12 用户:"试错很多次跑通了,却没法在别的会话复用")。
+      // steps 是给人看的流水(带失败、带 read/shot 这些不可回放的动作),flow 是给机器回放的:
+      // 只记【成功的、真会改变页面状态的】那几种,形状与录制技能的 events 完全一致 ——
+      // 这样存下来就能直接进技能库,复用现成的回放引擎(选择器自愈/参数化/skill_run),不另造一套。
+      flow: [{ act: 'navigate', url }],
       netFrom: 0, conFrom: 0,   // 只统计本会话开始之后的网络/控制台(标签页是新开的,基线就是 0,留字段是为了将来复用已有标签)
       // ★开会话时就钉住"是哪张对话卡在调我":截图要摆回【那张】卡。
       // 会话能开十分钟,期间别的卡也会忙起来 —— 到截图时再现算就会推给错的人。
@@ -195,7 +204,8 @@ module.exports = function initBrowserAgent(ctx) {
         + '或者这个端口上跑的【不是你以为的那个项目】(端口冲突很常见)。'
         + '先 browser_eval 看一眼 document.title / location.href / #app 的内容再往下走,别急着截图。' } : {}),
       url: curUrl(s), title: (snap && snap.title) || '', elements: (snap && snap.elements) || '', text: (snap && String(snap.text || '').slice(0, 3000)) || '',
-      note: '标签页已开,用户看得见。围栏:' + (isLocal(url) ? '本机' : originOf(url)) + '。做完必须调 browser_close 出报告。',
+      note: '标签页已开,用户看得见(在标签条上,点过去就能看)。做完必须调 browser_close 出报告 —— '
+        + '★跑通之后记得 browser_save_flow 把这条流程存进技能库,别的会话就不用再试错一遍了。',
     }
   }
 
@@ -293,6 +303,7 @@ module.exports = function initBrowserAgent(ctx) {
       if (!pol.ok) { step(s, 'navigate', target, false, pol.err); return { error: pol.err } }
       const r = await execStep(wc, { act: 'navigate', url: target }, tab, { waitMs: 8000 })
       step(s, 'navigate', target, !!r.ok, r.err)
+      if (r.ok) s.flow.push({ act: 'navigate', url: target })
       try { await waitNetIdle(tab, 300, 4000) } catch {}
       return r.ok ? { ok: true, url: curUrl(s) } : { error: r.err || '导航失败' }
     }
@@ -422,7 +433,20 @@ module.exports = function initBrowserAgent(ctx) {
     const r = await execStep(wc, ev, tab, { waitMs: 4000 })
     step(s, action, sel + (action === 'type' ? ' ← ' + str(a.value).slice(0, 40) : ''), !!r.ok, r.err)
     try { await waitNetIdle(tab, 300, 2500) } catch {}
-    if (r.ok) return { ok: true, url: curUrl(s) }
+    if (r.ok) {
+      // 只把【会改变页面状态】的动作记进可回放流(scroll/wheel/hover 是辅助动作,回放时不必要)
+      if (['click', 'input', 'select', 'check', 'key', 'submit'].includes(ev.act)) {
+        const keep = { act: ev.act, sel: ev.sel, selAlt: [] }
+        if (ev.value != null) keep.value = ev.value
+        if (ev.text) keep.text = ev.text
+        if (ev.key) keep.key = ev.key
+        if (ev.checked != null) keep.checked = ev.checked
+        // 密码不落明文(与录制同一条口径):标 secret,回放时要求现场提供
+        if (/password/i.test(str(ev.sel)) || /密码/.test(str(ev.sel))) { keep.secret = true; delete keep.value }
+        s.flow.push(keep)
+      }
+      return { ok: true, url: curUrl(s) }
+    }
     // ★"找不到元素"的回执必须【指出下一步】。真机 2026-08-11:回执只有一句
     //   「selector(+alt) not found (waited 4000ms)」,模型于是接着猜 —— 连猜 4 个
     //   .el-dialog .frow:nth-of-type(3) .el-form 这种选择器,每次白等 4 秒,最后被用户掐掉。
@@ -825,6 +849,61 @@ module.exports = function initBrowserAgent(ctx) {
       note: '文件已放进输入框(change 事件已派发)。多数组件此时会自动开始上传;要提交表单的还得再点提交。' }
   }
 
+  // ── see:看一眼这页(多模态)────────────────────────────────────────────────
+  // 【用户 2026-08-12】"要学会用多模态模型解决问题。这个要教会 Agent。"
+  // 教法不是"劝主模型去读图"—— 本机主模型根本不支持图片输入,劝它只会白烧一轮。
+  // 正确的做法:截图 → 壳层拿去问【视觉模型】→ 把答案当【文字】还给主模型。
+  // 于是"看得见"和"想得清"由两个模型分工,主模型不需要自己有视觉能力。
+  // 什么时候该用它:read/eval/html 都是结构性的,回答不了"这页看起来对不对"——
+  // 布局错位、样式塌了、图表画歪了、弹窗遮住了内容,这些只有看图才知道。
+  async function agentSee(a) {
+    const s = live(a && a.sessionId); if (!s) return { error: '会话不存在或已结束(先 browser_open)' }
+    const tab = tabOf(s); if (!tab) return { error: '这个会话的标签页已被关掉' }
+    if (typeof askVision !== 'function') return { error: '本机没装读图通道' }
+    const rr = await brShotTab(tab, !!(a && a.full))
+    const p = typeof rr === 'string' ? rr : (rr && rr.path)
+    if (!p) return { error: '截图失败,没法看' }
+    const q = str(a && a.question)
+    const r = await askVision(p, q)
+    step(s, 'see', q.slice(0, 80) || '(看一眼)', !r.error, r.error || '')
+    if (r.error) return { error: r.error }
+    return { ok: true, url: curUrl(s), model: r.model, answer: r.answer, shot: p,
+      note: '这是【视觉模型】看图之后的文字描述 —— 你自己没读到图。要按它下判断的话,'
+        + '涉及具体数值/文案的地方最好再用 browser_eval 核一次(看图会看错,查 DOM 不会)。' }
+  }
+
+  // ── 把跑通的流程沉淀成技能 ────────────────────────────────────────────────
+  // 【用户 2026-08-12】"试错了很多次跑通了,还是没法在其他会话中复用。要提供流程自主沉淀的能力。"
+  // 这件事的关键不是"存下来",是【存成能被现成引擎回放的东西】:
+  // 本仓已经有一整套录制技能的回放引擎(选择器自愈 selAlt、参数化、skill_run、断点接管),
+  // 所以沉淀只要把会话里那条动作流写成同样形状的录制文件,别的会话直接 skill_run 就能跑。
+  // 另造一套"Agent 专用流程"是错的:回放里最难的那些(元素找不到怎么自愈、参数怎么填)全要重写一遍。
+  function agentSaveFlow(a) {
+    const s = live(a && a.sessionId); if (!s) return { error: '会话不存在或已结束' }
+    const name = str(a && a.name).trim()
+    if (!name) return { error: 'name 必填:一句话说清这个流程干什么(别人在技能库里就靠它认出来)' }
+    const acts = arr(s.flow).filter((e) => e && e.act !== 'navigate')
+    if (!acts.length) return { error: '这个会话还没有任何【会改变页面状态】的成功动作(只有读页/截图),没什么可沉淀的' }
+    const id = 'agent-' + nowMs().toString(36)
+    const rec = {
+      id,
+      title: name.slice(0, 60),
+      description: str(a && a.description).slice(0, 400) || s.purpose,
+      startUrl: (arr(s.flow)[0] || {}).url || curUrl(s),
+      skill: true,
+      createdBy: 'agent',
+      createdAt: new Date().toISOString(),
+      events: arr(s.flow),
+      params: [],
+    }
+    try { saveRec(rec) } catch (e) { return { error: '存不下来: ' + e.message } }
+    step(s, 'save_flow', id + ' ' + name, true, '')
+    log('[browser-agent] 沉淀流程 ' + id + ' 「' + name + '」共 ' + rec.events.length + ' 步')
+    return { ok: true, skillId: id, steps: rec.events.length,
+      note: '已存进技能库。别的会话里用 skill_run 跑它(skill_list 能看到),不用再从头试一遍。'
+        + (arr(s.flow).some((e) => e.secret) ? ' 其中有密码步:回放时要现场提供,录里没存明文。' : '') }
+  }
+
   // ── eval(仿 CC 的 javascript_tool)──────────────────────────────────────────
   // 【为什么必须有】2026-08-11 真机思考过程里,模型【连着五次】问同一件事:
   //   「内嵌浏览器可执行 JS 吗?工具集里有 headless_eval 但那是 headless。会话组没有 eval。」
@@ -1000,5 +1079,5 @@ module.exports = function initBrowserAgent(ctx) {
     sessions.clear()
   }
 
-  return { agentOpen, agentRead, agentFind, agentAct, agentEval, agentHtml, agentUpload, agentTabs, agentResize, agentAssert, agentShot, agentDiag, agentClose, anyLive, dropAll, policyCheck, __sessions: sessions }
+  return { agentOpen, agentRead, agentFind, agentAct, agentEval, agentHtml, agentUpload, agentSaveFlow, agentSee, agentTabs, agentResize, agentAssert, agentShot, agentDiag, agentClose, anyLive, dropAll, policyCheck, __sessions: sessions }
 }

@@ -29,7 +29,7 @@ const { makeDecider } = require('./orch/decide')      // 决策器:模型在整�
 
 module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebContentsView, screen, dialog, Tray, Menu, nativeImage, shell, path, fs, oc, log }) {
   // 纯文件 IO 函数搬进 recorder-core 的 initStore 工厂,这里注入依赖后解构使用
-  const { recDir, readRec, writeLastRun, skillList, loadAssertions, loadScans, loadReview, gitChangedFiles } = require('./recorder-core').initStore({ app, fs, path, execSync: require('child_process').execSync })
+  const { recDir, readRec, saveRec, writeLastRun, skillList, loadAssertions, loadScans, loadReview, gitChangedFiles } = require('./recorder-core').initStore({ app, fs, path, execSync: require('child_process').execSync })
   // 额外窗口引用
   S.mainWin = null   // 桌面主窗口(shell.html)单例,createMainWindow 管理
   S.embedWc = new Set()   // 主窗口内嵌会话卡的 guest webContents id(波2):发卡收口进 shell 的会话都登记在这
@@ -1130,6 +1130,32 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   }
   S.visionInfo = visionInfo
 
+  // ★"教会 Agent 用多模态"(2026-08-12 用户提)的正确做法不是劝主模型去读图 ——
+  //   本机主模型根本不支持图片输入,劝它只会白烧一轮(真机实录:read 那个 png → image omitted)。
+  //   正确做法是【壳层替它去问视觉模型,回来的是文字】:主模型拿到文字就能用,
+  //   不需要它自己具备视觉能力。这条路把"看得见"和"想得清"拆成两个模型各干各的。
+  async function askVision(imgPath, question) {
+    const v = await visionInfo()
+    if (!v.ok) return { error: '本机没有可用的读图模型(' + (v.why || '') + ')—— 去 设置 → 模型 里选一个支持图片输入的' }
+    const mv = S.settings.modelVision
+    let serve = null
+    try { serve = await oc.ensureServe(S.settings.projectDir || '', S.handlers, log) } catch (e) { return { error: '起 serve 失败: ' + e.message } }
+    let sid = ''
+    try {
+      sid = await oc.createSession(serve, '看图·' + String(question || '').slice(0, 20))
+      if (!sid) return { error: '建会话失败' }
+      const buf = fs.readFileSync(imgPath)
+      const dataUrl = 'data:image/png;base64,' + buf.toString('base64')
+      const q = String(question || '').trim() || '这一页现在是什么状态?有没有报错、弹窗、空数据?用简短的中文说清楚。'
+      const ans = await oc.sendMessage(serve, sid, q + '\n\n(只看图回答,不要臆测图里没有的东西;看不清就说看不清)',
+        { providerID: mv.providerID, modelID: mv.modelID, name: mv.name },
+        [{ mime: 'image/png', url: dataUrl, filename: path.basename(imgPath) }])
+      return { ok: true, answer: String(ans || '').trim(), model: mv.name || mv.modelID }
+    } catch (e) { return { error: '读图失败: ' + e.message } }
+    finally { if (sid) { try { await oc.deleteSession(serve, sid) } catch {} } }
+  }
+  S.askVision = askVision
+
   // 缩略图像素宽:与后台视口同宽(1440),源本来就是这个尺寸 → 不用缩放,只做一次 JPEG 编码。
   // 比原来"出 2880 再缩到 1520"省掉一次大图解码 + 一次缩放,主线程上的活少一大半。
   const SHOT_W = 1440
@@ -1219,7 +1245,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     try { shell.openPath(fp); return { ok: true } } catch (e) { return { error: e.message } }
   })
 
-  const brAgent = initBrowserAgent({ S, log, brActive, newTab, closeTab, activateTab, createBrowser, ensureBrowserBackground, brScreenshot, brShotTab, execStep, waitNetIdle, pageRead: skillPageRead, brSetDevice, showShot, callerWc, visionInfo })
+  const brAgent = initBrowserAgent({ S, log, brActive, newTab, closeTab, activateTab, createBrowser, ensureBrowserBackground, brScreenshot, brShotTab, execStep, waitNetIdle, pageRead: skillPageRead, brSetDevice, showShot, callerWc, visionInfo, saveRec, askVision })
   // 挂 S:relay(mail.js)在本行【之前】就被 initMail 构造了,而 brAgent 是 const —— 直接传进去会踩 TDZ。
   // 本仓跨层访问的惯例本来就是挂 S(S.setCardBusy / S.dropPendingPerm 同款),relay 调用期再取,顺序天然安全。
   S.brAgent = brAgent

@@ -837,6 +837,14 @@ function initStore({ app, fs, path, execSync }) {
     }
     return [...out]
   }
-  return { recDir, readRec, writeLastRun, skillList, loadAssertions, loadScans, loadReview, gitChangedFiles }
+  /** 写一份录制/技能文件(Agent 沉淀流程用;与人工录制同一个目录、同一种形状 —— 回放引擎不分来源) */
+  function saveRec(rec) {
+    const id = String((rec && rec.id) || '').replace(/[^\w.-]/g, '')
+    if (!id) throw new Error('缺 id')
+    try { fs.mkdirSync(recDir(), { recursive: true }) } catch {}
+    fs.writeFileSync(path.join(recDir(), id + '.json'), JSON.stringify(rec, null, 2))
+    return id
+  }
+  return { recDir, readRec, saveRec, writeLastRun, skillList, loadAssertions, loadScans, loadReview, gitChangedFiles }
 }
 module.exports.initStore = initStore

@@ -332,6 +332,33 @@ const TOOLS = [
     }, required: ['sessionId', 'files'] },
   },
   {
+    name: 'browser_save_flow',
+    description: '★把这个会话里【跑通的操作流程】存进技能库,别的会话直接复用。'
+      + '试错了十几次终于跑通,不存下来,下一个会话还得从头试一遍 —— 这是最亏的一种浪费。'
+      + '存的是真实发生过的动作(点了哪、填了什么),形状与人工录制的技能完全一致,'
+      + '所以能直接 skill_run 回放,并且享受现成的选择器自愈。密码步不存明文,回放时现场提供。'
+      + '什么时候调:流程验通了、close 之前。',
+    inputSchema: { type: 'object', properties: {
+      sessionId: { type: 'string' },
+      name: { type: 'string', description: '一句话说清这个流程干什么(别人在技能库里靠它认出来),如「登录并新建采购单」' },
+      description: { type: 'string', description: '什么情况下该跑它、前置条件是什么' },
+    }, required: ['sessionId', 'name'] },
+  },
+  {
+    name: 'browser_see',
+    description: '★让【视觉模型】看一眼这一页,把它看到的用文字告诉你。'
+      + '你自己多半读不了图(主模型没有图片输入能力),所以这是你"看见"页面的唯一途径 —— '
+      + 'browser_read/eval/html 都是结构性的,回答不了"这页看起来对不对":'
+      + '布局错位、样式塌了、图表画歪了、弹窗遮住内容、按钮位置怪异 —— 这些只有看图才知道。'
+      + '什么时候用:验收界面/复现"看起来不对"的问题/截图之后想确认自己理解得对不对。'
+      + '注意:看图会看错,涉及具体数值或文案时再用 browser_eval 核一次。',
+    inputSchema: { type: 'object', properties: {
+      sessionId: { type: 'string' },
+      question: { type: 'string', description: '想让它看什么(越具体越准),如「表格里第一行的状态是什么」「有没有报错弹窗」' },
+      full: { type: 'boolean', description: '看整页(默认只看当前视口)' },
+    }, required: ['sessionId'] },
+  },
+  {
     name: 'browser_tabs',
     description: '会话内的多标签:list 看有哪些 / open 开一个新页 / switch 切过去 / close 关掉。'
       + '★什么时候用:要【对着两个页面看】的时候 —— 改前改后、列表页与详情页、两个环境同一功能。'
@@ -535,6 +562,16 @@ async function callTool(name, args) {
     const r = await relayPost('/browser/upload', body)
     if (r.error) return r.error
     return '已放入文件:' + (r.files || []).join('、') + '\n' + (r.note || '')
+  }
+  if (name === 'browser_save_flow') {
+    const r = await relayPost('/browser/save_flow', { sessionId: String(args.sessionId || ''), name: String(args.name || ''), description: String(args.description || '') })
+    if (r.error) return r.error
+    return '已沉淀为技能 ' + r.skillId + '(' + r.steps + ' 步)。' + (r.note || '')
+  }
+  if (name === 'browser_see') {
+    const r = await relayPost('/browser/see', { sessionId: String(args.sessionId || ''), question: String(args.question || ''), full: !!args.full })
+    if (r.error) return r.error
+    return '【' + r.model + ' 看到的】' + r.answer + '\n\n' + (r.note || '')
   }
   if (name === 'browser_eval') {
     const r = await relayPost('/browser/eval', { sessionId: String(args.sessionId || ''), expr: String(args.expr || '') })

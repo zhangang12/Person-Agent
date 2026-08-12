@@ -83,6 +83,10 @@ function makeCtx(over = {}) {
     },
     waitNetIdle: async () => {},
     visionInfo: async () => (over.vision || { ok: false, why: '本机没有能读图的模型' }),
+    askVision: async (p2, q) => (over.vision && over.vision.ok
+      ? { ok: true, answer: '看到一个表格,第一行状态是「进行中」', model: '视觉模型X' }
+      : { error: '本机没有可用的读图模型' }),
+    saveRec: (rec) => { calls.saved = rec; return rec.id },
     pageRead: async (tab) => (over.emptyPage
       ? { ok: true, url: tab.page.url, title: '', elements: '', text: '' }
       : { ok: true, url: tab.page.url, title: '标题', elements: 'button 「提交」  → #submit', text: tab.page.text }),
@@ -91,22 +95,28 @@ function makeCtx(over = {}) {
 }
 const tabOf = (S) => S.browser.tabs[S.browser.tabs.length - 1]
 
-console.log('用例1:围栏 —— 默认只放行本机,其他站点要用户显式加白')
+console.log('用例1:围栏 —— 缺省不限,但协议红线和留痕不许动')
 {
+  // 【2026-08-12 用户拍板】"浏览器支持打开 localhost 的 IP 地址,要放开这个控制。现在什么网站都应该可以访问。"
+  // 于是缺省围栏改成 off。放开的是【站点】,没放开的是:
+  //   ① 只允许 http/https —— file:/data: 是读本地文件的口子,任何模式下都不放行;
+  //   ② 每次跨出本机都留痕 —— 权限可以放宽,痕迹不能少,否则出事时查不回来。
   const { ba } = makeCtx()
-  ok('本机 http 放行', ba.policyCheck('http://localhost:5199/x').ok)
-  ok('127.0.0.1 放行', ba.policyCheck('http://127.0.0.1:8080/').ok)
-  const r = ba.policyCheck('https://uat.example.com/pay')
-  ok('外部站点默认拒', !r.ok)
-  // 拒绝必须给出【怎么开通】,不能只说不行 —— 否则用户和 Agent 都卡在这不知道下一步
-  ok('  拒绝信息带开通指引(设置路径 + 具体 origin)', /设置/.test(r.err) && /https:\/\/uat\.example\.com/.test(r.err), r.err)
-  ok('非 http/https 拒(file/data 等一律不碰)', !ba.policyCheck('file:///etc/passwd').ok)
-  ok('URL 解析不了也拒(不是放行)', !ba.policyCheck('不是个网址').ok)
+  ok('本机放行', ba.policyCheck('http://localhost:5199/x').ok && ba.policyCheck('http://127.0.0.1:8080/').ok)
+  ok('★★缺省放行任意 http/https(用户拍板:什么网站都应该可以访问)',
+    ba.policyCheck('https://uat.example.com/pay').ok && ba.policyCheck('http://any.site/x').ok)
+  ok('★★但 file: 任何模式下都不放行(那是读本地文件的口子)', !ba.policyCheck('file:///etc/passwd').ok)
+  ok('★  data: 同样不放行', !ba.policyCheck('data:text/html,<b>x').ok)
+  ok('  URL 解析不了也拒(不是放行)', !ba.policyCheck('不是个网址').ok)
 
-  const { ba: ba2 } = makeCtx({ settings: { browserAgent: { origins: ['https://uat.example.com'] } } })
-  ok('加白后同 origin 放行', ba2.policyCheck('https://uat.example.com/pay').ok)
-  ok('  加白只对该 origin 生效,不外溢到同名前缀域', !ba2.policyCheck('https://uat.example.com.evil.cn/').ok)
-  ok('  加白不外溢到 http(协议不同 origin 不同)', !ba2.policyCheck('http://uat.example.com/').ok)
+  const { ba: baL } = makeCtx({ settings: { browserAgent: { fence: 'local' } } })
+  ok('fence=local:回到"只本机"', !baL.policyCheck('https://uat.example.com/').ok && baL.policyCheck('http://127.0.0.1/').ok)
+  ok('  拒绝时说清当前是哪种围栏、怎么改', /只本机/.test(baL.policyCheck('https://x.com/').err) && /设置/.test(baL.policyCheck('https://x.com/').err))
+
+  const { ba: baW } = makeCtx({ settings: { browserAgent: { fence: 'list', origins: ['https://uat.example.com'] } } })
+  ok('fence=list:只放行清单里的', baW.policyCheck('https://uat.example.com/pay').ok && !baW.policyCheck('https://other.com/').ok)
+  ok('  清单不外溢到同名前缀域', !baW.policyCheck('https://uat.example.com.evil.cn/').ok)
+  ok('  清单不外溢到 http(协议不同 origin 不同)', !baW.policyCheck('http://uat.example.com/').ok)
 
   const { ba: ba3 } = makeCtx({ settings: { browserAgent: { enabled: false } } })
   ok('总开关关掉后连本机都不放行', !ba3.policyCheck('http://localhost:1/').ok)
@@ -134,12 +144,13 @@ console.log('用例3:open 的前置校验')
   ok('缺 url 拒', !!(await ba.agentOpen({ purpose: 'x' })).error)
   // purpose 不是形式主义:浏览器是用户的,报告和界面都要显示"Agent 现在在干嘛"
   ok('★缺 purpose 拒(用户得知道 Agent 在他浏览器里干什么)', !!(await ba.agentOpen({ url: 'http://localhost:1/' })).error)
-  ok('越围栏的 url 在 open 阶段就拒(不会先开标签页再说)', !!(await ba.agentOpen({ url: 'https://evil.example.com/', purpose: 'x' })).error)
+  const { ba: baF } = makeCtx({ settings: { browserAgent: { fence: 'local' } } })
+  ok('越围栏的 url 在 open 阶段就拒(不会先开标签页再说)', !!(await baF.agentOpen({ url: 'https://evil.example.com/', purpose: 'x' })).error)
 }
 
-console.log('用例4:★围栏按【当前页】现查 —— 页面自己跳走了也要拦住')
+console.log('用例4:★围栏按【当前页】现查 —— 页面自己跳走了也要拦住(用 fence=local 才有围栏可越)')
 {
-  const { ba, S } = makeCtx()
+  const { ba, S } = makeCtx({ settings: { browserAgent: { fence: 'local' } } })
   const r = await ba.agentOpen({ url: 'http://localhost:5199/a.html', purpose: '验跳转' })
   // 模拟页面自己跳到外网(SSO/业务跳转/被挂马),不是 Agent 主动 navigate 的
   tabOf(S).page.url = 'https://生产系统.example.com/转账'
@@ -151,9 +162,9 @@ console.log('用例4:★围栏按【当前页】现查 —— 页面自己跳走
   ok('  越界这一步如实记进报告(不是静默吞掉)', rep.steps.some((x) => !x.ok && /围栏/.test(x.err)), rep.steps)
 }
 
-console.log('用例5:navigate 按【目标 URL】先判后跳')
+console.log('用例5:navigate 按【目标 URL】先判后跳(同样用 fence=local)')
 {
-  const { ba, calls } = makeCtx()
+  const { ba, calls } = makeCtx({ settings: { browserAgent: { fence: 'local' } } })
   const r = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '验导航围栏' })
   const before = calls.exec.length
   const bad = await ba.agentAct({ sessionId: r.sessionId, action: 'navigate', url: 'https://外网.example.com/' })
@@ -288,7 +299,8 @@ console.log('用例7.8:eval / html —— 模型在真机思考里连问了五�
   // 没有这条路,它只能拿 read 的扁平清单猜结构:弹层里 6 个一样的数字输入框,它烧了六屏推理拼
   // nth-of-type 全废,最后跑去 rg/sed 读 .vue 源码。缺一件工具的代价不是少一个功能,
   // 是模型把 token 全烧在绕路上。
-  const { ba, S } = makeCtx()
+  // 用 fence=local 才有"跳出围栏"可言(缺省 off 是放行任意站点)
+  const { ba, S } = makeCtx({ settings: { browserAgent: { fence: 'local' } } })
   const r = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '验 eval/html' })
   const sid = r.sessionId
   ok('★eval 能跑并回结果 + 类型', (() => { const p = tabOf(S).page; p.evalOut = { v: '6', n: 1, t: 'number' }; return true })())
@@ -518,6 +530,56 @@ console.log('用例7.16:滚轮 —— 内层容器才是真正要滚的那个')
   p.scrollTarget = true
   const sc = await ba.agentAct({ sessionId: r.sessionId, action: 'scroll', selector: '#x' })
   ok('  scroll+ref 仍是"滚到那个元素"(老语义不动)', !!sc.ok && /滚到元素/.test(String(sc.scrolled)), sc)
+}
+
+console.log('用例7.17:流程沉淀 —— 试错跑通的东西不能只留在这一个会话里')
+{
+  // 【用户 2026-08-12】"试错了很多次后跑通了还是没法在其他会话中复用。要提供流程自主沉淀的能力。"
+  // 关键不是"存下来",是【存成能被现成引擎回放的东西】:本仓已有录制技能的整套回放
+  // (选择器自愈 selAlt、参数化、skill_run、断点接管),所以沉淀只要写成同样形状的录制文件。
+  // 另造一套"Agent 专用流程"是错的 —— 回放里最难的那些全要重写一遍。
+  const { ba, S, calls } = makeCtx()
+  const r = await ba.agentOpen({ url: 'http://localhost:5199/login', purpose: '验沉淀' })
+  ok('★还没做过任何改变状态的动作 → 不许沉淀(只有读页/截图没什么可存的)',
+    /没有任何/.test(String(ba.agentSaveFlow({ sessionId: r.sessionId, name: 'x' }).error)))
+  await ba.agentAct({ sessionId: r.sessionId, action: 'type', selector: '#user', value: 'admin' })
+  await ba.agentAct({ sessionId: r.sessionId, action: 'type', selector: 'input[type=password]', value: 'admin123' })
+  await ba.agentAct({ sessionId: r.sessionId, action: 'click', selector: '#login' })
+  await ba.agentAct({ sessionId: r.sessionId, action: 'scroll', direction: 'down' })   // 辅助动作,不该进流程
+  const sv = ba.agentSaveFlow({ sessionId: r.sessionId, name: '登录并进首页', description: '验证用' })
+  ok('★★存进技能库', !!sv.ok && !!sv.skillId, sv)
+  const rec = calls.saved
+  ok('  形状与人工录制一致(skill/events/startUrl)', !!rec.skill && Array.isArray(rec.events) && /login/.test(String(rec.startUrl)), Object.keys(rec || {}))
+  ok('★  只收会改变页面状态的动作(scroll 这类辅助动作不进去)',
+    rec.events.filter((e) => e.act === 'scroll' || e.act === 'wheel').length === 0, rec.events.map((e) => e.act))
+  ok('  首步是 navigate 到起始页(回放要能自己走到那儿)', rec.events[0].act === 'navigate')
+  ok('★★密码不落明文(与人工录制同一条口径)', (() => {
+    const pw = rec.events.find((e) => e.secret)
+    return !!pw && pw.value === undefined
+  })(), rec.events)
+  ok('  回执告诉它别的会话怎么用', /skill_run/.test(String(sv.note)), sv.note)
+}
+
+console.log('用例7.18:多模态 —— 让视觉模型替它看,回来的是文字')
+{
+  // 【用户 2026-08-12】"要学会用多模态模型解决问题。这个要教会 Agent。"
+  // 教法不是"劝主模型去读图"——本机主模型根本不支持图片输入,劝它只会白烧一轮
+  // (真机实录:read 那个 png → "image omitted: could not be resized")。
+  // 正确做法:截图 → 壳层拿去问视觉模型 → 把答案当【文字】还给主模型。
+  {
+    const { ba } = makeCtx({ vision: { ok: true } })
+    const r = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '验看图' })
+    const see = await ba.agentSee({ sessionId: r.sessionId, question: '第一行状态是什么' })
+    ok('★★看图结果以【文字】回来(主模型不需要自己有视觉能力)', !!see.ok && /进行中/.test(String(see.answer)), see)
+    ok('  说清这是视觉模型看的、你自己没读到图', /视觉模型/.test(String(see.note)) && /没读到图/.test(String(see.note)), see.note)
+    ok('★  提醒涉及数值要再用 eval 核一次(看图会看错)', /browser_eval/.test(String(see.note)), see.note)
+  }
+  {
+    const { ba } = makeCtx({ vision: { ok: false, why: '本机没有能读图的模型' } })
+    const r = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '验看图' })
+    const see = await ba.agentSee({ sessionId: r.sessionId })
+    ok('  没有读图模型时明确报错并指路(不是静默失败)', !!see.error && /读图模型/.test(String(see.error)), see.error)
+  }
 }
 
 console.log('用例8:会话生命周期 —— 超时/并发/重复收/取证')
