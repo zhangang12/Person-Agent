@@ -187,6 +187,94 @@ module.exports = function initBrowserAgent(ctx) {
     return rec
   }
 
+  // ── 登录线索:开会话时把项目里【现成的答案】挖出来推给它 ─────────────────────
+  // 【2026-08-12 用户的问题】"对接 excelshare 时 Agent 很快就知道怎么登录、怎么回归,
+  // 为什么内网做一个项目的登录要探索半天,还说不清卡在哪?"
+  // 查出来的原因不体面但很确定:excelshare 项目根有一份 17KB 的 AGENTS.md,第 45 行直接写着
+  // "种子账号:admin/admin123",还写了外网登录闸门怎么放行 —— serve 会自动注入它。
+  // 那不是"探索得快",那是【读到的】。换个没写这些的项目,同一个模型只能去 UI 里摸,
+  // 而登录恰恰最摸不出来:密码在种子脚本里、闸门在后端、验证码走别的通道,UI 上一概看不见。
+  // 它也说不清问题在哪 —— 因为真因在后端,页面上只有一句"密码错误"或者一直转圈。
+  //
+  // 靠"每个项目都手写一份 AGENTS.md"是治标。所以壳层自己扫一遍,口径与"召回"同一条:push,
+  // 不指望它想到去 grep。只扫【按名字就该写这些】的文件,不做全仓全文扫 ——
+  // 几十毫秒换掉半天试错。纯 Node 走目录,不调 grep(内网是 Windows,那儿没有 grep)。
+  const CLUE_NAME = /^(AGENTS|agents|README|readme|CLAUDE|claude)\.md$|^README$|^\.env($|\.)|^docker-compose.*\.ya?ml$/
+  const CLUE_SEED = /(seed|fixture|conftest|testdata|test_data|init_?db|demo_?data)/i
+  const CLUE_E2E = /\.(spec|test|e2e|cy)\.(js|ts|mjs|cjs|jsx|tsx)$/i
+  const CLUE_API = /^(login|auth|signin|session|gate)\.(py|js|ts|go|java|rb|php|cs)$/i
+  // 三种才算线索,少一种都不行:①"种子/测试账号"这类字样【后面跟着一对值】 ②key = "值" ③admin / xxx。
+  // 只按关键词匹配会捞回一堆「# 创建测试用户」这种没有值的注释、和 call('POST','/api/…') 这种代码行:
+  // 真机在 excelshare 上扫出来 6 条,3 条是这种噪音,把种子账号那条挤到了后面。
+  // ③ 的第二段必须是 ASCII —— 「admin/桌面客户端」是在讲免闸名单,不是口令;
+  //   且 admin 前面不能是斜杠 —— 「'/api/admin/users'」是 URL 路径,不是账号对。
+  const CRED_RE = /((种子|测试|默认|初始|演示|示例)\s*(账号|用户|账户|密码|口令)[^\n]{0,12}?[`'"\s:：=]\S+\s*[\/:]\s*\S{3,}|(username|user|account|login|password|passwd|pwd)\s*[:=]\s*['"][^'"\s]{2,40}['"]|(?<![\/\w])admin\s*\/\s*[A-Za-z0-9_@.\-]{3,})/i
+  // 「admin / manager」多半是"这两个角色都期望 200"的表格,不是口令对 —— 第二段是角色名就不算。
+  const ROLE_RE = /^(manager|admin|user|users|guest|operator|viewer|editor|owner|staff|member|root|test|demo|api|v\d)$/i
+  const SECRET_RE = /(secret|token|api.?key|private.?key|access.?key|salt|jwt)/i
+  const GATE_RE = /(验证码|captcha|\botp\b|二次验证|双因素|gate_enabled|外网.{0,6}(闸|门|限制)|滑块验证|图形码)/i
+  const SKIP_DIR = /^(node_modules|\.git|dist|build|out|\.venv|venv|__pycache__|\.next|\.nuxt|coverage|target|vendor|\.cache)$/
+
+  function loginClues() {
+    const fs = require('fs'); const path = require('path')
+    const roots = [(S.settings || {}).projectDir, (S.settings || {}).backendDir].filter(Boolean)
+    if (!roots.length) return ''
+    const creds = [], gates = [], e2es = [], apis = []
+    // 按【账号值】去重,不是按行:同一对 admin/admin123 在 AGENTS.md、demo/README、启动脚本里
+    // 各写一遍很常见(真机上它一个人占掉 3 条,把别的账号挤没了)。取行里第一对值当 key。
+    const seenCred = new Set()
+    const credKey = (L) => { const m = L.match(/([A-Za-z0-9_@.\-]{2,30})\s*\/\s*([A-Za-z0-9_@.\-]{2,40})/); return m ? (m[1] + '/' + m[2]).toLowerCase() : L.toLowerCase().replace(/\s+/g, '') }
+    for (const root of roots) {
+      const files = []
+      const walk = (d, depth) => {
+        if (depth > 3 || files.length > 300) return
+        let ents = []
+        try { ents = fs.readdirSync(d, { withFileTypes: true }) } catch { return }
+        for (const e of ents) {
+          if (files.length > 300) return
+          if (e.isDirectory()) { if (!SKIP_DIR.test(e.name)) walk(path.join(d, e.name), depth + 1) }
+          else if (CLUE_NAME.test(e.name) || CLUE_SEED.test(e.name) || CLUE_E2E.test(e.name) || CLUE_API.test(e.name)) files.push(path.join(d, e.name))
+        }
+      }
+      try { walk(root, 0) } catch {}
+      // 线索只给 5 条:文档/env/seed 优先,e2e 脚本垫底 —— 别让测试脚本里的零碎把种子账号挤下去
+      const rank = (f) => { const bn = require('path').basename(f); return CLUE_NAME.test(bn) ? 0 : CLUE_SEED.test(bn) ? 1 : CLUE_API.test(bn) ? 2 : 3 }
+      files.sort((x, y) => rank(x) - rank(y))
+      for (const f of files.slice(0, 80)) {
+        const rel = (() => { try { return path.relative(root, f) || path.basename(f) } catch { return f } })()
+        if (CLUE_API.test(path.basename(f)) && apis.length < 4) apis.push(rel)
+        if (/\.env\.prod/i.test(f)) continue          // 生产 env 一律不看,那里面没有测试账号,只有会捅漏的东西
+        let txt = ''
+        try { if (fs.statSync(f).size > 300000) continue; txt = fs.readFileSync(f, 'utf8') } catch { continue }
+        const lines = txt.split('\n')
+        for (let i = 0; i < lines.length && creds.length < 5; i++) {
+          const L = str(lines[i]).trim()
+          if (!L || L.length > 200 || !CRED_RE.test(L)) continue
+          // 高熵密钥不往上下文里搬:登录用不上,泄出去却是真事故
+          if (SECRET_RE.test(L)) continue
+          if (/(example|placeholder|xxxx|your[-_ ]|<[^>]+>|\*\*\*)/i.test(L) && !/(种子|测试|默认|初始)/.test(L)) continue
+          const pair = L.match(/([A-Za-z0-9_@.\-]{2,30})\s*\/\s*([A-Za-z0-9_@.\-]{2,40})/)
+          if (pair && ROLE_RE.test(pair[2]) && !/(种子|测试|默认|初始|password|passwd|pwd)/i.test(L)) continue
+          const ck = credKey(L)
+          if (seenCred.has(ck)) continue
+          seenCred.add(ck)
+          creds.push(rel + ':' + (i + 1) + '  ' + L.slice(0, 130))
+        }
+        if (gates.length < 3 && GATE_RE.test(txt)) gates.push(rel)
+        if (e2es.length < 3 && CLUE_E2E.test(f) && /login|登录|signin/i.test(txt)) e2es.push(rel)
+      }
+    }
+    if (!creds.length && !gates.length && !e2es.length && !apis.length) return ''
+    const L = ['★这个项目里【现成的登录线索】(壳层扫出来的,别再去页面上猜):']
+    for (const c of creds) L.push('  · 账号口令  ' + c)
+    for (const e of e2es) L.push('  · 现成的登录脚本  ' + e + ' —— 读它比自己摸快')
+    for (const g of gates) L.push('  · ' + g + ' 里有【验证码/登录闸门】—— 登录不通可能不是密码错,是被闸门拦了,先读这个文件')
+    for (const a2 of apis) L.push('  · 登录接口实现  ' + a2)
+    L.push('登录点下去之后【先看那次请求的状态码和响应体】(browser_assert{kind:"request_status"}或 browser_diag),')
+    L.push('别只看页面上那句"密码错误"—— 登录失败的真因多在后端(闸门/账号锁/CORS/代理),UI 上看不出来。')
+    return L.join('\n')
+  }
+
   function step(s, kind, detail, ok, err) {
     if (s.steps.length < MAX_STEPS) s.steps.push({ i: s.steps.length + 1, kind, detail: str(detail).slice(0, 300), ok: !!ok, err: str(err).slice(0, 300), at: nowMs() - s.startedAt })
     return ok
@@ -263,6 +351,8 @@ module.exports = function initBrowserAgent(ctx) {
     return {
       ok: true, sessionId: id, expiresInSec: Math.round((s.expiresAt - nowMs()) / 1000),
       ...(recallNote(url) ? { recall: recallNote(url) } : {}),
+      ...(( /login|signin|sso|\bauth\b|登录|登陆/i.test(url + ' ' + purpose)
+        || /password|密码/i.test(str(snap && snap.elements)) ) && loginClues() ? { clues: loginClues() } : {}),
       ...(emptyish ? { warning: '页面打开了,但一个可交互元素、几乎一个字都没有 —— 多半是 SPA 还没挂载完,'
         + '或者这个端口上跑的【不是你以为的那个项目】(端口冲突很常见)。'
         + '先 browser_eval 看一眼 document.title / location.href / #app 的内容再往下走,别急着截图。' } : {}),
@@ -1547,5 +1637,5 @@ module.exports = function initBrowserAgent(ctx) {
     sessions.clear()
   }
 
-  return { __dialogJs: DIALOG_JS, __armDialogJs: armDialogJs, agentOpen, agentRead, agentFind, agentAct, agentEval, agentHtml, agentUpload, agentSaveFlow, agentSee, agentState, agentCookie, agentTabs, agentResize, agentAssert, agentShot, agentDiag, agentClose, anyLive, dropAll, policyCheck, __sessions: sessions }
+  return { __dialogJs: DIALOG_JS, __armDialogJs: armDialogJs, __loginClues: loginClues, agentOpen, agentRead, agentFind, agentAct, agentEval, agentHtml, agentUpload, agentSaveFlow, agentSee, agentState, agentCookie, agentTabs, agentResize, agentAssert, agentShot, agentDiag, agentClose, anyLive, dropAll, policyCheck, __sessions: sessions }
 }

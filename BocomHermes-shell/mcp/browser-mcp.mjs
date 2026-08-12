@@ -577,7 +577,7 @@ async function callTool(name, args) {
   }
   if (name === 'browser_open') {
     const r = await relayPost('/browser/open', { url: String(args.url || ''), purpose: String(args.purpose || '') })
-    return (r.recall ? r.recall + '\n\n' : '')
+    return (r.clues ? r.clues + '\n\n' : '') + (r.recall ? r.recall + '\n\n' : '')
       + '会话已开: ' + r.sessionId + '(' + r.expiresInSec + 's 内有效)\n当前页: ' + r.url + (r.title ? '(' + r.title + ')' : '')
       + '\n' + (r.note || '') + '\n\n可交互元素(→ 后为现成选择器):\n' + (r.elements || '(无)')
       + '\n\n正文节选:\n' + String(r.text || '').slice(0, 2000)

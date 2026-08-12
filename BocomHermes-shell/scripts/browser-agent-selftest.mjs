@@ -845,6 +845,48 @@ console.log('用例7.23:沉淀怎么被【提】起来 —— 召回 / 点名催
   ok('★自述 failed 的流程不沉淀(跑不通的路存进库里是害人)', cl2.report.sediment === undefined && !calls2.saved, cl2.report.sediment)
 }
 
+console.log('用例7.24:登录线索 —— 项目里现成的答案要推给它,别让它去 UI 里摸')
+{
+  // 【这条用例的来历】2026-08-12 用户问:"对接 excelshare 时 Agent 很快就知道怎么登录,
+  // 为什么内网做一个项目的登录要探索半天?" 真因:excelshare 项目根 AGENTS.md 第 45 行
+  // 直接写着种子账号,serve 自动注入 —— 它是【读到的】,不是探索出来的。
+  const fs2 = await import('node:fs'), os2 = await import('node:os'), pth = await import('node:path')
+  const FIX = fs2.mkdtempSync(pth.join(os2.tmpdir(), 'bh-clue-'))
+  const W = (rel, txt) => { const f = pth.join(FIX, rel); fs2.mkdirSync(pth.dirname(f), { recursive: true }); fs2.writeFileSync(f, txt) }
+  W('AGENTS.md', '# 项目\n种子账号：`admin / admin123`（seed 自动建）\n')
+  W('README.md', '默认账号 admin / admin123 登录\n')                    // 同一对 → 要去重
+  W('.env', 'DB_PASSWORD="local123"\nJWT_PASSWORD="never-leak-this"\n') // 后者是密钥 → 不许搬进上下文
+  W('.env.production', 'password = "prod-must-never-appear"\n')          // 生产 env 整个文件不看
+  W('backend/gate.py', 'def issue_code():\n    pass  # 发验证码\n')
+  W('e2e/login.spec.ts', "test('login', async () => {})\n")
+  W('tests/api_test.py', "s, r = call('POST', '/api/admin/users')\n")    // URL 路径不是账号对
+  W('docs/roles.md', '- admin / manager: 全部 200\n')                    // 角色对不是账号对
+  W('config.yml', 'password: "your-password-here"\n')                    // 占位符不算线索
+  W('node_modules/pkg/AGENTS.md', '种子账号：`hacked / hacked123`\n')     // 依赖目录不许扫
+
+  const { ba } = makeCtx({ settings: { projectDir: FIX } })
+  const r = await ba.agentOpen({ url: 'http://localhost:5199/login', purpose: '登录进去看看' })
+  const c = String(r.clues || '')
+  ok('★★开会话就把项目里【现成的登录账号】推出来(它就不用去 UI 里摸)', /AGENTS\.md:2/.test(c) && /admin \/ admin123/.test(c), c.slice(0, 200))
+  ok('★★高熵密钥不许搬进上下文(登录用不上,泄出去是真事故)', !/never-leak-this/.test(c) && /local123/.test(c), c)
+  ok('★★生产 env 整个文件不看', !/prod-must-never-appear/.test(c), c)
+  ok('★  依赖目录不扫(node_modules 里的东西不是这个项目的)', !/hacked/.test(c), c)
+  ok('★  URL 路径不当账号对(/api/admin/users 曾被误当成 admin/users)', !/api_test/.test(c), c)
+  ok('★  角色对不当账号对(admin / manager 是"两个角色都期望 200"的表格)', !/roles\.md/.test(c), c)
+  ok('  占位符不算线索(your-password-here)', !/your-password/.test(c), c)
+  ok('  同一对账号只报一次(同一个 admin/admin123 常在三处各写一遍)', (c.match(/admin \/ admin123/g) || []).length === 1, c)
+  ok('★★点出【验证码/登录闸门】—— 这才是"登录不通但说不清为什么"的答案', /gate\.py 里有【验证码\/登录闸门】/.test(c), c)
+  ok('  点出现成的登录脚本和登录接口实现', /login\.spec\.ts/.test(c) && /登录接口/.test(c), c)
+  ok('★★要求先看【请求状态码和响应体】,别只看页面上那句"密码错误"', /request_status/.test(c) && /真因多在后端/.test(c), c)
+
+  // 不许到处塞:非登录页一个字都不说
+  const r2 = await ba.agentOpen({ url: 'http://localhost:5199/report', purpose: '看报表' })
+  ok('★  非登录页不推这段(到处塞就成噪音,模型会开始整体忽略回执)', r2.clues === undefined, r2.clues)
+  const r3 = await makeCtx().ba.agentOpen({ url: 'http://localhost:5199/login', purpose: '登录' })
+  ok('  没配项目目录时不炸、也不硬凑', r3.clues === undefined && !!r3.ok, r3.clues)
+  try { fs2.rmSync(FIX, { recursive: true, force: true }) } catch {}
+}
+
 console.log('用例8:会话生命周期 —— 超时/并发/重复收/取证')
 {
   const { ba, S, calls } = makeCtx()
