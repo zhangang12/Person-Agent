@@ -2552,8 +2552,48 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
     try {
       const r = mcpCfg.autoRegisterIfMissing()
       if (r && r.ok && !r.already) { S.mcpRegChangedAt = Date.now(); log('MCP 自动注册完成 → ' + r.path + '(若已有外部 serve 在跑,需重启 serve 才带上工具)') }
+      // ★把两份账对上(2026-08-12 内网反复报 MCP not connected 的根因):
+      //   serve 只在【它自己启动时】读一次 opencode.jsonc,而这份配置是壳层启动后才补写/纠正的。
+      //   只要 serve 比壳层老(手动 bocomcode serve / 上一轮残留),它手里就是旧的:
+      //   旧路径 → spawn ENOENT;没有条目 → 工具根本不存在。两种都表现为 not connected,
+      //   而且【整个 serve 生命周期都不会自愈】—— 用户只看到"工具时好时坏",完全查不出所以然。
+      //   这段就是把"磁盘上写的"和"serve 手里的"当场比一遍,不一致就【明说】+ 给唯一有效的动作。
+      setTimeout(() => { mcpLiveCheck().catch(() => {}) }, 4000)
     } catch (e) { log('MCP 自动注册异常: ' + e.message) }
   }, 800)
+
+  // serve 手里的 MCP 配置 vs 磁盘上的:不一致就是 not connected 的来源,必须当场说出来
+  async function mcpLiveCheck() {
+    let serve = null
+    try { serve = await oc.ensureServe(S.settings.projectDir || '', S.handlers, log) } catch { return }
+    if (!serve) return
+    const chk = await oc.checkMcp(serve)
+    if (!chk || !chk.known) { log('[mcp-check] 这台 serve 不认 /config 端点,跳过'); return }
+    const base = (typeof mcpCfg.baseDir === 'function' ? mcpCfg.baseDir() : '') || ''
+    const names = arrOf(chk.names)
+    const stale = names.filter((k) => base && !String(chk.commands[k] || '').includes(base))
+    if (!names.length) {
+      const why = 'serve 手里【一个 BocomHermes-* 工具都没有】—— 它在配置写好之前就启动了。'
+        + '这一轮里所有内嵌浏览器/邮件/编排工具都会报 not connected,而且不会自愈。'
+        + '唯一有效的动作:重启 serve(退出 bocomcode serve 再起,或让本程序自己拉一个)。'
+      log('[mcp-check] ★' + why)
+      try { new Notification({ title: 'BocomHermes · MCP 工具没挂上', body: why.slice(0, 160) }).show() } catch {}
+      S.mcpMismatch = why
+      return
+    }
+    if (stale.length) {
+      const why = 'serve 手里的 MCP 路径是旧的(' + String(chk.commands[stale[0]] || '').slice(0, 120) + '),'
+        + '当前程序在 ' + base + '。它启动时读的是旧配置,spawn 会 ENOENT —— 表现就是 not connected。'
+        + '唯一有效的动作:重启 serve。'
+      log('[mcp-check] ★' + why)
+      try { new Notification({ title: 'BocomHermes · MCP 路径过期', body: why.slice(0, 160) }).show() } catch {}
+      S.mcpMismatch = why
+      return
+    }
+    S.mcpMismatch = ''
+    log('[mcp-check] serve 手里的 MCP 与当前程序一致(' + names.length + ' 个:' + names.join(' ') + ')')
+  }
+  const arrOf = (x) => (Array.isArray(x) ? x : [])
 
   // ── LSP 一键注册(内网无外网:opencode 内置 server 探测不到会联网安装必失败,代码智能靠随包自带) ──
   // 三个 node 系 server(TS/Vue/Pyright)用 Electron 内嵌 Node 跑,首启自动写 opencode.jsonc 的 lsp 段(缺失/路径过期才写)。

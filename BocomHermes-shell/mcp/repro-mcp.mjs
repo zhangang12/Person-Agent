@@ -6,6 +6,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { execFileSync } from 'node:child_process'
+import { installGuard } from './_guard.mjs'
+installGuard('repro')   // 崩溃兜底 + 死因留痕(见 _guard.mjs 头注:not connected 的真相)
 
 const log = (...a) => process.stderr.write('[repro-mcp] ' + a.join(' ') + '\n')
 

@@ -20,6 +20,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { installGuard } from './_guard.mjs'
+installGuard('lsp')   // 崩溃兜底 + 死因留痕(见 _guard.mjs 头注:not connected 的真相)
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const log = (...a) => process.stderr.write('[lsp-mcp] ' + a.join(' ') + '\n')

@@ -11,6 +11,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import http from 'node:http'
+import { installGuard } from './_guard.mjs'
+installGuard('orch')   // 崩溃兜底 + 死因留痕(见 _guard.mjs 头注:not connected 的真相)
 
 const log = (...a) => process.stderr.write('[orch-mcp] ' + a.join(' ') + '\n')
 

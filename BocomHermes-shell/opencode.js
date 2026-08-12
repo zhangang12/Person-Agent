@@ -891,12 +891,25 @@ async function listAgents(info, opts = {}) {
 }
 // 问 serve【实际加载】的配置里有没有我们的 MCP 注册 —— 配置文件写了不等于 serve 带上了(外部 serve 早于注册启动=静默没工具)。
 // GET /config 是 serve 启动时装载的快照,正是我们要的"它到底认不认"。端点不存在/形状不认识 → known:false(别误报)。
+// serve【实际加载】的 MCP 配置 —— 注意不是磁盘上那份。
+// 这两份会不一致,而且不一致时的表现就是 not connected:
+// opencode serve 只在【自己启动时】读一次 opencode.jsonc;而本壳层是启动后才去补写/纠正那份配置的。
+// 只要 serve 比壳层老(用户手动 bocomcode serve、或上一轮残留的进程),它手里就是旧的:
+// 旧路径(换过安装目录)→ spawn ENOENT;压根没有这些条目 → 工具不存在。
+// 两种都表现为"工具调用报 not connected",而且【整个 serve 生命周期都不会自愈】。
+// 所以这里把命令行原样带回来,让壳层能把两份账对上,而不是只回一个布尔值。
 async function checkMcp(info) {
   try {
     const cfg = await api(info.base, 'GET', '/config')
     const mcp = (cfg && cfg.mcp) || (cfg && cfg.config && cfg.config.mcp)
     if (!mcp || typeof mcp !== 'object') return { known: false }
-    return { known: true, registered: !!(mcp['BocomHermes-browser'] || mcp['BocomHermes-mail']) }
+    const names = Object.keys(mcp).filter((k) => /^BocomHermes-/i.test(k))
+    const commands = {}
+    for (const k of names) {
+      const c = mcp[k] && mcp[k].command
+      commands[k] = Array.isArray(c) ? c.join(' ') : String(c || '')
+    }
+    return { known: true, registered: !!(mcp['BocomHermes-browser'] || mcp['BocomHermes-mail']), names, commands }
   } catch { return { known: false } }
 }
 

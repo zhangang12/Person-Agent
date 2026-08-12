@@ -5,6 +5,8 @@
 // CWD 取 process.cwd()（serve 以项目目录启动），可用 BOCOMHERMES_GIT_CWD 覆盖。
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
+import { installGuard } from './_guard.mjs'
+installGuard('git')   // 崩溃兜底 + 死因留痕(见 _guard.mjs 头注:not connected 的真相)
 
 const log = (...a) => process.stderr.write('[git-mcp] ' + a.join(' ') + '\n')
 const cwd = () => process.env.BOCOMHERMES_GIT_CWD || process.cwd()

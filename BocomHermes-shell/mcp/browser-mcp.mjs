@@ -9,6 +9,8 @@ import net from 'node:net'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { installGuard } from './_guard.mjs'
+installGuard('browser')   // 崩溃兜底 + 死因留痕(见 _guard.mjs 头注:not connected 的真相)
 
 const log = (...a) => process.stderr.write('[browser-mcp] ' + a.join(' ') + '\n')   // 日志走 stderr，stdout 只发协议
 const HEADFUL = process.env.BOCOMHERMES_BROWSER_HEADFUL === '1'

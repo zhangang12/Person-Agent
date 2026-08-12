@@ -113,5 +113,5 @@ module.exports = function initMcpConfig(ctx) {
       return doRegister()   // 一个都没注册 → 写默认目标
     } catch (e) { log('mcp auto-register err: ' + e.message); return { ok: false, error: e.message } }
   }
-  return { autoRegisterIfMissing }
+  return { autoRegisterIfMissing, baseDir: mcpBaseDir }   // baseDir:壳层拿它去和 serve 手里的路径对账(见 window.js mcpLiveCheck)
 }

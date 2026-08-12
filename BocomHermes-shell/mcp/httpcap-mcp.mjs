@@ -4,6 +4,8 @@
 // 用法：被测程序/浏览器把 HTTP 代理指向本代理地址即可。注册见 mcp/README.md。
 import http from 'node:http'
 import net from 'node:net'
+import { installGuard } from './_guard.mjs'
+installGuard('httpcap')   // 崩溃兜底 + 死因留痕(见 _guard.mjs 头注:not connected 的真相)
 
 const log = (...a) => process.stderr.write('[httpcap-mcp] ' + a.join(' ') + '\n')
 const CAP = 64 * 1024, MAX = 800
