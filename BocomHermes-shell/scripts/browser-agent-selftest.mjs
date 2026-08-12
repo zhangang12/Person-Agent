@@ -918,6 +918,51 @@ console.log('用例7.25:iframe —— 子页面里的元素要能点,盲区要�
   void c2
 }
 
+console.log('用例7.26:AGENTS.md 由 opencode 自己维护 —— 壳层只教/催/查缺')
+{
+  // 【用户点明的分工,2026-08-12】BocomHermes 是 opencode 的壳;AGENTS.md 是日常开发必备、
+  // 给 Agent 看的文档,应该让编程智能体【自己主动维护】。壳层要做的是"叫它去维护",不是替它写。
+  // 我先后错了两次:①提议人工闸门(会挡掉 excelshare 那份手册 —— 它就是 Claude 自己写进去的)
+  // ②又写了个壳层代写的工具 + BocomHermes 专属区块(opencode 本来就有 write/edit,
+  //   而机器块会把知识圈出文档的正常结构)。这一格钉住修正后的分工。
+  const fs2 = await import('node:fs'), os2 = await import('node:os'), pth = await import('node:path')
+  const mk = (name, txt) => { const d = fs2.mkdtempSync(pth.join(os2.tmpdir(), 'bh-rb-')); if (name) fs2.writeFileSync(pth.join(d, name), txt); return d }
+
+  const run = async (dir) => {
+    const { ba, S } = makeCtx({ settings: { projectDir: dir } })
+    const r = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '跑个流程' })
+    tabOf(S).page.selCount = 1
+    await ba.agentAct({ sessionId: r.sessionId, action: 'type', selector: '#u', value: 'admin' })
+    await ba.agentAct({ sessionId: r.sessionId, action: 'click', selector: '#ok' })
+    return (await ba.agentClose({ sessionId: r.sessionId, status: 'done' })).report
+  }
+  const d0 = mk('', '')                                        // 连 AGENTS.md 都没有(内网就是这种)
+  const rep0 = await run(d0)
+  ok('★★项目连 AGENTS.md 都没有 → 收会话时点名催它建', /连 AGENTS.md 都没有/.test(String(rep0.runbook)), rep0.runbook)
+  ok('★  催的是"用你自己的 write/edit 改项目根 AGENTS.md",不是调壳层的什么工具',
+    /write\/edit/.test(String(rep0.runbook)) && /项目根 AGENTS\.md/.test(String(rep0.runbook)) && !/project_note/.test(String(rep0.runbook)), rep0.runbook)
+  ok('★  明说别新造机器专属区块(这是人和 Agent 共读的文档)', /别?不用建什么专属区块|不用建什么专属区块/.test(String(rep0.runbook)), rep0.runbook)
+  ok('  把壳层知道的先填好(这次开的地址),它只补它才知道的', /localhost:5199/.test(String(rep0.runbook)), rep0.runbook)
+
+  // ★这个 fixture 是故意的:文档【顺口提到"登录"】,但没有任何账号。
+  //   第一版查缺是关键词匹配,被这种文本一蒙就判"写清楚了",永远不催 —— 而它根本进不去系统。
+  const d1 = mk('AGENTS.md', '# 项目\n登录模块在 backend/auth,菜单权限见 menus.py。跑起来:npm run dev\n')
+  const rep1 = await run(d1)
+  ok('★★文档只"提到登录"、没给账号 → 照样催(关键词碰运气会漏掉这种,而它最常见)',
+    /没有能登录的账号/.test(String(rep1.runbook)), rep1.runbook)
+  const d1b = mk('AGENTS.md', '# 项目\n种子账号 admin/admin123\n')
+  const rep1b = await run(d1b)
+  ok('★  有账号但没写怎么起服务 → 也催(缺哪半说哪半)', /没写怎么起服务/.test(String(rep1b.runbook)), rep1b.runbook)
+
+  const d2 = mk('AGENTS.md', '# 项目\n种子账号 admin/admin123;前端端口 5199;回归跑 npm run e2e\n')
+  const rep2 = await run(d2)
+  ok('★★已经写清楚了 → 一个字都不催(重复催会被当噪音整体忽略)', rep2.runbook === undefined, rep2.runbook)
+
+  const rep3 = await run('')                                   // 没配项目目录
+  ok('  没配项目目录时不催(催了它也没地方写)', rep3.runbook === undefined, rep3.runbook)
+  for (const d of [d0, d1, d1b, d2]) { try { fs2.rmSync(d, { recursive: true, force: true }) } catch {} }
+}
+
 console.log('用例8:会话生命周期 —— 超时/并发/重复收/取证')
 {
   const { ba, S, calls } = makeCtx()

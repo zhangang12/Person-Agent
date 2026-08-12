@@ -718,6 +718,7 @@ async function callTool(name, args) {
     if ((rep.shots || []).length) lines.push('截图:\n' + rep.shots.map((x) => '  · ' + x).join('\n'))
     if (rep.verdict === 'INCONCLUSIVE') lines.push('注意: 一条断言都没做 —— 这只是"打开看了一眼",不算验证。')
     if (rep.sediment) lines.push('\n' + rep.sediment)
+    if (rep.runbook) lines.push('\n' + rep.runbook)
     return lines.join('\n')
   }
   if (name === 'skill_page_read') {

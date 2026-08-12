@@ -1432,6 +1432,47 @@ module.exports = function initBrowserAgent(ctx) {
     return { error: 'action 只能是 save|load|clear|list' }
   }
 
+  // ── 项目运行手册:AGENTS.md 由【opencode 自己维护】,壳层只教、只催、只查缺 ────────
+  // 【2026-08-12 用户两次纠正,记全】
+  // 第一次:我提议"Agent 写进壳层 userData 的笔记,进仓库要人点一下"。用户拿反例:excelshare 那份
+  //   AGENTS.md 就是 Claude 自己登记进去的(查过:作者 Claude,种子账号那行在提交里,
+  //   近 50 个提交 24 个有 Claude 参与)。人工闸门会正好挡掉这件事里最值钱的东西。
+  // 第二次:我又绕回去写了个壳层代写的工具(project_note + 一个 BocomHermes 专属块)。用户点明:
+  //   BocomHermes 是 opencode 的壳,AGENTS.md 是日常开发必备、给 Agent 看的文档,
+  //   【应该让编程智能体自己主动维护】—— 壳层要做的是"叫它去维护",不是替它写。
+  //   我那个机器块还有个更实际的坏处:把知识圈进壳层专属区域,而这是人和 Agent 共读的文档,
+  //   excelshare 那份就是按文档自己的结构写的,没有任何机器块。opencode 本来就有 write/edit。
+  //
+  // 所以壳层的职责收到三件:① 规程里教(见 session.js loadToolRules)
+  //                       ② 在它刚跑通、还记得怎么走的时候点名催(browser_close 的报告)
+  //                       ③ 查缺:项目有没有 AGENTS.md、里面有没有写清怎么登录/怎么跑
+  function noteFile() {
+    const fs = require('fs'); const path = require('path')
+    const dir = str((S.settings || {}).projectDir)
+    if (!dir) return { error: '没有配置项目目录' }
+    for (const n of ['AGENTS.md', 'agents.md']) { const f = path.join(dir, n); try { if (fs.existsSync(f)) return { f } } catch {} }
+    return { f: path.join(dir, 'AGENTS.md'), fresh: true }
+  }
+  /** 项目手册缺什么(空串=不缺,不催)。只看两件事:文件在不在、关键内容有没有。 */
+  function runbookMissing() {
+    const nf = noteFile(); if (nf.error) return ''            // 没配项目目录就别催,催了也做不了
+    if (nf.fresh) return '★这个项目【连 AGENTS.md 都没有】—— 所以每个会话都得从零探索一遍,包括你刚才那半天。'
+    let txt = ''; const fs = require('fs')
+    try { txt = fs.readFileSync(nf.f, 'utf8') } catch { return '' }
+    // 别用关键词碰运气:任何架构文档都会顺口提一句"登录模块在 xxx",一提就判"写清楚了",
+    // 于是永远不催 —— 而它根本没有账号。要查的是【能照着做的事实】:
+    //   ① 有没有账号口令(CRED_RE 与登录线索同一条判据) ② 有没有怎么起/怎么跑(命令或地址端口)
+    const hasAcct = txt.split('\n').some((L) => L.length < 200 && CRED_RE.test(L) && !SECRET_RE.test(L))
+    const hasRun = /(npm|pnpm|yarn|python|uvicorn|flask|gradle|mvn|docker|start\.(sh|bat)|\.\/gradlew)\s+\S/.test(txt)
+      || /https?:\/\/(localhost|127\.0\.0\.1|\d+\.\d+\.\d+\.\d+)(:\d+)?/.test(txt)
+    if (!hasAcct || !hasRun) return '★项目有 AGENTS.md,但里面'
+      + (!hasAcct && !hasRun ? '【既没有能登录的账号、也没有怎么起/怎么跑】'
+        : !hasAcct ? '【没有能登录的账号】(只提到"登录"两个字不算 —— 下一个会话照样进不去)'
+          : '【没写怎么起服务/地址端口】')
+      + ' —— 下一个会话还是得摸一遍。'
+    return ''
+  }
+
   // ── 把跑通的流程沉淀成技能 ────────────────────────────────────────────────
   // 【用户 2026-08-12】"试错了很多次跑通了,还是没法在其他会话中复用。要提供流程自主沉淀的能力。"
   // 这件事的关键不是"存下来",是【存成能被现成引擎回放的东西】:
@@ -1652,6 +1693,20 @@ module.exports = function initBrowserAgent(ctx) {
           + 'browser_save_flow{sessionId:"' + s.id + '",name:"…"}(覆盖同一条,不会多出一条;收会话后 '
           + Math.round(SAVE_GRACE_MS / 60000) + ' 分钟内有效)。'
       }
+    }
+    // ★运行手册的催促:和沉淀同一个时机(刚跑通、还记得怎么走),但内容只有它知道 ——
+    //   壳层知道地址和流程 id,不知道账号从哪来、踩了什么坑。所以把壳层知道的先填好,
+    //   剩下的点名要它补。excelshare 那份手册就是这么攒出来的,它是"探索半天"和"读一行就会"的分界线。
+    if (status === 'done' && arr(s.flow).length) {
+      const miss = runbookMissing()
+      if (miss) s.result.runbook = miss + '\n'
+        + '现在就用你自己的 write/edit 把它补进【项目根 AGENTS.md】(没有就建一份,按这份文档自己的结构写,'
+        + '不用建什么专属区块 —— 它是给人和下一个 Agent 一起读的)。\n'
+        + '把这些填进去:①怎么登录(账号从哪来:seed 脚本?运维给的?有验证码闸门吗) '
+        + '②地址端口(这次开的是 ' + curUrl(s) + ') ③怎么跑回归'
+        + (s.autoId ? '(这条流程已沉淀,别的会话 skill_run ' + s.autoId + ' 就能回放,把这句也写进去)' : '')
+        + ' ④踩过的坑和绕法。\n'
+        + 'serve 每轮自动注入项目根 AGENTS.md —— 写进去,下一个会话开局就读到;不写,下一个人把你今天的半天原样重走。'
     }
     s.closedAt = nowMs()
     const t = tabOf(s)
