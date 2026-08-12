@@ -171,8 +171,9 @@ module.exports = function initSession(S, { ipcMain, path, fs, shell, oc, log, re
       + 'browser_diag(控制台与网络:可按关键词筛、可看成功请求、可按 id 取【响应体】—— 接口通了但返回体不对是前端 bug 的大头)/ browser_close。'
       + '它带着用户的登录态,你在里面做的每一步用户都能看到 —— 所以【验证本项目的页面、复现前端问题、走一遍真实流程】一律用这一组,'
       + '它产生的结果才算得上证据。'
-      + '另有一组 headless_ 前缀的无头浏览器:另起进程、没有登录态、用户看不见,【只适合读公网只读页面】。'
-      + '★别拿 headless_ 去验本项目的东西:它同样会正常返回 HTML,但那是一个没登录、和用户看到的不是同一个的页面,验了等于没验。</内嵌浏览器>\n'
+      + '另有一个 headless_fetch:另起一次性无头 Chrome 读一个网页、读完就关。'
+      + '用它的唯一场景是【读不该碰用户登录态的公网页面】(第三方文档之类)。'
+      + '★验本项目的任何东西都不许用它:它照样会返回 HTML,但那是个没登录、和用户看到的不是同一个的页面,验了等于没验。</内嵌浏览器>\n'
     // 技能摘要常驻(P1.4,借鉴 CC skill frontmatter 摘要常驻思想):模型先知道"有哪些技能可用",正文仍按需注入(全文预算见 card-send)
     let skillLines = ''
     try {
@@ -276,8 +277,7 @@ desc: 改完前端代码后,用内嵌浏览器真正打开页面验证(加载/�
 
 【步骤】(用 browser_open/read/act/assert/shot/diag/close 这一组,bash 只用于起服务)
 0. 先认清用哪套浏览器:browser_open 开的是【内嵌浏览器】——用户真在用的那个,带登录态、他全程看得见、选择器有兜底。
-   另有一组 browser_navigate/get_text/click/... 跑在 MCP 进程内的无头浏览器里:没有登录态、用户看不见、
-   和真实使用环境不是同一个东西。验证一律用前者;后者只在"纯公网只读页面"时才考虑。
+   另有一个 headless_fetch 只用来读公网页面(另起进程、没有登录态、用户看不见),验证一律不用它。
 1. 确认前端在跑:任务已给入口 URL 就直接进第 2 步;否则按项目文档(CLAUDE.md/README/package.json scripts)用 bash 起 dev 服务(后台起),等到能访问再继续。起不来 → 如实报告"服务起不来+报错原文"并停止,不要编造验证结果。
 2. browser_open(url=入口, purpose="一句话说清这次验什么")。它会另开一个标签页并返回首屏结构(可交互元素带现成选择器)。
    越出围栏会被拒(默认只放行本机)——照它给的指引报告即可,不要绕路去用无头那套冒充。
@@ -368,7 +368,7 @@ desc: 代码改动后的自主验证：基线构建测试→补最小测试/复�
 - 前端:起 dev 服务 → browser_open(内嵌浏览器,带登录态、用户看得见) → 立刻 browser_assert 验 no_console_error + no_failed_request
   → 再断一条指向本次改动的预期(text_present/selector_exists;"没报错"不等于"对了") → 有交互就 browser_act 走一遍关键路径再断言
   → browser_shot 截图并把图读一遍 → browser_close 出报告(VERDICT 机判,零断言算 INCONCLUSIVE)。
-  别用 browser_navigate 那组:它跑在 MCP 进程内的无头浏览器里,没有登录态、用户看不见,验的不是真实环境。
+  别用 headless_fetch 验:它另起进程、没有登录态、用户看不见,验的不是真实环境。
 - 后端/接口:curl 调关键接口,校验响应体形状与字段(不只看状态码);异常参数也要测(空/畸形/边界)。
 - 库/工具函数:从全新上下文 import 当消费者调公开 API。
 

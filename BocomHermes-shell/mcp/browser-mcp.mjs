@@ -489,14 +489,24 @@ const TOOLS = [
       note: { type: 'string', description: '一句话:验了什么/为什么验不下去' },
     }, required: ['sessionId', 'status'] },
   },
-  { name: 'headless_navigate', description: '【无头·非用户浏览器】在 MCP 进程内另起的一次性浏览器里打开网址,返回标题与最终URL。没有登录态、用户看不见 —— 只适合公网只读页面;要验证本项目页面请用 browser_open 那一组', inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } },
-  { name: 'headless_get_text', description: '获取当前页面可见正文文本(innerText)', inputSchema: { type: 'object', properties: {} } },
-  { name: 'headless_get_html', description: '获取当前页面或某选择器的 HTML', inputSchema: { type: 'object', properties: { selector: { type: 'string', description: 'CSS 选择器，可空=整页' } } } },
-  { name: 'headless_click', description: '点击匹配 CSS 选择器的第一个元素', inputSchema: { type: 'object', properties: { selector: { type: 'string' } }, required: ['selector'] } },
-  { name: 'headless_type', description: '向输入框(选择器)填入文本，可选回车提交', inputSchema: { type: 'object', properties: { selector: { type: 'string' }, text: { type: 'string' }, submit: { type: 'boolean' } }, required: ['selector', 'text'] } },
-  { name: 'headless_eval', description: '在页面里执行一段 JS 表达式并返回结果(JSON可序列化)', inputSchema: { type: 'object', properties: { expression: { type: 'string' } }, required: ['expression'] } },
-  { name: 'headless_screenshot', description: '对当前页面截图，保存为临时 PNG 并返回文件路径', inputSchema: { type: 'object', properties: {} } },
-  { name: 'headless_close', description: '【无头】关闭那个一次性无头浏览器、释放资源(与 browser_close 不是一回事:后者是收 Agent 自主会话并出报告)', inputSchema: { type: 'object', properties: {} } },
+  // ★2026-08-12 从 8 个砍到 1 个。用户:"这个无头浏览器是不是会产生噪音,要剔除掉吧"—— 对,而且不止噪音:
+  //   · 8 个工具常驻每轮 tools/list 是 token 税,名字还跟 browser_act 撞(headless_click vs click),
+  //     而它偏爱走错路是有实证的(playwright 那道降级闸门就是为此加的);
+  //   · 真正的害处是 headless_click/type/eval 让它【能在暗处把整个任务做完】:
+  //     没有登录态、用户看不见、出不了报告(verdict)、不进沉淀 —— 那种结果没法判,
+  //     正是这一整天在防的东西。要验本项目一律走 browser_* 那组。
+  //   只留一件它确实更合适的事:【隔离地读一个不受信任的公网页面】。
+  //   用内嵌浏览器开外网会带上用户的登录态,那页面还能读 cookie;这里是另起的一次性 Chrome,
+  //   读完就关,干净。读完即关也省掉了"忘了 headless_close 把 Chrome 留在后台"这个老毛病。
+  { name: 'headless_fetch',
+    description: '【隔离读公网页面】另起一次性无头 Chrome 打开网址、返回正文文本,读完立刻关。'
+      + '用它的唯一理由:那个页面【不该碰用户的登录态】(公网文档/第三方页面)。'
+      + '要验证本项目的页面、要登录态、要出报告或沉淀流程 —— 一律用 browser_open 那一组,这里做不到那些。',
+    inputSchema: { type: 'object', properties: {
+      url: { type: 'string' },
+      html: { type: 'boolean', description: '要 HTML 而不是正文文本(默认文本)' },
+      selector: { type: 'string', description: '只取这个选择器的内容' },
+    }, required: ['url'] } },
 ]
 
 async function callTool(name, args) {
@@ -737,24 +747,24 @@ async function callTool(name, args) {
     const r = await relayPost('/skill/takeover-done', { gateId: String(args.gateId || ''), status: String(args.status || ''), note: String(args.note || '') })
     return '✓ 接管已收口(' + r.status + '),回放报告随之更新。'
   }
-  if (name === 'headless_navigate') { const r = await navigate(String(args.url || '')); return `已打开：${r.title}\n${r.url}` }
-  if (name === 'headless_get_text') { return String(await evalJs('document.body ? document.body.innerText : document.documentElement.innerText') || '').slice(0, 20000) }
-  if (name === 'headless_get_html') { const sel = args.selector ? JSON.stringify(args.selector) : null; const expr = sel ? `(document.querySelector(${sel})||{}).outerHTML||''` : 'document.documentElement.outerHTML'; return String(await evalJs(expr) || '').slice(0, 40000) }
-  if (name === 'headless_click') { const sel = JSON.stringify(String(args.selector)); const r = await evalJs(`(()=>{const el=document.querySelector(${sel}); if(!el) return 'NOT_FOUND'; el.click(); return 'OK';})()`); return r === 'OK' ? '已点击 ' + args.selector : '未找到元素：' + args.selector }
-  if (name === 'headless_type') {
-    const sel = JSON.stringify(String(args.selector)), txt = JSON.stringify(String(args.text))
-    const r = await evalJs(`(()=>{const el=document.querySelector(${sel}); if(!el) return 'NOT_FOUND'; el.focus(); el.value=${txt}; el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); return 'OK';})()`)
-    if (r !== 'OK') return '未找到输入框：' + args.selector
-    if (args.submit) await evalJs(`(()=>{const el=document.querySelector(${sel}); if(el&&el.form) el.form.submit(); return 'OK';})()`)
-    return '已输入到 ' + args.selector + (args.submit ? '（并提交）' : '')
+  if (name === 'headless_fetch') {
+    const u = String(args.url || '')
+    if (!/^https?:\/\//i.test(u)) return '只收 http/https 网址'
+    try {
+      const r = await navigate(u)
+      const sel = args.selector ? JSON.stringify(String(args.selector)) : null
+      const expr = args.html
+        ? (sel ? `(document.querySelector(${sel})||{}).outerHTML||''` : 'document.documentElement.outerHTML')
+        : (sel ? `(document.querySelector(${sel})||{}).innerText||''` : 'document.body?document.body.innerText:document.documentElement.innerText')
+      const txt = String(await evalJs(expr) || '')
+      const cap = args.html ? 40000 : 20000
+      return '已读(隔离无头,不带登录态):' + r.title + '\n' + r.url + '\n\n'
+        + txt.slice(0, cap) + (txt.length > cap ? '\n\n(截断:共 ' + txt.length + ' 字,这里只给了前 ' + cap + ')' : '')
+    } finally {
+      // 一定要关:留着就是一个后台 Chrome 进程,而"忘了 headless_close"是这组工具的老毛病
+      try { closeBrowser() } catch {}
+    }
   }
-  if (name === 'headless_eval') { const v = await evalJs(String(args.expression || '')); return typeof v === 'string' ? v : JSON.stringify(v) }
-  if (name === 'headless_screenshot') {
-    const b = await ensureBrowser(); const r = await b.cdp.send('Page.captureScreenshot', { format: 'png' })
-    const file = path.join(os.tmpdir(), 'BocomHermes-shot-' + Date.now() + '.png'); fs.writeFileSync(file, Buffer.from(r.data, 'base64'))
-    return '已截图：' + file
-  }
-  if (name === 'headless_close') { closeBrowser(); return '已关闭浏览器' }
   throw new Error('未知工具：' + name)
 }
 

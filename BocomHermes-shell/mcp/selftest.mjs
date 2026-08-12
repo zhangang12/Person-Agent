@@ -19,7 +19,7 @@ try {
   ok(init.result?.serverInfo?.name === 'BocomHermes-browser', 'initialize 返回 serverInfo')
   notify('notifications/initialized')
   const list = await req('tools/list')
-  ok(Array.isArray(list.result?.tools) && list.result.tools.some((t) => t.name === 'headless_navigate'), 'tools/list 含 headless_navigate（' + (list.result?.tools?.length || 0) + ' 个工具）')
+  ok(Array.isArray(list.result?.tools) && list.result.tools.some((t) => t.name === 'headless_fetch'), 'tools/list 含 headless_fetch（' + (list.result?.tools?.length || 0) + ' 个工具）')
   ok(list.result.tools.some((t) => t.name === 'doc_read'), 'tools/list 含 doc_read(任务编排加工环节)')
   // ── 契约:两套浏览器工具族必须都在、且【绝不重名】────────────────────────
   // browser_*  = 内嵌浏览器(用户真在用的那个:带登录态、看得见、强引擎)——端到端验证走这组
@@ -33,10 +33,18 @@ try {
     for (const n of ['browser_open', 'browser_read', 'browser_act', 'browser_assert', 'browser_shot', 'browser_diag', 'browser_close']) {
       ok(names.includes(n), '  内嵌浏览器族含 ' + n)
     }
-    for (const n of ['headless_navigate', 'headless_get_text', 'headless_close']) {
-      ok(names.includes(n), '  无头族已改名带 headless_ 前缀:' + n)
-    }
-    ok(!names.some((n) => ['browser_navigate', 'browser_get_text', 'browser_eval', 'browser_screenshot', 'browser_click', 'browser_type', 'browser_get_html'].includes(n)),
+    // ★2026-08-12 无头族从 8 个砍到 1 个(用户:"这个无头浏览器是不是会产生噪音,要剔除掉吧")。
+    //   真正的害处不是噪音,是 headless_click/type/eval 让模型能【在暗处把整个任务做完】:
+    //   没有登录态、用户看不见、出不了 verdict、不进沉淀 —— 那种结果没法判。
+    //   所以"暗处操作"的能力必须消失,而不是靠提示劝它别用。这一格钉住它别被谁又加回来。
+    ok(names.includes('headless_fetch'), '  无头族只留 headless_fetch(隔离读公网页)')
+    const zombie = ['headless_navigate', 'headless_click', 'headless_type', 'headless_eval', 'headless_get_text', 'headless_get_html', 'headless_screenshot', 'headless_close'].filter((n) => names.includes(n))
+    ok(zombie.length === 0, '★无头族【不许】再有点击/输入/执行 JS 这类操作能力' + (zombie.length ? ' —— 又冒出来了: ' + zombie.join(',') : ''))
+    ok(names.filter((n) => n.startsWith('headless_')).length === 1, '  headless_ 前缀总共只有 1 个工具(每多一个都是每轮的 token 税)')
+    // ★这条断言 2026-08-12 修过一次:原来把 browser_eval 也列进"弱族名字",
+    //   而 browser_eval 后来成了内嵌族的正当工具(会话内跑 JS)——于是这个套件一直是红的,
+    //   而它不在我日常跑的那批里,红了没人看见。清单只留【真正属于弱族】的名字。
+    ok(!names.some((n) => ['browser_navigate', 'browser_get_text', 'browser_get_html', 'browser_screenshot', 'browser_click', 'browser_type'].includes(n)),
       '★弱族不再占用 browser_ 前缀(否则模型挑错的那个,验的就不是真实环境)')
     const open = (list.result?.tools || []).find((t) => t.name === 'browser_open')
     ok(!!open && Array.isArray(open.inputSchema?.required) && open.inputSchema.required.includes('purpose'),
@@ -84,19 +92,25 @@ try {
     try { fsm.rmSync(tmp, { recursive: true, force: true }) } catch {}
   }
 
-  const html = 'data:text/html,' + encodeURIComponent('<title>TS-OK</title><body><h1 id=h>HELLO_BOCOMHERMES</h1>')
-  const nav = await req('tools/call', { name: 'headless_navigate', arguments: { url: html } }, 60000)
+  // 原来用 data: URL 免起服务 —— 但 headless_fetch 只收 http/https(file:/data: 一律拒,
+  // 那是防"拿它去读本地文件"的那道门)。所以这里起一个一次性 http 服务,测的也更接近真实。
+  const srv = (await import('node:http')).createServer((_q, res) => { res.setHeader('content-type', 'text/html; charset=utf-8'); res.end('<title>TS-OK</title><body><h1 id=h>HELLO_BOCOMHERMES</h1>') })
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r))
+  const html = 'http://127.0.0.1:' + srv.address().port + '/'
+  const nav = await req('tools/call', { name: 'headless_fetch', arguments: { url: html } }, 60000)
   const navText = nav.result?.content?.[0]?.text || ''
   if (nav.result?.isError) {
     console.log('  ! 浏览器不可用（MCP 协议已通过，运行时需 Edge/Chrome + Node22+）：' + navText.replace(/\n/g, ' '))
   } else {
-    ok(/TS-OK/.test(navText), 'navigate 返回标题（' + navText.replace(/\n/g, ' ') + '）')
-    const txt = await req('tools/call', { name: 'headless_get_text', arguments: {} }, 20000)
-    ok(/HELLO_BOCOMHERMES/.test(txt.result?.content?.[0]?.text || ''), 'get_text 取到正文')
-    const ev = await req('tools/call', { name: 'headless_eval', arguments: { expression: 'document.querySelector("#h").id' } }, 20000)
-    ok((ev.result?.content?.[0]?.text || '') === 'h', 'eval 返回元素 id')
-    await req('tools/call', { name: 'headless_close', arguments: {} }, 10000)
+    ok(/TS-OK/.test(navText), 'fetch 带回标题（' + navText.split('\n')[0] + '）')
+    ok(/HELLO_BOCOMHERMES/.test(navText), '★一次调用就把正文带回来了(原来要 navigate+get_text+close 三次)')
+    ok(/不带登录态/.test(navText), '回执明说"不带登录态"—— 免得它拿这个去验本项目')
+    const one = await req('tools/call', { name: 'headless_fetch', arguments: { url: html, selector: '#h' } }, 60000)
+    ok(/HELLO_BOCOMHERMES/.test(one.result?.content?.[0]?.text || ''), '支持只取某个选择器')
+    const bad = await req('tools/call', { name: 'headless_fetch', arguments: { url: 'file:///etc/passwd' } }, 20000)
+    ok(/只收 http/.test(bad.result?.content?.[0]?.text || ''), '★只收 http/https(file: 拒掉 —— 别让它拿这个读本地文件)')
   }
+  try { srv.close() } catch {}
 } catch (e) { console.error('selftest error:', e.message); fail++ }
 
 // ── 编排 MCP 的工具契约(另起一个进程,与浏览器 MCP 互不影响)──────────────
