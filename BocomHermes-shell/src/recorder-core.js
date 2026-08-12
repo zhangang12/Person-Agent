@@ -802,7 +802,7 @@ function initStore({ app, fs, path, execSync }) {
         const j = JSON.parse(fs.readFileSync(path.join(recDir(), f), 'utf8'))
         if (!j.skill) continue
         out.push({ id: j.id || f.replace(/\.json$/, ''), name: j.title || j.id, description: j.description || '', startUrl: j.startUrl || '',
-          steps: (j.events || []).length,
+          steps: (j.events || []).length, auto: !!j.auto, runs: +j.runs || 0,
           lastRun: j.lastRun || null,
           hasSuccess: !!(j.success && j.success.value),
           params: (j.params || []).map((p) => ({ key: p.key, label: p.label || p.key, default: p.default != null ? p.default : '', secret: !!p.secret })) })

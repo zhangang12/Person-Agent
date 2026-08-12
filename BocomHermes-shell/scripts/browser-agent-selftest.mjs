@@ -103,8 +103,9 @@ function makeCtx(over = {}) {
     askVision: async (p2, q) => (over.vision && over.vision.ok
       ? { ok: true, answer: '看到一个表格,第一行状态是「进行中」', model: '视觉模型X' }
       : { error: '本机没有可用的读图模型' }),
-    saveRec: (rec) => { calls.saved = rec; return rec.id },
+    saveRec: (rec) => { calls.saved = rec; calls.recs = calls.recs || {}; calls.recs[rec.id] = JSON.parse(JSON.stringify(rec)); return rec.id },
     skillList: () => (over.skills || []),
+    readRec: (id) => { const r = (calls.recs || {})[id]; if (!r) throw new Error('没有'); return r },
     pageRead: async (tab) => (over.emptyPage
       ? { ok: true, url: tab.page.url, title: '', elements: '', text: '' }
       : { ok: true, url: tab.page.url, title: '标题', elements: 'button 「提交」  → #submit', text: tab.page.text }),
@@ -775,6 +776,10 @@ console.log('用例7.23:沉淀怎么被【提】起来 —— 召回 / 点名催
   ok('★  不把别的站点的流程混进来(host 匹配)', !/agent-old/.test(String(r.recall)), r.recall)
   ok('  明确让它【先跑现成的】而不是自己从零试', /skill_run/.test(String(r.recall)) && /别从零试错/.test(String(r.recall)), r.recall)
   ok('  带上步数和参数,它才判断得出这条能不能用', /8 步/.test(String(r.recall)) && /acct/.test(String(r.recall)), r.recall)
+  const r9 = await makeCtx({ skills: [{ id: 'auto-1', name: '自动存的那条', startUrl: 'http://localhost:5199/x', steps: 4, auto: true, runs: 7, params: [] }] })
+    .ba.agentOpen({ url: 'http://localhost:5199/', purpose: '看草稿标注' })
+  ok('★  自动存的要标明"未经确认",并报跑通过几次(它才判断得出可信度)',
+    /自动存的/.test(String(r9.recall)) && /7 次/.test(String(r9.recall)), r9.recall)
   const r0 = await makeCtx().ba.agentOpen({ url: 'http://localhost:5199/', purpose: '没沉淀时' })
   ok('  没有匹配就不说话(不许硬塞一句噪音)', r0.recall === undefined, r0.recall)
 }
@@ -789,29 +794,55 @@ console.log('用例7.23:沉淀怎么被【提】起来 —— 召回 / 点名催
   await ba.agentAct({ sessionId: r.sessionId, action: 'click', selector: '#ok' })   // 试错一次
   calls.failAct = false
   const cl = await ba.agentClose({ sessionId: r.sessionId, status: 'done' })
-  // ★② 点名催:开场那句"记得存",等它把流程试通时早被几十屏回执埋掉了
-  ok('★★收会话的报告里点名催沉淀', /browser_save_flow/.test(String(cl.report.sediment)), cl.report.sediment)
-  ok('★  命令写全了能照抄(带 sessionId,不用它自己拼)', String(cl.report.sediment).includes(r.sessionId), cl.report.sediment)
-  ok('★  报出试错次数 —— 那是不沉淀的代价,下个会话要原样再走一遍', /试错 1 次/.test(String(cl.report.sediment)), cl.report.sediment)
+  // ★② 自动存:【收会话时壳层自己存】,不是催模型去存
+  //    靠自觉的机制在这条链路上不成立 —— 它把流程试通时上下文已经很满,收尾那一步最容易被省掉。
+  ok('★★收会话时【壳层自己把流程存进了技能库】,不需要模型调任何工具',
+    !!calls.saved && calls.saved.skill === true && Array.isArray(calls.saved.events) && calls.saved.events.length >= 2, calls.saved && { id: calls.saved.id, n: (calls.saved.events || []).length })
+  ok('★  报告里说清"已经自动存了"以及怎么回放(它才知道下次能复用)',
+    /自动存进技能库/.test(String(cl.report.sediment)) && /skill_run/.test(String(cl.report.sediment)), cl.report.sediment)
+  ok('  名字先拿 purpose 凑,并标明可以改', /验点名催/.test(String(calls.saved.title)) && /browser_save_flow/.test(String(cl.report.sediment)), calls.saved.title)
+  ok('  标成 auto(召回时要能区分"自动存的草稿"和"人确认过的")', calls.saved.auto === true, calls.saved.auto)
+  const autoId = calls.saved.id
 
-  // ★③ 收了之后还能存:真实顺序就是先 close 拿报告、再想起沉淀
-  const sv = await ba.agentSaveFlow({ sessionId: r.sessionId, name: '登录一下' })
-  ok('★★会话收了【仍然能存】(之前用 live() 拦,催了也存不进去,等于白催)', !!sv.ok && sv.steps >= 2, sv)
-  ok('  存的是回放引擎认的形状(能 skill_run)', !!calls.saved && calls.saved.skill === true && Array.isArray(calls.saved.events), calls.saved && Object.keys(calls.saved))
-  const cl2 = await ba.agentClose({ sessionId: r.sessionId })
-  ok('  已经存过了就不再催(重复催会被当噪音忽略)', cl2.report.sediment === undefined || !/save_flow/.test(String(cl2.report.sediment)), cl2.report.sediment)
+  // ★③ 同一条路重跑:合并成一条,不许把技能库堆满
+  const r2 = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '同一条路再跑一次' })
+  tabOf(S).page.selCount = 1
+  await ba.agentAct({ sessionId: r2.sessionId, action: 'type', selector: '#u', value: 'admin' })
+  await ba.agentAct({ sessionId: r2.sessionId, action: 'click', selector: '#ok' })
+  await ba.agentClose({ sessionId: r2.sessionId, status: 'done' })
+  ok('★★同站点同一串动作 → 同一个 id,重跑只覆盖(否则跑 20 次库里 20 条垃圾)', calls.saved.id === autoId, { now: calls.saved.id, first: autoId })
+  ok('★  runs 累加(跑得多说明这条最常用,召回时优先推它)', calls.saved.runs === 2, calls.saved.runs)
+  // ★反向:动作不一样就必须是【另一条】—— 只验"相同→相同"的话,一个恒定 id 也能过,
+  //   那等于把所有流程合并成一条,比不去重更糟。
+  const rx = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '另一条路' })
+  tabOf(S).page.selCount = 1
+  await ba.agentAct({ sessionId: rx.sessionId, action: 'click', selector: '#menu-报表' })
+  await ba.agentAct({ sessionId: rx.sessionId, action: 'click', selector: '#导出' })
+  await ba.agentClose({ sessionId: rx.sessionId, status: 'done' })
+  ok('★★同站点【不同动作串】必须是另一条(否则所有流程被合并成一条,比不去重更糟)', calls.saved.id !== autoId, { now: calls.saved.id, first: autoId })
+
+  // ★④ 认领:改名覆盖同一条,不留两份
+  const sv = await ba.agentSaveFlow({ sessionId: r2.sessionId, name: '登录并进首页' })
+  ok('★★认领改名【覆盖同一条】,不许一条流程在库里躺两份', sv.ok && sv.skillId === autoId, sv)
+  ok('  认领后不再标 auto', calls.saved.auto === false && calls.saved.title === '登录并进首页', { auto: calls.saved.auto, t: calls.saved.title })
+  const r3 = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '第三次' })
+  tabOf(S).page.selCount = 1
+  await ba.agentAct({ sessionId: r3.sessionId, action: 'type', selector: '#u', value: 'admin' })
+  await ba.agentAct({ sessionId: r3.sessionId, action: 'click', selector: '#ok' })
+  await ba.agentClose({ sessionId: r3.sessionId, status: 'done' })
+  ok('★人起的名字不许被后来的自动沉淀覆盖回 purpose', calls.saved.title === '登录并进首页' && calls.saved.runs === 3, { t: calls.saved.title, runs: calls.saved.runs })
 }
 {
-  const { ba, S } = makeCtx()
+  const { ba, S, calls: calls2 } = makeCtx()
   const r = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '只读了一眼' })
   const cl = await ba.agentClose({ sessionId: r.sessionId, status: 'done' })
-  ok('  只是打开看了看(没有改状态的动作)→ 不催', cl.report.sediment === undefined, cl.report.sediment)
+  ok('  只是打开看了看(没有改状态的动作)→ 不存(库里不进垃圾)', cl.report.sediment === undefined && !calls2.saved, cl.report.sediment)
   const r2 = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '自述失败' })
   tabOf(S).page.selCount = 1
   await ba.agentAct({ sessionId: r2.sessionId, action: 'type', selector: '#u', value: 'a' })
   await ba.agentAct({ sessionId: r2.sessionId, action: 'click', selector: '#ok' })
   const cl2 = await ba.agentClose({ sessionId: r2.sessionId, status: 'failed' })
-  ok('★自述 failed 的流程不催沉淀(跑不通的路存进库里是害人)', cl2.report.sediment === undefined, cl2.report.sediment)
+  ok('★自述 failed 的流程不沉淀(跑不通的路存进库里是害人)', cl2.report.sediment === undefined && !calls2.saved, cl2.report.sediment)
 }
 
 console.log('用例8:会话生命周期 —— 超时/并发/重复收/取证')

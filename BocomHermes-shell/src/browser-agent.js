@@ -48,7 +48,7 @@ function isLocal(u) {
 }
 
 module.exports = function initBrowserAgent(ctx) {
-  const { S, log, brActive, newTab, closeTab, activateTab, createBrowser, ensureBrowserBackground, brScreenshot, brShotTab, execStep, waitNetIdle, pageRead, brSetDevice, showShot, callerWc, visionInfo, saveRec, skillList, askVision } = ctx
+  const { S, log, brActive, newTab, closeTab, activateTab, createBrowser, ensureBrowserBackground, brScreenshot, brShotTab, execStep, waitNetIdle, pageRead, brSetDevice, showShot, callerWc, visionInfo, saveRec, readRec, skillList, askVision } = ctx
 
   const sessions = new Map()   // id → session
 
@@ -137,7 +137,7 @@ module.exports = function initBrowserAgent(ctx) {
     const h = hostOf(url); if (!h) return []
     let all = []; try { all = skillList ? (skillList() || []) : [] } catch { return [] }
     return all.filter((k) => hostOf(k.startUrl) === h)
-      .sort((x, y) => (+new Date(y.lastRun || 0) || 0) - (+new Date(x.lastRun || 0) || 0))
+      .sort((x, y) => ((y.runs || 0) - (x.runs || 0)) || ((+new Date(y.lastRun || 0) || 0) - (+new Date(x.lastRun || 0) || 0)))
       .slice(0, 3)
   }
   function recallNote(url) {
@@ -145,10 +145,46 @@ module.exports = function initBrowserAgent(ctx) {
     if (!ks.length) return ''
     return '★这个站点已经有 ' + ks.length + ' 条沉淀好的流程:\n'
       + ks.map((k) => '  · ' + k.id + ' 「' + k.name + '」' + k.steps + ' 步'
+        + (k.runs > 1 ? ' 跑通过 ' + k.runs + ' 次' : '')
+        + (k.auto ? '(自动存的,名字是当时的 purpose 凑的,未经确认)' : '')
         + (k.params && k.params.length ? '(参数:' + k.params.map((x) => x.key).join(',') + ')' : '')
         + (k.description ? ' —— ' + str(k.description).slice(0, 80) : '')).join('\n')
       + '\n【先用 skill_run 跑现成的这条】,别从零试错一遍 —— 它已经带选择器自愈,比你现场猜稳。'
       + '只有确认它办不了你这件事,才自己动手。'
+  }
+
+  // ── 自动沉淀:不指望模型自觉 ─────────────────────────────────────────────────
+  // 【上一版错在哪】三处提示全是"推给模型、靠它自己调 save_flow"——也就是【一步都不自动】。
+  // 模型不调就永久丢掉,而"试错半小时跑通、下个会话从零再来"正是用户报的那个问题本身。
+  // 靠自觉的机制在这条链路上不成立:它把流程试通时上下文已经很满,收尾那一步最容易被省掉。
+  // 所以改成:收会话时【壳层自己先存一份】,模型愿意的话再来认领、改个准名字。
+  //
+  // 会不会把技能库堆满?按【动作指纹】存:同一个站点 + 同一串动作 → 同一个 id,重跑只覆盖并 runs+1。
+  // 同一条路跑 20 次,库里还是一条,而 runs=20 恰好说明它最常用(召回时优先推它)。
+  // 密码不会泄:flow 入栈时密码步就已经标 secret、删掉了 value(见 act 里那段),自动存也拿不到明文。
+  const fp8 = (t) => { let h = 0x811c9dc5; for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = (h * 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
+  function flowFp(s) {
+    const host = hostOf((arr(s.flow)[0] || {}).url || curUrl(s))
+    return fp8(host + '|' + arr(s.flow).map((e) => e.act + ':' + str(e.sel || e.url || e.key || '').slice(0, 60)).join('>'))
+  }
+  function autoSediment(s, verdict) {
+    const id = 'auto-' + flowFp(s)
+    let prev = null; try { prev = readRec ? readRec(id) : null } catch {}
+    const claimed = !!(prev && prev.auto === false)   // 已被认领过:不许把人起的名字覆盖回 purpose
+    const rec = {
+      id,
+      title: claimed ? prev.title : (str(s.purpose).slice(0, 60) || 'Agent 跑过的流程'),
+      description: claimed ? prev.description : ('自动沉淀:' + str(s.purpose).slice(0, 200) + '(判定 ' + verdict + ')'),
+      startUrl: (arr(s.flow)[0] || {}).url || curUrl(s),
+      skill: true, auto: !claimed, createdBy: 'agent-auto',
+      createdAt: (prev && prev.createdAt) || new Date().toISOString(),
+      runs: ((prev && +prev.runs) || 0) + 1,
+      events: arr(s.flow), params: (prev && prev.params) || [],
+    }
+    try { saveRec(rec) } catch (e) { log('[browser-agent] 自动沉淀失败: ' + e.message); return null }
+    s.autoId = id
+    log('[browser-agent] 自动沉淀 ' + id + ' 「' + rec.title + '」' + rec.events.length + ' 步(第 ' + rec.runs + ' 次)')
+    return rec
   }
 
   function step(s, kind, detail, ok, err) {
@@ -232,7 +268,7 @@ module.exports = function initBrowserAgent(ctx) {
         + '先 browser_eval 看一眼 document.title / location.href / #app 的内容再往下走,别急着截图。' } : {}),
       url: curUrl(s), title: (snap && snap.title) || '', elements: (snap && snap.elements) || '', text: (snap && String(snap.text || '').slice(0, 3000)) || '',
       note: '标签页已开,用户看得见(在标签条上,点过去就能看)。做完必须调 browser_close 出报告 —— '
-        + '跑通之后 browser_save_flow 把这条流程存进技能库(收会话的报告里会再提醒一次),别的会话就不用再试错一遍。',
+        + '流程会在 browser_close 时【自动沉淀】进技能库,你不用记着存;想给它起个准名字再调 browser_save_flow。',
     }
   }
 
@@ -564,7 +600,7 @@ module.exports = function initBrowserAgent(ctx) {
       step(s, 'drag', sel + ' → ' + (toSel || ('+' + ddx + ',' + ddy)), !bad3, bad3 || '')
       loopNote(s, action, sel, toSel, !bad3)
       if (bad3) return { error: bad3 }
-      if (['click', 'input'].length) s.flow.push({ act: 'drag', sel, selAlt: [], toSel, dx: ddx, dy: ddy })
+      s.flow.push({ act: 'drag', sel, selAlt: [], toSel, dx: ddx, dy: ddy })
       try { await waitNetIdle(tab, 300, 2500) } catch {}
       return { ok: true, url: curUrl(s), from: r2.from, to: r2.to,
         note: '两套机制都发了(HTML5 DnD + 鼠标模拟,中间带 8 个移动步)。拖完【务必再 browser_read 或 browser_eval 核一下结果】——'
@@ -1288,15 +1324,20 @@ module.exports = function initBrowserAgent(ctx) {
     if (!name) return { error: 'name 必填:一句话说清这个流程干什么(别人在技能库里就靠它认出来)' }
     const acts = arr(s.flow).filter((e) => e && e.act !== 'navigate')
     if (!acts.length) return { error: '这个会话还没有任何【会改变页面状态】的成功动作(只有读页/截图),没什么可沉淀的' }
-    const id = 'agent-' + nowMs().toString(36)
+    // ★认领:如果收会话时已经自动存过,就【覆盖同一条】,不许一条流程在库里躺两份
+    const id = s.autoId || ('agent-' + nowMs().toString(36))
+    // 覆盖时要把"跑通过几次/什么时候第一次跑通"带过来 —— 认领一次就把 runs 清零的话,
+    // 召回排序(跑得多的优先)当场失效,而这条恰恰是刚被人认领、最值得推的那一条。
+    let prev = null; try { prev = readRec ? readRec(id) : null } catch {}
     const rec = {
       id,
       title: name.slice(0, 60),
       description: str(a && a.description).slice(0, 400) || s.purpose,
       startUrl: (arr(s.flow)[0] || {}).url || curUrl(s),
-      skill: true,
+      skill: true, auto: false,
       createdBy: 'agent',
-      createdAt: new Date().toISOString(),
+      createdAt: (prev && prev.createdAt) || new Date().toISOString(),
+      runs: (prev && +prev.runs) || 1,
       events: arr(s.flow),
       params: [],
     }
@@ -1471,12 +1512,16 @@ module.exports = function initBrowserAgent(ctx) {
     // 试错次数一起报出来:那是不沉淀的【代价】,下一个会话会把这些试错原样再走一遍。
     const flowActs = arr(s.flow).filter((e) => e && e.act !== 'navigate').length
     if (status === 'done' && flowActs >= 2 && !s.savedFlow) {
-      s.result.sediment = '★这条流程有 ' + flowActs + ' 个会改状态的动作'
-        + (stepFail.length ? '、试错 ' + stepFail.length + ' 次才跑通' : '') + ',还没沉淀。\n'
-        + '现在调 browser_save_flow{sessionId:"' + s.id + '",name:"一句话说清它干什么"} 存进技能库'
-        + '(会话收了之后 ' + Math.round(SAVE_GRACE_MS / 60000) + ' 分钟内仍然能存)。\n'
-        + '不存的话,下一个会话会把'
-        + (stepFail.length ? '这 ' + stepFail.length + ' 次试错' : '这些步骤') + '原样再走一遍。'
+      const rec = autoSediment(s, verdict)
+      if (rec) {
+        s.result.sediment = '★这条流程已【自动存进技能库】:' + rec.id + ' 「' + rec.title + '」' + rec.events.length + ' 步'
+          + (rec.runs > 1 ? '(这条路第 ' + rec.runs + ' 次跑通,已合并到同一条)' : '')
+          + (stepFail.length ? ',路上试错 ' + stepFail.length + ' 次' : '') + '。\n'
+          + '别的会话直接 skill_run ' + rec.id + ' 回放,不用再试一遍。\n'
+          + '名字是拿你开会话时那句 purpose 凑的 —— 想起个更准的就调 '
+          + 'browser_save_flow{sessionId:"' + s.id + '",name:"…"}(覆盖同一条,不会多出一条;收会话后 '
+          + Math.round(SAVE_GRACE_MS / 60000) + ' 分钟内有效)。'
+      }
     }
     s.closedAt = nowMs()
     const t = tabOf(s)
