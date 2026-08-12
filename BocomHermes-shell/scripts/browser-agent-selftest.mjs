@@ -21,6 +21,13 @@ function makeCtx(over = {}) {
     const page = { url, text: '', selCount: 0 }
     const wc = {
       isDestroyed: () => false,
+      session: {
+        cookies: {
+          get: async () => (page.cookies || [{ name: 'JSESSIONID', value: 'x', domain: 'localhost', path: '/' }]),
+          set: async () => { page.cookieSet = (page.cookieSet || 0) + 1 },
+        },
+        clearStorageData: async () => { page.cleared = true },
+      },
       debugger: { sendCommand: async (m, p2) => {
         if (m === 'DOM.getDocument') return { root: { nodeId: 1 } }
         if (m === 'DOM.querySelector') return { nodeId: 7 }
@@ -31,6 +38,13 @@ function makeCtx(over = {}) {
       getTitle: () => '标题',
       executeJavaScript: async (code) => {
         // agentEval / agentHtml 的返回形状(先判,它们的代码里也含 innerText/querySelectorAll)
+        if (/getBoundingClientRect/.test(code) && /x:Math\.round/.test(code)) return { x: 10, y: 10 }
+        if (/__bocom_dlg/.test(code) && /armed=/.test(code)) { page.armed = JSON.parse((code.match(/armed=(\{[^}]*\})/) || [])[1] || '{}'); return 1 }
+        if (/__bocom_dlg/.test(code)) return page.dialogs || []
+        if (/getComputedStyle\(e\)/.test(code) && /"visible"/.test(code)) return page.until || 'visible'
+        if (/pointerover/.test(code)) { page.hovered = true; return 1 }
+        if (/localStorage.length/.test(code)) return page.local || { token: 'abc' }
+        if (/localStorage.setItem/.test(code)) { page.restored = true; return 1 }
         if (/__bhCan/.test(code) && /scrollTop\+=/.test(code)) {
           if (!page.scrollTarget) return { no: 1 }
           page.wheelSeen = (page.wheelSeen || 0) + 1
@@ -620,6 +634,87 @@ console.log('用例7.19:原地打转要能自己停 —— 卡住时的应对')
     if (rr.error) { ok('★不许误伤正常流程(动作各不相同且都成功)', false, rr.error); break }
     if (i === 9) ok('★不许误伤正常流程(动作各不相同且都成功)', true)
   }
+}
+
+console.log('用例7.20:弹窗不许挂死 / 等条件 / 后退 / 状态复用')
+{
+  const { ba, S } = makeCtx()
+  const r = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '验这一批' })
+  const p = tabOf(S).page
+
+  // ★弹窗:默认取消(默认同意一次删除就是事故);要确定必须显式预置
+  const d1 = await ba.agentAct({ sessionId: r.sessionId, action: 'dialog', accept: true, text: 'x' })
+  ok('★★dialog 能预置下一个弹窗的答案', !!d1.ok && /确定/.test(String(d1.armed)), d1)
+  ok('  明说只对【下一个】生效(不设常驻是刻意的)', /下一个/.test(String(d1.note)), d1.note)
+  const d0 = await ba.agentAct({ sessionId: r.sessionId, action: 'dialog', accept: false })
+  ok('  也能显式选取消', !!d0.ok && /取消/.test(String(d0.armed)))
+  p.dialogs = [{ kind: 'confirm', text: '确认删除这条记录吗?', answered: '取消' }]
+  const rd = await ba.agentRead({ sessionId: r.sessionId })
+  ok('★★出现过的弹窗必须在 read 回执里说出来(不能悄悄发生)',
+    (rd.dialogs || []).some((x) => /确认删除/.test(x) && /取消/.test(x)), rd.dialogs)
+
+  // ★wait 等条件
+  p.until = 'visible'
+  const w1 = await ba.agentAct({ sessionId: r.sessionId, action: 'wait', selector: '.tbl', until: 'visible', ms: 1000 })
+  ok('★等元素出现:命中就立刻返回', !!w1.ok && /visible/.test(String(w1.met)), w1)
+  p.until = 'visible'
+  const w2 = await ba.agentAct({ sessionId: r.sessionId, action: 'wait', selector: '.loading', until: 'hidden', ms: 600 })
+  ok('★等不到 → 报错并指路(别再等同一个条件)', !!w2.error && /browser_read|browser_diag/.test(String(w2.error)), String(w2.error).slice(0, 80))
+  ok('  没给条件时退回定时睡(老行为不断)', !!(await ba.agentAct({ sessionId: r.sessionId, action: 'wait', ms: 120 })).ok)
+
+  // ★hover 走合成事件(后台标签收不到真实输入事件)
+  p.hovered = false
+  await ba.agentAct({ sessionId: r.sessionId, action: 'hover', selector: '#menu' })
+  ok('★hover 派发合成鼠标事件(真实输入事件到不了后台标签)', p.hovered === true)
+
+  // ★状态复用
+  const sv = await ba.agentState({ sessionId: r.sessionId, action: 'save', name: '柜员甲' })
+  ok('★★存登录态快照(cookies + localStorage)', !!sv.ok && sv.cookies >= 1 && sv.localKeys >= 1, sv)
+  ok('  默认只在内存,并说明落盘=明文凭据', /内存/.test(String(sv.note)) && /明文/.test(String(sv.note)), sv.note)
+  const ls = await ba.agentState({ sessionId: r.sessionId, action: 'list' })
+  ok('  list 看得到', (ls.snapshots || []).some((x) => x.name === '柜员甲'), ls.snapshots)
+  p.restored = false
+  const ld = await ba.agentState({ sessionId: r.sessionId, action: 'load', name: '柜员甲' })
+  ok('★load 切回来(cookies 逐条写回 + localStorage 恢复)', !!ld.ok && ld.cookies >= 1 && p.restored === true, ld)
+  ok('  提醒恢复后要刷新一次才生效', /navigate|刷新/.test(String(ld.note)), ld.note)
+  ok('  load 不存在的名字 → 明确说去 list 看', /list/.test(String((await ba.agentState({ sessionId: r.sessionId, action: 'load', name: '没这个' })).error)))
+  const cl = await ba.agentState({ sessionId: r.sessionId, action: 'clear' })
+  ok('★clear 清空(测未登录的表现就靠它)', !!cl.ok && p.cleared === true, cl)
+}
+
+console.log('用例7.21:弹窗守卫【真跑一遍】—— 光测"预置机制"是空断言')
+{
+  // ★上一格我断言了"confirm 默认取消",红验却不红 —— 因为那段 JS 在假 frame 里从没被执行过,
+  //   我测的只是"预置这个动作能不能调"。空断言比没有断言更糟:它让错的行为看起来被钉住了。
+  //   DIALOG_JS 是纯 JS,那就在 Node 里造个假 window 真跑它,把行为本身钉死。
+  const { ba } = makeCtx()
+  const win = { onbeforeunload: function () {} }
+  // eslint-disable-next-line no-new-func
+  new Function('window', 'return ' + ba.__dialogJs)(win)
+  ok('★★没预置时 confirm 返回 false(默认【取消】—— 默认同意一次删除就是事故)', win.confirm('确认删除?') === false)
+  ok('★  alert 不阻塞、返回 undefined(原来它会调原生的,后台标签上直接把页面冻住)', win.alert('提示') === undefined)
+  ok('  prompt 默认返回 null', win.prompt('输入') === null)
+  ok('  onbeforeunload 被清掉(离开页面时它同样会弹原生框卡住)', win.onbeforeunload === null)
+
+  // 预置之后才点确定,而且【只管一次】
+  // eslint-disable-next-line no-new-func
+  new Function('window', 'return ' + ba.__armDialogJs(true, '张三'))(win)
+  ok('★★预置 accept 之后 confirm 返回 true', win.confirm('确认提交?') === true)
+  ok('★★只管一次:紧接着的第二个 confirm 又回到取消', win.confirm('再确认一次?') === false)
+  // eslint-disable-next-line no-new-func
+  new Function('window', 'return ' + ba.__armDialogJs(true, '张三'))(win)
+  ok('  prompt 用预置的文本', win.prompt('姓名') === '张三')
+  ok('★出现过的弹窗都记下来了(kind/文案/怎么答的)', (() => {
+    const seen = win.__bocom_dlg.seen
+    return seen.length >= 5 && seen.some((x) => x.kind === 'confirm' && x.answered === '确定')
+      && seen.some((x) => x.kind === 'confirm' && x.answered === '取消')
+  })(), win.__bocom_dlg.seen)
+  ok('  重复注入不覆盖已记录的(SPA 内导航会重装守卫)', (() => {
+    const n = win.__bocom_dlg.seen.length
+    // eslint-disable-next-line no-new-func
+    new Function('window', 'return ' + ba.__dialogJs)(win)
+    return win.__bocom_dlg.seen.length === n
+  })())
 }
 
 console.log('用例8:会话生命周期 —— 超时/并发/重复收/取证')

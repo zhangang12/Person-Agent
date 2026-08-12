@@ -171,6 +171,7 @@ module.exports = function initBrowserAgent(ctx) {
       wc: (typeof callerWc === 'function' ? (() => { try { return callerWc() } catch { return null } })() : null),
     }
     sessions.set(id, s)
+    try { await installDialogGuard(tab) } catch (e) { log('[browser-agent] 弹窗守卫装不上: ' + e.message) }
     step(s, 'open', url, true, '')
     log('[browser-agent] 开会话 ' + id + ' → ' + url + ' (' + purpose + ')')
     // 等页面基本安定再交给 Agent,省得它第一步读到空白页
@@ -220,9 +221,12 @@ module.exports = function initBrowserAgent(ctx) {
     // elemErr 同理,而且更狠:采集炸了却照样 ok:true + elements 里塞一句"(采集失败)",
     // 模型只会把它当"这页没元素"接着往下猜 selector —— 真机 2026-08-11 就是这么走的。
     // 所以炸了要【明说 + 给下一步】,而不是让它自己揣摩。
+    const dlgs = arr(await dialogsOf(tab)).slice(-5)
     const ee = str(snap && snap.elemErr)
     return { ok: true, url: curUrl(s), title: (snap && snap.title) || '', elements: (snap && snap.elements) || '',
       text: (snap && snap.text) || '', truncated: (snap && snap.truncated) || '',
+      // 弹窗是"悄悄发生然后改变一切"的东西:出现过就必须说,否则模型会对着一个被拦掉的操作继续推
+      ...(dlgs.length ? { dialogs: dlgs.map((d) => d.kind + '「' + d.text + '」→ ' + (d.answered || '已忽略')) } : {}),
       ...(ee ? { elemError: '元素采集失败:' + ee + ' —— 这一轮拿不到 ref 句柄,别用 ref 点(编号会指错);'
         + '先 browser_shot 看截图确认页面长什么样,或者 browser_act 用 selector 操作' } : {}) }
   }
@@ -423,16 +427,80 @@ module.exports = function initBrowserAgent(ctx) {
           + `return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()`, true)
       } catch {}
       if (!box) { step(s, 'hover', sel, false, '找不到元素或元素不可见'); return { error: '找不到元素或元素不可见(先 browser_read 拿新 ref,或先 scroll 到它)' } }
-      try { wc.sendInputEvent({ type: 'mouseMove', x: box.x, y: box.y }) } catch (e) { return { error: '悬停失败: ' + e.message } }
+      // ★后台标签【收不到真实输入事件】(滚轮那次实测:监听器计数为 0)—— 所以真实事件只是
+      //   标签在前台时的锦上添花,真正让浮层出来的是下面这组合成事件。
+      try { wc.sendInputEvent({ type: 'mouseMove', x: box.x, y: box.y }) } catch {}
+      try {
+        await wc.executeJavaScript('(function(){var e=document.querySelector(' + JSON.stringify(sel) + ');if(!e)return 0;'
+          + 'var r=e.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2;'
+          + 'var o={bubbles:true,cancelable:true,clientX:x,clientY:y};'
+          + '["pointerover","mouseover","pointerenter","mouseenter","pointermove","mousemove"].forEach(function(t){'
+          + 'try{e.dispatchEvent(new MouseEvent(t,o))}catch(err){}});return 1})()', true)
+      } catch (e) { return { error: '悬停失败: ' + e.message } }
       await new Promise((r) => setTimeout(r, 250))   // 给悬浮层一点出现时间,否则紧接着的 read 读不到它
       step(s, 'hover', sel, true, '')
       return { ok: true, url: curUrl(s), hint: '已悬停 —— 悬浮层通常要再 browser_read 一次才看得到' }
     }
     else if (action === 'wait') {
-      const ms = Math.min(Math.max(+a.ms || 800, 100), 5000)
-      await new Promise((r) => setTimeout(r, ms))
-      step(s, 'wait', ms + 'ms', true, '')
+      // ★等【条件】,不是等时间(2026-08-12):原来只能盲睡,而真实卡点是"提交后 loading 什么时候消失"、
+      //   "表格什么时候刷出来"、"跳转什么时候完成"—— 睡短了假失败,睡长了白等,两头都亏。
+      //   给了 until/urlContains 就轮询到条件成立;什么都不给才退回定时睡(老行为不断)。
+      const cap = Math.min(Math.max(+a.ms || 800, 100), 30000)
+      const until = str(a.until).toLowerCase()          // visible | hidden | gone
+      const urlPart = str(a.urlContains)
+      if (!until && !urlPart) {
+        await new Promise((r) => setTimeout(r, Math.min(cap, 5000)))
+        step(s, 'wait', cap + 'ms', true, '')
+        return { ok: true, url: curUrl(s), waited: cap + 'ms(定时)' }
+      }
+      if (until && !sel) return { error: 'until=' + until + ' 要配 ref 或 selector(等哪个元素)' }
+      const t0 = nowMs()
+      let hit = false, last = ''
+      while (nowMs() - t0 < cap) {
+        if (urlPart) { if (str(curUrl(s)).indexOf(urlPart) >= 0) { hit = true; break } last = curUrl(s) }
+        if (until) {
+          let st2 = null
+          try {
+            st2 = await wc.executeJavaScript('(function(){var e=null;try{e=document.querySelector('
+              + JSON.stringify(sel) + ')}catch(err){return "bad"}'
+              + 'if(!e)return "gone";var r=e.getBoundingClientRect();'
+              + 'var cs=getComputedStyle(e);'
+              + 'return (r.width||r.height)&&cs.visibility!=="hidden"&&cs.display!=="none"?"visible":"hidden"})()', true)
+          } catch (e) { st2 = 'bad' }
+          if (st2 === 'bad') return { error: '选择器不合法: ' + sel }
+          last = str(st2)
+          if ((until === 'visible' && st2 === 'visible')
+            || (until === 'hidden' && (st2 === 'hidden' || st2 === 'gone'))
+            || (until === 'gone' && st2 === 'gone')) { hit = true; break }
+        }
+        await new Promise((r) => setTimeout(r, 200))
+      }
+      const took = nowMs() - t0
+      step(s, 'wait', (until || ('url~' + urlPart)) + ' ' + (hit ? '命中' : '超时'), hit, hit ? '' : '等了 ' + took + 'ms 仍未满足')
+      if (hit) return { ok: true, url: curUrl(s), waited: took + 'ms', met: until || ('url 含 ' + urlPart) }
+      return { error: '等了 ' + took + 'ms,条件仍未满足(当前:' + (last || '未知') + ')'
+        + ' —— 别再等同一个条件了:用 browser_read 看这一刻页面到底是什么样,'
+        + '或 browser_diag 看有没有请求失败(等不到往往是那一步根本没成功,不是慢)' }
+    }
+    else if (action === 'back' || action === 'forward') {
+      // 表单流程里"返回上一步"很常见;原来只能重新 navigate —— 那会丢掉页面状态
+      const can = action === 'back' ? wc.canGoBack() : wc.canGoForward()
+      if (!can) return { error: action === 'back' ? '没有可后退的历史(这是第一页)' : '没有可前进的历史' }
+      try { if (action === 'back') wc.goBack(); else wc.goForward() } catch (e) { return { error: e.message } }
+      try { await waitNetIdle(tab, 300, 5000) } catch {}
+      step(s, action, curUrl(s), true, '')
+      s.flow.push({ act: 'navigate', url: curUrl(s) })   // 沉淀时按"导航到那个地址"回放,比重放历史稳
       return { ok: true, url: curUrl(s) }
+    }
+    else if (action === 'dialog') {
+      // 预置【下一个】原生弹窗的答案。一次只管一个 —— 不设成常驻是刻意的:
+      // "以后所有 confirm 都点确定"这种设置,踩到删除确认时就是灾难。
+      let r2 = 0
+      try { r2 = await wc.executeJavaScript(armDialogJs(a.accept !== false, a.text), true) } catch {}
+      if (!r2) return { error: '这一页的弹窗守卫还没装上(通常是页面刚跳转);先 browser_read 一次再试' }
+      step(s, 'dialog', (a.accept !== false ? '确定' : '取消') + (a.text ? ' ' + str(a.text).slice(0, 40) : ''), true, '')
+      return { ok: true, armed: (a.accept !== false ? '确定' : '取消'),
+        note: '只对【下一个】弹窗生效。做完那个动作后建议 browser_read 一次,回执里能看到弹窗实际问了什么。' }
     }
     else return { error: '未知 action: ' + action + '(可用 click|type|select|check|enter|key|scroll|hover|navigate|wait)' }
 
@@ -856,6 +924,39 @@ module.exports = function initBrowserAgent(ctx) {
       note: '文件已放进输入框(change 事件已派发)。多数组件此时会自动开始上传;要提交表单的还得再点提交。' }
   }
 
+  // ── 原生弹窗:不许挂死,答案由 Agent 显式决定 ────────────────────────────────
+  // 【为什么这是最危险的一个缺口】页面调 window.confirm 会【阻塞渲染进程】等一个原生对话框,
+  // 而 Agent 的标签页是后台的(没挂进任何窗口)—— 那个对话框弹不出来也就永远不返回,
+  // 整个页面从此冻住,后续每个工具都超时。业务系统满屏"确认删除吗?",踩上是必然的。
+  // 原来的包装只是【记一笔然后照样调原生的】,所以完全挡不住。
+  // 改法:Agent 自己的标签页里三个弹窗一律【不阻塞】,并且:
+  //   · confirm 默认返回 false —— 默认拒绝比默认同意安全得多("确认删除吗?"默认点确定是灾难);
+  //   · 要点确定必须 Agent【预先明说】(browser_act{action:'dialog',accept:true}),一次只管一个;
+  //   · 出现过什么弹窗全部记下来,read/diag 里能看到 —— 不能让它悄悄发生。
+  const DIALOG_JS = '(function(){if(window.__bocom_dlg)return 1;'
+    + 'var st={armed:null,seen:[]};window.__bocom_dlg=st;'
+    + 'window.alert=function(m){st.seen.push({kind:"alert",text:String(m).slice(0,300)});return undefined};'
+    + 'window.confirm=function(m){var a=st.armed;st.armed=null;'
+    + 'st.seen.push({kind:"confirm",text:String(m).slice(0,300),answered:a?"确定":"取消"});return !!(a&&a.accept)};'
+    + 'window.prompt=function(m,d){var a=st.armed;st.armed=null;'
+    + 'st.seen.push({kind:"prompt",text:String(m).slice(0,300),answered:a?(a.text||""):"(取消)"});'
+    + 'return a?String(a.text==null?"":a.text):null};'
+    + 'window.onbeforeunload=null;return 1})()'
+  function armDialogJs(accept, text) {
+    return '(function(){if(!window.__bocom_dlg)return 0;window.__bocom_dlg.armed='
+      + JSON.stringify({ accept: !!accept, text: str(text) }) + ';return 1})()'
+  }
+  async function installDialogGuard(tab) {
+    const wc = tab.view.webContents
+    const go = () => { wc.executeJavaScript(DIALOG_JS, true).catch(() => {}) }
+    go()
+    if (!tab.__bhDlgWired) { tab.__bhDlgWired = true; wc.on('dom-ready', go) }   // SPA 内导航后要重装
+  }
+  async function dialogsOf(tab) {
+    try { return await tab.view.webContents.executeJavaScript('(window.__bocom_dlg&&window.__bocom_dlg.seen)||[]', true) }
+    catch { return [] }
+  }
+
   // ── 原地打转的闸 ──────────────────────────────────────────────────────────
   // 【为什么必须由壳层来拦】"卡住"在真机里的样子是:同一个动作换着选择器试第 4 次、第 5 次,
   // 每次白等 4 秒,一直烧到用户看不下去把它掐掉(2026-08-11 实录:连猜 4 个 nth-of-type)。
@@ -914,6 +1015,106 @@ module.exports = function initBrowserAgent(ctx) {
     return { ok: true, url: curUrl(s), model: r.model, answer: r.answer, shot: p,
       note: '这是【视觉模型】看图之后的文字描述 —— 你自己没读到图。要按它下判断的话,'
         + '涉及具体数值/文案的地方最好再用 browser_eval 核一次(看图会看错,查 DOM 不会)。' }
+  }
+
+  // ── 浏览器状态:存 / 复用 / 清空 ──────────────────────────────────────────
+  // 【用户 2026-08-12】"还有 session 复用等浏览器状态保持的工具"。
+  // 先说清现状,免得做重复功:cookies 走的是同一个 Electron session,【本来就共享且落盘持久】——
+  // 所以重开标签、甚至重启应用,多数系统仍是登录态。真正会丢的是两样:
+  //   ① localStorage / sessionStorage 里的 token(SPA 常把它放这儿,或者干脆只放内存);
+  //   ② "我想换个身份跑" / "我想测未登录的表现" —— 这两件事没有工具就只能手工清浏览器。
+  // 所以这里补的是【命名快照】:把当前 origin 的 cookies + localStorage 存成一份,随时切回来。
+  // ★默认只存在内存里(壳层进程生命周期内):这些是【登录凭据】,落盘等于把凭据明文写进硬盘。
+  //   要跨重启复用得显式 persist:true,并且回执里把这句话说明白 —— 不能让它悄悄发生。
+  const stateSnaps = new Map()   // name -> { origin, cookies, local, at }
+  function stateFile(name) {
+    const path2 = require('path'); const { app } = require('electron')
+    return path2.join(app.getPath('userData'), 'browser-state', String(name).replace(/[^\w.-]/g, '') + '.json')
+  }
+  async function agentState(a) {
+    const s = live(a && a.sessionId); if (!s) return { error: '会话不存在或已结束(先 browser_open)' }
+    const tab = tabOf(s); if (!tab) return { error: '这个会话的标签页已被关掉' }
+    const wc = tab.view.webContents
+    const act = str(a && a.action).toLowerCase() || 'save'
+    const name = str(a && a.name).trim()
+    const url = curUrl(s)
+    const origin = originOf(url)
+    const ses = (() => { try { return wc.session } catch { return null } })()
+    if (!ses) return { error: '拿不到浏览器 session' }
+
+    if (act === 'list') {
+      const mem = [...stateSnaps.entries()].map(([k, v]) => ({ name: k, origin: v.origin, cookies: v.cookies.length, at: v.at, where: '内存' }))
+      let disk = []
+      try {
+        const fs2 = require('fs'); const path2 = require('path'); const { app } = require('electron')
+        const d = path2.join(app.getPath('userData'), 'browser-state')
+        disk = fs2.readdirSync(d).filter((f) => f.endsWith('.json')).map((f) => ({ name: f.replace(/\.json$/, ''), where: '磁盘' }))
+      } catch {}
+      return { ok: true, snapshots: [...mem, ...disk] }
+    }
+
+    if (act === 'clear') {
+      // 测"未登录时的表现"必须能清干净 —— 反向用例里这是最常用的一步
+      try { await ses.clearStorageData({ storages: ['cookies', 'localstorage', 'indexdb', 'websql', 'serviceworkers', 'cachestorage'] }) } catch (e) { return { error: '清不掉: ' + e.message } }
+      try { await wc.executeJavaScript('(function(){try{localStorage.clear();sessionStorage.clear()}catch(e){}return 1})()', true) } catch {}
+      step(s, 'state', 'clear', true, '')
+      return { ok: true, note: '已清空 cookies 与本地存储(整个浏览器,不只这一页)。刷新页面即可看到未登录状态。' }
+    }
+
+    if (!name) return { error: 'save/load 要给 name(这份状态叫什么,如「柜员甲」「admin」)' }
+
+    if (act === 'save') {
+      if (!origin) return { error: '当前页没有有效 origin,存不了' }
+      let cookies = []
+      try { cookies = await ses.cookies.get({}) } catch (e) { return { error: '读 cookies 失败: ' + e.message } }
+      let local = {}
+      try { local = await wc.executeJavaScript('(function(){var o={};try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);o[k]=localStorage.getItem(k)}}catch(e){}return o})()', true) } catch {}
+      const snap = { origin, cookies, local, at: new Date().toISOString() }
+      stateSnaps.set(name, snap)
+      let persisted = ''
+      if (a && a.persist) {
+        try {
+          const fs2 = require('fs'); const path2 = require('path')
+          const fp = stateFile(name)
+          fs2.mkdirSync(path2.dirname(fp), { recursive: true })
+          fs2.writeFileSync(fp, JSON.stringify(snap), { mode: 0o600 })
+          persisted = fp
+        } catch (e) { return { error: '落盘失败: ' + e.message } }
+      }
+      step(s, 'state', 'save ' + name, true, '')
+      return { ok: true, name, origin, cookies: cookies.length, localKeys: Object.keys(local).length,
+        note: persisted
+          ? '已存进内存【并落盘】:' + persisted + ' —— ★这里面是登录凭据的明文,别把它拷给别人;不需要跨重启就别用 persist。'
+          : '已存进内存(本次运行内有效,别的会话也能 load)。要跨重启复用就加 persist:true —— 那等于把登录凭据明文写进硬盘,想清楚再用。' }
+    }
+
+    if (act === 'load') {
+      let snap = stateSnaps.get(name)
+      if (!snap) {
+        try { const fs2 = require('fs'); snap = JSON.parse(fs2.readFileSync(stateFile(name), 'utf8')) } catch {}
+      }
+      if (!snap) return { error: '没有叫「' + name + '」的状态快照(用 action:"list" 看有哪些)' }
+      let n = 0
+      for (const c of arr(snap.cookies)) {
+        try {
+          await ses.cookies.set({
+            url: (c.secure ? 'https://' : 'http://') + String(c.domain || '').replace(/^\./, '') + (c.path || '/'),
+            name: c.name, value: c.value, domain: c.domain, path: c.path,
+            secure: !!c.secure, httpOnly: !!c.httpOnly, expirationDate: c.expirationDate,
+          })
+          n++
+        } catch { /* 单条失败不影响其余(域名/协议对不上的老 cookie 很常见)*/ }
+      }
+      try {
+        await wc.executeJavaScript('(function(){var o=' + JSON.stringify(snap.local || {}) + ';'
+          + 'try{for(var k in o)localStorage.setItem(k,o[k])}catch(e){}return 1})()', true)
+      } catch {}
+      step(s, 'state', 'load ' + name, true, '')
+      return { ok: true, name, cookies: n, total: arr(snap.cookies).length, origin: snap.origin,
+        note: '已恢复。localStorage 是写进【当前页】的 origin 的 —— 如果快照来自别的站点,先 navigate 过去再 load。'
+          + '恢复完通常要刷新一次页面才生效(browser_act{action:"navigate"} 到当前地址即可)。' }
+    }
+    return { error: 'action 只能是 save|load|clear|list' }
   }
 
   // ── 把跑通的流程沉淀成技能 ────────────────────────────────────────────────
@@ -1123,5 +1324,5 @@ module.exports = function initBrowserAgent(ctx) {
     sessions.clear()
   }
 
-  return { agentOpen, agentRead, agentFind, agentAct, agentEval, agentHtml, agentUpload, agentSaveFlow, agentSee, agentTabs, agentResize, agentAssert, agentShot, agentDiag, agentClose, anyLive, dropAll, policyCheck, __sessions: sessions }
+  return { __dialogJs: DIALOG_JS, __armDialogJs: armDialogJs, agentOpen, agentRead, agentFind, agentAct, agentEval, agentHtml, agentUpload, agentSaveFlow, agentSee, agentState, agentTabs, agentResize, agentAssert, agentShot, agentDiag, agentClose, anyLive, dropAll, policyCheck, __sessions: sessions }
 }

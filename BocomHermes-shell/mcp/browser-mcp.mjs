@@ -280,17 +280,26 @@ const TOOLS = [
       + '业务系统里真正带滚动条的几乎都是内层容器(表格体 / el-scrollbar / 弹层 / 侧栏),整页根本不滚;'
       + '虚拟滚动、无限加载、自定义滚动条、地图缩放这些也只认 wheel 事件。'
       + '回执会说清【滚的是谁、位移多少、到底了没有】—— "滚不动"和"已经到底"是两回事。'
-      + ' hover:发【真实鼠标事件】(纯 CSS 的下拉菜单也能弹出来),悬停后通常要再 browser_read 一次才看得到浮层。',
+      + ' ★wait 要等【条件】不要等时间:until:"hidden" 等 loading 消失 / until:"visible" 等表格出来 /'
+      + ' urlContains 等跳转完成。盲睡是最常见的假失败来源(睡短了没等到,睡长了白等)。'
+      + ' back|forward:走浏览器历史(比重新 navigate 稳,不丢页面状态)。'
+      + ' ★dialog:给【下一个】原生弹窗预置答案(accept:true=点确定)。业务系统满屏"确认删除吗",'
+      + '不预置就默认点【取消】—— 这是刻意的:默认同意一次删除就是事故。弹窗实际问了什么,browser_read 回执里能看到。'
+      + ' hover:发合成鼠标事件(纯 CSS 的下拉菜单也能弹出来),悬停后通常要再 browser_read 一次才看得到浮层。',
     inputSchema: { type: 'object', properties: {
       sessionId: { type: 'string' },
-      action: { type: 'string', enum: ['click', 'type', 'select', 'check', 'enter', 'key', 'scroll', 'wheel', 'hover', 'navigate', 'wait'] },
+      action: { type: 'string', enum: ['click', 'type', 'select', 'check', 'enter', 'key', 'scroll', 'wheel', 'hover', 'navigate', 'back', 'forward', 'dialog', 'wait'] },
       key: { type: 'string', description: 'action=key 时:Enter/Escape/Tab/Backspace/Delete/方向键/Home/End/PageUp/PageDown(输入文字用 type)' },
       direction: { type: 'string', enum: ['up', 'down', 'left', 'right'], description: 'action=scroll 且没给 ref/selector 时:整页往哪滚(默认 down)' },
       amount: { type: 'number', description: 'action=scroll 整页滚多少像素(默认 600)' },
       ref: { type: 'string', description: '★首选:browser_read 给的句柄(ref_3 或 3)。用它就不用拼选择器 —— 精确唯一,页面变了会明确报错而不是点错' },
       selector: { type: 'string', description: '没有 ref 时才用。可以是 CSS 选择器、__text__:角色或标签|文本(角色就用 browser_read 印出来的那个,如 __text__:textbox|输入客户名称),也可以直接写 "ref_58"(和 ref 参数等价);严禁 :has-text()/xpath' },
       value: { type: 'string' }, text: { type: 'string' },
-      checked: { type: 'boolean' }, url: { type: 'string' }, ms: { type: 'number' },
+      checked: { type: 'boolean' }, url: { type: 'string' },
+      ms: { type: 'number', description: 'wait 的上限毫秒(配 until/urlContains 时是超时上限,最长 30s)' },
+      until: { type: 'string', enum: ['visible', 'hidden', 'gone'], description: 'wait:等这个元素变成什么状态(要配 ref/selector)。等 loading 消失用 hidden' },
+      urlContains: { type: 'string', description: 'wait:等地址栏里出现这段(跳转/登录完成最常用)' },
+      accept: { type: 'boolean', description: 'dialog:下一个弹窗点确定(true)还是取消(默认取消)' },
     }, required: ['sessionId', 'action'] },
   },
   {
@@ -357,6 +366,23 @@ const TOOLS = [
       question: { type: 'string', description: '想让它看什么(越具体越准),如「表格里第一行的状态是什么」「有没有报错弹窗」' },
       full: { type: 'boolean', description: '看整页(默认只看当前视口)' },
     }, required: ['sessionId'] },
+  },
+  {
+    name: 'browser_state',
+    description: '★浏览器状态的存/取/清 —— 用来"不必每次从登录开始"和"切换身份/测未登录"。'
+      + '先知道一件事:cookies 走同一个浏览器 session,【本来就共享且落盘持久】,所以重开标签多半仍是登录态;'
+      + '真正会丢的是 localStorage 里的 token,以及"想换个身份跑"这种需求。'
+      + ' save:把当前 origin 的 cookies+localStorage 存成命名快照(默认只在内存,本次运行内有效,别的会话也能 load);'
+      + ' load:切回某份快照(恢复后通常要 navigate 一次才生效);'
+      + ' clear:清空 cookies 与本地存储 —— 测【未登录时的表现】就靠它;'
+      + ' list:看有哪些快照。'
+      + ' ★persist:true 会落盘,那等于把登录凭据明文写进硬盘 —— 不需要跨重启就别用。',
+    inputSchema: { type: 'object', properties: {
+      sessionId: { type: 'string' },
+      action: { type: 'string', enum: ['save', 'load', 'clear', 'list'] },
+      name: { type: 'string', description: 'save/load 用:这份状态叫什么(如「柜员甲」「admin」)' },
+      persist: { type: 'boolean', description: 'save 时落盘(跨重启可用;明文凭据,慎用)' },
+    }, required: ['sessionId', 'action'] },
   },
   {
     name: 'browser_tabs',
@@ -562,6 +588,15 @@ async function callTool(name, args) {
     const r = await relayPost('/browser/upload', body)
     if (r.error) return r.error
     return '已放入文件:' + (r.files || []).join('、') + '\n' + (r.note || '')
+  }
+  if (name === 'browser_state') {
+    const body = { sessionId: String(args.sessionId || ''), action: String(args.action || 'save') }
+    if (args.name != null) body.name = String(args.name)
+    if (args.persist) body.persist = true
+    const r = await relayPost('/browser/state', body)
+    if (r.error) return r.error
+    if (r.snapshots) return r.snapshots.length ? r.snapshots.map((x) => x.name + '(' + x.where + (x.origin ? ' ' + x.origin : '') + ')').join('\n') : '(还没有任何状态快照)'
+    return JSON.stringify({ name: r.name, cookies: r.cookies, localKeys: r.localKeys }) + '\n' + (r.note || '')
   }
   if (name === 'browser_save_flow') {
     const r = await relayPost('/browser/save_flow', { sessionId: String(args.sessionId || ''), name: String(args.name || ''), description: String(args.description || '') })
