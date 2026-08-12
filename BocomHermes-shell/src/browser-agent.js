@@ -486,7 +486,11 @@ module.exports = function initBrowserAgent(ctx) {
       //   老写法为了让 brScreenshot(内部取 brActive())能拿到图,先把自己的标签激活 ——
       //   那等于把用户正在看的页面从窗口上摘下来,而且截完【不还】。
       //   CDP 的 Page.captureScreenshot 不走合成表面,后台标签照样出图。
-      const p = await brShotTab(tab, !!(a && a.full))
+      // brShotTab 现在可能回 {path,note,buf}(整页图按像素预算截断时要把这件事说出来);
+      // 自测里的假实现回字符串 —— 两种都接,少一层耦合
+      const rr = await brShotTab(tab, !!(a && a.full))
+      const p = typeof rr === 'string' ? rr : (rr && rr.path)
+      const shotNote = (rr && rr.note) || ''
       if (!p) return { error: '截图失败(后台标签没有调试器?)' }
       const label = str(a && a.label).slice(0, 120)
       s.shots.push({ path: p, label, at: nowMs() - s.startedAt })
@@ -496,7 +500,7 @@ module.exports = function initBrowserAgent(ctx) {
       // markdown 图片语法,而那条路径渲染不出来。于是"截图给我看"这件事对用户永远只剩一行路径。
       // 谁有能力把图摆出来?壳层。所以由壳层直推进当前对话卡,不经过模型。
       let shown = false
-      if (typeof showShot === 'function') { try { shown = !!showShot({ path: p, label, url: curUrl(s), full: !!(a && a.full), wc: s.wc }) } catch (e) { log('[browser-agent] 展示截图失败: ' + e.message) } }
+      if (typeof showShot === 'function') { try { shown = !!showShot({ path: p, label, url: curUrl(s), full: !!(a && a.full), wc: s.wc, buf: (rr && rr.buf) || null }) } catch (e) { log('[browser-agent] 展示截图失败: ' + e.message) } }
       // ★"你自己能不能看这张图"必须说实话(2026-08-12):本机 12 个模型一个都不能读图,
       //   而回执以前写着"要看就把它当附件读一遍"—— 模型照做,拿回
       //   「image omitted: could not be resized below the image size limit」,白烧一轮,
@@ -509,6 +513,8 @@ module.exports = function initBrowserAgent(ctx) {
           + '那只会拿回一句"image omitted"白烧一轮。要确认页面状态请用 browser_read(元素+ref)/'
           + ' browser_eval(直接查 DOM)/ browser_html(看结构),这三样给的是文字,你读得到。'
       return { ok: true, path: p, shownToUser: shown, youCanSeeIt: !!vis.ok,
+        // ★截断要如实说:不说的话模型会把"顶部一屏"当成整页,后面的内容当成不存在
+        ...(shotNote ? { truncated: shotNote + ' —— 要看下面的内容:browser_act{action:"scroll"} 往下滚再截一张' } : {}),
         note: (shown
           ? '这张图已经【直接展示在用户的对话里】了,不用再把路径念给用户、也不用叫用户自己去打开。'
           : '图已存盘但没能摆进对话(当前没有活动对话卡)。') + selfSee }

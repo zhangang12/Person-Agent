@@ -596,17 +596,42 @@ module.exports = function initBrowser(ctx) {
   // CDP 截图(不依赖合成表面):窗口隐藏/视图没被绘制时,capturePage 会报
   // "Current display surface not available for capture" —— 而 Page.captureScreenshot 照样能出图。
   // Agent 自主会话常在窗口没亮到前台时截图,全靠这条路。
+  // 整页截图的【像素预算】—— 2026-08-12 内网报 MCP error -32001(客户端等超时),根因就在这里。
+  // 实测(快机器):6900 CSS px 高的页面,整页出图 2850×13800 = 3900 万像素、1.9MB、1.3 秒。
+  // 而老代码的高度上限是 30000 CSS px,后台标签又把 deviceScaleFactor 设成 2 ——
+  // 最坏情况 2850×60000 ≈ 1.7 亿像素(裸位图约 680MB):Chromium 编码 + base64 传回 +
+  // 主进程再解码缩放,全在主线程上,慢机器上几十秒到几分钟,relay 连别的请求都答不了。
+  // 两条闸:① 整页图不要 2 倍分辨率(它要的是版式和覆盖,不是像素锐度)—— scale 抵掉 dsf;
+  //        ② 总像素封顶,超了就【截掉下半部分并如实说明】,不许悄悄地慢死。
+  const FULL_MAX_PX = 25e6      // 2500 万像素:1440 宽时约 17000 CSS px 高,够长了
+  const FULL_MAX_H = 15000      // 绝对高度上限(CSS px)
   async function brShotCdp(tab, full) {
     const dbg = tab.view.webContents.debugger
     const opt = { format: 'png' }
+    let note = ''
     if (full) {
       const m = await dbg.sendCommand('Page.getLayoutMetrics')
       const cs = m.cssContentSize || m.contentSize || { width: 1280, height: 800 }
-      const w = Math.max(1, Math.ceil(cs.width)), h = Math.max(1, Math.min(Math.ceil(cs.height), 30000))   // 30000px 上限防超大页爆内存
-      Object.assign(opt, { captureBeyondViewport: true, clip: { x: 0, y: 0, width: w, height: h, scale: 1 } })
+      const dsf = tab._bgMetrics ? (BG_VIEWPORT.deviceScaleFactor || 1) : 1
+      const scale = 1 / dsf                                   // ① 出 1 倍像素,别让后台视口的 2 倍把成本翻四倍
+      const w = Math.max(1, Math.ceil(cs.width))
+      let h = Math.max(1, Math.min(Math.ceil(cs.height), FULL_MAX_H))
+      if (h < Math.ceil(cs.height)) note = '页面高 ' + Math.ceil(cs.height) + 'px,超过上限 ' + FULL_MAX_H + 'px,只截了顶部'
+      if (w * h > FULL_MAX_PX) {                              // ② 像素预算
+        const h2 = Math.max(1, Math.floor(FULL_MAX_PX / w))
+        note = '页面高 ' + Math.ceil(cs.height) + 'px,整页会到 ' + Math.round(w * h / 1e6) + ' 百万像素(会很慢),只截了顶部 ' + h2 + 'px'
+        h = h2
+      }
+      if (note) log('[shot] ' + note + ' —— 要看下面的内容请 scroll 后分段截')
+      Object.assign(opt, { captureBeyondViewport: true, clip: { x: 0, y: 0, width: w, height: h, scale } })
     }
+    const t0 = Date.now()
     const shot = await dbg.sendCommand('Page.captureScreenshot', opt)
-    return saveShot(Buffer.from(shot.data, 'base64'))
+    const buf = Buffer.from(shot.data, 'base64')
+    const p = saveShot(buf)
+    // 分段耗时留痕:内网报"截图超时"时,这一行直接说明是 CDP 慢还是落盘慢
+    log('[shot] CDP 出图 ' + (Date.now() - t0) + 'ms ' + Math.round(buf.length / 1024) + 'KB' + (full ? ' (整页)' : ''))
+    return { path: p, note, buf }
   }
   /** 对【指定标签】截图,不管它是不是当前活动标签、也不管窗口有没有亮。
    *  ★Agent 后台会话必须走这条:brScreenshot 内部取的是 brActive()——后台标签不是活动标签,
@@ -617,7 +642,7 @@ module.exports = function initBrowser(ctx) {
     // ★必须先等调试器就绪:attachDbg 是异步的(Network/Page/Runtime.enable 全在 _dbgReady 里),
     //   刚开的标签立刻截图会撞上 tab.dbg 还没定 —— 真机第一次自测就报「后台标签没有调试器?」。
     try { await Promise.race([tab._dbgReady || Promise.resolve(), new Promise((r) => setTimeout(r, 4000))]) } catch {}
-    if (tab.dbg) { try { return await brShotCdp(tab, full) } catch (e) { log('browser shot(tab) cdp 失败: ' + e.message) } }
+    if (tab.dbg) { try { const r = await brShotCdp(tab, full); return r } catch (e) { log('browser shot(tab) cdp 失败: ' + e.message) } }
     if (tab.id === S.browser.activeId) { try { return await brShotVisible(tab) } catch (e) { log('browser shot(tab) 可视区兜底也失败: ' + e.message) } }
     // 最后一招:临时切前台截一张,【截完立刻还回去】。闪一下总比"截图给我"直接失败好,
     // 但必须还 —— 老代码正是"切过去就不还",那才是用户说的"又把我的会话毁掉了"。
@@ -640,7 +665,7 @@ module.exports = function initBrowser(ctx) {
         const cs = m.cssContentSize || m.contentSize || { width: 1280, height: 800 }
         const w = Math.max(1, Math.ceil(cs.width)), h = Math.max(1, Math.min(Math.ceil(cs.height), 30000))   // 30000px 上限防超大页爆内存
         const shot = await dbg.sendCommand('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { x: 0, y: 0, width: w, height: h, scale: 1 } })
-        return saveShot(Buffer.from(shot.data, 'base64'))
+        return (await brShotCdp(tab, true)).path
       }
       return await brShotVisible(tab)
     } catch (e) {
@@ -649,7 +674,7 @@ module.exports = function initBrowser(ctx) {
       //   而最常见的失败原因正是它自己:视图没被合成(窗口隐藏/未绘制)时 capturePage 必报
       //   "Current display surface not available for capture",重试一万次也是同一个错。
       //   换条真不一样的路:CDP 截图不走合成表面,窗口没亮也能出图。
-      if (tab.dbg) { try { return await brShotCdp(tab, full) } catch (e2) { log('browser screenshot cdp 兜底也失败: ' + e2.message) } }
+      if (tab.dbg) { try { return (await brShotCdp(tab, full)).path } catch (e2) { log('browser screenshot cdp 兜底也失败: ' + e2.message) } }
       try { return await brShotVisible(tab) } catch { return null }
     }
   }

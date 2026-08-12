@@ -61,7 +61,12 @@ function makeCtx(over = {}) {
     closeTab: (id) => { calls.closeTab.push(id); const i = S.browser.tabs.findIndex((t) => t.id === id); if (i >= 0) S.browser.tabs.splice(i, 1) },
     activateTab: (id) => { calls.activateTab.push(id); S.browser.activeId = id },
     brScreenshot: async () => { calls.shots++; return '/tmp/shot-' + calls.shots + '.png' },
-    brShotTab: async (tab) => { calls.shots++; calls.shotTabs.push(tab && tab.id); return '/tmp/shot-' + calls.shots + '.png' },
+    brShotTab: async (tab, full) => {
+      calls.shots++; calls.shotTabs.push(tab && tab.id)
+      // 真身现在回 {path,note,buf};整页超预算时 note 非空。两种形状都要能接(自测也要覆盖对象形态)
+      if (over.shotObj) return { path: '/tmp/shot-' + calls.shots + '.png', note: full ? '页面高 40000px,整页会到 114 百万像素(会很慢),只截了顶部 17361px' : '', buf: null }
+      return '/tmp/shot-' + calls.shots + '.png'
+    },
     execStep: async (wc, ev) => {
       calls.exec.push(ev)
       if (over.execFail) return { ok: false, err: over.execErr || '假失败' }
@@ -457,6 +462,22 @@ console.log('用例7.14:反向用例(故意输错、期望被拦)—— 正例�
   ok('  真发出去了就要判失败并指出是哪条', !c2.pass && /不该发出去却发了/.test(String(c2.actual)), c2.actual)
   ok('  缺 expect 明确拒', /要给 url 片段/.test(String((await ba.agentAssert({ sessionId: r.sessionId, kind: 'no_request' })).error)))
   ok('  未知判据的提示里带上新增的这几种', /request_status/.test(String((await ba.agentAssert({ sessionId: r.sessionId, kind: '瞎写' })).error)))
+}
+
+console.log('用例7.15:整页截图有像素预算 —— 截断了要如实说')
+{
+  // 【2026-08-12 内网 MCP error -32001】客户端等超时。根因:整页截图没有成本上限 ——
+  // 老代码高度上限 30000 CSS px,后台标签又是 2 倍分辨率 → 最坏 1.7 亿像素(裸位图约 680MB),
+  // Chromium 编码 + base64 传回 + 主进程再解码缩放全在主线程,慢机器上几十秒到几分钟,
+  // 期间 relay 连别的请求都答不了。现在封顶到 2500 万像素、整页出 1 倍图;
+  // 而封顶就意味着【截断】—— 不说的话模型会把"顶部一屏"当成整页,后面的内容当成不存在。
+  const { ba } = makeCtx({ shotObj: true })
+  const r = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '验截断回报' })
+  const s1 = await ba.agentShot({ sessionId: r.sessionId, full: true })
+  ok('★★整页超预算被截断 → 回执里如实说', !!s1.ok && /只截了顶部/.test(String(s1.truncated || '')), s1)
+  ok('  并给下一步(scroll 后再截一张)', /scroll/.test(String(s1.truncated || '')), s1.truncated)
+  const s2 = await ba.agentShot({ sessionId: r.sessionId })
+  ok('  没截断就不加噪音', !s2.truncated, s2)
 }
 
 console.log('用例8:会话生命周期 —— 超时/并发/重复收/取证')

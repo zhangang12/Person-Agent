@@ -1171,8 +1171,11 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     const fp = String((info && info.path) || '')
     if (!fp) return false
     let dataUrl = '', w = 0, h = 0
+    const t0 = Date.now()
     try {
-      const img = nativeImage.createFromPath(fp)
+      // ★有原始 buffer 就别再从磁盘解一遍:整页 PNG 能到 2MB,重解 + 缩放 + JPEG 编码全在主线程上,
+      //   而主线程同时在跑 relay 的 HTTP —— 它卡住,MCP 那边就是一句 -32001(内网实测)。
+      const img = (info && info.buf) ? nativeImage.createFromBuffer(info.buf) : nativeImage.createFromPath(fp)
       if (img.isEmpty()) throw new Error('读不出图片(可能还没写完)')
       const size = img.getSize(); w = size.width; h = size.height
       // 缩到 SHOT_W 再转 JPEG:原图 1280×800 的 PNG 常有 300KB~1.5MB,base64 还要再涨 1/3。
@@ -1191,7 +1194,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
       wc.send('card-shot', { path: fp, label: String((info && info.label) || ''), url: String((info && info.url) || ''),
         full: !!(info && info.full), dataUrl, w, h })
     } catch (e) { log('[shot] 推送失败: ' + e.message); return false }
-    log('[shot] 已摆进对话:' + fp + ' ' + w + '×' + h + (dataUrl ? ' (缩略 ' + Math.round(dataUrl.length / 1024) + 'KB)' : ' (无缩略)'))
+    log('[shot] 已摆进对话(缩图 ' + (Date.now() - t0) + 'ms):' + fp + ' ' + w + '×' + h + (dataUrl ? ' (缩略 ' + Math.round(dataUrl.length / 1024) + 'KB)' : ' (无缩略)'))
     return true
   }
   // 点缩略图 → 用系统看图器打开原图。★只开白名单里的路径:渲染端传什么就开什么等于开了一个任意文件打开接口

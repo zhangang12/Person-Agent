@@ -108,15 +108,37 @@ function userData() {
   return path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'BocomHermes-shell')
 }
 function relayCfg() { try { return JSON.parse(fs.readFileSync(path.join(userData(), 'mail-relay.json'), 'utf8')) } catch { return null } }
+// ★必须有超时(2026-08-12 内网实测 MCP error -32001):没有超时的话这个请求会一直挂着,
+// 最后是【MCP 客户端】先超时,报一句 -32001 Request timed out —— 回执里没有路由、没有耗时、
+// 什么都没有,查都不知道从哪查。自己先超时并说清"哪个调用、等了多久、下一步看什么",
+// 才是能查的错。整页截图是最容易慢的那一个(内网机器上大页面能到几十秒),给它更长的窗口。
+const RELAY_TIMEOUT_MS = 90000
+const SLOW_ROUTES = { '/browser/shot': 180000, '/preview/start': 120000 }
 function relayPost(urlPath, body) {
   return new Promise((resolve, reject) => {
     const cfg = relayCfg(); if (!cfg) return reject(new Error('找不到 mail-relay.json — 桌面智能体没在跑,先启动它'))
     const data = JSON.stringify(body || {})
+    const ms = SLOW_ROUTES[urlPath] || RELAY_TIMEOUT_MS
+    const t0 = Date.now()
+    let done = false
+    const fail = (e) => { if (!done) { done = true; reject(e) } }
     const req = http.request({ hostname: '127.0.0.1', port: cfg.port, path: urlPath, method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data), 'x-bocom-tok': cfg.token } }, (res) => {
       let buf = ''; res.setEncoding('utf8'); res.on('data', (c) => buf += c)
-      res.on('end', () => { try { const j = JSON.parse(buf || '{}'); j.error ? reject(new Error(j.error)) : resolve(j) } catch (e) { reject(new Error('relay 响应非 JSON: ' + buf.slice(0, 200))) } })
+      res.on('end', () => {
+        if (done) return
+        done = true
+        try { const j = JSON.parse(buf || '{}'); j.error ? reject(new Error(j.error)) : resolve(j) } catch (e) { reject(new Error('relay 响应非 JSON: ' + buf.slice(0, 200))) }
+      })
     })
-    req.on('error', (e) => reject(new Error('relay 连不上(' + cfg.port + '): ' + e.message)))
+    req.setTimeout(ms, () => {
+      try { req.destroy() } catch {}
+      fail(new Error(urlPath + ' 超时(等了 ' + Math.round((Date.now() - t0) / 1000) + ' 秒,上限 ' + Math.round(ms / 1000) + ' 秒)'
+        + ' —— 桌面端那边这一步没在时限内做完。'
+        + (urlPath === '/browser/shot'
+          ? '整页截图最容易慢:页面很长时位图会到上亿像素。先不加 full 截可视区,或者 browser_act{action:"scroll"} 分段截。'
+          : '去看桌面端日志(托盘 → 打开日志)里这一时刻的记录。')))
+    })
+    req.on('error', (e) => fail(new Error('relay 连不上(' + cfg.port + '): ' + e.message)))
     req.write(data); req.end()
   })
 }
