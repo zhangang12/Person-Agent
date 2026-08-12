@@ -231,5 +231,92 @@ const MODEL = { providerID: 'opencode', modelID: 'mimo-v2.5-free', name: 'MiMo V
   await close(srv)
 }
 
+// ── ⑥ 长工具调用:工具在飞的时候一切都不动,但它没卡 ──────────────────────
+// 【用户 2026-08-12:"经常触发模型回合卡死"】上一版的进度指纹是我手搓的,只数
+// 消息数/parts/token/文本长 —— 【不看工具状态】。于是一次长工具调用(npm install、跑测试、
+// 大页面整页截图……)在它眼里和"冻住"一模一样:parts 不增、token 不动、文本不动,
+// 而模型其实正老老实实等我们的工具返回。这就是"经常"的来源 —— 越是干实事的回合越容易中。
+// 判据要认【工具在飞】:toolRunning=true 时一律算活着。
+{
+  const hung = []
+  const srv = http.createServer((req, res) => {
+    const send = (o) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)) }
+    if (req.method === 'POST' && /\/message$/.test(req.url)) { hung.push(res); return }
+    if (req.method === 'GET' && /\/message$/.test(req.url)) {
+      // 一条 assistant:文本/token 全程一个字不动,只挂着一个【还在跑】的工具
+      return send([{ info: { id: 'm0', role: 'user' }, parts: [] }, {
+        info: { id: 'msg_1', role: 'assistant', modelID: 'deepseek-v4-flash',
+          time: { created: Date.now() }, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } },
+        parts: [{ type: 'tool', callID: 'c1', state: { status: 'running', title: 'npm install' } }],
+      }])
+    }
+    if (req.method === 'POST' && /\/abort$/.test(req.url)) { srv.aborted = (srv.aborted || 0) + 1; return send({ ok: true }) }
+    send({})
+  })
+  srv.hung = hung
+  const base = await listen(srv)
+  T.modelBlacklist.clear()
+  let err = null
+  const out = await Promise.race([
+    oc.sendMessage({ base, dir: '/proj' }, 'ses_1', '装个依赖', MODEL, [], () => {}).catch((e) => { err = e; return null }),
+    new Promise((r) => setTimeout(() => r('__still_waiting__'), 3000)),   // 阈值 600ms 的 5 倍
+  ])
+  // 注:这一格红验【没红】—— droppedOf 本来就要求 parts 为空,有工具 part 时永远不会判丢弃。
+  // 保留它是当防线(将来 droppedOf 的判据若放宽,这条能挡住),但它不是"经常卡死"的主因。
+  // 主因是下面 ⑦ 那个:停滞确认窗只有阈值的 1/3。
+  ok('工具还在跑(文本/token 全程不动)→ 不许判卡死【防线格,非主因】',
+    out === '__still_waiting__' && !err, { out: String(out).slice(0, 90), err: err && err.message })
+  ok('  也没白 abort 一个正在干活的回合', !srv.aborted, srv.aborted)
+  T.modelBlacklist.clear()
+  await close(srv)
+}
+
+// ── ⑦ 停滞确认窗:必须停满【整整一个阈值】才判死 ─────────────────────────────
+// 【用户 2026-08-12:"经常触发模型回合卡死。这个记时要改"】
+// 上一版只要求停滞 1/3 阈值。回合跑过阈值之后,那实际含义就变成"静默 30 秒 = 判死",
+// 而真机里最常见的合法静默恰恰是【新起一步、下一个 token 还没来】(模型排队/内网端点慢):
+// 新消息让指纹动一下、计时清零,接着就是一段纯等待。30 秒对它太苛刻。
+// 阈值本身(90s)是当初实测定的"压过合法慢首字"(最慢的正常收官 36.4s),停满它才对得上原意。
+{
+  const created = Date.now()
+  const frozen = {
+    info: { id: 'msg_1', role: 'assistant', sessionID: 'ses_1', modelID: 'mimo-v2.5-free',
+      time: { created }, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } },
+    parts: [],
+  }
+  const hung = []
+  const srv = http.createServer((req, res) => {
+    const send = (o) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)) }
+    if (req.method === 'POST' && /\/message$/.test(req.url)) { hung.push(res); return }
+    if (req.method === 'GET' && /\/message$/.test(req.url)) return send([{ info: { id: 'm0', role: 'user' }, parts: [] }, frozen])
+    if (req.method === 'POST' && /\/abort$/.test(req.url)) { srv.aborted = (srv.aborted || 0) + 1; return send({ ok: true }) }
+    send({})
+  })
+  srv.hung = hung
+  const base = await listen(srv)
+  T.modelBlacklist.clear()
+  // 阈值 600ms:停滞确认窗 = 整整 600ms(旧版是 200ms)。
+  // 在 [起判 600ms, 起判+确认窗) 这段里【不许】开枪 —— 900ms 时还得活着。
+  let err = null
+  const out = await Promise.race([
+    oc.sendMessage({ base, dir: '/proj' }, 'ses_1', '问一句', MODEL, [], () => {}).catch((e) => { err = e; return null }),
+    new Promise((r) => setTimeout(() => r('__alive_at_1100ms__'), 1100)),
+  ])
+  // 检查点必须落在两种窗【之间】,否则测了等于没测:
+  //   拉取网格 200ms;起判 600ms → 首次有效评估在 600ms(记指纹、计时清零)
+  //   旧窗 400ms → 1000ms 那一拍开枪;新窗 600ms → 要到 1200ms。所以 1100ms 是唯一能分开两者的点。
+  //   (第一版我写的是 900ms —— 两种窗在那时都还没开枪,红验自然不红。)
+  ok('★★起判之后、确认窗没满之前:不许开枪(旧版 1/3 窗在 1000ms 那一拍就已经杀了)',
+    out === '__alive_at_1100ms__' && !err, { out: String(out).slice(0, 60), err: err && err.message })
+  // 再等一会儿:确认窗满了,真冻住的还是要抓到 —— 放宽不等于放过
+  const out2 = await Promise.race([
+    new Promise((r) => setTimeout(() => r('__still_alive__'), 2500)),
+    new Promise((r) => { const t = setInterval(() => { if (err) { clearInterval(t); r('__fired__') } }, 50) }),
+  ])
+  ok('★确认窗满了,真冻住的照样抓得到(放宽不是放过)', out2 === '__fired__' || !!err, { out2, err: err && err.message })
+  T.modelBlacklist.clear()
+  await close(srv)
+}
+
 console.log(fail ? ('\n❌ 静默丢弃自测:' + pass + ' passed, ' + fail + ' failed') : ('\n✅ 静默丢弃自测:全部通过  ' + pass + ' passed, 0 failed'))
 process.exit(fail ? 1 : 0)

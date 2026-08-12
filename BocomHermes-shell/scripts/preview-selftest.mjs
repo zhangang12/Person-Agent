@@ -47,6 +47,37 @@ console.log('== launch.json 解析 ==')
   })())
 }
 
+console.log('\n== 没有 launch.json 时:报错要能让人下一步就动手 ==')
+{
+  // 【真机 2026-08-12 用户:"工具出错。没找到 launch.json"】原来的报错只有一句"去建一个",
+  // 既没说建在哪、也没说里面写什么 —— 用户和模型都卡在这一步。
+  // ★但"让模型自己写配置再启动"是不行的:那等于绕开"只跑用户写好的具名命令"这条边界,
+  //   拿到任意命令执行。所以这里【只推不写】—— 把该写的内容摆出来,由用户存一次。
+  const { suggestLaunch } = initPreview.__pure
+  const d4 = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-sg-'))
+  fs.mkdirSync(path.join(d4, 'frontend'))
+  fs.writeFileSync(path.join(d4, 'frontend', 'package.json'), JSON.stringify({ scripts: { dev: 'vite' } }))
+  fs.mkdirSync(path.join(d4, 'backend')); fs.mkdirSync(path.join(d4, 'backend', 'app'))
+  fs.writeFileSync(path.join(d4, 'backend', 'app', 'main.py'), '')
+  fs.mkdirSync(path.join(d4, 'desktop')); fs.mkdirSync(path.join(d4, 'desktop', 'app'))   // 只有目录没入口 —— 不许推
+  const sg = suggestLaunch(d4)
+  const names = JSON.parse(sg.json).configurations.map((c) => c.name)
+  ok('★按项目实际情况推出配置(前端 vite / 后端 uvicorn)', names.includes('frontend') && names.includes('backend-uvicorn'), names)
+  ok('★★只有一个叫 app 的目录、没有入口文件 → 不许推(第一版就在这误报)', !names.some((n) => n.startsWith('desktop')), names)
+  ok('  vite 的默认端口按 5173,不是瞎写', JSON.parse(sg.json).configurations.find((c) => c.name === 'frontend').port === 5173)
+  ok('  告诉用户存到哪个文件', /\.bocom[\\/]launch\.json$/.test(String(sg.path)), sg.path)
+
+  const pv2 = initPreview({ S: { settings: { projectDir: d4 } }, log: () => {} })
+  const e = (await pv2.start({ name: 'web' })).error || ''
+  ok('★★start 的报错里【带着这份可粘贴的配置】,不是一句"去建一个"', /configurations/.test(e) && /frontend/.test(e), e.slice(0, 120))
+  ok('  并且写明这份必须由用户存(边界要说清,不是让模型自己写)', /由【用户】存|绕开/.test(e), e.slice(-160))
+  const d5 = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-sg2-'))
+  const pv3 = initPreview({ S: { settings: { projectDir: d5 } }, log: () => {} })
+  const e2 = (await pv3.start({ name: 'web' })).error || ''
+  ok('  空项目推不出来时,说清"得手写",不留死胡同', /得手写/.test(e2), e2.slice(0, 120))
+  try { fs.rmSync(d4, { recursive: true, force: true }); fs.rmSync(d5, { recursive: true, force: true }) } catch {}
+}
+
 console.log('\n== 日志筛选 ==')
 {
   const lines = [{ text: 'booting…' }, { text: 'ready on 3000' }, { text: 'Error: EADDRINUSE' }, { text: 'compiled with 1 warning' }]

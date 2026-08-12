@@ -2559,6 +2559,12 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       //   而且【整个 serve 生命周期都不会自愈】—— 用户只看到"工具时好时坏",完全查不出所以然。
       //   这段就是把"磁盘上写的"和"serve 手里的"当场比一遍,不一致就【明说】+ 给唯一有效的动作。
       setTimeout(() => { mcpLiveCheck().catch(() => {}) }, 4000)
+      // 卡死判定的阈值可调(内网端点慢就调大):knobs.dropWatchSec,缺省 90 秒。
+      // 判据本身是"停滞满一个阈值",所以调大 = 更宽容,不会把真卡死漏掉,只是发现得晚一点。
+      try {
+        const sec = +(((S.settings || {}).knobs || {}).dropWatchSec)
+        if (Number.isFinite(sec) && sec >= 10) { oc.setDropWatchMs(sec * 1000); log('[knob] 回合卡死判定阈值 = ' + sec + 's') }
+      } catch {}
     } catch (e) { log('MCP 自动注册异常: ' + e.message) }
   }, 800)
 

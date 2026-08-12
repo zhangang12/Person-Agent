@@ -80,6 +80,7 @@ const modelBlacklist = new Map()   // base -> Map<modelID, { at, notified }>
 // 可调只为【自测】:否则一条断言要真等 90 秒。生产路径没有任何地方改它。
 let DROP_WATCH_MS = 90000
 function setDropWatchMs(ms) { const n = +ms; if (Number.isFinite(n) && n >= 100) DROP_WATCH_MS = n }
+function getDropWatchMs() { return DROP_WATCH_MS }
 // 盯防的拉取间隔跟着阈值缩放:自测把阈值调到几百毫秒时,5s 一拍会永远等不到第二拍
 const dropPollMs = () => Math.max(200, Math.min(5000, Math.round(DROP_WATCH_MS / 6)))
 // 拉黑分两种,寿命必须不同 —— 这两件事以前记在同一本账上、都是【永久】的:
@@ -728,22 +729,23 @@ async function sendMessage(info, sessionId, text, model, files, onNote, opts = {
     //   任何一项变了 = 活着,把停滞计时清零;只有连着 STALL_CONFIRM 毫秒一动不动、
     //   且最新那条仍符合冻住指纹,才开枪。真死的回合照样抓得到(只是晚 STALL_CONFIRM),
     //   而正在干活的回合永远不会被误杀。
-    const progressSig = (asst) => {
-      let parts = 0, toks = 0, chars = 0
-      for (const m of asst) {
-        const inf = (m && (m.info || m)) || {}
-        const ps = (m && (m.parts || (m.data && m.data.parts))) || []
-        parts += ps.length
-        for (const p of ps) chars += String((p && p.text) || '').length
-        const t = inf.tokens || {}; const c = t.cache || {}
-        toks += (+t.input || 0) + (+t.output || 0) + (+t.reasoning || 0) + (+c.read || 0) + (+c.write || 0)
-      }
-      const last = asst[asst.length - 1]
-      const lid = String((((last && (last.info || last)) || {}).id) || '')
-      return asst.length + '/' + parts + '/' + toks + '/' + chars + '/' + lid
-    }
-    // 停滞确认窗:至少两拍、且不短于阈值的三分之一 —— 一拍就下结论会被"两次轮询之间恰好没动"骗到
-    const stallConfirmMs = () => Math.max(2 * dropPollMs(), Math.round(DROP_WATCH_MS / 3))
+    // ★进度指纹直接用 pickTurnText 的 —— 别再自己写一份(2026-08-12 用户:"经常触发模型回合卡死")。
+    //   我上一版手搓的指纹只数 消息数/parts/token/文本长,【不看工具状态】。
+    //   于是一次长工具调用(npm install、跑测试、大页面整页截图……)在它眼里和"冻住"一模一样:
+    //   parts 不增、token 不动、文本不动 —— 而模型其实正老老实实等我们的工具返回。
+    //   pickTurnText 那份是现成且经过打磨的:工具状态、子 Agent 进度回写、思考长度全算进去,
+    //   还单独给出 toolRunning。同一件事不许有两份互不知情的账本 —— 用它那份。
+    //   ★toolRunning=true 时【一律算活着】:工具在飞,回合按定义就没卡;
+    //     这条是本次误杀的正解 —— 不是把阈值调大就能了事的。
+    // 停滞确认窗 = 【整整一个阈值】(2026-08-12 用户:"经常触发模型回合卡死")。
+    // ★上一版只要求停滞 1/3 阈值(90s 里的 30s),而回合跑过 90 秒之后,那实际含义就变成了
+    //   "静默 30 秒 = 判死"。真机里最常见的合法静默恰恰是:新起一步、下一个 token 还没来
+    //   (模型排队/内网端点慢)—— 新消息让指纹动一下、计时清零,然后就是一段纯等待。
+    //   30 秒对它太苛刻;而阈值本身(90s)是当初实测定下来的"压过合法慢首字"的数
+    //   (最慢的正常收官 36.4s),停滞满这么久才判死才对得上原意。
+    // ★另:工具在飞时一律算活着(见下)。这条其实碰不到 droppedOf(有 part 就不算丢弃),
+    //   留着是防线不是主力 —— 我一度以为它是主因,红验没红才发现自己修错了地方。
+    const stallConfirmMs = () => Math.max(2 * dropPollMs(), DROP_WATCH_MS)
     let dropIv = null
     const dropWatch = new Promise((res) => {
       const t0 = Date.now()
@@ -754,8 +756,9 @@ async function sendMessage(info, sessionId, text, model, files, onNote, opts = {
           const raw = await api(info.base, 'GET', `/session/${sessionId}/message`, undefined, 8000)
           const list = Array.isArray(raw) ? raw : (raw && raw.data) || []
           const asst = list.filter((m) => ((m && (m.info || m)) || {}).role === 'assistant')
-          const s2 = progressSig(asst)
-          if (s2 !== sig) { sig = s2; lastMove = Date.now(); return }   // 有动静 = 活着,重新计时
+          const st = pickTurnText(list)
+          if (st.toolRunning) { lastMove = Date.now(); return }         // ★有工具在飞 = 回合没卡,它在等我们
+          if (st.sig !== sig) { sig = st.sig; lastMove = Date.now(); return }   // 指纹变了 = 还在推进
           if (Date.now() - lastMove < stallConfirmMs()) return          // 还没停够久,再看一拍
           const why = droppedOf(asst[asst.length - 1])
           if (why) { clearInterval(dropIv); dropIv = null; res({ __dropped__: why }) }
@@ -1539,8 +1542,8 @@ function anyHealthyServe() {
   return null
 }
 
-module.exports = { ensureServe, createSession, deleteSession, sendMessage, listModels, listAgents, checkMcp, abort, replyPermission, replyQuestion, rejectQuestion, sessionExists, listSessions, getMessages, getRawMessages, getSessionChildren, getSessionTodo, listPendingQuestions, generationStalled, pollTurnParts, getSessionUsage, getStreamState, consumeAbortFlag, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, anyHealthyServe, AUTO_ALLOW,
+module.exports = { setDropWatchMs, ensureServe, createSession, deleteSession, sendMessage, listModels, listAgents, checkMcp, abort, replyPermission, replyQuestion, rejectQuestion, sessionExists, listSessions, getMessages, getRawMessages, getSessionChildren, getSessionTodo, listPendingQuestions, generationStalled, pollTurnParts, getSessionUsage, getStreamState, consumeAbortFlag, killAll, retireIfOrphan, setServeBin, onKeepAlive, probeOnce, anyHealthyServe, AUTO_ALLOW,
   __test: { dispatch, waitAssistantText, extractText, pickTurnText, abortedSince, abortedSids, normalizeMessages, stripInjected, splitThink,
-    normDirKey, sameDir, inflight, noteChild, noteModelBlacklist, modelBlacklist, blacklistHit, BL_TTL, setDropWatchMs, refreshSessionTree, runEventLoop, turnTextCache, stoppedSids, lastUserMatches, noteUsage,
+    normDirKey, sameDir, inflight, noteChild, noteModelBlacklist, modelBlacklist, blacklistHit, BL_TTL, setDropWatchMs, getDropWatchMs, refreshSessionTree, runEventLoop, turnTextCache, stoppedSids, lastUserMatches, noteUsage,
     maps: { pool, baseToEntry, childToParent, childTitle, classifiedSessions, sidBase },
     setSpawnHook: (fn) => { spawnServeHook = fn } } }

@@ -45,7 +45,62 @@ function readLaunch(dir) {
     }))
     return { configs, from: p }
   }
-  return { error: '没找到 launch.json(在项目目录下建 .bocom/launch.json 或 .claude/launch.json)', configs: [] }
+  return { error: '没找到 launch.json', configs: [], suggest: suggestLaunch(dir) }
+}
+
+/** 没有 launch.json 时,按项目里实际有什么【推一份出来】。
+ *  ★为什么只推不写:模型能启动的必须是【用户写好的具名配置】—— 让它自己写配置再启动,
+ *  等于绕开这道边界拿到任意命令执行。所以这里只把该写的内容摆出来,由用户存一次。
+ *  ★为什么必须推:原来的报错只有一句"去建一个",既没说建在哪、也没说里面写什么 ——
+ *  用户和模型都卡在这一步(真机就是这么卡的)。报错要能让人下一步就动手。 */
+function suggestLaunch(dir) {
+  const d = str(dir)
+  if (!d) return null
+  const cfgs = []
+  const seen = new Set()
+  const addNode = (rel) => {
+    const pj = path.join(d, rel, 'package.json')
+    let j = null
+    try { j = JSON.parse(fs.readFileSync(pj, 'utf8')) } catch { return }
+    const sc = (j && j.scripts) || {}
+    const name = ['dev', 'start', 'serve'].find((k) => sc[k])
+    if (!name) return
+    // 端口:脚本里显式写了就用它;vite 默认 5173,其余按 3000 猜(用户可改)
+    const m = String(sc[name]).match(/--port[= ](\d+)/)
+    const isVite = /vite/.test(String(sc[name]))
+    const port = m ? +m[1] : (isVite ? 5173 : 3000)
+    const key = rel || '.'
+    if (seen.has(key)) return
+    seen.add(key)
+    cfgs.push({ name: rel ? rel.replace(/[\\/]/g, '-') : 'web', runtimeExecutable: 'npm', runtimeArgs: ['run', name],
+      cwd: rel || undefined, port, url: 'http://127.0.0.1:' + port })
+  }
+  const addPy = (rel) => {
+    const base = path.join(d, rel)
+    let files = []
+    try { files = fs.readdirSync(base) } catch { return }
+    // ★必须有【真入口文件】才推:只看到一个叫 app 的目录就推 uvicorn 是误报
+    //   (真机第一版就把 desktop/ 推成了 desktop-uvicorn —— 那目录里根本没有 python 服务)
+    const has = (rel2) => { try { return fs.existsSync(path.join(base, rel2)) } catch { return false } }
+    if (files.includes('manage.py')) {
+      cfgs.push({ name: (rel || 'api') + '-django', runtimeExecutable: 'python3', runtimeArgs: ['manage.py', 'runserver', '0.0.0.0:8000'], cwd: rel || undefined, port: 8000, url: 'http://127.0.0.1:8000' })
+    } else if (has(path.join('app', 'main.py')) || has('main.py')) {
+      const mod = has(path.join('app', 'main.py')) ? 'app.main:app' : 'main:app'
+      cfgs.push({ name: (rel || 'api') + '-uvicorn', runtimeExecutable: 'python3', runtimeArgs: ['-m', 'uvicorn', mod, '--reload', '--port', '8000'], cwd: rel || undefined, port: 8000, url: 'http://127.0.0.1:8000',
+        note: '入口 ' + mod + ' 按你的实际变量名核一眼(FastAPI 里那个 app = FastAPI())' })
+    }
+  }
+  let subs = []
+  try { subs = fs.readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory() && !/^(node_modules|\.|dist|build)/.test(e.name)).map((e) => e.name) } catch {}
+  addNode('')
+  addPy('')
+  for (const sub of subs.slice(0, 12)) { addNode(sub); addPy(sub) }
+  if (!cfgs.length) return null
+  return {
+    path: path.join(d, '.bocom', 'launch.json'),
+    json: JSON.stringify({ version: '0.0.1', configurations: cfgs }, null, 2),
+    why: '按项目里实际有的 package.json / python 入口推出来的,端口按脚本里写的或常见默认值 —— 存之前核一眼',
+  }
 }
 
 /** 端口通了没:轮询 connect,通了即就绪。比"等日志里出现某句话"稳 —— 每个框架那句话都不一样。 */
@@ -100,7 +155,13 @@ module.exports = function initPreview(ctx) {
     if (!name) return { error: '要启动哪个配置?给 name(用 preview_list 看有哪些);★不接受任意命令 —— 只能跑 launch.json 里写好的' }
 
     const lj = readLaunch(dir)
-    if (lj.error && !(lj.configs || []).length) return { error: lj.error }
+    if (lj.error && !(lj.configs || []).length) {
+      const sg = lj.suggest
+      return { error: lj.error + (sg
+        ? '。这是按你项目实际情况推的一份,存成 ' + sg.path + ' 就能用(' + sg.why + '):\n' + sg.json
+          + '\n★这份配置必须由【用户】存 —— 让模型自己写配置再启动,等于绕开"只跑用户写好的命令"这条边界。'
+        : '(在项目目录下建 .bocom/launch.json 或 .claude/launch.json;项目里没探到 package.json 或 python 入口,得手写)') }
+    }
     const cfg = (lj.configs || []).find((c) => c.name === name)
     if (!cfg) return { error: '没有叫「' + name + '」的配置。现有:' + ((lj.configs || []).map((c) => c.name).join(' / ') || '(空)') }
 
@@ -162,9 +223,10 @@ module.exports = function initPreview(ctx) {
   function configs(a) {
     const dir = str((a && a.dir) || (S && S.settings && S.settings.projectDir))
     const lj = readLaunch(dir)
-    return { ok: true, from: lj.from || '', error: lj.error || '', configs: (lj.configs || []).map((c) => ({ name: c.name, cmd: c.exec + ' ' + c.args.join(' '), port: c.port, url: c.url })) }
+    return { ok: true, from: lj.from || '', error: lj.error || '', suggest: lj.suggest || null,
+      configs: (lj.configs || []).map((c) => ({ name: c.name, cmd: c.exec + ' ' + c.args.join(' '), port: c.port, url: c.url })) }
   }
 
   return { start, logs, stop, list, configs, killAll, __test: { readLaunch, filterLines, waitPort } }
 }
-module.exports.__pure = { readLaunch, filterLines }
+module.exports.__pure = { readLaunch, filterLines, suggestLaunch }
