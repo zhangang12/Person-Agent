@@ -275,11 +275,15 @@ const TOOLS = [
     name: 'browser_act',
     description: '在会话标签页里执行一步操作(强引擎:选择器兜底+可见性等待+红框高亮)。'
       + '★定位优先用 ref(browser_read 返回的 [ref_N]),没有 ref 再用 selector。navigate 的目标也走围栏。'
-      + ' scroll:给 ref/selector 就滚到那个元素,不给就整页滚 —— 页面很长时"点不到"最常见的原因就是它不在视口里。'
+      + ' scroll:给 ref/selector = 滚到那个元素;不给 = 在页面上滚一段 —— 页面很长时"点不到"最常见的原因就是它不在视口里。'
+      + ' ★wheel:发【真滚轮事件】,并且滚的是【离目标最近的可滚动容器】而不是整页。'
+      + '业务系统里真正带滚动条的几乎都是内层容器(表格体 / el-scrollbar / 弹层 / 侧栏),整页根本不滚;'
+      + '虚拟滚动、无限加载、自定义滚动条、地图缩放这些也只认 wheel 事件。'
+      + '回执会说清【滚的是谁、位移多少、到底了没有】—— "滚不动"和"已经到底"是两回事。'
       + ' hover:发【真实鼠标事件】(纯 CSS 的下拉菜单也能弹出来),悬停后通常要再 browser_read 一次才看得到浮层。',
     inputSchema: { type: 'object', properties: {
       sessionId: { type: 'string' },
-      action: { type: 'string', enum: ['click', 'type', 'select', 'check', 'enter', 'key', 'scroll', 'hover', 'navigate', 'wait'] },
+      action: { type: 'string', enum: ['click', 'type', 'select', 'check', 'enter', 'key', 'scroll', 'wheel', 'hover', 'navigate', 'wait'] },
       key: { type: 'string', description: 'action=key 时:Enter/Escape/Tab/Backspace/Delete/方向键/Home/End/PageUp/PageDown(输入文字用 type)' },
       direction: { type: 'string', enum: ['up', 'down', 'left', 'right'], description: 'action=scroll 且没给 ref/selector 时:整页往哪滚(默认 down)' },
       amount: { type: 'number', description: 'action=scroll 整页滚多少像素(默认 600)' },

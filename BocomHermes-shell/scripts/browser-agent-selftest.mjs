@@ -31,6 +31,14 @@ function makeCtx(over = {}) {
       getTitle: () => '标题',
       executeJavaScript: async (code) => {
         // agentEval / agentHtml 的返回形状(先判,它们的代码里也含 innerText/querySelectorAll)
+        if (/__bhCan/.test(code) && /scrollTop\+=/.test(code)) {
+          if (!page.scrollTarget) return { no: 1 }
+          page.wheelSeen = (page.wheelSeen || 0) + 1
+          // ★到底了就钳位(真浏览器就是这样)—— 不钳的话"到底"和"滚动了"分不开,断言会假过
+          if (!page.atEnd) page.scrollTop = (page.scrollTop || 0) + (+(code.match(/scrollTop\+=(-?\d+)/) || [])[1] || 0)
+          return { ok: 1 }
+        }
+        if (/__bhCan/.test(code)) { return page.scrollTarget ? { pos: page.scrollTop || 0, atEnd: !!page.atEnd, what: page.scrollWhat || 'div.el-table__body' } : null }
         if (/tagName===.SELECT./.test(code)) return !!page.nativeSelect
         if (/el-select-dropdown__item/.test(code)) return page.comboOut !== undefined ? page.comboOut : { ok: 1, picked: page.comboPick || '某项' }
         if (/data-bh-upload/.test(code) && /setAttribute/.test(code)) return page.uploadFind !== undefined ? page.uploadFind : { ok: 1 }
@@ -478,6 +486,38 @@ console.log('用例7.15:整页截图有像素预算 —— 截断了要如实说
   ok('  并给下一步(scroll 后再截一张)', /scroll/.test(String(s1.truncated || '')), s1.truncated)
   const s2 = await ba.agentShot({ sessionId: r.sessionId })
   ok('  没截断就不加噪音', !s2.truncated, s2)
+}
+
+console.log('用例7.16:滚轮 —— 内层容器才是真正要滚的那个')
+{
+  // 【用户 2026-08-12 问"是不是还没有鼠标滚轮的能力"】原来只有 window.scrollBy:
+  //   ① 内层滚动容器(表格体 / el-scrollbar / 弹层 / 侧栏)一动不动 —— 业务系统里真正带滚动条的就是它们;
+  //   ② 依赖 wheel 事件的组件(虚拟滚动、无限加载、自定义滚动条、地图缩放)收不到任何信号。
+  // ★真机实测还查出一件事:后台标签【收不到真实输入事件】(sendInputEvent 的 wheel 监听器计数为 0),
+  //   所以真正干活的是"合成 wheel 事件 + 直接滚",真实事件只是标签在前台时的锦上添花。
+  const { ba, S } = makeCtx()
+  const r = await ba.agentOpen({ url: 'http://localhost:5199/', purpose: '验滚轮' })
+  const p = tabOf(S).page
+  p.scrollTarget = true; p.scrollTop = 0; p.scrollWhat = 'div.el-table__body'
+  const w1 = await ba.agentAct({ sessionId: r.sessionId, action: 'wheel', selector: '.el-table', direction: 'down', amount: 500 })
+  ok('★★滚的是内层容器,不是整页', !!w1.ok && w1.moved === 500 && /el-table__body/.test(String(w1.target)), w1)
+  ok('★派发了 wheel 事件(虚拟滚动/无限加载只认它)', (p.wheelSeen || 0) > 0, p.wheelSeen)
+  ok('  回执说清滚的是谁、滚了多少', /已滚动 500px/.test(String(w1.scrolled)) && /el-table__body/.test(String(w1.scrolled)), w1.scrolled)
+
+  p.atEnd = true
+  const w2 = await ba.agentAct({ sessionId: r.sessionId, action: 'wheel', selector: '.el-table', direction: 'down', amount: 500 })
+  ok('★"已经到底"和"滚不动"要分得开(前者是正常结束,后者是找错了地方)',
+    !!w2.ok && w2.atEnd === true && /到底/.test(String(w2.scrolled)), w2)
+
+  p.scrollTarget = false
+  const w3 = await ba.agentAct({ sessionId: r.sessionId, action: 'wheel', selector: '.nope', direction: 'down' })
+  ok('★压根没有可滚容器 → 报错并指路(别让它以为滚过了)',
+    !!w3.error && /没有可滚动的容器/.test(String(w3.error)) && /内层容器/.test(String(w3.error)), w3)
+
+  // scroll + ref 的老语义(滚到元素)不许被改坏
+  p.scrollTarget = true
+  const sc = await ba.agentAct({ sessionId: r.sessionId, action: 'scroll', selector: '#x' })
+  ok('  scroll+ref 仍是"滚到那个元素"(老语义不动)', !!sc.ok && /滚到元素/.test(String(sc.scrolled)), sc)
 }
 
 console.log('用例8:会话生命周期 —— 超时/并发/重复收/取证')

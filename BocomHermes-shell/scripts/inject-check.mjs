@@ -85,7 +85,7 @@ export function extractInjected(src) {
         if (depth === 0 && (c === '+' || c === ',')) { stop = k; break }
       }
       if (stop < 0) break
-      body += '(0)'
+      body += '\u0000'   // 标记:形状留给 placeholderize 按上下文定(语句位要 (0); ,表达式位要 (0))
       i = stop
       if (src[i] === ',' || src[i] === ')') break   // 参数结束
     }
@@ -103,11 +103,33 @@ export function swallowedEscapes(body) {
   return [...new Set([...stripped.matchAll(/\\([^`$'\"])/gs)].map((x) => (x[1] === '\n' ? '\\<换行>' : '\\' + x[1])))]
 }
 
-/** ${…} 占位换成一个合法的 JS 值,好让整段能当源码解析 */
-export function placeholderize(body) {
-  // 占位可能出现在表达式位(?:'A':'B')、字符串拼接里、甚至语句位;统一换成【带括号的】0 ——
-  // 裸 0 会让 `${JSON.stringify(q)}.toLowerCase()` 变成 0.toLowerCase(),那本身就是语法错(假报)
-  return String(body).replace(/\$\{[^}]*\}/g, '(0)')
+/** ${…} / 拼接进来的表达式,换成一个合法的 JS 片段,好让整段能当源码解析。
+ *  ★没有一种占位在所有位置都合法:
+ *    表达式位要 `(0)`(裸 0 会让 `${x}.toLowerCase()` 变成 0.toLowerCase(),那是语法错);
+ *    语句位要 `(0);`(不带分号会拼成 `(0)if(...)`);
+ *    而 `f((0);)` 又是错的。所以【两种都试】,任一能解析就算过 —— 只有都不行才是真语法错。
+ *  这条是被自己咬出来的:我写了个"半开函数体"的注入片段,占位落在语句位,
+ *  检查器报了两条假 SyntaxError。一把会误报的尺子,下一个人第一反应就是把它关掉。 */
+export const PLACEHOLDERS = ['(0)', '(0);', 'smart']
+/** form='smart':【按上下文】选形状 —— 同一段里占位常常既在语句位又在表达式位
+ *  (例:'(function(){' + 找容器的语句 + 'try{x(new E({d:' + dy + '}))}'),
+ *  单一形状必然有一边错。看占位【前面】那个非空字符:是 { ; } 或开头 → 语句位,用 (0);
+ *  其余(: , ( = + 等)→ 表达式位,用 (0)。 */
+export function placeholderize(body, form) {
+  const src = String(body)
+  // ${…}(模板串占位)和 \u0000(抠取阶段留下的拼接表达式标记)一视同仁 —— 两者都是"这里原本有个值"
+  const RE = /\$\{[^}]*\}|\u0000/g
+  if (form !== 'smart') return src.replace(RE, form || PLACEHOLDERS[0])
+  let out = '', i = 0
+  const re = RE
+  let m
+  while ((m = re.exec(src))) {
+    out += src.slice(i, m.index)
+    const before = out.replace(/[\s\r\n]+$/, '').slice(-1)
+    out += (before === '' || before === '{' || before === ';' || before === '}') ? '(0);' : '(0)'
+    i = m.index + m[0].length
+  }
+  return out + src.slice(i)
 }
 
 /** 按模板串的规则把源文本"煮"一遍 —— 这才是【页面真正收到】的那段源码。
@@ -139,9 +161,13 @@ export function checkInjected(body) {
   const bad = []
   const sw = swallowedEscapes(body)
   if (sw.length) bad.push({ kind: 'escape', msg: '单反斜杠被模板串吞掉 → ' + sw.join(' ') + '(要写 \\\\)' })
-  const code = cookTemplate(placeholderize(body))
-  try { acorn.parse(code, { ecmaVersion: 'latest', sourceType: 'script', allowReturnOutsideFunction: true, allowAwaitOutsideFunction: true }) }
-  catch (e) { bad.push({ kind: 'parse', msg: '注入的源码解析不过(页面上必抛 SyntaxError):' + e.message }) }
+  let lastErr = null, parsed = false
+  for (const form of PLACEHOLDERS) {
+    const code = cookTemplate(placeholderize(body, form))
+    try { acorn.parse(code, { ecmaVersion: 'latest', sourceType: 'script', allowReturnOutsideFunction: true, allowAwaitOutsideFunction: true }); parsed = true; break }
+    catch (e) { lastErr = e }
+  }
+  if (!parsed) bad.push({ kind: 'parse', msg: '注入的源码解析不过(页面上必抛 SyntaxError):' + (lastErr && lastErr.message) })
   return bad
 }
 

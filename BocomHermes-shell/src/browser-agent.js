@@ -335,21 +335,65 @@ module.exports = function initBrowserAgent(ctx) {
     }
     // ★scroll:页面很长时"点不到"最常见的原因就是它压根不在视口里 —— 而元素不可见时读页不给 ref、
     //   动作也点不着,于是模型会误判成"这个按钮不存在"。给 ref/selector 就滚到它,不给就整页滚。
-    else if (action === 'scroll') {
+    else if (action === 'scroll' || action === 'wheel') {
       const dir = (str(a.direction) || 'down').toLowerCase()
       const amt = Math.min(Math.max(+a.amount || 600, 50), 5000)
       const dx = dir === 'left' ? -amt : dir === 'right' ? amt : 0
       const dy = dir === 'up' ? -amt : dir === 'down' ? amt : 0
-      let r2 = null
-      try {
-        r2 = await wc.executeJavaScript(sel
-          ? `(function(){var e=document.querySelector(${JSON.stringify(sel)});if(!e)return {err:'找不到元素'};`
-            + `e.scrollIntoView({block:'center',inline:'center'});return {ok:1,into:1}})()`
-          : `(function(){window.scrollBy(${dx},${dy});return {ok:1,y:Math.round(window.scrollY)}})()`, true)
-      } catch (e) { r2 = { err: e.message } }
-      const bad = r2 && r2.err
-      step(s, 'scroll', sel || (dir + ' ' + amt), !bad, bad || '')
-      return bad ? { error: bad } : { ok: true, url: curUrl(s), scrolled: sel ? '已滚到元素' : ('已滚动 ' + dir + ' ' + amt) }
+      // scroll + 给了 ref/selector = "滚到这个元素"(老语义,不动)
+      if (action === 'scroll' && sel) {
+        let r2 = null
+        try {
+          r2 = await wc.executeJavaScript('(function(){var e=document.querySelector(' + JSON.stringify(sel) + ');'
+            + 'if(!e)return {err:\'找不到元素\'};e.scrollIntoView({block:\'center\',inline:\'center\'});return {ok:1}})()', true)
+        } catch (e) { r2 = { err: e.message } }
+        const bad2 = r2 && r2.err
+        step(s, 'scroll', sel, !bad2, bad2 || '')
+        return bad2 ? { error: bad2 } : { ok: true, url: curUrl(s), scrolled: '已滚到元素' }
+      }
+      // ★其余情况:发【真滚轮】+ 内层容器兜底(2026-08-12 用户问"是不是还没有鼠标滚轮")
+      //   原来无 ref 时只有 window.scrollBy,两件事都做不了:
+      //   ① 内层滚动容器(overflow:auto 的表格体 / el-scrollbar / 弹层 / 虚拟列表)一动不动 ——
+      //      业务系统里真正要滚的几乎都是它们,而不是 document;
+      //   ② 依赖 wheel 事件的组件(虚拟滚动、无限加载、自定义滚动条、地图缩放)收不到任何信号。
+      //   所以:先在目标位置发真 mouseWheel(让监听器有机会响应),再回读位移;
+      //   没动就找【最近的可滚动祖先 / 页面上最大的可滚动容器】直接设 scrollTop 兜底。
+      //   回执如实说"滚的是谁、位移多少、到底了没有" —— 滚不动和到底了是两回事。
+      let at = { x: 720, y: 450 }
+      if (sel) {
+        try {
+          const box = await wc.executeJavaScript('(function(){var e=document.querySelector(' + JSON.stringify(sel) + ');'
+            + 'if(!e)return null;var r=e.getBoundingClientRect();if(!r.width&&!r.height)return null;'
+            + 'return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()', true)
+          if (box) at = box
+        } catch {}
+      }
+      const before = await scrollPos(wc, sel)
+      // 先试真实输入事件:标签页在前台时它最"真"。★后台标签收不到(实测 wheel 监听器计数为 0),
+      // 所以它只是锦上添花,真正干活的是下面那条合成事件 + 直接滚。
+      try { wc.sendInputEvent({ type: 'mouseWheel', x: at.x, y: at.y, deltaX: -dx, deltaY: -dy, canScroll: true }) }
+      catch (e) { log('[browser-agent] 真实滚轮事件发不出去(' + e.message + ')') }
+      await new Promise((r) => setTimeout(r, 100))
+      let after = await scrollPos(wc, sel)
+      let how = '真实滚轮'
+      if (!before || !after || before.pos === after.pos) {
+        const r3 = await scrollByJs(wc, sel, dx, dy)
+        if (r3 && r3.no) {
+          step(s, action, (sel || dir) + ' ' + amt, false, '没有可滚动的容器')
+          return { error: '这个位置没有可滚动的容器 —— 先 browser_read 或 browser_eval 确认要滚的是哪一块,'
+            + '再把那块的 ref/selector 给我(业务系统里真正带滚动条的几乎都是内层容器,不是整页)' }
+        }
+        await new Promise((r) => setTimeout(r, 60))
+        after = await scrollPos(wc, sel)
+        how = '合成 wheel 事件 + 直接滚(后台标签收不到真实输入事件)'
+      }
+      const moved = before && after ? Math.abs(after.pos - before.pos) : 0
+      const atEnd = !!(after && after.atEnd)
+      step(s, action, (sel || dir) + ' ' + amt, true, '')
+      return { ok: true, url: curUrl(s), how, target: (after && after.what) || '(未知)',
+        moved, atEnd,
+        scrolled: moved ? ('已滚动 ' + moved + 'px(' + how + ',对象:' + ((after && after.what) || '?') + ')')
+          : (atEnd ? '没动 —— 已经到底/到顶了' : '没动 —— 这个位置没有可滚动的容器,换个 ref 再试(或先 browser_read 确认要滚的是哪块)') }
     }
     // ★hover:菜单/提示/悬浮操作条都要先悬停才出来。用【真实鼠标事件】而不是 JS 派发的 mouseover ——
     //   后者触发不了 CSS :hover,而很多下拉菜单恰恰是纯 CSS 的,只派事件会看着"悬停了却什么都没弹"。
@@ -628,6 +672,42 @@ module.exports = function initBrowserAgent(ctx) {
   // 什么才是问题所在,不是它有没有 200);③ 取某一条的响应体 —— 这一条最关键,"接口通了但返回体不对"
   // 是前端 bug 的大头,只看状态码永远看不见。
   // 【为什么默认值不变】不给参数时行为与老版一致(error + 失败请求),老调用不受影响。
+  // 找"该滚的那个东西":给了选择器就往上找最近的可滚动祖先;没给就找页面上最大的可滚动容器。
+  // ★为什么不是 document:业务系统里真正带滚动条的几乎都是内层容器(表格体、弹层、侧栏),
+  //   document 本身常常一点都不滚 —— 只滚 window 等于什么都没做。
+  // ★这里【只产语句片段】,不自带 (function(){ —— 第一版自带了开头、调用方又包一层,
+  //   少一个闭合括号,整段是语法错;而调用处 catch 把它吞了,表现成"没有可滚动的容器"。
+  //   又一次:静默 catch 把我自己的 bug 藏成了业务结论。
+  const scrollFinderJs = (sel) => 'function __bhCan(e){if(!e||e===document.body||e===document.documentElement)return false;'
+    + 'var cs=getComputedStyle(e);return /auto|scroll/.test(cs.overflowY+cs.overflowX)&&(e.scrollHeight>e.clientHeight+4||e.scrollWidth>e.clientWidth+4)}'
+    + 'var t=null;'
+    + (sel
+      ? 'var e0=document.querySelector(' + JSON.stringify(sel) + ');for(var p=e0;p;p=p.parentElement){if(__bhCan(p)){t=p;break}}'
+      : 'var best=null,area=0,all=document.querySelectorAll("*");'
+        + 'for(var i=0;i<all.length;i++){var e=all[i];if(!__bhCan(e))continue;var r=e.getBoundingClientRect();var a2=r.width*r.height;if(a2>area){area=a2;best=e}}t=best;')
+    + 'if(!t&&document.documentElement.scrollHeight>innerHeight+4)t=document.scrollingElement;'
+  async function scrollPos(wc, sel) {
+    try {
+      return await wc.executeJavaScript('(function(){' + scrollFinderJs(sel)
+        + 'if(!t)return null;'
+        + 'var isDoc=(t===document.scrollingElement);'
+        + 'return {pos:Math.round(t.scrollTop+t.scrollLeft),'
+        + 'atEnd:(t.scrollTop+t.clientHeight>=t.scrollHeight-2),'
+        + 'what:isDoc?"整页":((t.tagName||"").toLowerCase()+(t.className?"."+String(t.className).split(" ")[0]:""))}})()', true)
+    } catch (e) { log('[browser-agent] 找滚动容器失败: ' + e.message); return null }   // ★不许静默:吞掉就成了"没有可滚动容器"
+  }
+  /** 在目标容器上派发【合成 wheel 事件】再直接滚 —— 后台标签收不到真实输入事件(实测),
+   *  而虚拟滚动/无限加载/自定义滚动条这些只认 wheel;合成事件虽然 isTrusted=false,
+   *  但绝大多数前端库不查这个,照样会响应。 */
+  async function scrollByJs(wc, sel, dx, dy) {
+    try {
+      return await wc.executeJavaScript('(function(){' + scrollFinderJs(sel)
+        + 'if(!t)return {no:1};'
+        + 'try{t.dispatchEvent(new WheelEvent("wheel",{deltaX:' + dx + ',deltaY:' + dy + ',bubbles:true,cancelable:true}))}catch(e){}'
+        + 't.scrollTop+=' + dy + ';t.scrollLeft+=' + dx + ';return {ok:1}})()', true)
+    } catch (e) { log('[browser-agent] JS 滚动失败: ' + e.message); return { err: e.message } }
+  }
+
   // ── 组件库下拉(el-select / ant-select / 任意 role=combobox)────────────────
   // 【为什么要在页面里一次做完】分成 click → read → click 三个来回的话:
   //   ① 每一步都要模型自己判断浮层出没出来、选项在哪个 class 里(它猜不准,真机里猜过很多次);
