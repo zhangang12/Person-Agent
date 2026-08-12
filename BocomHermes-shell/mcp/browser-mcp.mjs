@@ -294,7 +294,7 @@ const TOOLS = [
       + ' hover:发合成鼠标事件(纯 CSS 的下拉菜单也能弹出来),悬停后通常要再 browser_read 一次才看得到浮层。',
     inputSchema: { type: 'object', properties: {
       sessionId: { type: 'string' },
-      action: { type: 'string', enum: ['click', 'type', 'select', 'check', 'enter', 'key', 'scroll', 'wheel', 'hover', 'navigate', 'back', 'forward', 'dialog', 'drag', 'point', 'wait'] },
+      action: { type: 'string', enum: ['click', 'right_click', 'double_click', 'type', 'select', 'check', 'enter', 'key', 'scroll', 'wheel', 'hover', 'navigate', 'back', 'forward', 'dialog', 'drag', 'point', 'wait'] },
       key: { type: 'string', description: 'action=key 时:Enter/Escape/Tab/Backspace/Delete/方向键/Home/End/PageUp/PageDown(输入文字用 type)' },
       direction: { type: 'string', enum: ['up', 'down', 'left', 'right'], description: 'action=scroll 且没给 ref/selector 时:整页往哪滚(默认 down)' },
       amount: { type: 'number', description: 'action=scroll 整页滚多少像素(默认 600)' },

@@ -494,6 +494,26 @@ module.exports = function initMail(ctx) {
               // 内嵌浏览器的使用/失败计数:权限层据此判"真的试过了吗"(playwright 降级闸,见 session.js)
               if (kind === 'browser-tool') {
                 if (!S.brStat) S.brStat = { opens: 0, fails: 0 }
+                // ★工具使用率落盘(2026-08-12 用户问"opencode 会自己使用了吗"):
+                //   这问题我答不了 —— 但它是可数的。每次调用记一笔到 userData/tool-usage.json,
+                //   跑几轮之后 `npm run tool:usage` 直接给出【哪些工具它一次都没碰过】。
+                //   比我猜、比它自述都靠得住:没被调用过的工具等于不存在,不管做得多好。
+                try {
+                  const uf = path.join(app.getPath('userData'), 'tool-usage.json')
+                  let u = {}
+                  try { u = JSON.parse(fs.readFileSync(uf, 'utf8')) || {} } catch {}
+                  const key = route + (route === 'act' && a && a.action ? ':' + String(a.action) : '')
+                  const c = u[key] || { n: 0, fail: 0, ms: 0 }
+                  c.n++; if (!r || r.error) c.fail++
+                  c.ms += (+ms || 0); c.last = new Date().toISOString()
+                  u[key] = c
+                  fs.writeFileSync(uf, JSON.stringify(u))
+                  // ★这个 catch 之前是空的,而里面藏着一个真 bug:算耗时用了 t0 ——
+                  //   那是【调用方块里】的 const,toolLog 里读不到,运行时 ReferenceError,
+                  //   被空 catch 吞掉,表现是"文件静默不生成"。undef 也没拦住:
+                  //   它是函数级作用域分析,兄弟块里的 const 在它看来"声明过了"。
+                  //   所以这里必须留声 —— 静默的 catch 就是这么把 bug 养大的。
+                } catch (e) { log('[tool-usage] 记不下来(使用率会不准): ' + e.message) }
                 if (route === 'open') S.brStat.opens++
                 if (!r || r.error) S.brStat.fails++
               }

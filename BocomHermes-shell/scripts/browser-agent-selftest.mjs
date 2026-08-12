@@ -39,6 +39,12 @@ function makeCtx(over = {}) {
       getTitle: () => '标题',
       executeJavaScript: async (code) => {
         // agentEval / agentHtml 的返回形状(先判,它们的代码里也含 innerText/querySelectorAll)
+        // 把注入体里 ev("类型",{选项}) 的调用【按顺序】抽出来 —— 断言要看序列,不是看源码里
+        // 出现过哪些字符串:第一版数 /detail:2/ 的个数,而 dblclick 那行自己就带 detail:2,
+        // 于是把 click×2 删掉计数照样够,断言过了却什么都没验到(又一条自己骗自己的断言)。
+        const evSeq = (c) => [...c.matchAll(/ev\("(\w+)",\{([^}]*)\}/g)].map((m) => m[1] + (/button:2/.test(m[2]) ? '#2' : '') + (/detail:2/.test(m[2]) ? '@2' : ''))
+        if (/contextmenu/.test(code)) { if (page.noEl) return { err: '找不到元素' }; page.seq = evSeq(code); return { ok: 1, at: [82, 22], defaultPrevented: !page.noPrevent } }
+        if (/dblclick/.test(code)) { page.seq = evSeq(code); return { ok: 1, at: [82, 22] } }
         if (/dragstart/.test(code)) { if (!page.dragOk) return { err: '找不到源元素' }; page.dragged = { steps: (code.match(/var N=(\d+)/) || [])[1] }; return { ok: 1, from: [10, 10], to: [50, 60] } }
         if (/elementFromPoint/.test(code) && /pointerdown/.test(code)) { if (page.noHit) return { err: '这个坐标上没有元素(x=9999 y=9999,可能超出了视口)' }; page.pointed = true; return { ok: 1, at: [30, 40], hit: 'canvas.chart' } }
         if (/getBoundingClientRect/.test(code) && /x:Math\.round/.test(code)) return { x: 10, y: 10 }
@@ -961,6 +967,34 @@ console.log('用例7.26:AGENTS.md 由 opencode 自己维护 —— 壳层只教/
   const rep3 = await run('')                                   // 没配项目目录
   ok('  没配项目目录时不催(催了它也没地方写)', rep3.runbook === undefined, rep3.runbook)
   for (const d of [d0, d1, d1b, d2]) { try { fs2.rmSync(d, { recursive: true, force: true }) } catch {} }
+}
+
+console.log('用例7.27:右键 / 双击 —— 企业系统的标配交互,之前一个都没有')
+{
+  // 对着 Claude Code 的 computer(right_click / double_click)清点工具面时发现的缺口。
+  // 表格行右键出菜单、双击进编辑 —— 内网柜面/管理端全是这种交互,缺了就得绕路。
+  const { ba, S } = makeCtx()
+  const r = await ba.agentOpen({ url: 'http://x/', purpose: '验右键双击' })
+  const p = tabOf(S).page
+  const rc = await ba.agentAct({ sessionId: r.sessionId, action: 'right_click', selector: '#row' })
+  // 序列断言:contextmenu 前面必须有 button:2 的 mousedown(菜单组件多数等的是这一对)
+  ok('★★右键:先 mousedown(button=2)再 contextmenu,顺序不能反',
+    !!rc.ok && p.seq.includes('mousedown#2') && p.seq.indexOf('mousedown#2') < p.seq.findIndex((t) => t.startsWith('contextmenu')), p.seq)
+  ok('★  回执要求"菜单是新元素,先重读拿 ref 再点菜单项"(不然它会拿旧 ref 去点)',
+    /browser_read/.test(String(rc.note)), rc.note)
+  p.noPrevent = true
+  const rc2 = await ba.agentAct({ sessionId: r.sessionId, action: 'right_click', selector: '#row' })
+  ok('★  页面没拦默认右键菜单 → 明说"这里很可能没有自定义菜单,别等菜单出来"',
+    /没有】拦默认右键|没有自定义菜单/.test(String(rc2.note)), rc2.note)
+  const dc = await ba.agentAct({ sessionId: r.sessionId, action: 'double_click', selector: '#row' })
+  ok('★★双击要发 click×2 + dblclick(只发 dblclick,el-table 那种"先选中行再进编辑"的不认)',
+    !!dc.ok && p.seq.filter((t) => t.startsWith('click')).length === 2 && p.seq[p.seq.length - 1] === 'dblclick@2', p.seq)
+  ok('  两个都进可回放流(沉淀时要能重放右键菜单那一步)',
+    (await ba.agentClose({ sessionId: r.sessionId, status: 'done' })).report.steps.filter((x) => /click/.test(x.kind)).length >= 3)
+  p.noEl = true
+  const { ba: b2 } = makeCtx()
+  const r2 = await b2.agentOpen({ url: 'http://x/', purpose: 'x' })
+  ok('  缺 ref/selector 明确拒', /要给 ref 或 selector/.test(String((await b2.agentAct({ sessionId: r2.sessionId, action: 'right_click' })).error)))
 }
 
 console.log('用例8:会话生命周期 —— 超时/并发/重复收/取证')

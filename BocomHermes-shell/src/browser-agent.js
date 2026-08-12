@@ -275,6 +275,17 @@ module.exports = function initBrowserAgent(ctx) {
     return L.join('\n')
   }
 
+  /** 拿到该在哪执行的那个"文档":fu 指向某个子框架就返回它,否则主框架。
+   *  click/type 走 execStep 早就按 ev.fu 定位子框架了,而 hover/point/drag/wheel/右键
+   *  这些【合成事件】的动作是我自己 executeJavaScript 的,一直只在主框架跑 ——
+   *  于是"清单里列着 iframe 里的元素,ref 也给了,一 hover 就说找不到"。同一套 ref 两种行为,最难查。 */
+  function execIn(tab, fu) {
+    const wc = tab.view.webContents
+    if (!fu) return wc
+    try { for (const f of wc.mainFrame.framesInSubtree) if (f !== wc.mainFrame && f.url === fu) return f } catch {}
+    return wc
+  }
+
   function step(s, kind, detail, ok, err) {
     if (s.steps.length < MAX_STEPS) s.steps.push({ i: s.steps.length + 1, kind, detail: str(detail).slice(0, 300), ok: !!ok, err: str(err).slice(0, 300), at: nowMs() - s.startedAt })
     return ok
@@ -394,15 +405,8 @@ module.exports = function initBrowserAgent(ctx) {
   // 【为什么只在已盖 ref 的元素上找,不重新扫一遍】重扫会重新编号 —— 上一次读页拿到的 ref 会集体指错,
   // 而模型不会知道(它手里那些编号看着还有效)。这是最坏的一类失败:动作成功、点的却不是它以为的那个。
   // 所以没读过页就明说"先 browser_read",与 CC 的"Call read_page first"同一条契约。
-  async function agentFind(a) {
-    const s = live(a && a.sessionId); if (!s) return { error: '会话不存在或已结束(先 browser_open)' }
-    const tab = tabOf(s); if (!tab) return { error: '这个会话的标签页已被关掉' }
-    const q = str(a && a.query).trim()
-    if (!q) return { error: '要找什么?给一句话,比如「登录按钮」「用户名输入框」' }
-    const limit = Math.min(Math.max(+(a && a.limit) || 10, 1), 30)
-    let out = null
-    try {
-      out = await tab.view.webContents.executeJavaScript(`(function(){
+  /** find 的注入体:主框架和每个子框架各跑一遍(read 给的 ref 覆盖到哪,find 就要搜到哪) */
+  const FIND_JS = (q, lim) => `(function(){
         var es=document.querySelectorAll('[data-bh-ref]');
         if(!es.length)return {none:1};
         var q=${JSON.stringify(q)}.toLowerCase();
@@ -421,9 +425,36 @@ module.exports = function initBrowserAgent(ctx) {
           hits.push({ref:e.getAttribute('data-bh-ref'),role:role,name:name,score:score});
         }
         hits.sort(function(x,y){return y.score-x.score});
-        return {hits:hits.slice(0,${limit}),total:hits.length};
-      })()`, true)
+        return {hits:hits.slice(0,${lim}),total:hits.length};
+      })()`
+  async function agentFind(a) {
+    const s = live(a && a.sessionId); if (!s) return { error: '会话不存在或已结束(先 browser_open)' }
+    const tab = tabOf(s); if (!tab) return { error: '这个会话的标签页已被关掉' }
+    const q = str(a && a.query).trim()
+    if (!q) return { error: '要找什么?给一句话,比如「登录按钮」「用户名输入框」' }
+    const limit = Math.min(Math.max(+(a && a.limit) || 10, 1), 30)
+    let out = null
+    try {
+      out = await tab.view.webContents.executeJavaScript(FIND_JS(q, limit), true)
+      // ★子框架也要搜:read 已经把 iframe 里的元素列进清单并给了 ref,find 只搜主框架的话
+      //   就是"清单里明明有、find 说没有"——同一套 ref 两种行为,最难查的那种不一致。
+      const need = () => limit - ((out && (out.hits || []).length) || 0)
+      if (need() > 0) {
+        let frames = []
+        try { frames = tab.view.webContents.mainFrame.framesInSubtree.filter((f) => f !== tab.view.webContents.mainFrame && f.url && !/^about:/.test(f.url)) } catch {}
+        for (const f of frames.slice(0, 8)) {
+          if (need() <= 0) break
+          try {
+            const sub = await f.executeJavaScript(FIND_JS(q, need()), true)
+            if (sub && (sub.hits || []).length) {
+              if (!out || out.none) out = { hits: [] }
+              out.hits = (out.hits || []).concat(sub.hits.map((h) => ({ ...h, frame: String(f.url).slice(0, 90) })))
+            }
+          } catch {}
+        }
+      }
     } catch (e) { return { error: '查找失败: ' + e.message } }
+    void 0
     if (out && out.none) return { error: '这一页还没读过(元素上没有 ref)—— 先 browser_read 一次,再 browser_find' }
     const hits = (out && out.hits) || []
     if (!hits.length) return { ok: true, found: 0, hint: '没找到匹配「' + q + '」的元素 —— 换个说法,或先 scroll 到那块再 browser_read' }
@@ -707,6 +738,39 @@ module.exports = function initBrowserAgent(ctx) {
         note: '两套机制都发了(HTML5 DnD + 鼠标模拟,中间带 8 个移动步)。拖完【务必再 browser_read 或 browser_eval 核一下结果】——'
           + '合成事件能不能被那个库认下来,只有看结果才知道,不能凭"没报错"当成拖成功了。' }
     }
+    else if (action === 'right_click' || action === 'double_click') {
+      // 表格行右键菜单、双击进编辑 —— 企业系统的标配交互,之前 act 里一个都没有(对着 Claude Code 的
+      // computer(right_click/double_click)清点时发现的缺口)。都走合成事件:
+      // 右键要发 contextmenu(button=2,菜单组件监听的就是它);双击要先两次 click 再补 dblclick,
+      // 只发 dblclick 的话 el-table 这类"第一次点选中行、双击才进编辑"的组件不认。
+      if (!sel) { step(s, action, '', false, '缺元素'); return { error: '要给 ref 或 selector' } }
+      let out = null
+      try {
+        out = await execIn(tab, fu).executeJavaScript('(function(){'
+          + 'var e=document.querySelector(' + JSON.stringify(sel) + ');'
+          + 'if(!e)return {err:"找不到元素"};'
+          + 'e.scrollIntoView({block:"center"});'
+          + 'var r=e.getBoundingClientRect();var x=Math.round(r.left+r.width/2),y=Math.round(r.top+r.height/2);'
+          + 'function ev(t,o){var m=Object.assign({bubbles:true,cancelable:true,composed:true,clientX:x,clientY:y,view:window},o||{});'
+          + 'try{return e.dispatchEvent(new MouseEvent(t,m))}catch(_){return false}}'
+          + (action === 'right_click'
+            ? 'ev("pointerdown",{button:2,buttons:2});ev("mousedown",{button:2,buttons:2});'
+              + 'ev("mouseup",{button:2,buttons:0});var d=ev("contextmenu",{button:2});'
+              + 'return {ok:1,at:[x,y],defaultPrevented:!d};'
+            : 'ev("pointerdown",{button:0,buttons:1});ev("mousedown",{button:0,buttons:1});ev("mouseup",{button:0});ev("click",{detail:1});'
+              + 'ev("mousedown",{button:0,buttons:1});ev("mouseup",{button:0});ev("click",{detail:2});'
+              + 'ev("dblclick",{detail:2});return {ok:1,at:[x,y]};')
+          + '})()', true)
+      } catch (e) { step(s, action, sel, false, e.message); return { error: '执行失败: ' + e.message } }
+      if (!out || out.err) { step(s, action, sel, false, (out && out.err) || '没反应'); return { error: (out && out.err) || '没反应' } }
+      step(s, action, sel, true, '')
+      s.flow.push({ act: action === 'right_click' ? 'right_click' : 'double_click', sel, selAlt: [] })
+      return { ok: true, at: out.at,
+        note: (action === 'right_click'
+          ? (out.defaultPrevented ? '右键菜单接住了(页面拦了默认菜单,说明是它自己的菜单)。' : '⚠ 页面【没有】拦默认右键菜单 —— 很可能这里根本没有自定义菜单,别等着菜单出来。')
+            + '菜单是新出现的元素:先 browser_read 拿新 ref 再点菜单项。'
+          : '双击已发(click×2 + dblclick 都发了)。合成事件能不能被那个表格组件认下来,只有看结果才知道 —— 再读一次核。') }
+    }
     else if (action === 'point') {
       // ★坐标点击:canvas / 地图 / 图表内部【没有 DOM 元素可选】,只能按坐标点。
       //   给了 ref/selector 就以它为原点(x/y 是相对偏移),不给就按视口绝对坐标 ——
@@ -743,7 +807,7 @@ module.exports = function initBrowserAgent(ctx) {
       return { ok: true, armed: (a.accept !== false ? '确定' : '取消'),
         note: '只对【下一个】弹窗生效。做完那个动作后建议 browser_read 一次,回执里能看到弹窗实际问了什么。' }
     }
-    else return { error: '未知 action: ' + action + '(可用 click|type|select|check|enter|key|scroll|hover|navigate|wait)' }
+    else return { error: '未知 action: ' + action + '(可用 click|right_click|double_click|type|select|check|enter|key|scroll|wheel|hover|navigate|back|forward|dialog|drag|point|wait)' }
 
     if (fu) ev.fu = fu
     const r = await execStep(wc, ev, tab, { waitMs: 4000 })
@@ -782,7 +846,7 @@ module.exports = function initBrowserAgent(ctx) {
     let why = ''
     if (notFound) {
       try {
-        const probe = await tab.view.webContents.executeJavaScript('(function(){'
+        const probe = await execIn(tab, fu).executeJavaScript('(function(){'
           + 'var b={f:0,s:0};try{var ifr=document.querySelectorAll("iframe,frame");'
           + 'for(var i=0;i<ifr.length;i++){var r=ifr[i].getBoundingClientRect();if(r.width>40&&r.height>40)b.f++}'
           + 'var a2=document.querySelectorAll("*");for(var j=0;j<a2.length;j++){if(a2[j].shadowRoot)b.s++}}catch(e){}'

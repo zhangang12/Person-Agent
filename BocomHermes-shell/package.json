@@ -64,7 +64,8 @@
     "split:test": "node scripts/browser-split-selftest.mjs",
     "ref:test": "node scripts/browser-ref-selftest.mjs",
     "type:test": "node scripts/type-verify-selftest.mjs",
-    "preview:test": "node scripts/preview-selftest.mjs"
+    "preview:test": "node scripts/preview-selftest.mjs",
+    "tool:usage": "node scripts/tool-usage.mjs"
   },
   "dependencies": {
     "mammoth": "^1.8.0",
