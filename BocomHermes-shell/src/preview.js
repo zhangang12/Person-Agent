@@ -174,7 +174,13 @@ module.exports = function initPreview(ctx) {
     const s = { id, name, cmd: cfg.exec + ' ' + cfg.args.join(' '), cwd, port: cfg.port,
       url: cfg.url || (cfg.port ? 'http://localhost:' + cfg.port : ''), lines: [], startedAt: Date.now(), exit: null, proc: null }
     try {
-      s.proc = spawn(cfg.exec, cfg.args, { cwd, shell: process.platform === 'win32', env: process.env })
+      // ★Windows 走 shell:true 时,Node 是把命令和参数【拼成一行】交给 cmd.exe 的,
+      //   自己不做引号处理 —— 参数里只要有空格(路径、带空格的脚本名)就会被拆断。
+      //   mac 上不走 shell,所以这类问题在我这边量不出来,只能按平台规则先包好。
+      const win = process.platform === 'win32'
+      const q = (x) => (win && /[\s&|<>^]/.test(String(x)) ? '"' + String(x).replace(/"/g, '\\"') + '"' : String(x))
+      s.proc = spawn(win ? q(cfg.exec) : cfg.exec, win ? cfg.args.map(q) : cfg.args,
+        { cwd, shell: win, env: process.env, windowsHide: true })
     } catch (e) { return { error: '起不来: ' + e.message } }
     servers.set(id, s)
     s.proc.stdout && s.proc.stdout.on('data', (d) => push(s, d.toString(), 'out'))

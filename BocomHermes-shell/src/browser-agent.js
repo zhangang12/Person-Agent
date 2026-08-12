@@ -500,7 +500,8 @@ module.exports = function initBrowserAgent(ctx) {
       // markdown 图片语法,而那条路径渲染不出来。于是"截图给我看"这件事对用户永远只剩一行路径。
       // 谁有能力把图摆出来?壳层。所以由壳层直推进当前对话卡,不经过模型。
       let shown = false
-      if (typeof showShot === 'function') { try { shown = !!showShot({ path: p, label, url: curUrl(s), full: !!(a && a.full), wc: s.wc, buf: (rr && rr.buf) || null }) } catch (e) { log('[browser-agent] 展示截图失败: ' + e.message) } }
+      const shotInfo = { path: p, label, url: curUrl(s), full: !!(a && a.full), wc: s.wc, buf: (rr && rr.buf) || null }
+      if (typeof showShot === 'function') { try { shown = !!showShot(shotInfo) } catch (e) { log('[browser-agent] 展示截图失败: ' + e.message) } }
       // ★"你自己能不能看这张图"必须说实话(2026-08-12):本机 12 个模型一个都不能读图,
       //   而回执以前写着"要看就把它当附件读一遍"—— 模型照做,拿回
       //   「image omitted: could not be resized below the image size limit」,白烧一轮,
@@ -515,6 +516,9 @@ module.exports = function initBrowserAgent(ctx) {
       return { ok: true, path: p, shownToUser: shown, youCanSeeIt: !!vis.ok,
         // ★截断要如实说:不说的话模型会把"顶部一屏"当成整页,后面的内容当成不存在
         ...(shotNote ? { truncated: shotNote + ' —— 要看下面的内容:browser_act{action:"scroll"} 往下滚再截一张' } : {}),
+        // ★"截到了"和"截了个寂寞"必须分开说:全白图看着也是成功,模型会拿它当证据往下走
+        ...(shotInfo.blankish ? { warning: shotInfo.blankish + ' —— 别拿它当"页面正常"的证据。'
+          + '先 browser_eval 看一眼 document.body.innerText.length / document.readyState,确认页面真渲染出来了再截。' } : {}),
         note: (shown
           ? '这张图已经【直接展示在用户的对话里】了,不用再把路径念给用户、也不用叫用户自己去打开。'
           : '图已存盘但没能摆进对话(当前没有活动对话卡)。') + selfSee }
@@ -685,14 +689,19 @@ module.exports = function initBrowserAgent(ctx) {
     const path = require('path'); const fs = require('fs')
     // ★根目录也要 realpath:macOS 的 /var 是指向 /private/var 的软链,文件 realpath 过、根没有,
     //   就会把【允许目录里的文件】误判成越界(自测第一次就撞上)。用户的项目目录带软链同理。
+    // ★Windows 的路径比较不分大小写(C:\Users 和 c:\users 是同一个),盘符大小写也常不一致。
+    //   用大小写敏感的 startsWith 去比,在 Windows 上会把【允许目录里的文件】误判成越界 ——
+    //   而我这边全程在 mac 上验的,这类差异量不出来,只能按平台规则改对。
+    const ci = process.platform === 'win32'
+    const norm = (x) => (ci ? String(x).toLowerCase() : String(x))
     const roots = uploadAllowRoots().map((d) => {
       try { return fs.realpathSync(d) } catch { return path.resolve(d) }
-    }).map((d) => d + path.sep)
+    }).map((d) => norm(d + path.sep))
     const real = []
     for (const fp of files) {
       let rp = ''
       try { rp = fs.realpathSync(path.resolve(fp)) } catch { return { error: '文件不存在:' + fp } }
-      if (roots.length && !roots.some((r) => (rp + path.sep).startsWith(r))) {
+      if (roots.length && !roots.some((r) => norm(rp + path.sep).startsWith(r))) {
         return { error: '拒绝上传该文件(不在允许目录):' + fp
           + ' —— 只允许 下载/桌面/文档/项目目录 里的文件。这个浏览器带着用户的登录态,'
           + '不能拿它把任意本地文件送进业务系统。要传别处的文件,先让用户把它拷到上面任一目录。' }

@@ -1172,7 +1172,7 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     if (!wc) return false
     const fp = String((info && info.path) || '')
     if (!fp) return false
-    let dataUrl = '', w = 0, h = 0
+    let dataUrl = '', w = 0, h = 0, blankish = ''
     const t0 = Date.now()
     try {
       // ★有原始 buffer 就别再从磁盘解一遍:整页 PNG 能到 2MB,重解 + 缩放 + JPEG 编码全在主线程上,
@@ -1190,11 +1190,24 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
     // 对排查毫无价值 —— 真机 2026-08-11 就出过一张。这类"能出图但图是废的"最容易蒙混过关,
     // 所以宁可多喊一声:宽度明显不够就留痕,别等用户看出来。
     if (w > 0 && w < 600) log('[shot] ⚠ 截图只有 ' + w + 'px 宽 —— 后台标签视口没设成功?这张图多半是手机断点布局,对排查没用')
+    // ★空白图哨兵:后台标签(没挂进窗口)在某些平台/驱动上可能出全白图 —— 真机 mac 上撞到过一次。
+    //   Windows 我这边验不了,所以宁可让它自己喊出来:PNG 压缩率能一眼分开 ——
+    //   实测全白 2880×1800 只有 19KB(≈3.8KB/百万像素),正常 1440×900 是 213KB(≈164KB/百万像素)。
+    //   低于 10KB/百万像素基本就是空白页,这时"截到了"和"截了个寂寞"必须分开说。
+    try {
+      const mp = (w * h) / 1e6
+      const kbPerMp = mp > 0 ? (info.buf ? info.buf.length : fs.statSync(fp).size) / 1024 / mp : 0
+      if (mp > 0.2 && kbPerMp < 10) {
+        blankish = '这张图几乎是空白的(' + Math.round(kbPerMp) + 'KB/百万像素,正常页面在 100 以上)'
+        log('[shot] ⚠ ' + blankish + ' —— 页面可能还没渲染,或后台标签在本平台截不出内容')
+      }
+    } catch {}
     shotPaths.add(fp)
     if (shotPaths.size > 200) { const it = shotPaths.values(); shotPaths.delete(it.next().value) }   // 粗粒度防涨
     try {
       wc.send('card-shot', { path: fp, label: String((info && info.label) || ''), url: String((info && info.url) || ''),
         full: !!(info && info.full), dataUrl, w, h })
+      if (info) info.blankish = blankish   // 回执要能说出"截到的是空白"(见 agentShot)
     } catch (e) { log('[shot] 推送失败: ' + e.message); return false }
     log('[shot] 已摆进对话(缩图 ' + (Date.now() - t0) + 'ms):' + fp + ' ' + w + '×' + h + (dataUrl ? ' (缩略 ' + Math.round(dataUrl.length / 1024) + 'KB)' : ' (无缩略)'))
     return true
@@ -3394,6 +3407,32 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       const out = await wc.executeJavaScript(`(function(){
         var SEL='button,a,input,select,textarea,[role="button"],[role="link"],[role="checkbox"],[role="tab"],[contenteditable="true"],[onclick]';
         var es=document.querySelectorAll(${onlyInteractive ? 'SEL' : "SEL+',h1,h2,h3,label,td,th'"});
+        // ★框架 H5 的退路(2026-08-12 冒烟实测):uni-app / Taro 这类把所有可点区域编译成
+        //   <div> + JS 事件,语义标签【一个都没有】—— 实测一页 101 个可见元素、文案齐全,
+        //   而 button/a/input 命中 0。照老判据读出来就是"这页没有可交互元素",
+        //   模型于是开始猜选择器(正是本轮一直在修的那个坑)。
+        //   所以:语义标签几乎为空时,退到"看着能点"的判据 —— 鼠标手型 / uni-app 的 data-event-opts /
+        //   类名带 btn|link|tab。只在语义扫描落空时才做全量 getComputedStyle,不给正常页面加负担。
+        var fallback=false;
+        if(es.length<5){
+          fallback=true;
+          var all=document.querySelectorAll('*');var pick=[];
+          for(var q=0;q<all.length&&pick.length<400;q++){
+            var el=all[q];
+            if(el.children&&el.children.length>3)continue;              // 只要叶子附近的,容器不算
+            var txt=(el.innerText||'').trim();
+            if(!txt&&!el.getAttribute('data-event-opts'))continue;
+            if(txt.length>40)continue;                                   // 一大段文字不是按钮
+            var cls=String(el.className||'');
+            var looks=!!el.getAttribute('data-event-opts')||/btn|button|link|tab|menu|cell|item/i.test(cls);
+            if(!looks){var cs2=window.getComputedStyle(el);if(!cs2||cs2.cursor!=='pointer')continue}
+            // 去重:外层包着内层、文字又一模一样时只留【最里面】那个 —— 点它最准,
+            // 也省得清单里"首页"连出三条(冒烟实测就是这样,10 条里有 6 条是重复的壳)
+            while(pick.length&&pick[pick.length-1].contains(el)&&(pick[pick.length-1].innerText||'').trim()===txt)pick.pop();
+            pick.push(el);
+          }
+          if(pick.length)es=pick;
+        }
         var lines=[],n=0,total=0;
         // 先清掉上一次的 ref —— 不清的话旧编号会和新编号混在一页上,ref_3 到底指谁就说不清了
         var old=document.querySelectorAll('[data-bh-ref]');
@@ -3415,10 +3454,12 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
           if(e.tagName==='A'&&e.getAttribute('href'))st.push('href='+String(e.getAttribute('href')).slice(0,60));
           lines.push('[ref_'+n+'] '+role+(name?' "'+name+'"':'')+(st.length?' ('+st.join(', ')+')':''));
         }
-        return {els:lines.join('\\n'),shown:n,total:total};
+        return {els:lines.join('\\n'),shown:n,total:total,fallback:fallback};
       })()`, true)
       els = (out && out.els) || ''
       if (out && out.total > out.shown) more += '可交互元素共 ' + out.total + ' 个,这里只给了前 ' + out.shown + ' 个(想看全部或按区域细看,先滚动/收窄再读一次);'
+      // 走了退路要说出来:这些 ref 是按"看着能点"挑的,不是语义标签,可能有漏有多
+      if (out && out.fallback) more += '这一页没有 button/a/input 这类语义标签(框架 H5 常见),上面的元素是按【鼠标手型/事件属性/类名】挑出来的 —— 可能有漏也可能有多,拿不准就用 browser_eval 直接查 DOM;'
     } catch (e) {
       // ★采集失败必须【留痕 + 单独一个字段】,不能塞进 elements 里冒充内容(2026-08-11 真机):
       // 原来是 els='(采集失败: …)' 且外层照样 ok:true —— 于是模型分不清"这页没有可交互元素"和

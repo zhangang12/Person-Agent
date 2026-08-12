@@ -41,6 +41,7 @@
     "mcpguard:test": "node scripts/mcp-guard-selftest.mjs",
     "mcp:doctor": "node scripts/mcp-doctor.mjs",
     "desktop:probe": "node scripts/desktop-probe.mjs",
+    "smoke:browser": "node scripts/browser-smoke.mjs",
     "mcp:httpcap": "node mcp/httpcap-mcp.mjs",
     "mcp:httpcap:test": "node mcp/httpcap-selftest.mjs",
     "mcp:repro": "node mcp/repro-mcp.mjs",
