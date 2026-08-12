@@ -3418,19 +3418,10 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
   // 【截断要说出来】原来 80 个元素 / 6000 字正文是硬截且不吭声 —— 模型以为自己看全了。
   //   今天一整天的教训:静默截断读起来和"就这么多"一模一样。
   const PAGE_MAX_EL = 200, PAGE_MAX_TEXT = 8000
-  async function skillPageRead(tab0, opts) {
-    const tab = tab0 || brActive(); if (!tab) return { error: '没有活跃标签' }
-    const wc = tab.view.webContents
-    const onlyInteractive = !(opts && opts.all)
-    let text = '', els = '', more = '', elemErr = ''
-    try {
-      const r = await wc.executeJavaScript('(function(){var t=(document.body&&document.body.innerText)||"";'
-        + 'return {t:t.slice(0,' + PAGE_MAX_TEXT + '),n:t.length}})()', true)
-      text = (r && r.t) || ''
-      if (r && r.n > PAGE_MAX_TEXT) more += '正文共 ' + r.n + ' 字,这里只给了前 ' + PAGE_MAX_TEXT + ' 字;'
-    } catch {}
-    try {
-      const out = await wc.executeJavaScript(`(function(){
+  /** 元素采集的注入体(主框架和每个 iframe 各跑一遍;__BASE 是本 frame 的 ref 起始号) */
+  const str2 = (x) => (x == null ? '' : String(x))
+  function collectBody(onlyInteractive) {
+    return `
         var SEL='button,a,input,select,textarea,[role="button"],[role="link"],[role="checkbox"],[role="tab"],[contenteditable="true"],[onclick]';
         var es=document.querySelectorAll(${onlyInteractive ? 'SEL' : "SEL+',h1,h2,h3,label,td,th'"});
         // ★框架 H5 的退路(2026-08-12 冒烟实测):uni-app / Taro 这类把所有可点区域编译成
@@ -3459,7 +3450,7 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
           }
           if(pick.length)es=pick;
         }
-        var lines=[],n=0,total=0;
+        var lines=[],n=0,total=0;   // n 是本 frame 内的序号,ref 用 __BASE+n 保证全页唯一
         // 先清掉上一次的 ref —— 不清的话旧编号会和新编号混在一页上,ref_3 到底指谁就说不清了
         var old=document.querySelectorAll('[data-bh-ref]');
         for(var k=0;k<old.length;k++){try{old[k].removeAttribute('data-bh-ref')}catch(e){}}
@@ -3468,8 +3459,8 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
           if(!r.width&&!r.height)continue;                       // 不可见的不给 ref:给了模型也点不着
           var cs=window.getComputedStyle(e); if(cs&&(cs.visibility==='hidden'||cs.display==='none'))continue;
           total++;
-          if(n>=${PAGE_MAX_EL})continue;
-          n++; e.setAttribute('data-bh-ref',String(n));
+          if(__BASE+n>=${PAGE_MAX_EL})continue;
+          n++; e.setAttribute('data-bh-ref',String(__BASE+n));
           var role=e.getAttribute('role')||e.tagName.toLowerCase();
           var name=(e.innerText||e.value||e.placeholder||(e.getAttribute&&e.getAttribute('aria-label'))||'').trim().replace(/\\s+/g,' ').slice(0,60);
           var st=[];
@@ -3478,14 +3469,76 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
           if(e.getAttribute&&e.getAttribute('aria-expanded'))st.push('expanded='+e.getAttribute('aria-expanded'));
           if(e.tagName==='INPUT'&&e.type)st.push('type='+e.type);
           if(e.tagName==='A'&&e.getAttribute('href'))st.push('href='+String(e.getAttribute('href')).slice(0,60));
-          lines.push('[ref_'+n+'] '+role+(name?' "'+name+'"':'')+(st.length?' ('+st.join(', ')+')':''));
+          lines.push('[ref_'+(__BASE+n)+'] '+role+(name?' "'+name+'"':'')+(st.length?' ('+st.join(', ')+')':''));
         }
-        return {els:lines.join('\\n'),shown:n,total:total,fallback:fallback};
-      })()`, true)
+        // 盲区普查:"Agent 在页面元素上摸索半天,不知道为什么"的真因多半在这里 ——
+        // 元素采集【只看主框架】,iframe 里的东西一个都进不来,而回执从不说这件事。
+        // 内网柜面那套是"外壳 + 各系统的 flex/h5 页面",典型的 iframe 架构:
+        // 它读到的是外壳,业务页在它眼里根本不存在,于是开始猜选择器 —— 猜一辈子也猜不到。
+        // shadow DOM(组件库)和 canvas(图表/Flex)同理:看得见,DOM 里摸不着。
+        // 所以把"我看不见什么"数出来、报出来 —— 这是诊断,也是它下一步该往哪走的唯一依据。
+        var blind={frames:[],shadow:0,canvas:0};
+        try{
+          var ifr=document.querySelectorAll('iframe,frame');
+          for(var z=0;z<ifr.length&&z<12;z++){
+            var f=ifr[z];var r2=f.getBoundingClientRect();
+            var same=false;try{same=!!f.contentDocument}catch(e2){same=false}
+            var inner=0;if(same){try{inner=f.contentDocument.querySelectorAll('button,a,input,select,textarea,[role="button"]').length}catch(e3){}}
+            blind.frames.push({i:z,src:String(f.src||f.getAttribute('src')||'(没有 src,可能是 JS 写进去的)').slice(0,160),
+              same:same,inner:inner,w:Math.round(r2.width),h:Math.round(r2.height)});
+          }
+          var all2=document.querySelectorAll('*');
+          for(var y=0;y<all2.length;y++){if(all2[y].shadowRoot)blind.shadow++}
+          blind.canvas=document.querySelectorAll('canvas,object,embed').length;
+        }catch(e4){}
+        return {els:lines.join('\\n'),shown:n,total:total,fallback:fallback,blind:blind};
+})()`
+  }
+
+  async function skillPageRead(tab0, opts) {
+    const tab = tab0 || brActive(); if (!tab) return { error: '没有活跃标签' }
+    const wc = tab.view.webContents
+    const onlyInteractive = !(opts && opts.all)
+    let text = '', els = '', more = '', elemErr = '', blind = ''
+    try {
+      const r = await wc.executeJavaScript('(function(){var t=(document.body&&document.body.innerText)||"";'
+        + 'return {t:t.slice(0,' + PAGE_MAX_TEXT + '),n:t.length}})()', true)
+      text = (r && r.t) || ''
+      if (r && r.n > PAGE_MAX_TEXT) more += '正文共 ' + r.n + ' 字,这里只给了前 ' + PAGE_MAX_TEXT + ' 字;'
+    } catch {}
+    // ★iframe 里的元素也要采(2026-08-12 用户:"Agent 在页面元素上摸索半天,不知道为什么")。
+    //   内网柜面那套是"外壳 + 各系统 flex/h5 页",业务页全在 iframe 里 —— 只采主框架的话,
+    //   它读到的是一张几乎空的清单,然后开始猜选择器,而它要点的东西【根本不在它能看到的世界里】。
+    //   这里不新造机器:录制早就支持在 iframe 里执行(frameFor + evalJs(fr,…)),WebFrameMain
+    //   在那个 frame 自己的上下文里跑,连跨域也进得去。所以读页按 frame 各跑一遍、ref 全局编号,
+    //   再记下"哪个 ref 属于哪个 frame",act 时把 fu 带上就落到对应 frame。
+    const collectJs = (base) => `(function(){`
+      + `var __BASE=${base};`
+      + collectBody(onlyInteractive)
+    let refFrames = {}
+    try {
+      const out = await wc.executeJavaScript(collectJs(0), true)
       els = (out && out.els) || ''
-      if (out && out.total > out.shown) more += '可交互元素共 ' + out.total + ' 个,这里只给了前 ' + out.shown + ' 个(想看全部或按区域细看,先滚动/收窄再读一次);'
+      let refN = (out && out.shown) || 0, total = (out && out.total) || 0
+      // 子框架逐个采:ref 接着编号,并记下这个 ref 属于哪个 frame(act 靠它把动作送进去)
+      let frames = []
+      try { frames = wc.mainFrame.framesInSubtree.filter((f) => f !== wc.mainFrame && f.url && !/^about:/.test(f.url)) } catch {}
+      for (const f of frames.slice(0, 8)) {
+        if (refN >= PAGE_MAX_EL) { more += '子框架里还有元素没采(总数已到 ' + PAGE_MAX_EL + ' 上限);'; break }
+        let sub = null
+        try { sub = await f.executeJavaScript(collectJs(refN), true) } catch (e) { more += '子框架 ' + String(f.url).slice(0, 60) + ' 采集失败:' + e.message + ';'; continue }
+        const sl = str2(sub && sub.els)
+        if (!sl) continue
+        // 标出这些元素在子页面里 —— 它得知道自己在跟谁打交道(选择器写在子页面的坐标系里)
+        els += (els ? '\n' : '') + '--- 以下在 iframe 内:' + String(f.url).slice(0, 120) + ' ---\n' + sl
+        for (let q = refN + 1; q <= refN + ((sub && sub.shown) || 0); q++) refFrames[q] = f.url
+        refN += (sub && sub.shown) || 0; total += (sub && sub.total) || 0
+        try { const tr = await f.executeJavaScript('(document.body&&document.body.innerText||"").slice(0,1500)', true); if (tr && tr.trim()) text += '\n--- iframe 正文:' + String(f.url).slice(0, 80) + ' ---\n' + tr } catch {}
+      }
+      if (total > refN) more += '可交互元素共 ' + total + ' 个,这里只给了前 ' + refN + ' 个(想看全部或按区域细看,先滚动/收窄再读一次);'
       // 走了退路要说出来:这些 ref 是按"看着能点"挑的,不是语义标签,可能有漏有多
       if (out && out.fallback) more += '这一页没有 button/a/input 这类语义标签(框架 H5 常见),上面的元素是按【鼠标手型/事件属性/类名】挑出来的 —— 可能有漏也可能有多,拿不准就用 browser_eval 直接查 DOM;'
+      blind = blindNote(out && out.blind)
     } catch (e) {
       // ★采集失败必须【留痕 + 单独一个字段】,不能塞进 elements 里冒充内容(2026-08-11 真机):
       // 原来是 els='(采集失败: …)' 且外层照样 ok:true —— 于是模型分不清"这页没有可交互元素"和
@@ -3495,8 +3548,36 @@ ${modalLines || '  (无错误样态 DOM 节点)'}
       elemErr = e.message
       log('[browser] 元素采集失败(ref 句柄这一轮不可用):' + e.message + ' @ ' + wc.getURL())
     }
-    return { ok: true, url: wc.getURL(), title: wc.getTitle(), elements: els, text, truncated: more || '', elemErr }
+    return { ok: true, url: wc.getURL(), title: wc.getTitle(), elements: els, text, truncated: more || '', elemErr, blind, refFrames }
   }
+  /** 把盲区普查翻成人话 + 明确的下一步。上面那段只负责数,判断口径全在这里。 */
+  function blindNote(b) {
+    if (!b) return ''
+    const L = []
+    const fr = (b.frames || []).filter((f) => f && f.w > 40 && f.h > 40)   // 1×1 的埋点 iframe 不算
+    if (fr.length) {
+      L.push('⚠ 这一页有 ' + fr.length + ' 个 iframe。子页面里的元素【已经采进清单了】'
+        + '(标着「--- 以下在 iframe 内 ---」那几行),用 [ref_N] 点它们照常生效。'
+        + '但要记住一件事:【CSS 选择器跨不进 iframe】—— 子页面里的东西只能用 ref,'
+        + '写 selector:"#xxx" 一定是 not found,那不是元素不存在,是 querySelector 到不了那一层。')
+      for (const f of fr.slice(0, 6)) {
+        L.push('   · iframe#' + f.i + ' ' + f.w + '×' + f.h + ' ' + (f.same ? '同源' : '跨域(连内容都读不到)')
+          + (f.same && f.inner ? ',里面约 ' + f.inner + ' 个可交互元素' : '') + '  src=' + f.src)
+      }
+      // 挑"最像业务页"的那个推给它:同源且内部元素多的优先。真机第一版按协议挑,
+      // 结果推了跨域那个(里面 1 个按钮),而同源那个装着整张登录表单(5 个元素)—— 推反了。
+      const usable = fr.filter((f) => /^https?:\/\//i.test(f.src))
+      const first = usable.slice().sort((x, y) => (y.same ? 1 : 0) - (x.same ? 1 : 0) || (y.inner || 0) - (x.inner || 0) || (y.w * y.h) - (x.w * x.h))[0]
+      L.push('   【子页面里步骤很多的话】直接 browser_open 那个 src 当独立页跑更省事:少一层嵌套,'
+        + '选择器也能用了。' + (first ? '最像业务页的是 iframe#' + first.i + ':' + first.src : ''))
+    }
+    if (b.shadow > 0) L.push('⚠ 页面里有 ' + b.shadow + ' 处 shadow DOM(组件库常见):这些元素在 DOM 里查不到,'
+      + 'querySelector 返回 null。用 browser_eval 走 el.shadowRoot.querySelector(…) 才进得去。')
+    if (b.canvas > 0) L.push('⚠ 有 ' + b.canvas + ' 个 canvas/object/embed(图表、Flex、旧插件):内部没有 DOM,'
+      + '选择器一个都定位不到。看内容用 browser_see(视觉模型读图),点里面用 browser_act{action:"point"} 按坐标。')
+    return L.join('\n')
+  }
+
   async function skillPageAct(a) {
     const t = S.browser._takeover
     if (!t || !t.active) return { error: '当前没有进行中的接管(仅回放整段失败、Agent 被点名接管时才可执行页面操作)' }

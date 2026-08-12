@@ -108,7 +108,8 @@ function makeCtx(over = {}) {
     readRec: (id) => { const r = (calls.recs || {})[id]; if (!r) throw new Error('没有'); return r },
     pageRead: async (tab) => (over.emptyPage
       ? { ok: true, url: tab.page.url, title: '', elements: '', text: '' }
-      : { ok: true, url: tab.page.url, title: '标题', elements: 'button 「提交」  → #submit', text: tab.page.text }),
+      : { ok: true, url: tab.page.url, title: '标题', elements: 'button 「提交」  → #submit', text: tab.page.text,
+        ...(over.refFrames ? { refFrames: over.refFrames } : {}), ...(over.blind ? { blind: over.blind } : {}) }),
   }
   return { ba: initBrowserAgent(ctx), S, calls, ctx }
 }
@@ -885,6 +886,36 @@ console.log('用例7.24:登录线索 —— 项目里现成的答案要推给它
   const r3 = await makeCtx().ba.agentOpen({ url: 'http://localhost:5199/login', purpose: '登录' })
   ok('  没配项目目录时不炸、也不硬凑', r3.clues === undefined && !!r3.ok, r3.clues)
   try { fs2.rmSync(FIX, { recursive: true, force: true }) } catch {}
+}
+
+console.log('用例7.25:iframe —— 子页面里的元素要能点,盲区要报出来')
+{
+  // 【来历】2026-08-12 用户:"Agent 自己在页面元素上都要摸索半天,不知道为什么"。
+  // 内网柜面那套是"外壳 + 各系统 flex/h5 页",业务页全在 iframe 里。而读页原来【只采主框架】:
+  // 它拿到一张几乎空的清单,然后开始猜选择器 —— 它要点的东西根本不在它能看到的世界里,
+  // 猜一辈子也猜不到,回执还什么都不说。
+  const FU = 'http://127.0.0.1:8898/child.html'
+  const { ba, S, calls } = makeCtx({
+    refFrames: { 2: FU, 3: FU },
+    blind: '⚠ 这一页有 2 个 iframe。子页面里的元素【已经采进清单了】…CSS 选择器跨不进 iframe',
+  })
+  const r = await ba.agentOpen({ url: 'http://127.0.0.1:8898/', purpose: '验 iframe' })
+  ok('★★读页回执把盲区带出来(iframe/shadow/canvas 是"看得见摸不着"的三种,不说它就只能猜)',
+    /iframe/.test(String(r.blind)), r.blind)
+  tabOf(S).page.selCount = 1
+  const t1 = await ba.agentAct({ sessionId: r.sessionId, action: 'type', ref: 2, value: 'zhangsan' })
+  const ev1 = calls.exec[calls.exec.length - 1]
+  ok('★★点/填 iframe 里的元素时,动作被送进【那个子框架】执行(靠 ev.fu → frameFor)',
+    !!t1.ok && ev1 && ev1.fu === FU, ev1)
+  const t2 = await ba.agentAct({ sessionId: r.sessionId, action: 'click', selector: '#submit' })
+  const ev2 = calls.exec[calls.exec.length - 1]
+  ok('★  主框架的元素【不许】被误送进子框架(送错了就是点到别人页面上)', !!t2.ok && !ev2.fu, ev2)
+  const rd = await ba.agentRead({ sessionId: r.sessionId })
+  ok('  每次读页都刷新 ref→frame 归属(ref 编号会重排,归属跟着变)', /iframe/.test(String(rd.blind)), rd.blind)
+  const { ba: ba2, calls: c2 } = makeCtx()
+  const r2 = await ba2.agentOpen({ url: 'http://x/', purpose: '没有 iframe 的页' })
+  ok('  没有 iframe 的页面:不带 fu、不多说一句话', r2.blind === undefined, r2.blind)
+  void c2
 }
 
 console.log('用例8:会话生命周期 —— 超时/并发/重复收/取证')

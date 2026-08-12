@@ -577,14 +577,15 @@ async function callTool(name, args) {
   }
   if (name === 'browser_open') {
     const r = await relayPost('/browser/open', { url: String(args.url || ''), purpose: String(args.purpose || '') })
-    return (r.clues ? r.clues + '\n\n' : '') + (r.recall ? r.recall + '\n\n' : '')
+    return (r.blind ? r.blind + '\n\n' : '') + (r.clues ? r.clues + '\n\n' : '') + (r.recall ? r.recall + '\n\n' : '')
       + '会话已开: ' + r.sessionId + '(' + r.expiresInSec + 's 内有效)\n当前页: ' + r.url + (r.title ? '(' + r.title + ')' : '')
       + '\n' + (r.note || '') + '\n\n可交互元素(→ 后为现成选择器):\n' + (r.elements || '(无)')
       + '\n\n正文节选:\n' + String(r.text || '').slice(0, 2000)
   }
   if (name === 'browser_read') {
     const r = await relayPost('/browser/read', { sessionId: String(args.sessionId || ''), all: !!args.all })
-    return '当前页: ' + r.url + (r.title ? '(' + r.title + ')' : '') + '\n\n可交互元素(用 [ref_N] 直接给 browser_act 的 ref 参数):\n' + (r.elements || '(无)')
+    return (r.blind ? r.blind + '\n\n' : '')
+      + '当前页: ' + r.url + (r.title ? '(' + r.title + ')' : '') + '\n\n可交互元素(用 [ref_N] 直接给 browser_act 的 ref 参数):\n' + (r.elements || '(无)')
       // 截断必须原样带出来:不说的话模型把"前 N 个"当成"页面就这么多"
       + (r.truncated ? '\n\n⚠ 本次读页有截断:' + r.truncated : '')
       + '\n\n正文节选:\n' + String(r.text || '').slice(0, 3000)

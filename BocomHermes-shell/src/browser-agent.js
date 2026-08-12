@@ -346,11 +346,13 @@ module.exports = function initBrowserAgent(ctx) {
 
     let snap = null
     try { snap = await pageRead(tab) } catch {}
+    s.refFrames = (snap && snap.refFrames) || {}
     // 打开了但页面是【空壳】(SPA 没挂载):也要明说,别让模型把空页当"这页就是没东西"
     const emptyish = !str(snap && snap.elements).trim() && str(snap && snap.text).trim().length < 8
     return {
       ok: true, sessionId: id, expiresInSec: Math.round((s.expiresAt - nowMs()) / 1000),
       ...(recallNote(url) ? { recall: recallNote(url) } : {}),
+      ...(snap && snap.blind ? { blind: snap.blind } : {}),
       ...(( /login|signin|sso|\bauth\b|登录|登陆/i.test(url + ' ' + purpose)
         || /password|密码/i.test(str(snap && snap.elements)) ) && loginClues() ? { clues: loginClues() } : {}),
       ...(emptyish ? { warning: '页面打开了,但一个可交互元素、几乎一个字都没有 —— 多半是 SPA 还没挂载完,'
@@ -368,6 +370,7 @@ module.exports = function initBrowserAgent(ctx) {
     const tab = tabOf(s); if (!tab) return { error: '这个会话的标签页已被关掉' }
     let snap = null
     try { snap = await pageRead(tab, { all: !!(a && a.all) }) } catch (e) { return { error: '读页失败: ' + e.message } }
+    s.refFrames = (snap && snap.refFrames) || {}   // 每次读页都刷新:ref 编号重排了,归属也跟着变
     // truncated 必须透传:截断了却不说,模型就把"前 200 个"当成"全部"(今天一整天最贵的教训之一)
     // elemErr 同理,而且更狠:采集炸了却照样 ok:true + elements 里塞一句"(采集失败)",
     // 模型只会把它当"这页没元素"接着往下猜 selector —— 真机 2026-08-11 就是这么走的。
@@ -376,6 +379,9 @@ module.exports = function initBrowserAgent(ctx) {
     const ee = str(snap && snap.elemErr)
     return { ok: true, url: curUrl(s), title: (snap && snap.title) || '', elements: (snap && snap.elements) || '',
       text: (snap && snap.text) || '', truncated: (snap && snap.truncated) || '',
+      // 盲区(iframe / shadow DOM / canvas)必须每次读页都说:它看不见的东西恰恰是它最容易
+      // 反复猜选择器的地方,而清单里"没有"和"看不见"长得一模一样
+      ...(snap && snap.blind ? { blind: snap.blind } : {}),
       // 弹窗是"悄悄发生然后改变一切"的东西:出现过就必须说,否则模型会对着一个被拦掉的操作继续推
       ...(dlgs.length ? { dialogs: dlgs.map((d) => d.kind + '「' + d.text + '」→ ' + (d.answered || '已忽略')) } : {}),
       ...(ee ? { elemError: '元素采集失败:' + ee + ' —— 这一轮拿不到 ref 句柄,别用 ref 点(编号会指错);'
@@ -455,6 +461,11 @@ module.exports = function initBrowserAgent(ctx) {
     const sel = refN ? '[data-bh-ref="' + refN + '"]'
       : selRefN ? '[data-bh-ref="' + selRefN + '"]'
         : selRaw.slice(0, 1000)
+    // ★ref 在 iframe 里就把动作送进那个 frame。读页时记下了 ref→frame 的归属,
+    //   execStep 本来就按 ev.fu 走 frameFor 定位子框架(录制那条路一直这么干),这里只是把线接上。
+    //   不接的话:清单里明明列着子页面的元素,一点就"找不到" —— 比看不见更让人摸不着头脑。
+    const refUsed = refN || selRefN || ''
+    const fu = refUsed ? str((s.refFrames || {})[refUsed] || '') : ''
     const wc = tab.view.webContents
 
     // navigate 特殊:要先按【目标 URL】过策略,再执行(不能等跳过去了才发现越界)
@@ -734,6 +745,7 @@ module.exports = function initBrowserAgent(ctx) {
     }
     else return { error: '未知 action: ' + action + '(可用 click|type|select|check|enter|key|scroll|hover|navigate|wait)' }
 
+    if (fu) ev.fu = fu
     const r = await execStep(wc, ev, tab, { waitMs: 4000 })
     step(s, action, sel + (action === 'type' ? ' ← ' + str(a.value).slice(0, 40) : ''), !!r.ok, r.err)
     try { await waitNetIdle(tab, 300, 2500) } catch {}
@@ -758,7 +770,35 @@ module.exports = function initBrowserAgent(ctx) {
     //   它不是不听话,是回执没告诉它"别猜、回去重读"。ref 句柄这条路存在的全部意义就是不用猜,
     //   而弹层/新页面出现后必须重读一次才有新句柄 —— 这句话得由工具说出来。
     const notFound = /not found|找不到/.test(str(r.err))
-    return { error: str(r.err || '执行失败') + (notFound
+    // ★"找不到"的同时把【页面上真有什么】捞回来。只说"别猜、回去重读"还不够:
+    //   2026-08-12 用户报"Agent 在页面元素上摸索半天,还不知道为什么"——
+    //   它缺的不是纪律,是【为什么找不到】这条信息。三种真因它自己分不出来:
+    //   ① 元素在 iframe 里(清单里永远不会有) ② 在 shadow DOM 里(querySelector 恒 null)
+    //   ③ 就是文案对不上。前两种再换一万个选择器也没用,必须由工具当场说清。
+    let why = ''
+    if (notFound) {
+      try {
+        const probe = await tab.view.webContents.executeJavaScript('(function(){'
+          + 'var b={f:0,s:0};try{var ifr=document.querySelectorAll("iframe,frame");'
+          + 'for(var i=0;i<ifr.length;i++){var r=ifr[i].getBoundingClientRect();if(r.width>40&&r.height>40)b.f++}'
+          + 'var a2=document.querySelectorAll("*");for(var j=0;j<a2.length;j++){if(a2[j].shadowRoot)b.s++}}catch(e){}'
+          + 'var t=[];try{var es=document.querySelectorAll(\'button,a,input,[role="button"],[onclick]\');'
+          + 'for(var k=0;k<es.length&&t.length<8;k++){var e2=es[k];var rr=e2.getBoundingClientRect();'
+          + 'if(rr.width<2||rr.height<2)continue;var nm=(e2.innerText||e2.value||e2.placeholder||"").trim().replace(/\\s+/g," ").slice(0,28);'
+          + 'if(nm)t.push(nm)}}catch(e){}'
+          + 'return {b:b,t:t}})()', true)
+        const bb = (probe && probe.b) || {}
+        if (bb.f) why += ' ★这一页有 ' + bb.f + ' 个 iframe,而【CSS 选择器跨不进 iframe】——'
+          + '如果你要点的东西在子页面里,写多少个选择器都是 not found。改用 browser_read 给的 [ref_N]:'
+          + '子页面的元素已经采进清单了(标着「以下在 iframe 内」),ref 会被送进对应的子框架执行。'
+        if (bb.s) why += ' ★页面里有 ' + bb.s + ' 处 shadow DOM —— querySelector 对它恒为 null,'
+          + '要用 browser_eval 走 el.shadowRoot.querySelector(…)。'
+        const t = (probe && probe.t) || []
+        if (t.length) why += ' 这一页当前【真有】的可点元素文案:' + t.map((x) => '「' + x + '」').join(' ')
+          + ' —— 对照一下是不是文案/页面根本不对(比如还没跳转过来)。'
+      } catch {}
+    }
+    return { error: str(r.err || '执行失败') + why + (notFound
       ? ' —— 别再换选择器猜了(猜错的代价是点到别的元素上还成功)。正确的下一步:重新 browser_read'
         + '(弹层/新页面出现后旧的 ref 就失效了,读一次拿到新的 [ref_N]),然后用 selector:"ref_N"。'
         + '元素在视口外时读页不会给它 ref —— 那就先 browser_act{action:"scroll"} 滚过去再读。'
