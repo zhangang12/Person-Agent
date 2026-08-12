@@ -107,11 +107,12 @@ html[data-embed="1"] .hl { display: none; }
 .shot { align-self: stretch; margin: 4px 0; }
 /* ★裁高不缩宽:等比缩到 420 高的话,1280×4200 的整页截图只剩 128px 宽的细条(目检实见)。
    满宽显示顶部那一屏才是有用的信息,余下的点开原图看。 */
-/* ★显示宽度必须封顶,不能占满对话区:缩略图是 1520 物理像素出的,显示到 760 CSS px 正好 1:1(Retina 2x);
+/* ★显示宽度必须封顶,不能占满对话区:截图源现在是 1440 物理像素(后台视口 1440×900 @1x),
+   显示到 720 CSS px 正好 1:1(Retina 2x)。源从 2880 降到 1440 是为了出图快 3 倍(见 browser.js BG_VIEWPORT);
    对话区在大屏上有 1500px 宽,让它占满就等于放大 2 倍 —— 用户一眼看出"太糊了"。
    同理 img 上【不写 width:100%】,让它按自然尺寸渲染、窄屏时才由 max-width 收缩,永不放大。 */
 .shot-frame {
-  position: relative; max-width: 760px; max-height: 460px; overflow: hidden; cursor: zoom-in;
+  position: relative; max-width: 720px; max-height: 460px; overflow: hidden; cursor: zoom-in;
   border: 1px solid var(--sep); border-radius: var(--r-sm); background: var(--fill-4);
 }
 .shot-frame:hover { border-color: var(--blue); }

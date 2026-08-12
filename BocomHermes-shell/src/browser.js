@@ -455,7 +455,12 @@ module.exports = function initBrowser(ctx) {
   //   于是它的视口是个窄条 —— 实测截出来 264×818,页面按手机断点渲染,截图对排查毫无价值。
   //   "看不见"不等于"没有尺寸":无头浏览器一样要显式给视口,这是 CDP Emulation 的本职。
   //   dsf=2 是为了出图够清晰(缩略图要按 2 倍分辨率给,见 window.js SHOT_W)。
-  const BG_VIEWPORT = { width: 1440, height: 900, deviceScaleFactor: 2, mobile: false }
+  // ★deviceScaleFactor 用 1,不用 2(2026-08-12 用户:"shot 还是跑了很久")。
+  //   2 倍是我当初为了缩略图在 Retina 上清晰设的,代价是每张图多栅格化【四倍面积】——
+  //   同一页面连拍三张实测:dsf=2 → 284/614/242ms、263~605KB;dsf=1 → 243/87/94ms、约 210KB。
+  //   稳态快 3 倍、体积小 3 倍,而慢机器上这个倍数只会更大(总耗时几乎全在 CDP 出图那一步)。
+  //   清晰度并没有损失:1440 宽的源显示在 720 CSS px 上正好 1:1(见 chat.css .shot-frame)。
+  const BG_VIEWPORT = { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }
   async function bgViewport(tab) {
     if (!tab || !tab.dbg) return
     try { await tab._dbgReady } catch {}

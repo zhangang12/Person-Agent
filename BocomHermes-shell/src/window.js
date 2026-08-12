@@ -1130,7 +1130,9 @@ module.exports = function initWindow(S, { ipcMain, app, BrowserWindow, WebConten
   }
   S.visionInfo = visionInfo
 
-  const SHOT_W = 1520
+  // 缩略图像素宽:与后台视口同宽(1440),源本来就是这个尺寸 → 不用缩放,只做一次 JPEG 编码。
+  // 比原来"出 2880 再缩到 1520"省掉一次大图解码 + 一次缩放,主线程上的活少一大半。
+  const SHOT_W = 1440
   const shotPaths = new Set()   // 壳层自己产出的截图路径白名单 —— 渲染端只能请求打开这里面的,不许开任意文件
 
   // 【收件人是谁】不能靠 agentInjectWc 猜:那条是给「发给 Agent」按钮用的(用户手动点,收件人=当前活动对话),

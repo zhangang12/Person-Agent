@@ -480,7 +480,7 @@ module.exports = function initMail(ctx) {
           // 于是模型在对话里说"页面元素采集失败",而日志里【完全没有这件事】,连"哪个调用、什么参数、
           // 报了什么"都无从查起。查一个看不见的东西只能靠猜,那一整天就是这么烧掉的。
           // 一行一调用:route + 关键参数摘要 + ok/错误。参数只摘不落全文(截图 base64 之类不能进日志)。
-          const toolLog = (kind, route, arg, r) => {
+          const toolLog = (kind, route, arg, r, ms) => {
             try {
               const a1 = arg || {}
               const brief = [a1.sessionId && ('sid=' + a1.sessionId), a1.name && ('name=' + a1.name),
@@ -489,7 +489,8 @@ module.exports = function initMail(ctx) {
                 a1.query && ('q=' + String(a1.query).slice(0, 40)), a1.expr && ('expr=' + String(a1.expr).slice(0, 60)), a1.serverId && ('srv=' + a1.serverId)].filter(Boolean).join(' ')
               const res = !r ? '(空回包)' : r.error ? ('✗ ' + String(r.error).slice(0, 160))
                 : (r.elemError ? '✓ 但元素采集失败:' + String(r.elemError).slice(0, 120) : '✓')
-              log('[' + kind + '] ' + route + (brief ? ' ' + brief : '') + ' → ' + res)
+              // ★耗时:用户问"shot 还是跑了很久"时,没有这个数就只能猜(本该一眼能答)
+              log('[' + kind + '] ' + route + (brief ? ' ' + brief : '') + ' → ' + res + (ms != null ? '  ' + ms + 'ms' : ''))
               // 内嵌浏览器的使用/失败计数:权限层据此判"真的试过了吗"(playwright 降级闸,见 session.js)
               if (kind === 'browser-tool') {
                 if (!S.brStat) S.brStat = { opens: 0, fails: 0 }
@@ -504,11 +505,12 @@ module.exports = function initMail(ctx) {
             const route = req.url.slice('/preview/'.length)
             const fn = { start: pv.start, logs: pv.logs, stop: pv.stop, list: pv.list, configs: pv.configs }[route]
             if (!fn) return reply({ error: '未知 preview 路由: ' + route })
+            const t0 = Date.now()
             try {
               const r = await fn(a)
-              toolLog('preview-tool', route, a, r)
+              toolLog('preview-tool', route, a, r, Date.now() - t0)
               return reply(r && r.error ? r : (route === 'list' ? { ok: true, servers: r } : r))
-            } catch (e) { toolLog('preview-tool', route, a, { error: e.message }); return reply({ error: e.message }) }
+            } catch (e) { toolLog('preview-tool', route, a, { error: e.message }, Date.now() - t0); return reply({ error: e.message }) }
           }
           if (req.url.startsWith('/browser/')) {
             const ba = S.brAgent
@@ -516,8 +518,9 @@ module.exports = function initMail(ctx) {
             const route = req.url.slice('/browser/'.length)
             const fn = { open: ba.agentOpen, read: ba.agentRead, find: ba.agentFind, act: ba.agentAct, eval: ba.agentEval, html: ba.agentHtml, upload: ba.agentUpload, tabs: ba.agentTabs, resize: ba.agentResize, assert: ba.agentAssert, shot: ba.agentShot, diag: ba.agentDiag, close: ba.agentClose }[route]
             if (!fn) return reply({ error: 'unknown ' + req.url })
-            try { const r = await fn(a); toolLog('browser-tool', route, a, r); return reply(r) }
-            catch (e) { toolLog('browser-tool', route, a, { error: e.message }); return reply({ error: e.message }) }
+            const t0 = Date.now()
+            try { const r = await fn(a); toolLog('browser-tool', route, a, r, Date.now() - t0); return reply(r) }
+            catch (e) { toolLog('browser-tool', route, a, { error: e.message }, Date.now() - t0); return reply({ error: e.message }) }
           }
           return reply({ error: 'unknown ' + req.url })
         } catch (e) { reply({ error: e.message }) }

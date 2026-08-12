@@ -59,7 +59,7 @@ app.whenReady().then(async () => {
   const ev = (win, js) => win.webContents.executeJavaScript(js)
   // 照抄壳层真身的口径(SHOT_W=1520 物理像素 + JPEG88),看到的就是真机会看到的东西。
   // ★这个口径必须跟 window.js 的 SHOT_W 一致,否则目检出来的清晰度是假的。
-  const SHOT_W = 1520
+  const SHOT_W = 1440   // 与真身同口径(BG_VIEWPORT 1440×900 @1x)—— 口径不一致,目检出来的清晰度就是假的
   const mk = (w, h) => 'data:image/jpeg;base64,' + require('electron').nativeImage
     .createFromBuffer(fakeShotPng(w, h)).resize({ width: SHOT_W, quality: 'best' }).toJPEG(88).toString('base64')
   const wide = mk(1280, 800)
