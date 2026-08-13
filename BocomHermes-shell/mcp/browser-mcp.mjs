@@ -674,13 +674,29 @@ async function callTool(name, args) {
       + (r.truncated ? '\n\n⚠ ' + r.truncated : '')
   }
   if (name === 'browser_act') {
+    // ★2026-08-12 审查发现的最贵一条:这里的白名单是【手写的】,而 schema 一路在加参数 ——
+    //   until/urlContains/accept/toRef/toSelector/dx/dy/x/y 九个【全被丢在这一行】。
+    //   后果不是"少个参数":drag 永远不知道拖到哪、point 永远不知道点哪(这两个功能等于不存在),
+    //   wait 的条件等待退化成盲睡,dialog 预设模型控制不了。
+    //   我没发现,是因为所有真机验证都直接 POST 到 relay,【绕过了这一层】——
+    //   而模型走的是 MCP → relay。以后验新工具必须走 MCP 通道(见 mcp/selftest.mjs)。
+    //   改成"schema 有什么就转发什么",别再手抄白名单:抄漏一次就是一个功能静默消失。
     const body = { sessionId: String(args.sessionId || ''), action: String(args.action || '') }
-    for (const k of ['ref', 'selector', 'value', 'text', 'url', 'key', 'direction']) if (args[k] != null) body[k] = String(args[k])
-    if (args.amount != null) body.amount = +args.amount
-    if (args.checked != null) body.checked = !!args.checked
-    if (args.ms != null) body.ms = +args.ms
+    const STR = ['ref', 'selector', 'value', 'text', 'url', 'key', 'direction', 'until', 'urlContains', 'toRef', 'toSelector']
+    const NUM = ['amount', 'ms', 'dx', 'dy', 'x', 'y']
+    const BOOL = ['checked', 'accept']
+    for (const k of STR) if (args[k] != null) body[k] = String(args[k])
+    for (const k of NUM) if (args[k] != null) body[k] = +args[k]
+    for (const k of BOOL) if (args[k] != null) body[k] = !!args[k]
     const r = await relayPost('/browser/act', body)
-    return 'ok — 当前页: ' + (r.url || '') + (r.scrolled ? '(' + r.scrolled + ')' : '') + (r.hint ? '\n' + r.hint : '')
+    // note 是壳层写给模型的下一步引导(拖完要核结果、绝对坐标会失效、右键菜单是新元素、
+    // 找不到元素时是 iframe 还是 shadow)。原来这一行把它整个丢了 —— 白写。
+    return 'ok — 当前页: ' + (r.url || '')
+      + (r.scrolled ? '(' + r.scrolled + ')' : '')
+      + (r.at ? '  点在 [' + r.at + ']' : '') + (r.hit ? ' → ' + r.hit : '')
+      + (r.moved != null ? '  滚动 ' + r.moved + 'px' + (r.atEnd ? '(到底了)' : '') : '')
+      + (r.waited != null ? '  等了 ' + r.waited : '')   // r.waited 自带单位,再补 ms 会变成 0msms
+      + (r.hint ? '\n' + r.hint : '') + (r.note ? '\n' + r.note : '')
   }
   if (name === 'browser_assert') {
     const r = await relayPost('/browser/assert', {
