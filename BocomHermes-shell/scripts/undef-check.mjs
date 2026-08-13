@@ -229,6 +229,26 @@ if (isMain) {
     const rel = path.relative(ROOT, f)
     all = all.concat(scanSource(src, rel, type, BROWSER_FILE.test(rel) ? BROWSER_GLOBALS : null))
   }
+  // ★顺带一条正则规则:手拼 file:// URI(2026-08-12 咬了一次)。
+  //   scripts/lsp-smoke.mjs 里写 'file:///' + process.cwd():
+  //   · POSIX 上 cwd 以 / 开头 → file:////Users/…(四个斜杠,非法)
+  //   · 这个仓库路径里有中文(个人智能体)→ 又没做百分号编码
+  //   结果 typescript/vue 两个 LSP 一直不应答,而 pyright 容忍 —— 看起来像"那两个 server 坏了",
+  //   查了两轮才落到这。路径转 URI 一律 pathToFileURL,手拼在中文路径 + 跨平台下必错。
+  //   放在这个脚本里是因为它是"每次都跑的全仓静态扫描",不是因为跟作用域有关。
+  for (const f of files) {
+    const rel = path.relative(ROOT, f)
+    if (/undef-check\.mjs$/.test(rel)) continue   // 规则自己写着那个模式,不然它第一个举报自己
+    let src = ''
+    try { src = fs.readFileSync(f, 'utf8') } catch { continue }
+    src.split('\n').forEach((L, i) => {
+      const t = L.trim()
+      if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) return   // 注释里讲这个坑不算犯这个坑
+      if (/(['"`])file:\/\/\/?\1\s*\+|(['"`])file:\/\/\/[^'"`]*\2\s*\+\s*[A-Za-z_$]/.test(L) && !/pathToFileURL/.test(L)) {
+        all.push({ file: rel, line: i + 1, name: '', kind: 'msg', msg: '手拼 file:// URI —— 用 pathToFileURL(p).href(中文路径/POSIX 前导斜杠手拼必错)' })
+      }
+    })
+  }
   const byFile = new Map()
   for (const b of all) { if (!byFile.has(b.file)) byFile.set(b.file, []); byFile.get(b.file).push(b) }
   if (!all.length) {
